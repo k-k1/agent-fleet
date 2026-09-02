@@ -47,7 +47,7 @@ func TestBitbucketGetUnauthorizedNoRetry(t *testing.T) {
 	defer srv.Close()
 
 	_, err := bitbucketGet(&http.Client{Timeout: 5 * time.Second}, "Bearer x", srv.URL)
-	if !errors.Is(err, errBitbucketUnauthorized) {
+	if !errors.Is(err, ErrBitbucketUnauthorized) {
 		t.Fatalf("expected errBitbucketUnauthorized, got %v", err)
 	}
 	if got := atomic.LoadInt32(&hits); got != 1 {
@@ -108,8 +108,8 @@ func TestBitbucketScopeParsing(t *testing.T) {
 	}
 }
 
-// bitbucketConnectCheck: 401 → scopeless; a recognized credential missing repo read →
-// errBBNoRepoRead; missing only write → "no_write" warn; full scopes → clean.
+// BitbucketConnectCheck: 401 → scopeless; a recognized credential missing repo read →
+// ErrBBNoRepoRead; missing only write → "no_write" warn; full scopes → clean.
 func TestBitbucketConnectCheck(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -118,8 +118,8 @@ func TestBitbucketConnectCheck(t *testing.T) {
 		wantWarn string
 		wantErr  error
 	}{
-		{"scopeless_401", http.StatusUnauthorized, "", "", errBBScopeless},
-		{"no_repo_read", http.StatusOK, "read:account", "", errBBNoRepoRead},
+		{"scopeless_401", http.StatusUnauthorized, "", "", ErrBBScopeless},
+		{"no_repo_read", http.StatusOK, "read:account", "", ErrBBNoRepoRead},
 		{"no_write", http.StatusOK, "read:repository:bitbucket", "no_write", nil},
 		{"full", http.StatusOK, "read:repository:bitbucket,write:repository:bitbucket", "", nil},
 		{"unverified_5xx", http.StatusBadGateway, "", "", nil},

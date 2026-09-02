@@ -23,7 +23,7 @@ import (
 // would otherwise be telling every member to restart their workspace). What the Agent
 // keeps is storage: GitHub's token arrives through the ordinary PUT
 // /connections/git/github.com — the same path a pasted PAT takes — and Bitbucket's
-// refresh credentials arrive through handleBitbucketStore below.
+// refresh credentials arrive through HandleBitbucketStore below.
 
 // --- Bitbucket OAuth (Authorization Code Grant) ---
 //
@@ -60,14 +60,14 @@ type bitbucketStoreReq struct {
 	Secret string `json:"secret,omitempty"`
 }
 
-// handleBitbucketStore persists tokens (from the CP callback) and installs the
+// HandleBitbucketStore persists tokens (from the CP callback) and installs the
 // credential helper for bitbucket.org only. The empty-helper reset clears the
 // inherited global `store` helper so our refreshing helper is the sole source.
 //
 // ★ The tenant's client key/secret are NOT stored (docs/log/71 §71.8). What lands here is
 // this member's own access + refresh token; the refresh grant runs in the CP, which is
 // where the tenant's secret stays.
-func handleBitbucketStore(w http.ResponseWriter, r *http.Request) {
+func HandleBitbucketStore(w http.ResponseWriter, r *http.Request) {
 	var req bitbucketStoreReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -95,9 +95,9 @@ func handleBitbucketStore(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 }
 
-// removeBitbucketOAuth clears the stored OAuth refresh creds. Called from the
+// RemoveBitbucketOAuth clears the stored OAuth refresh creds. Called from the
 // generic disconnect (connections.go) so one ✕ covers both paths.
-func removeBitbucketOAuth() {
+func RemoveBitbucketOAuth() {
 	s, err := secrets.Load()
 	if err != nil {
 		return
@@ -106,7 +106,7 @@ func removeBitbucketOAuth() {
 	_ = s.Save()
 }
 
-// refreshBitbucket exchanges the refresh_token for a fresh access token.
+// RefreshBitbucket exchanges the refresh_token for a fresh access token.
 //
 // ★ The grant runs in the CONTROL PLANE (docs/log/71 §71.8). It is Basic-authenticated with
 // the tenant's OAuth app secret, and that secret used to be copied into every member's
@@ -123,8 +123,8 @@ func removeBitbucketOAuth() {
 //   - a store written BEFORE this change still holds key/secret. Those are used only as
 //     a fallback if the bridge is unavailable, and are dropped the first time the bridge
 //     answers — proving the replacement works before removing what it replaces.
-func refreshBitbucket(c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
-	if b := loadGitOAuthBridge(); b != nil {
+func RefreshBitbucket(c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
+	if b := LoadGitOAuthBridge(); b != nil {
 		nc, err := refreshBitbucketViaCP(*b, c)
 		if err == nil {
 			return nc, nil
@@ -137,10 +137,10 @@ func refreshBitbucket(c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) 
 	return refreshBitbucketDirect(c)
 }
 
-// loadGitOAuthBridge reads the CP bridge out of the store. nil = not configured, which
+// LoadGitOAuthBridge reads the CP bridge out of the store. nil = not configured, which
 // is normal on a deployment with no PUBLIC_BASE_URL (the CP injects nothing then) and on
 // a container started before docs/log/71.
-func loadGitOAuthBridge() *secrets.CPBridge {
+func LoadGitOAuthBridge() *secrets.CPBridge {
 	s, err := secrets.Load()
 	if err != nil || s.GitOAuthBridge == nil {
 		return nil
@@ -159,7 +159,7 @@ type cpRefreshedToken struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
-// refreshOAuthViaCP runs one provider's refresh grant through the CP bridge. The
+// RefreshOAuthViaCP runs one provider's refresh grant through the CP bridge. The
 // provider is a path segment (bitbucket / jira, docs/log/80 §80.17) — the bridge token and
 // base URL are shared, because what the bridge authorizes is "refresh THIS member's
 // tokens", not one provider's.
@@ -167,7 +167,7 @@ type cpRefreshedToken struct {
 // Bounded on purpose: this call sits in front of every git clone once the access token
 // is near expiry (and in front of every work item refresh for Jira), so a hung CP must
 // fail rather than wedge the caller. The CP's own retries fit inside this budget.
-func refreshOAuthViaCP(b secrets.CPBridge, provider, refreshToken string) (cpRefreshedToken, error) {
+func RefreshOAuthViaCP(b secrets.CPBridge, provider, refreshToken string) (cpRefreshedToken, error) {
 	if refreshToken == "" {
 		return cpRefreshedToken{}, fmt.Errorf("no refresh token stored")
 	}

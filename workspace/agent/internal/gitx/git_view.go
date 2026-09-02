@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -17,7 +16,7 @@ import (
 // working copy. It lets the Console inspect an initialized submodule without
 // pretending that the nested checkout is another ~/repos entry.
 func repoViewDir(w http.ResponseWriter, r *http.Request) (string, bool) {
-	dir, ok := repoDirFromPath(w, r)
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return "", false
 	}
@@ -33,13 +32,13 @@ func repoViewDir(w http.ResponseWriter, r *http.Request) (string, bool) {
 	// Only a gitlink declared by the parent may be selected. Merely finding an
 	// embedded .git directory is not enough: that would turn this read endpoint
 	// into a generic nested-repository browser.
-	stage, err := gitx.Run(dir, "ls-files", "--stage", "--", rel)
+	stage, err := Run(dir, "ls-files", "--stage", "--", rel)
 	if err != nil || !strings.HasPrefix(stage, "160000 ") {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_submodule", "path is not a submodule: "+rel)
 		return "", false
 	}
 	target := filepath.Join(dir, rel)
-	if !isGitRepo(target) {
+	if !IsGitRepo(target) {
 		httpx.WriteErr(w, http.StatusNotFound, "submodule_unavailable", "submodule is not initialized: "+rel)
 		return "", false
 	}
@@ -53,11 +52,11 @@ type submoduleView struct {
 	SHA         string `json:"sha,omitempty"`
 }
 
-// handleRepoSubmodules detects submodules from .gitmodules. Initialized nested
+// HandleRepoSubmodules detects submodules from .gitmodules. Initialized nested
 // checkouts become selectable SCM graph targets; missing ones remain visible so
 // the UI can explain why their history cannot be opened.
-func handleRepoSubmodules(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoSubmodules(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
@@ -65,7 +64,7 @@ func handleRepoSubmodules(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"submodules": []submoduleView{}})
 		return
 	}
-	out, err := gitx.Run(dir, "config", "--file", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
+	out, err := Run(dir, "config", "--file", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
 	if err != nil && strings.TrimSpace(out) == "" {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"submodules": []submoduleView{}})
 		return
@@ -82,9 +81,9 @@ func handleRepoSubmodules(w http.ResponseWriter, r *http.Request) {
 		if !valid {
 			continue
 		}
-		sm := submoduleView{Name: name, Path: rel, Initialized: isGitRepo(filepath.Join(dir, rel))}
+		sm := submoduleView{Name: name, Path: rel, Initialized: IsGitRepo(filepath.Join(dir, rel))}
 		if sm.Initialized {
-			sm.SHA, _ = gitx.Run(filepath.Join(dir, rel), "rev-parse", "--short", "HEAD")
+			sm.SHA, _ = Run(filepath.Join(dir, rel), "rev-parse", "--short", "HEAD")
 		}
 		items = append(items, sm)
 	}
@@ -124,14 +123,14 @@ type Change struct {
 	Untracked bool   `json:"untracked"`
 }
 
-func gitChanges(dir string) ([]Change, error) {
+func GitChanges(dir string) ([]Change, error) {
 	// core.quotePath=false: emit non-ASCII (e.g. Japanese) paths verbatim as UTF-8
 	// instead of C-style octal escapes ("\346\227\245…"). Without it the escaped
 	// name reaches the Console FILES list and no longer matches the real path, so
 	// clicking a changed file fails to open it.
 	// Raw .Output() (not runGit): porcelain lines may START with a space (" M foo")
 	// and trimming would corrupt the first line's XY status columns.
-	out, err := gitx.Cmd(dir, "-c", "core.quotePath=false", "status", "--porcelain").Output()
+	out, err := Cmd(dir, "-c", "core.quotePath=false", "status", "--porcelain").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -150,12 +149,12 @@ func gitChanges(dir string) ([]Change, error) {
 	return cs, nil
 }
 
-func handleRepoChanges(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoChanges(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
-	cs, err := gitChanges(dir)
+	cs, err := GitChanges(dir)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
@@ -163,14 +162,14 @@ func handleRepoChanges(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": cs})
 }
 
-func handleRepoDiff(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoDiff(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
 	q := r.URL.Query()
 	// core.quotePath=false: keep non-ASCII paths in the +++/--- headers as UTF-8
-	// so the Console renders them as text (see gitChanges).
+	// so the Console renders them as text (see GitChanges).
 	args := []string{"-c", "core.quotePath=false", "diff"}
 	if v := q.Get("staged"); v == "1" || v == "true" {
 		args = append(args, "--staged")
@@ -185,7 +184,7 @@ func handleRepoDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	// Raw .Output() (not runGit): the patch body is returned verbatim in the JSON
 	// response and must stay byte-identical (no trimming).
-	out, err := gitx.Cmd(dir, args...).Output() // diff exits 0 even with changes
+	out, err := Cmd(dir, args...).Output() // diff exits 0 even with changes
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
@@ -206,8 +205,8 @@ type commitView struct {
 	Subject string `json:"subject"`
 }
 
-func handleRepoLog(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoLog(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
@@ -225,13 +224,13 @@ func handleRepoLog(w http.ResponseWriter, r *http.Request) {
 		}
 		args = append(args, ref)
 	}
-	out, err := gitx.Run(dir, args...)
+	out, err := Run(dir, args...)
 	if err != nil {
 		// An unborn branch (a folder from POST /repos/init, or a clone of an empty
 		// remote) has no commits, and `git log` calls that fatal. "No history yet" is
 		// not a failure to report — the graph view already answers it with an empty
 		// list, because `git log --all` exits 0 there.
-		if st, sErr := gitStatus(dir); sErr == nil && st.Unborn {
+		if st, sErr := GitStatus(dir); sErr == nil && st.Unborn {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"commits": []commitView{}})
 			return
 		}
@@ -309,10 +308,10 @@ func parseDecorate(d string) ([]graphRef, string) {
 	return refs, current
 }
 
-// handleRepoGraph returns the commit-graph DAG for the codeleaf-style lane view: all
+// HandleRepoGraph returns the commit-graph DAG for the codeleaf-style lane view: all
 // refs as roots, topo + date ordered, newest-first, each with parents + decorating
 // refs, plus reachability-from-HEAD so the Console can dim off-branch commits.
-func handleRepoGraph(w http.ResponseWriter, r *http.Request) {
+func HandleRepoGraph(w http.ResponseWriter, r *http.Request) {
 	dir, ok := repoViewDir(w, r)
 	if !ok {
 		return
@@ -326,7 +325,7 @@ func handleRepoGraph(w http.ResponseWriter, r *http.Request) {
 	// refs/tags/…). The short form is ambiguous for slash-containing branch names — a
 	// local "feat/x" and a remote "origin/feat/x" both just look like "a/b" — which made
 	// parseDecorate misclassify local branches as remotes (no branch-checkout offered).
-	out, err := gitx.Run(dir, "log", "--all", "--topo-order", "--date-order",
+	out, err := Run(dir, "log", "--all", "--topo-order", "--date-order",
 		"--decorate=full", "--max-count="+strconv.Itoa(limit),
 		"--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%cI%x1f%s%x1f%D")
 	if err != nil {
@@ -335,7 +334,7 @@ func handleRepoGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	// Reachable-from-HEAD set → inBranch. Empty (detached / no HEAD) ⇒ dim nothing.
 	reachable := map[string]bool{}
-	if rl, err := gitx.Run(dir, "rev-list", "HEAD"); err == nil {
+	if rl, err := Run(dir, "rev-list", "HEAD"); err == nil {
 		for _, s := range strings.Fields(rl) {
 			reachable[s] = true
 		}
@@ -372,10 +371,10 @@ type commitFile struct {
 	Path   string `json:"path"`
 }
 
-// handleRepoShow returns one commit's detail for the history → diff pane (codeleaf
+// HandleRepoShow returns one commit's detail for the history → diff pane (codeleaf
 // CommitDetail style): header (subject/body/author/date/sha), the changed-file list,
-// and the full colored patch. Diff is size-capped like handleRepoDiff.
-func handleRepoShow(w http.ResponseWriter, r *http.Request) {
+// and the full colored patch. Diff is size-capped like HandleRepoDiff.
+func HandleRepoShow(w http.ResponseWriter, r *http.Request) {
 	dir, ok := repoViewDir(w, r)
 	if !ok {
 		return
@@ -387,7 +386,7 @@ func handleRepoShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Header: one record, fields separated by \x1f; body is last (may hold newlines).
-	hdr, err := gitx.Run(dir, "log", "-1",
+	hdr, err := Run(dir, "log", "-1",
 		"--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b", sha)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such commit")
@@ -401,7 +400,7 @@ func handleRepoShow(w http.ResponseWriter, r *http.Request) {
 
 	// Changed files (name-status). First token = status, last = path (rename → new).
 	files := []commitFile{}
-	if ns, err := gitx.Run(dir, "-c", "core.quotePath=false", "show", "--name-status",
+	if ns, err := Run(dir, "-c", "core.quotePath=false", "show", "--name-status",
 		"--format=", "--no-color", sha); err == nil {
 		for _, line := range strings.Split(ns, "\n") {
 			f := strings.Split(strings.TrimSpace(line), "\t")
@@ -414,7 +413,7 @@ func handleRepoShow(w http.ResponseWriter, r *http.Request) {
 
 	// Full patch. Raw .Output() (not runGit): the patch body is returned verbatim
 	// in the JSON response and must stay byte-identical (no trimming).
-	diff, err := gitx.Cmd(dir, "-c", "core.quotePath=false", "show", "--format=", "--no-color", sha).Output()
+	diff, err := Cmd(dir, "-c", "core.quotePath=false", "show", "--format=", "--no-color", sha).Output()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
@@ -446,7 +445,7 @@ func validPaths(dir string, ps []string) ([]string, bool) {
 }
 
 func gitPathsOp(w http.ResponseWriter, r *http.Request, gitArgs []string, code string) {
-	dir, ok := repoDirFromPath(w, r)
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
@@ -462,24 +461,24 @@ func gitPathsOp(w http.ResponseWriter, r *http.Request, gitArgs []string, code s
 	args := append([]string{}, gitArgs...)
 	args = append(args, "--")
 	args = append(args, paths...)
-	if out, err := gitx.Combined(dir, args...); err != nil {
+	if out, err := Combined(dir, args...); err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, code, fmt.Sprintf("%v: %s", err, out))
 		return
 	}
-	cs, _ := gitChanges(dir)
+	cs, _ := GitChanges(dir)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": cs})
 }
 
-func handleRepoStage(w http.ResponseWriter, r *http.Request) {
+func HandleRepoStage(w http.ResponseWriter, r *http.Request) {
 	gitPathsOp(w, r, []string{"add"}, "stage_failed")
 }
 
-func handleRepoUnstage(w http.ResponseWriter, r *http.Request) {
+func HandleRepoUnstage(w http.ResponseWriter, r *http.Request) {
 	gitPathsOp(w, r, []string{"restore", "--staged"}, "unstage_failed")
 }
 
-// handleRepoDiscard is destructive (drops worktree changes); the Console confirms.
-func handleRepoDiscard(w http.ResponseWriter, r *http.Request) {
+// HandleRepoDiscard is destructive (drops worktree changes); the Console confirms.
+func HandleRepoDiscard(w http.ResponseWriter, r *http.Request) {
 	gitPathsOp(w, r, []string{"restore"}, "discard_failed")
 }
 
@@ -488,8 +487,8 @@ type commitReq struct {
 	All     bool   `json:"all"`
 }
 
-func handleRepoCommit(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoCommit(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
@@ -507,10 +506,10 @@ func handleRepoCommit(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "-a")
 	}
 	args = append(args, "-m", req.Message)
-	if out, err := gitx.Combined(dir, args...); err != nil {
+	if out, err := Combined(dir, args...); err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "commit_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}
-	st, _ := gitStatus(dir)
+	st, _ := GitStatus(dir)
 	httpx.WriteJSON(w, http.StatusOK, st)
 }

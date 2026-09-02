@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -36,17 +35,17 @@ import (
 // traversal stays blocked. Length is 96 runes to fit repo@branch without truncating.
 var repoNameRe = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N}._@-]{0,95}$`)
 
-func reposRoot() string { return filepath.Join(homeDir(), "repos") }
+func ReposRoot() string { return filepath.Join(homeDir(), "repos") }
 
-// resolveRepoDir maps a validated name to its working-copy path.
-func resolveRepoDir(name string) (string, bool) {
+// ResolveRepoDir maps a validated name to its working-copy path.
+func ResolveRepoDir(name string) (string, bool) {
 	if !repoNameRe.MatchString(name) {
 		return "", false
 	}
-	return filepath.Join(reposRoot(), name), true
+	return filepath.Join(ReposRoot(), name), true
 }
 
-func isGitRepo(dir string) bool {
+func IsGitRepo(dir string) bool {
 	fi, err := os.Stat(filepath.Join(dir, ".git"))
 	return err == nil && (fi.IsDir() || fi.Mode().IsRegular()) // dir, or a file for worktrees/submodules
 }
@@ -97,10 +96,10 @@ type Repo struct {
 	Locked bool `json:"locked,omitempty"`
 }
 
-func workingCopyID(dir string) string {
+func WorkingCopyID(dir string) string {
 	marker, err := workingCopyMarkerPath(dir)
 	if err == nil {
-		if id := readWorkingCopyID(marker); id != "" {
+		if id := ReadWorkingCopyID(marker); id != "" {
 			return id
 		}
 		buf := make([]byte, 16)
@@ -115,7 +114,7 @@ func workingCopyID(dir string) string {
 				}
 				_ = os.Remove(marker)
 			} else if os.IsExist(openErr) {
-				if id := readWorkingCopyID(marker); id != "" {
+				if id := ReadWorkingCopyID(marker); id != "" {
 					return id
 				}
 			}
@@ -155,7 +154,7 @@ func workingCopyMarkerPath(dir string) (string, error) {
 	return "", fmt.Errorf("working-copy metadata not found")
 }
 
-func readWorkingCopyID(path string) string {
+func ReadWorkingCopyID(path string) string {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return ""
@@ -184,7 +183,7 @@ type RepoIntegration struct {
 // hosts collapse to a short slug the Console can badge/icon; anything else returns the
 // bare host as the slug so self-hosted remotes still identify. ("", "") when no host.
 func gitProviderHost(remote string) (string, string) {
-	u := sshToHTTPS(strings.TrimSpace(remote))
+	u := SSHToHTTPS(strings.TrimSpace(remote))
 	u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
 	if i := strings.IndexAny(u, "/@"); i >= 0 && strings.ContainsRune(u[:i+1], '@') {
 		u = u[strings.IndexByte(u, '@')+1:] // strip any leftover userinfo
@@ -231,12 +230,12 @@ type RepoStatus struct {
 	Untracked int  `json:"untracked"`
 }
 
-// gitStatus parses `git status --porcelain=v2 --branch` into a RepoStatus.
+// GitStatus parses `git status --porcelain=v2 --branch` into a RepoStatus.
 // porcelain=v2 is stable across git versions and unambiguous to parse, unlike
 // the human-readable output.
-func gitStatus(dir string) (RepoStatus, error) {
+func GitStatus(dir string) (RepoStatus, error) {
 	var s RepoStatus
-	out, err := gitx.Run(dir, "status", "--porcelain=v2", "--branch")
+	out, err := Run(dir, "status", "--porcelain=v2", "--branch")
 	if err != nil {
 		return s, err
 	}
@@ -281,20 +280,20 @@ func gitStatus(dir string) (RepoStatus, error) {
 	return s, nil
 }
 
-// gitWorktreeIntegration compares two worktree-local HEADs by object ID. A plain
+// GitWorktreeIntegration compares two worktree-local HEADs by object ID. A plain
 // "HEAD...HEAD" invocation from one directory would resolve both names to that
 // directory's HEAD, because linked worktrees share refs but have separate HEADs.
-func gitWorktreeIntegration(parentDir, worktreeDir, targetBranch string) RepoIntegration {
+func GitWorktreeIntegration(parentDir, worktreeDir, targetBranch string) RepoIntegration {
 	r := RepoIntegration{TargetBranch: targetBranch, Relation: "unknown"}
-	parentHead, err := gitx.Run(parentDir, "rev-parse", "--verify", "HEAD")
+	parentHead, err := Run(parentDir, "rev-parse", "--verify", "HEAD")
 	if err != nil {
 		return r
 	}
-	worktreeHead, err := gitx.Run(worktreeDir, "rev-parse", "--verify", "HEAD")
+	worktreeHead, err := Run(worktreeDir, "rev-parse", "--verify", "HEAD")
 	if err != nil {
 		return r
 	}
-	out, err := gitx.Run(worktreeDir, "rev-list", "--left-right", "--count", parentHead+"..."+worktreeHead)
+	out, err := Run(worktreeDir, "rev-list", "--left-right", "--count", parentHead+"..."+worktreeHead)
 	if err != nil {
 		return r
 	}
@@ -323,9 +322,9 @@ func gitWorktreeIntegration(parentDir, worktreeDir, targetBranch string) RepoInt
 	return r
 }
 
-func handleListRepos(w http.ResponseWriter, r *http.Request) {
+func HandleListRepos(w http.ResponseWriter, r *http.Request) {
 	repos := []Repo{}
-	entries, _ := os.ReadDir(reposRoot()) // missing root => empty list
+	entries, _ := os.ReadDir(ReposRoot()) // missing root => empty list
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -338,8 +337,8 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 			// this folder from GET /repos/jobs instead.
 			continue
 		}
-		dir := filepath.Join(reposRoot(), e.Name())
-		if !isGitRepo(dir) {
+		dir := filepath.Join(ReposRoot(), e.Name())
+		if !IsGitRepo(dir) {
 			// An SVN working copy (docs/log/41) is a flat folder with a .svn dir; surface it
 			// with revision/URL so it shows in the tree and can host a session. Anything
 			// else (a plain folder) is skipped.
@@ -348,19 +347,19 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		st, _ := gitStatus(dir)
+		st, _ := GitStatus(dir)
 		var provider, host string
-		if origin, ok := gitOriginURL(dir); ok {
+		if origin, ok := GitOriginURL(dir); ok {
 			provider, host = gitProviderHost(origin)
 		}
 		var parent, createdAt string
-		wt := isLinkedWorktree(dir)
+		wt := IsLinkedWorktree(dir)
 		if wt {
-			parent = filepath.Base(worktreeParent(dir))
+			parent = filepath.Base(WorktreeParent(dir))
 			createdAt = worktreeCreatedAt(dir)
 		}
 		repos = append(repos, Repo{
-			Name: e.Name(), WorkingCopyID: workingCopyID(dir), Path: dir, Branch: st.Branch,
+			Name: e.Name(), WorkingCopyID: WorkingCopyID(dir), Path: dir, Branch: st.Branch,
 			Dirty: st.Dirty, Ahead: st.Ahead, Behind: st.Behind, Unborn: st.Unborn,
 			Provider: provider, Remote: host,
 			Worktree: wt, Parent: parent, CreatedAt: createdAt,
@@ -377,12 +376,12 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 		if !repos[i].Worktree {
 			continue
 		}
-		parentDir := worktreeParent(repos[i].Path)
+		parentDir := WorktreeParent(repos[i].Path)
 		targetBranch := ""
 		if parent, ok := byName[repos[i].Parent]; ok {
 			targetBranch = parent.Branch
 		}
-		integration := gitWorktreeIntegration(parentDir, repos[i].Path, targetBranch)
+		integration := GitWorktreeIntegration(parentDir, repos[i].Path, targetBranch)
 		repos[i].Integration = &integration
 	}
 	// Delete lock (docs/log/45): one ledger read for the whole list, not one per row.
@@ -442,8 +441,8 @@ func gitClone(dir, remoteURL, branch, newBranch string) error {
 // (it stays silent when stderr is not a terminal) and its output is streamed rather
 // than buffered, so the Console can show a live line instead of a spinner that says
 // nothing for twenty minutes.
-func gitCloneCtx(ctx context.Context, sink *repoJobSink, dir, remoteURL, branch, newBranch string) error {
-	if err := os.MkdirAll(reposRoot(), 0o755); err != nil {
+func gitCloneCtx(ctx context.Context, sink RepoJobSink, dir, remoteURL, branch, newBranch string) error {
+	if err := os.MkdirAll(ReposRoot(), 0o755); err != nil {
 		return err
 	}
 	// The parent clone must NOT use --recurse-submodules: a submodule pinned to an
@@ -460,10 +459,10 @@ func gitCloneCtx(ctx context.Context, sink *repoJobSink, dir, remoteURL, branch,
 		}
 		args = append(args, "--", remoteURL, dir)
 		if sink == nil {
-			return gitx.Combined("", args...)
+			return Combined("", args...)
 		}
-		err := gitx.Stream(ctx, sink, "", args...)
-		return sink.tailString(), err
+		err := Stream(ctx, sink, "", args...)
+		return sink.Tail(), err
 	}
 	b := strings.TrimSpace(branch)
 	if strings.HasPrefix(b, "-") {
@@ -500,7 +499,7 @@ func gitCloneCtx(ctx context.Context, sink *repoJobSink, dir, remoteURL, branch,
 // i.e. a freshly created, commit-less repository. Used to tell "empty repo" apart
 // from "requested branch missing on a populated repo" before retrying a clone.
 func remoteHasNoBranches(remoteURL string) bool {
-	out, err := gitx.Run("", "ls-remote", "--heads", "--", remoteURL)
+	out, err := Run("", "ls-remote", "--heads", "--", remoteURL)
 	return err == nil && out == ""
 }
 
@@ -508,10 +507,10 @@ func remoteHasNoBranches(remoteURL string) bool {
 // copy has no commits yet (a fresh clone of an empty remote), or "" when HEAD
 // resolves to a commit (the normal case).
 func unbornHead(dir string) string {
-	if gitx.OK(dir, "rev-parse", "--verify", "-q", "HEAD") {
+	if OK(dir, "rev-parse", "--verify", "-q", "HEAD") {
 		return ""
 	}
-	out, err := gitx.Run(dir, "symbolic-ref", "--short", "HEAD")
+	out, err := Run(dir, "symbolic-ref", "--short", "HEAD")
 	if err != nil {
 		return ""
 	}
@@ -531,17 +530,17 @@ func gitCheckoutNewBranch(dir, newBranch string) error {
 		args = append(args, "-b") // create it; else fall through to a plain switch
 	}
 	args = append(args, b)
-	if out, err := gitx.Combined(dir, args...); err != nil {
+	if out, err := Combined(dir, args...); err != nil {
 		return fmt.Errorf("create branch %s: %v: %s", b, err, out)
 	}
 	return nil
 }
 
-// isLinkedWorktree reports whether dir is a linked worktree (from `git worktree
+// IsLinkedWorktree reports whether dir is a linked worktree (from `git worktree
 // add`), as opposed to a normal/main working copy. A linked worktree's git dir lives
 // under the parent's common dir (…/.git/worktrees/<name>).
-func isLinkedWorktree(dir string) bool {
-	out, err := gitx.Run(dir, "rev-parse", "--absolute-git-dir")
+func IsLinkedWorktree(dir string) bool {
+	out, err := Run(dir, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return false
 	}
@@ -561,21 +560,21 @@ func worktreeCreatedAt(dir string) string {
 	return fi.ModTime().UTC().Format(time.RFC3339)
 }
 
-// worktreeParent returns the main working copy a linked worktree belongs to (the
+// WorktreeParent returns the main working copy a linked worktree belongs to (the
 // directory holding the shared .git), so `git worktree remove` can be run from it.
-func worktreeParent(dir string) string {
-	out, err := gitx.Run(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+func WorktreeParent(dir string) string {
+	out, err := Run(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return ""
 	}
 	return filepath.Dir(out) // …/repos/app/.git -> …/repos/app
 }
 
-// linkedWorktreeCount returns how many linked worktrees hang off dir (0 for a plain
+// LinkedWorktreeCount returns how many linked worktrees hang off dir (0 for a plain
 // clone). Deleting a main working copy with linked worktrees would break them, so the
 // delete handler refuses while this is > 0.
-func linkedWorktreeCount(dir string) int {
-	out, err := gitx.Run(dir, "worktree", "list", "--porcelain")
+func LinkedWorktreeCount(dir string) int {
+	out, err := Run(dir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return 0
 	}
@@ -591,35 +590,35 @@ func linkedWorktreeCount(dir string) int {
 	return 0
 }
 
-// maybePruneWorktree auto-removes a linked worktree once nothing needs it — the
+// MaybePruneWorktree auto-removes a linked worktree once nothing needs it — the
 // counterpart to worktree-then-start that keeps them from piling up. It removes only
 // when dir is a worktree, no session meta references it (worktreeHasSessions), AND it
 // is clean: uncommitted or unpushed work is preserved for manual handling via the
 // explicit force-delete path. Best-effort; called after a session's meta is forgotten.
-func maybePruneWorktree(dir string) {
-	if dir == "" || !isLinkedWorktree(dir) || worktreeHasSessions(dir) {
+func MaybePruneWorktree(dir string) {
+	if dir == "" || !IsLinkedWorktree(dir) || worktreeHasSessions(dir) {
 		return
 	}
 	if repoLocked(dir) {
 		return // 削除ロック（docs/log/45）は自動 prune にも効く
 	}
-	if st, err := gitStatus(dir); err != nil || st.Dirty || st.Ahead > 0 {
+	if st, err := GitStatus(dir); err != nil || st.Dirty || st.Ahead > 0 {
 		return // keep dirty/unpushed worktrees; the user force-deletes those explicitly
 	}
-	parent := worktreeParent(dir)
+	parent := WorktreeParent(dir)
 	if parent == "" {
 		return
 	}
-	_ = gitx.Cmd(parent, "worktree", "remove", "--force", dir).Run()
-	_ = gitx.Cmd(parent, "worktree", "prune").Run()
+	_ = Cmd(parent, "worktree", "remove", "--force", dir).Run()
+	_ = Cmd(parent, "worktree", "prune").Run()
 }
 
-// gitCurrentBranch returns dir's checked-out branch name, "(detached)" on a
+// GitCurrentBranch returns dir's checked-out branch name, "(detached)" on a
 // detached HEAD, or "" when dir isn't a resolvable git working tree. Cheaper than
-// gitStatus (a single rev-parse, no porcelain parse) — used to stamp a session's
+// GitStatus (a single rev-parse, no porcelain parse) — used to stamp a session's
 // start branch at create and to detect later drift on the session list.
-func gitCurrentBranch(dir string) string {
-	out, err := gitx.Run(dir, "rev-parse", "--abbrev-ref", "HEAD")
+func GitCurrentBranch(dir string) string {
+	out, err := Run(dir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return ""
 	}
@@ -630,36 +629,36 @@ func gitCurrentBranch(dir string) string {
 	return b
 }
 
-// gitBranchExists reports whether a local branch of that name exists in dir.
-func gitBranchExists(dir, branch string) bool {
-	return gitx.OK(dir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+// GitBranchExists reports whether a local branch of that name exists in dir.
+func GitBranchExists(dir, branch string) bool {
+	return OK(dir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
 }
 
-// gitBranchSHA returns the tip commit of a local branch, or "" if absent.
-func gitBranchSHA(dir, branch string) string {
-	out, err := gitx.Run(dir, "rev-parse", "--verify", "refs/heads/"+branch)
+// GitBranchSHA returns the tip commit of a local branch, or "" if absent.
+func GitBranchSHA(dir, branch string) string {
+	out, err := Run(dir, "rev-parse", "--verify", "refs/heads/"+branch)
 	if err != nil {
 		return ""
 	}
 	return out
 }
 
-// gitCreateBranch creates a local branch at sha (restore path). Reports success.
-func gitCreateBranch(dir, branch, sha string) bool {
-	return gitx.Cmd(dir, "branch", branch, sha).Run() == nil
+// GitCreateBranch creates a local branch at sha (restore path). Reports success.
+func GitCreateBranch(dir, branch, sha string) bool {
+	return Cmd(dir, "branch", branch, sha).Run() == nil
 }
 
-// mergedLocalBranches returns dir's local branches already contained in HEAD (safe to
+// MergedLocalBranches returns dir's local branches already contained in HEAD (safe to
 // delete — their commits live in the current line), excluding the checked-out branch.
 // Worktree-checked-out branches are also excluded (git refuses to delete those). The
 // cleanup survey uses this to propose merged temp/* branches left behind by removed
 // worktrees.
-func mergedLocalBranches(dir string) []string {
+func MergedLocalBranches(dir string) []string {
 	// `--merged` (no ref) = merged into HEAD. Tab-separated so empty fields survive the
 	// split: name \t worktreepath (non-empty = checked out somewhere) \t HEAD ("*" =
 	// current). Skip the current branch and any worktree-checked-out branch (git refuses
 	// to delete those), plus the trunk.
-	out, err := gitx.Run(dir, "branch", "--merged",
+	out, err := Run(dir, "branch", "--merged",
 		"--format=%(refname:short)%09%(worktreepath)%09%(HEAD)")
 	if err != nil {
 		return nil
@@ -685,11 +684,11 @@ func mergedLocalBranches(dir string) []string {
 	return names
 }
 
-// gitDirInfo returns dir's current branch AND whether it's a linked worktree in a
+// GitDirInfo returns dir's current branch AND whether it's a linked worktree in a
 // single rev-parse (branch line + absolute-git-dir line), so the session list can
 // enrich every row with one git call per unique dir. "" branch / false for a non-repo.
-func gitDirInfo(dir string) (branch string, worktree bool) {
-	out, err := gitx.Run(dir, "rev-parse", "--abbrev-ref", "HEAD", "--absolute-git-dir")
+func GitDirInfo(dir string) (branch string, worktree bool) {
+	out, err := Run(dir, "rev-parse", "--abbrev-ref", "HEAD", "--absolute-git-dir")
 	if err != nil {
 		return "", false
 	}
@@ -708,17 +707,17 @@ func gitDirInfo(dir string) (branch string, worktree bool) {
 
 // branchExists reports whether dir already has a local branch named branch.
 func branchExists(dir, branch string) bool {
-	return gitx.OK(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	return OK(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
 }
 
-// branchNameStatus reports whether name already exists as a local branch and/or as a
+// BranchNameStatus reports whether name already exists as a local branch and/or as a
 // remote-tracking branch (on any remote). This catches a worktree/rename name that
 // would otherwise SILENTLY create a divergent branch: `git worktree add -b X` (and
 // `git branch -m X`) happily make a fresh local X when only a past remote X exists,
 // which then collides at push time. Callers refuse and offer the user a choice.
-func branchNameStatus(dir, name string) (local, remote bool) {
+func BranchNameStatus(dir, name string) (local, remote bool) {
 	local = branchExists(dir, name)
-	out, err := gitx.Run(dir, "for-each-ref", "--format=%(refname:short)", "refs/remotes")
+	out, err := Run(dir, "for-each-ref", "--format=%(refname:short)", "refs/remotes")
 	if err == nil {
 		suffix := "/" + name
 		for _, ln := range strings.Split(out, "\n") {
@@ -731,7 +730,7 @@ func branchNameStatus(dir, name string) (local, remote bool) {
 	return
 }
 
-// worktreeBranches maps a branch name to the working copy that has it checked out,
+// WorktreeBranches maps a branch name to the working copy that has it checked out,
 // for every worktree of dir's repository EXCEPT dir itself.
 //
 // git allows a branch to be checked out in only ONE worktree at a time — both
@@ -746,8 +745,8 @@ func branchNameStatus(dir, name string) (local, remote bool) {
 //
 // Best-effort: an unreadable worktree list yields an empty map, i.e. nothing is
 // blocked and git's own refusal remains the backstop.
-func worktreeBranches(dir string) map[string]string {
-	out, err := gitx.Run(dir, "worktree", "list", "--porcelain")
+func WorktreeBranches(dir string) map[string]string {
+	out, err := Run(dir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil
 	}
@@ -770,11 +769,11 @@ func worktreeBranches(dir string) map[string]string {
 	return m
 }
 
-// writeBranchInUse answers a request for a branch that is live in another working
+// WriteBranchInUse answers a request for a branch that is live in another working
 // copy. Beyond the stable code it carries that copy's FOLDER name, because the only
 // useful next step is "open it" — a bare failure leaves the user guessing which of
 // their worktrees holds the branch.
-func writeBranchInUse(w http.ResponseWriter, branch, path string) {
+func WriteBranchInUse(w http.ResponseWriter, branch, path string) {
 	folder := filepath.Base(path)
 	httpx.WriteJSON(w, http.StatusConflict, map[string]any{"error": map[string]string{
 		"code":     errCodeBranchInUse,
@@ -789,25 +788,25 @@ func writeBranchInUse(w http.ResponseWriter, branch, path string) {
 // instead of wedging the create request past its client deadline.
 const worktreeSyncTimeout = 30 * time.Second
 
-// ensureBranchRef makes base resolvable before `git worktree add` runs. A branch
+// EnsureBranchRef makes base resolvable before `git worktree add` runs. A branch
 // pushed after this copy's last fetch exists on the remote but in NO local ref, and
 // worktree add fails outright with "invalid reference" — the user asked to work on a
 // branch that demonstrably exists, so a failed launch is the wrong answer. One bounded
 // fetch fixes it. Skipped when the name already resolves locally or as a remote-tracking
 // ref (the common case), so an ordinary launch pays no network cost.
-func ensureBranchRef(dir, base string) {
+func EnsureBranchRef(dir, base string) {
 	if base = strings.TrimSpace(base); base == "" {
 		return
 	}
-	if local, remote := branchNameStatus(dir, base); local || remote {
+	if local, remote := BranchNameStatus(dir, base); local || remote {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), worktreeSyncTimeout)
 	defer cancel()
-	_ = gitx.CmdContext(ctx, dir, "fetch", "--prune").Run()
+	_ = CmdContext(ctx, dir, "fetch", "--prune").Run()
 }
 
-// fastForwardWorktree brings a just-created existing-branch worktree up to its
+// FastForwardWorktree brings a just-created existing-branch worktree up to its
 // upstream tip (git pull --ff-only). "Start work on branch X" means X as it is NOW,
 // not as of this copy's last fetch — without this the session silently begins on a
 // stale checkout, which is the failure the whole existing-branch flow exists to avoid.
@@ -816,21 +815,21 @@ func ensureBranchRef(dir, base string) {
 // on a local-only branch, unpushed local commits, real divergence) is a state the user
 // still wants a session in — resolving it is the session's job. A fast-forward that
 // actually moved HEAD re-syncs submodules, whose pinned commits differ per commit.
-func fastForwardWorktree(dir string) {
-	before, _ := gitx.Run(dir, "rev-parse", "HEAD")
+func FastForwardWorktree(dir string) {
+	before, _ := Run(dir, "rev-parse", "HEAD")
 	ctx, cancel := context.WithTimeout(context.Background(), worktreeSyncTimeout)
 	defer cancel()
-	if out, err := gitx.CmdContext(ctx, dir, "pull", "--ff-only").CombinedOutput(); err != nil {
+	if out, err := CmdContext(ctx, dir, "pull", "--ff-only").CombinedOutput(); err != nil {
 		// Not an error path — log it so a "why am I behind?" question is answerable.
 		log.Printf("worktree %s: fast-forward skipped: %v: %s", filepath.Base(dir), err, strings.TrimSpace(string(out)))
 		return
 	}
-	if after, _ := gitx.Run(dir, "rev-parse", "HEAD"); after != before {
+	if after, _ := Run(dir, "rev-parse", "HEAD"); after != before {
 		gitSubmodulesUpdate(dir)
 	}
 }
 
-// fastForwardNewWorktreeToOrigin is the new-branch twin of fastForwardWorktree: it
+// FastForwardNewWorktreeToOrigin is the new-branch twin of FastForwardWorktree: it
 // advances a just-forked worktree from the parent's LOCAL <base> to origin/<base>.
 //
 // Why it is needed at all: `git worktree add -b temp/x <dir> <base>` resolves <base>
@@ -851,24 +850,24 @@ func fastForwardWorktree(dir string) {
 // work is the base they meant); no origin at all → nothing to do. HEAD is left alone in
 // each case. `pull` with an explicit refspec sets no upstream, so the new branch keeps
 // the same tracking state (none) it has today.
-func fastForwardNewWorktreeToOrigin(dir, base string) {
+func FastForwardNewWorktreeToOrigin(dir, base string) {
 	base = strings.TrimSpace(base)
 	if base == "" || strings.HasPrefix(base, "-") {
 		return
 	}
-	if _, ok := gitOriginURL(dir); !ok {
+	if _, ok := GitOriginURL(dir); !ok {
 		return // local-only working copy (internal scratch repo, git init): nothing newer exists
 	}
-	before, _ := gitx.Run(dir, "rev-parse", "HEAD")
+	before, _ := Run(dir, "rev-parse", "HEAD")
 	ctx, cancel := context.WithTimeout(context.Background(), worktreeSyncTimeout)
 	defer cancel()
-	if out, err := gitx.CmdContext(ctx, dir, "pull", "--ff-only", "origin", base).CombinedOutput(); err != nil {
+	if out, err := CmdContext(ctx, dir, "pull", "--ff-only", "origin", base).CombinedOutput(); err != nil {
 		// Not an error path — log it so "why did my branch start behind?" is answerable.
 		log.Printf("worktree %s: base fast-forward to origin/%s skipped: %v: %s",
 			filepath.Base(dir), base, err, strings.TrimSpace(string(out)))
 		return
 	}
-	if after, _ := gitx.Run(dir, "rev-parse", "HEAD"); after != before {
+	if after, _ := Run(dir, "rev-parse", "HEAD"); after != before {
 		gitSubmodulesUpdate(dir) // submodule pins differ per commit
 	}
 }
@@ -890,7 +889,7 @@ func realPath(p string) string {
 // host, and the child git clones inherit these -c settings). Returns nil when there are no
 // SSH-form submodule URLs, leaving the command untouched.
 func submoduleInsteadOfArgs(dir string) []string {
-	out, err := gitx.Run(dir, "config", "-f", ".gitmodules", "--get-regexp", `^submodule\..*\.url$`)
+	out, err := Run(dir, "config", "-f", ".gitmodules", "--get-regexp", `^submodule\..*\.url$`)
 	if err != nil {
 		return nil
 	}
@@ -917,7 +916,7 @@ func submoduleInsteadOfArgs(dir string) []string {
 }
 
 // sshURLHost returns the host of an SSH git URL (scp-like or ssh://), ok=false for anything
-// else (HTTPS, local paths). Mirrors sshToHTTPS's matching so the two stay consistent.
+// else (HTTPS, local paths). Mirrors SSHToHTTPS's matching so the two stay consistent.
 func sshURLHost(url string) (string, bool) {
 	u := strings.TrimSpace(url)
 	if m := scpURLRe.FindStringSubmatch(u); m != nil {
@@ -934,7 +933,7 @@ func sshURLHost(url string) (string, bool) {
 // `submodule init` materialized; nested submodules are handled best-effort by the
 // recursive update.
 func rewriteSubmoduleSSHURLs(dir string) {
-	out, err := gitx.Run(dir, "config", "--get-regexp", `^submodule\..*\.url$`)
+	out, err := Run(dir, "config", "--get-regexp", `^submodule\..*\.url$`)
 	if err != nil {
 		return // no submodules / no config
 	}
@@ -943,8 +942,8 @@ func rewriteSubmoduleSSHURLs(dir string) {
 		if !ok {
 			continue
 		}
-		if https := sshToHTTPS(url); https != url {
-			_ = gitx.Cmd(dir, "config", key, https).Run()
+		if https := SSHToHTTPS(url); https != url {
+			_ = Cmd(dir, "config", key, https).Run()
 		}
 	}
 }
@@ -957,10 +956,10 @@ var (
 	sshURLRe = regexp.MustCompile(`^ssh://(?:[^@/\s]+@)?([^:/\s]+)(?::\d+)?/(.+)$`)
 )
 
-// sshToHTTPS converts an SSH git URL to HTTPS (returns the input unchanged if it is
+// SSHToHTTPS converts an SSH git URL to HTTPS (returns the input unchanged if it is
 // not SSH). Mirrors CodeLeaf's sshToHttps. Host-agnostic, so self-hosted providers
 // work too.
-func sshToHTTPS(url string) string {
+func SSHToHTTPS(url string) string {
 	u := strings.TrimSpace(url)
 	if m := scpURLRe.FindStringSubmatch(u); m != nil {
 		return "https://" + m[1] + "/" + strings.TrimPrefix(m[2], "/")
@@ -971,9 +970,9 @@ func sshToHTTPS(url string) string {
 	return u
 }
 
-// gitOriginURL returns dir's origin remote URL (ok=false when there is none).
-func gitOriginURL(dir string) (string, bool) {
-	out, err := gitx.Run(dir, "remote", "get-url", "origin")
+// GitOriginURL returns dir's origin remote URL (ok=false when there is none).
+func GitOriginURL(dir string) (string, bool) {
+	out, err := Run(dir, "remote", "get-url", "origin")
 	if err != nil {
 		return "", false
 	}
@@ -984,12 +983,12 @@ func gitOriginURL(dir string) (string, bool) {
 // drop a trailing ".git"/slash, lowercase (hosts and GitHub/Bitbucket owner/repo
 // are case-insensitive). Good enough to tell "same repo" from "different repo".
 func normalizeRemote(u string) string {
-	u = sshToHTTPS(strings.TrimSpace(u))
+	u = SSHToHTTPS(strings.TrimSpace(u))
 	u = strings.TrimSuffix(strings.TrimRight(u, "/"), ".git")
 	return strings.ToLower(u)
 }
 
-// ensureRepo guarantees a working copy for remoteURL exists under ~/repos and
+// EnsureRepo guarantees a working copy for remoteURL exists under ~/repos and
 // returns its path, so a session can launch with that dir as CWD.
 //
 // name is the target folder. An explicit name (e.g. "<repo>-<branch>") lets two
@@ -1002,7 +1001,7 @@ func normalizeRemote(u string) string {
 // newBranch, when set, is created off branch (the base) and switched to — a fresh
 // working branch to start the session on. On a reused copy it forks from the base
 // only when it does not already exist (otherwise it is simply switched to).
-func ensureRepo(remoteURL, branch, newBranch, name string) (string, error) {
+func EnsureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 	remoteURL = strings.TrimSpace(remoteURL)
 	if remoteURL == "" || strings.HasPrefix(remoteURL, "-") {
 		return "", fmt.Errorf("remote_url is required and must not start with '-'")
@@ -1010,16 +1009,16 @@ func ensureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 	if name = strings.TrimSpace(name); name == "" {
 		name = deriveRepoName(remoteURL)
 	}
-	dir, ok := resolveRepoDir(name)
+	dir, ok := ResolveRepoDir(name)
 	if !ok {
 		return "", fmt.Errorf("repo name is invalid: %q", name)
 	}
-	if isGitRepo(dir) {
+	if IsGitRepo(dir) {
 		// Reuse only when the existing clone is the SAME remote; otherwise two
 		// distinct repos sharing a derived name (alice/app vs bob/app) would
 		// silently collide on one directory. Mismatch => the caller must
 		// disambiguate by passing an explicit, distinct name.
-		if origin, ok := gitOriginURL(dir); ok && normalizeRemote(origin) != normalizeRemote(remoteURL) {
+		if origin, ok := GitOriginURL(dir); ok && normalizeRemote(origin) != normalizeRemote(remoteURL) {
 			return "", fmt.Errorf("repo %q already exists for a different remote (%s); choose a different name", name, origin)
 		}
 		nb := strings.TrimSpace(newBranch)
@@ -1030,7 +1029,7 @@ func ensureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 			// A reused clone of a still-empty remote sits on an unborn branch with no
 			// ref to check out; when it's already the requested one there is nothing to do.
 			if unbornHead(dir) != b {
-				if out, err := gitx.Combined(dir, "checkout", b); err != nil {
+				if out, err := Combined(dir, "checkout", b); err != nil {
 					return "", fmt.Errorf("checkout %s: %v: %s", b, err, out)
 				}
 			}
@@ -1050,7 +1049,7 @@ func ensureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 	return dir, nil
 }
 
-// ensureWorktree creates (or reuses) a git worktree of an existing working copy
+// EnsureWorktree creates (or reuses) a git worktree of an existing working copy
 // (parentDir) under ~/repos/<repo>@<branch> and returns its path, so a session can
 // launch with that dir as CWD — the "worktree-then-start" path for session.create.
 //
@@ -1061,8 +1060,8 @@ func ensureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 // gitdir over the token-authed HTTPS path (see gitSubmodulesUpdate); this does not
 // disturb the parent's submodules. git refuses to check out a branch already live in
 // another worktree, which the error surfaces as-is.
-func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error) {
-	if !isGitRepo(parentDir) {
+func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error) {
+	if !IsGitRepo(parentDir) {
 		return "", fmt.Errorf("not a git working copy: %s", parentDir)
 	}
 	base = strings.TrimSpace(base)
@@ -1085,14 +1084,14 @@ func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 		seg = sanitizeSeg(seg)
 	}
 	name := filepath.Base(parentDir) + "@" + seg
-	dir, ok := resolveRepoDir(name)
+	dir, ok := ResolveRepoDir(name)
 	if !ok {
 		return "", fmt.Errorf("worktree name is invalid: %q", name)
 	}
 	// Reuse an existing worktree at that path (idempotent re-launch); a non-git path of
 	// the same name is a conflict the caller must resolve with a different branch.
 	if _, err := os.Stat(dir); err == nil {
-		if isGitRepo(dir) {
+		if IsGitRepo(dir) {
 			// A previous launch may have left submodules unfetched or wedged (the sync is
 			// time-boxed, and a killed clone does not resume by itself — git_submodule.go).
 			// Nothing else on the relaunch path ever retries, so the session would keep
@@ -1114,7 +1113,7 @@ func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	} else {
 		args = append(args, dir, base)
 	}
-	if out, err := gitx.Combined(parentDir, args...); err != nil {
+	if out, err := Combined(parentDir, args...); err != nil {
 		return "", fmt.Errorf("worktree add: %v: %s", err, out)
 	}
 	applyGitIdentity(dir)    // commit identity for the worktree (config is shared, but explicit)
@@ -1126,7 +1125,7 @@ func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	return dir, nil
 }
 
-func handleCloneRepo(w http.ResponseWriter, r *http.Request) {
+func HandleCloneRepo(w http.ResponseWriter, r *http.Request) {
 	var req cloneReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -1145,7 +1144,7 @@ func handleCloneRepo(w http.ResponseWriter, r *http.Request) {
 			name += "-" + sanitizeSeg(nb)
 		}
 	}
-	dir, ok := resolveRepoDir(name)
+	dir, ok := ResolveRepoDir(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "name must start with a letter or number, may contain letters/numbers plus . _ @ -, and be at most 96 characters")
 		return
@@ -1162,7 +1161,7 @@ func handleCloneRepo(w http.ResponseWriter, r *http.Request) {
 	// large repository outlives the proxies in front of this handler, and answering
 	// "done" from a request that merely survived is how a half-written working copy got
 	// reported as a finished one.
-	job := startRepoJob("git", name, dir, req.RemoteURL, func(ctx context.Context, sink *repoJobSink) error {
+	job := startRepoJob("git", name, dir, req.RemoteURL, func(ctx context.Context, sink RepoJobSink) error {
 		return gitCloneCtx(ctx, sink, dir, req.RemoteURL, req.Branch, req.NewBranch)
 	})
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"job": job})
@@ -1179,14 +1178,14 @@ type initRepoReq struct {
 func gitInitDefaultBranch() string {
 	// Read from the repos root, not the new folder: this runs before init, so there
 	// is no repo yet and only global/system config can answer.
-	out, err := gitx.Run(reposRoot(), "config", "--get", "init.defaultBranch")
+	out, err := Run(ReposRoot(), "config", "--get", "init.defaultBranch")
 	if b := strings.TrimSpace(out); err == nil && b != "" {
 		return b
 	}
 	return "main"
 }
 
-// handleInitRepo creates a brand-new working copy under ~/repos and runs `git init`
+// HandleInitRepo creates a brand-new working copy under ~/repos and runs `git init`
 // in it — the "start something that doesn't exist anywhere yet" path, next to the
 // clone (POST /repos) and SVN checkout (POST /repos/svn) import paths.
 //
@@ -1200,13 +1199,13 @@ func gitInitDefaultBranch() string {
 // being invisible in the rail — launchable by path, but with no row, no worktrees,
 // no diff view and no delete. The repository starts empty and commit-less; that is
 // what Repo.Unborn reports.
-func handleInitRepo(w http.ResponseWriter, r *http.Request) {
+func HandleInitRepo(w http.ResponseWriter, r *http.Request) {
 	var req initRepoReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	name := strings.TrimSpace(req.Name)
-	dir, ok := resolveRepoDir(name)
+	dir, ok := ResolveRepoDir(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "name must start with a letter or number, may contain letters/numbers plus . _ @ -, and be at most 96 characters")
 		return
@@ -1224,7 +1223,7 @@ func handleInitRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	branch := gitInitDefaultBranch()
-	if out, err := gitx.Combined(dir, "init", "-b", branch); err != nil {
+	if out, err := Combined(dir, "init", "-b", branch); err != nil {
 		// The folder is ours — the stat above proved it did not exist — so clearing it
 		// leaves no half-made working copy behind for the next attempt to trip over.
 		_ = os.RemoveAll(dir)
@@ -1235,46 +1234,46 @@ func handleInitRepo(w http.ResponseWriter, r *http.Request) {
 	// identity from, and it would only unset keys that don't exist. Adding a remote
 	// later goes through the identity sync like any other working copy.
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"repo": Repo{
-		Name: name, WorkingCopyID: workingCopyID(dir), Path: dir, Branch: branch, Unborn: true,
+		Name: name, WorkingCopyID: WorkingCopyID(dir), Path: dir, Branch: branch, Unborn: true,
 	}})
 }
 
-// repoDirFromPath validates {name} and ensures the working copy exists.
-func repoDirFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
-	dir, ok := resolveRepoDir(r.PathValue("name"))
+// RepoDirFromPath validates {name} and ensures the working copy exists.
+func RepoDirFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	dir, ok := ResolveRepoDir(r.PathValue("name"))
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid repo name")
 		return "", false
 	}
-	if !isGitRepo(dir) {
+	if !IsGitRepo(dir) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such repo: "+r.PathValue("name"))
 		return "", false
 	}
 	return dir, true
 }
 
-// repoAnyDirFromPath validates {name} and ensures it is a working copy of EITHER
+// RepoAnyDirFromPath validates {name} and ensures it is a working copy of EITHER
 // kind (git or svn). Used by the vcs-agnostic endpoints (delete); the git-only
-// endpoints keep repoDirFromPath so they never run git on an svn folder.
-func repoAnyDirFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
-	dir, ok := resolveRepoDir(r.PathValue("name"))
+// endpoints keep RepoDirFromPath so they never run git on an svn folder.
+func RepoAnyDirFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	dir, ok := ResolveRepoDir(r.PathValue("name"))
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid repo name")
 		return "", false
 	}
-	if !isGitRepo(dir) && !isSvnRepo(dir) {
+	if !IsGitRepo(dir) && !isSvnRepo(dir) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such repo: "+r.PathValue("name"))
 		return "", false
 	}
 	return dir, true
 }
 
-func handleRepoStatus(w http.ResponseWriter, r *http.Request) {
+func HandleRepoStatus(w http.ResponseWriter, r *http.Request) {
 	dir, ok := repoViewDir(w, r)
 	if !ok {
 		return
 	}
-	st, err := gitStatus(dir)
+	st, err := GitStatus(dir)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
@@ -1282,8 +1281,8 @@ func handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
-// branchInfo describes one checkout target for the branch-switch modal.
-type branchInfo struct {
+// BranchInfo describes one checkout target for the branch-switch modal.
+type BranchInfo struct {
 	Name    string `json:"name"`    // checkout name (remote prefix stripped → DWIM tracking)
 	Remote  bool   `json:"remote"`  // remote-only (no local branch of this name)
 	Unix    int64  `json:"unix"`    // last-commit time, for newest-first sorting
@@ -1292,16 +1291,16 @@ type branchInfo struct {
 	Current bool   `json:"current"` // currently checked out
 	// WorktreePath is the OTHER working copy that already has this branch checked
 	// out ("" = free). git permits a branch in one worktree only, so the pickers
-	// disable these rows and offer to open that copy instead (see worktreeBranches).
+	// disable these rows and offer to open that copy instead (see WorktreeBranches).
 	WorktreePath string `json:"worktree_path,omitempty"`
 }
 
-func handleRepoBranches(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoBranches(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
-	st, _ := gitStatus(dir)
+	st, _ := GitStatus(dir)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"branches": gitBranchInfos(dir, st.Branch), "current": st.Branch})
 }
 
@@ -1312,17 +1311,17 @@ func handleRepoBranches(w http.ResponseWriter, r *http.Request) {
 // entry also carries the other worktree holding it, if any, so pickers can rule out
 // a target git would refuse anyway (remote-only names have no local ref, so they are
 // never occupied).
-func gitBranchInfos(dir, current string) []branchInfo {
-	occupied := worktreeBranches(dir)
+func gitBranchInfos(dir, current string) []BranchInfo {
+	occupied := WorktreeBranches(dir)
 	const sep = "\x1f" // unit separator: absent from ref names, dates, and subjects
 	format := strings.Join([]string{
 		"%(refname:short)", "%(committerdate:unix)", "%(committerdate:iso8601)", "%(contents:subject)",
 	}, sep)
-	infos := []branchInfo{}
+	infos := []BranchInfo{}
 	seen := map[string]bool{}
 	// Local first so a local branch wins over its remote duplicate.
 	for _, ns := range []string{"refs/heads", "refs/remotes"} {
-		out, err := gitx.Run(dir, "for-each-ref", "--format="+format, ns)
+		out, err := Run(dir, "for-each-ref", "--format="+format, ns)
 		if err != nil {
 			continue
 		}
@@ -1349,7 +1348,7 @@ func gitBranchInfos(dir, current string) []branchInfo {
 			}
 			seen[name] = true
 			unix, _ := strconv.ParseInt(f[1], 10, 64)
-			infos = append(infos, branchInfo{
+			infos = append(infos, BranchInfo{
 				Name: name, Remote: isRemote, Unix: unix, Date: f[2], Subject: f[3],
 				Current: name == current, WorktreePath: occupied[name],
 			})
@@ -1365,8 +1364,8 @@ type checkoutReq struct {
 	Create bool   `json:"create"`
 }
 
-func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoCheckout(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
@@ -1415,41 +1414,41 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 		// Answer with the stable code instead, so the Console can point at the copy that
 		// holds it rather than dead-ending on git's message. A sha (detached checkout)
 		// never matches a branch name here, so that path is unaffected.
-		if occ := worktreeBranches(dir)[ref]; occ != "" {
-			writeBranchInUse(w, ref, occ)
+		if occ := WorktreeBranches(dir)[ref]; occ != "" {
+			WriteBranchInUse(w, ref, occ)
 			return
 		}
 		args = []string{"checkout", ref}
 	}
-	if out, err := gitx.Combined(dir, args...); err != nil {
+	if out, err := Combined(dir, args...); err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "checkout_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}
 	gitSubmodulesUpdate(dir)
-	st, _ := gitStatus(dir)
+	st, _ := GitStatus(dir)
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
-// renameBranchReq is the body for the session-scoped branch rename (session_title.go).
-type renameBranchReq struct {
+// RenameBranchReq is the body for the session-scoped branch rename (session_title.go).
+type RenameBranchReq struct {
 	Name string `json:"name"`
 }
 
-// handleRepoFF fast-forwards the current branch to its upstream (git pull --ff-only):
+// HandleRepoFF fast-forwards the current branch to its upstream (git pull --ff-only):
 // fetches the tracked remote branch and advances the local branch only if it's a strict
 // fast-forward (no merge commit). Fails cleanly when there's no upstream or the branch
 // has diverged.
-func handleRepoFF(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoFF(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
-	if out, err := gitx.Combined(dir, "pull", "--ff-only"); err != nil {
+	if out, err := Combined(dir, "pull", "--ff-only"); err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "ff_failed", out)
 		return
 	}
 	gitSubmodulesUpdate(dir)
-	st, _ := gitStatus(dir)
+	st, _ := GitStatus(dir)
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
@@ -1457,34 +1456,34 @@ func handleRepoFF(w http.ResponseWriter, r *http.Request) {
 // It accepts only a strict ancestor relationship, so it can never create a merge
 // commit or resolve a divergence implicitly.
 func fastForwardWorktreeFromParent(parent, dir string) error {
-	if integration := gitWorktreeIntegration(parent, dir, ""); integration.Relation != "contained" {
+	if integration := GitWorktreeIntegration(parent, dir, ""); integration.Relation != "contained" {
 		return fmt.Errorf("the worktree is not strictly behind its parent")
 	}
-	parentHead, err := gitx.Run(parent, "rev-parse", "--verify", "HEAD")
+	parentHead, err := Run(parent, "rev-parse", "--verify", "HEAD")
 	if err != nil {
 		return err
 	}
-	if out, err := gitx.Combined(dir, "merge", "--ff-only", strings.TrimSpace(parentHead)); err != nil {
+	if out, err := Combined(dir, "merge", "--ff-only", strings.TrimSpace(parentHead)); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
 	gitSubmodulesUpdate(dir)
 	return nil
 }
 
-// handleRepoParentFF is the local-only counterpart to handleRepoFF: it brings a
+// HandleRepoParentFF is the local-only counterpart to HandleRepoFF: it brings a
 // linked worktree up to its parent, without fetching or consulting origin. The
 // relationship is re-checked server-side so an old Console row stays safe.
-func handleRepoParentFF(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoParentFF(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
-	if !isLinkedWorktree(dir) {
+	if !IsLinkedWorktree(dir) {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_worktree", "parent fast-forward is only available for linked worktrees")
 		return
 	}
-	parent := worktreeParent(dir)
-	if parent == "" || !isGitRepo(parent) {
+	parent := WorktreeParent(dir)
+	if parent == "" || !IsGitRepo(parent) {
 		httpx.WriteErr(w, http.StatusNotFound, "parent_not_found", "cannot resolve the parent working copy")
 		return
 	}
@@ -1492,7 +1491,7 @@ func handleRepoParentFF(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "parent_ff_not_possible", err.Error())
 		return
 	}
-	st, _ := gitStatus(dir)
+	st, _ := GitStatus(dir)
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
@@ -1500,8 +1499,8 @@ type fetchReq struct {
 	Prune bool `json:"prune"`
 }
 
-func handleRepoFetch(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoFetch(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
@@ -1511,16 +1510,16 @@ func handleRepoFetch(w http.ResponseWriter, r *http.Request) {
 	if req.Prune {
 		args = append(args, "--prune")
 	}
-	if out, err := gitx.Combined(dir, args...); err != nil {
+	if out, err := Combined(dir, args...); err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "fetch_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}
-	st, _ := gitStatus(dir)
+	st, _ := GitStatus(dir)
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
-func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoAnyDirFromPath(w, r)
+func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoAnyDirFromPath(w, r)
 	if !ok {
 		return
 	}
@@ -1557,7 +1556,7 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	// An SVN working copy has no worktree registry — just a folder with a .svn dir.
 	// Remove it directly (after the session guard above); the git worktree logic below
 	// applies only to git working copies.
-	if !isGitRepo(dir) && isSvnRepo(dir) {
+	if !IsGitRepo(dir) && isSvnRepo(dir) {
 		if err := os.RemoveAll(dir); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 			return
@@ -1575,24 +1574,24 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	// worktree has submodules). Use `remove --force`, but gate it on our own dirty/ahead
 	// check so uncommitted or unpushed work isn't silently destroyed — the client must
 	// re-request with force=true to override.
-	if isLinkedWorktree(dir) {
+	if IsLinkedWorktree(dir) {
 		if !force {
-			if st, err := gitStatus(dir); err == nil && (st.Dirty || st.Ahead > 0) {
+			if st, err := GitStatus(dir); err == nil && (st.Dirty || st.Ahead > 0) {
 				httpx.WriteErr(w, http.StatusConflict, errCodeWorktreeDirty,
 					"worktree has uncommitted or unpushed changes; pass force=true to delete anyway")
 				return
 			}
 		}
-		parent := worktreeParent(dir)
+		parent := WorktreeParent(dir)
 		if parent == "" {
 			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", "cannot resolve worktree parent")
 			return
 		}
-		if out, err := gitx.Combined(parent, "worktree", "remove", "--force", dir); err != nil {
+		if out, err := Combined(parent, "worktree", "remove", "--force", dir); err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, errCodeWorktreeRemoveFailed, out)
 			return
 		}
-		_ = gitx.Cmd(parent, "worktree", "prune").Run()
+		_ = Cmd(parent, "worktree", "prune").Run()
 		if pruneSessions(r) {
 			forgetNonLiveMetasUnder(dir)
 		}
@@ -1603,7 +1602,7 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	// A main working copy with linked worktrees must not be removed — os.RemoveAll would
 	// break every worktree hanging off it. Refuse and let the user delete the worktrees
 	// first.
-	if n := linkedWorktreeCount(dir); n > 0 {
+	if n := LinkedWorktreeCount(dir); n > 0 {
 		httpx.WriteErr(w, http.StatusConflict, errCodeHasWorktrees,
 			fmt.Sprintf("this working copy has %d worktree(s) branched off it; delete those first", n))
 		return
@@ -1629,7 +1628,7 @@ func pruneSessions(r *http.Request) bool {
 }
 
 // forgetNonLiveMetasUnder removes the metas of any NON-live session whose cwd is at or
-// under dir. handleDeleteRepo has already refused when a LIVE session runs there, so the
+// under dir. HandleDeleteRepo has already refused when a LIVE session runs there, so the
 // remaining metas are stopped/archived — unusable once dir is gone (resume would hit
 // DirGoneErr). Belt-and-suspenders: re-check liveness here too. jsonl is left on disk
 // (same as stop = forget meta, keep transcript).

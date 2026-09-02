@@ -18,7 +18,7 @@ func TestApplyGitIdentity(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	dir := filepath.Join(reposRoot(), "app")
+	dir := filepath.Join(ReposRoot(), "app")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

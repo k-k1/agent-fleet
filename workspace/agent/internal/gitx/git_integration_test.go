@@ -5,8 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 )
 
 func runIntegrationGit(t *testing.T, dir string, args ...string) {
@@ -33,7 +31,7 @@ func TestGitWorktreeIntegrationRelations(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	// Isolate HOME (like TestEnsureWorktree): ensureWorktree materializes under
+	// Isolate HOME (like TestEnsureWorktree): EnsureWorktree materializes under
 	// ~/repos, and a worktree left in the REAL home outlives its temp parent —
 	// once the tmp cleaner removes the parent, later runs see a dangling
 	// worktree and fail with relation=unknown.
@@ -41,14 +39,14 @@ func TestGitWorktreeIntegrationRelations(t *testing.T) {
 	t.Setenv("HOME", home)
 	parent := filepath.Join(home, "repos", "app")
 	gitInit(t, parent)
-	worktree, err := ensureWorktree(parent, "main", "feature-wt", "")
+	worktree, err := EnsureWorktree(parent, "main", "feature-wt", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree: %v", err)
 	}
 
 	assertRelation := func(want string, targetUnique, worktreeUnique int) {
 		t.Helper()
-		got := gitWorktreeIntegration(parent, worktree, "main")
+		got := GitWorktreeIntegration(parent, worktree, "main")
 		if got.Relation != want || got.TargetUnique != targetUnique || got.WorktreeUnique != worktreeUnique {
 			t.Fatalf("integration = %+v, want relation=%s target=%d worktree=%d", got, want, targetUnique, worktreeUnique)
 		}
@@ -60,12 +58,12 @@ func TestGitWorktreeIntegrationRelations(t *testing.T) {
 	commitIntegrationFile(t, parent, "parent-change")
 	assertRelation("diverged", 1, 1)
 	runIntegrationGit(t, parent, "merge", "--no-ff", "feature-wt", "-m", "merge feature")
-	got := gitWorktreeIntegration(parent, worktree, "main")
+	got := GitWorktreeIntegration(parent, worktree, "main")
 	if got.Relation != "contained" || got.TargetUnique == 0 || got.WorktreeUnique != 0 {
 		t.Fatalf("integration after merge = %+v, want contained with parent-only commits", got)
 	}
 
-	unknown := gitWorktreeIntegration(filepath.Join(t.TempDir(), "missing"), worktree, "main")
+	unknown := GitWorktreeIntegration(filepath.Join(t.TempDir(), "missing"), worktree, "main")
 	if unknown.Relation != "unknown" {
 		t.Fatalf("missing parent relation = %q, want unknown", unknown.Relation)
 	}
@@ -76,26 +74,26 @@ func TestFastForwardWorktreeFromParent(t *testing.T) {
 		t.Skip("git not available")
 	}
 	// Isolate HOME for the same reason TestGitWorktreeIntegrationRelations does:
-	// ensureWorktree materializes under ~/repos, so an unisolated run leaves a worktree
+	// EnsureWorktree materializes under ~/repos, so an unisolated run leaves a worktree
 	// in the REAL home whose temp parent is gone — and every later run then reuses that
 	// dangling copy (relation=unknown) instead of creating a fresh one.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	parent := filepath.Join(home, "repos", "app")
 	gitInit(t, parent)
-	worktree, err := ensureWorktree(parent, "main", "feature-parent-ff", "")
+	worktree, err := EnsureWorktree(parent, "main", "feature-parent-ff", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree: %v", err)
 	}
 	commitIntegrationFile(t, parent, "parent-change")
-	want, err := gitx.Run(parent, "rev-parse", "HEAD")
+	want, err := Run(parent, "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := fastForwardWorktreeFromParent(parent, worktree); err != nil {
 		t.Fatalf("fast-forward from parent: %v", err)
 	}
-	got, err := gitx.Run(worktree, "rev-parse", "HEAD")
+	got, err := Run(worktree, "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}

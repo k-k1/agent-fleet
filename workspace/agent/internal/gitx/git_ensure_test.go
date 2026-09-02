@@ -63,7 +63,7 @@ func TestEnsureRepoSideBySideBranches(t *testing.T) {
 	remote := "file://" + src
 
 	// Default branch into the legacy bare-name folder.
-	dirMain, err := ensureRepo(remote, "main", "", "")
+	dirMain, err := EnsureRepo(remote, "main", "", "")
 	if err != nil {
 		t.Fatalf("ensureRepo main: %v", err)
 	}
@@ -72,20 +72,20 @@ func TestEnsureRepoSideBySideBranches(t *testing.T) {
 	}
 
 	// Same repo, different branch, explicit distinct name => a separate clone.
-	dirFeat, err := ensureRepo(remote, "feature", "", "app-feature")
+	dirFeat, err := EnsureRepo(remote, "feature", "", "app-feature")
 	if err != nil {
 		t.Fatalf("ensureRepo feature: %v", err)
 	}
 	if dirFeat == dirMain {
 		t.Fatalf("feature reused the main clone (%q); want a separate dir", dirFeat)
 	}
-	if !isGitRepo(dirMain) || !isGitRepo(dirFeat) {
-		t.Fatalf("both working copies should exist: main=%v feature=%v", isGitRepo(dirMain), isGitRepo(dirFeat))
+	if !IsGitRepo(dirMain) || !IsGitRepo(dirFeat) {
+		t.Fatalf("both working copies should exist: main=%v feature=%v", IsGitRepo(dirMain), IsGitRepo(dirFeat))
 	}
-	if br, _ := gitStatus(dirFeat); br.Branch != "feature" {
+	if br, _ := GitStatus(dirFeat); br.Branch != "feature" {
 		t.Fatalf("feature clone branch = %q, want feature", br.Branch)
 	}
-	if br, _ := gitStatus(dirMain); br.Branch != "main" {
+	if br, _ := GitStatus(dirMain); br.Branch != "main" {
 		t.Fatalf("main clone branch = %q, want main (should be untouched)", br.Branch)
 	}
 }
@@ -102,27 +102,27 @@ func TestEnsureRepoNewBranch(t *testing.T) {
 	remote := "file://" + src
 
 	// Clone at base "main" and fork a fresh branch, into its own folder.
-	dir, err := ensureRepo(remote, "main", "feat/x", "app-feat-x")
+	dir, err := EnsureRepo(remote, "main", "feat/x", "app-feat-x")
 	if err != nil {
 		t.Fatalf("ensureRepo new branch: %v", err)
 	}
 	if want := filepath.Join(home, "repos", "app-feat-x"); dir != want {
 		t.Fatalf("dir = %q, want %q", dir, want)
 	}
-	if br, _ := gitStatus(dir); br.Branch != "feat/x" {
+	if br, _ := GitStatus(dir); br.Branch != "feat/x" {
 		t.Fatalf("branch = %q, want feat/x", br.Branch)
 	}
 
 	// Reusing the same folder + new branch simply switches back to it (no error even
 	// though the branch already exists).
-	dir2, err := ensureRepo(remote, "main", "feat/x", "app-feat-x")
+	dir2, err := EnsureRepo(remote, "main", "feat/x", "app-feat-x")
 	if err != nil {
 		t.Fatalf("ensureRepo reuse new branch: %v", err)
 	}
 	if dir2 != dir {
 		t.Fatalf("reuse dir = %q, want %q", dir2, dir)
 	}
-	if br, _ := gitStatus(dir2); br.Branch != "feat/x" {
+	if br, _ := GitStatus(dir2); br.Branch != "feat/x" {
 		t.Fatalf("reuse branch = %q, want feat/x", br.Branch)
 	}
 }
@@ -146,7 +146,7 @@ func TestEnsureRepoEmptyRemote(t *testing.T) {
 	remote := "file://" + src
 
 	// Clone at the (not-yet-born) default branch => fallback plain clone on unborn main.
-	dir, err := ensureRepo(remote, "main", "", "")
+	dir, err := EnsureRepo(remote, "main", "", "")
 	if err != nil {
 		t.Fatalf("ensureRepo empty remote: %v", err)
 	}
@@ -156,12 +156,12 @@ func TestEnsureRepoEmptyRemote(t *testing.T) {
 
 	// Reuse the same copy at the same branch: must not attempt a checkout of a
 	// ref that does not exist yet.
-	if _, err := ensureRepo(remote, "main", "", ""); err != nil {
+	if _, err := EnsureRepo(remote, "main", "", ""); err != nil {
 		t.Fatalf("ensureRepo reuse empty clone: %v", err)
 	}
 
 	// Fork a session branch off the unborn base (checkout -b works on unborn HEAD).
-	dirNB, err := ensureRepo(remote, "main", "temp/x", "app-x")
+	dirNB, err := EnsureRepo(remote, "main", "temp/x", "app-x")
 	if err != nil {
 		t.Fatalf("ensureRepo empty remote + new branch: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestEnsureRepoEmptyRemote(t *testing.T) {
 	// A populated remote with a missing branch must NOT silently fall back.
 	srcFull := filepath.Join(t.TempDir(), "full")
 	gitInit(t, srcFull)
-	if _, err := ensureRepo("file://"+srcFull, "nosuch", "", "full-nosuch"); err == nil {
+	if _, err := EnsureRepo("file://"+srcFull, "nosuch", "", "full-nosuch"); err == nil {
 		t.Fatalf("ensureRepo populated remote + missing branch: expected error, got nil")
 	}
 }
@@ -190,15 +190,15 @@ func TestEnsureRepoOriginMismatch(t *testing.T) {
 	gitInit(t, srcA)
 	gitInit(t, srcB)
 
-	if _, err := ensureRepo("file://"+srcA, "main", "", ""); err != nil {
+	if _, err := EnsureRepo("file://"+srcA, "main", "", ""); err != nil {
 		t.Fatalf("ensureRepo A: %v", err)
 	}
 	// Same derived name "app", different remote => must refuse, not silently reuse.
-	if _, err := ensureRepo("file://"+srcB, "main", "", ""); err == nil {
+	if _, err := EnsureRepo("file://"+srcB, "main", "", ""); err == nil {
 		t.Fatalf("ensureRepo B: expected origin-mismatch error, got nil (silent reuse)")
 	}
 	// With a distinct name it succeeds as an independent clone.
-	if _, err := ensureRepo("file://"+srcB, "main", "", "app-bob"); err != nil {
+	if _, err := EnsureRepo("file://"+srcB, "main", "", "app-bob"); err != nil {
 		t.Fatalf("ensureRepo B with distinct name: %v", err)
 	}
 }

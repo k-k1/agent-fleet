@@ -33,7 +33,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 )
 
@@ -82,7 +81,7 @@ func gitSubmodulesUpdate(dir string) submoduleOutcome {
 	if !hasSubmodules(dir) {
 		return submoduleDone
 	}
-	if out, err := gitx.Combined(dir, "submodule", "init"); err != nil { // local: reads .gitmodules, no network
+	if out, err := Combined(dir, "submodule", "init"); err != nil { // local: reads .gitmodules, no network
 		log.Printf("submodules %s: init failed: %v: %s", dir, err, out)
 	}
 	rewriteSubmoduleSSHURLs(dir)
@@ -102,7 +101,7 @@ func gitSubmodulesUpdate(dir string) submoduleOutcome {
 func runSubmoduleUpdate(dir string, insteadOf []string) submoduleOutcome {
 	ctx, cancel := context.WithTimeout(context.Background(), submoduleHardTimeout)
 	args := append(append([]string{}, insteadOf...), "submodule", "update", "--recursive")
-	cmd := gitx.CmdContext(ctx, dir, args...)
+	cmd := CmdContext(ctx, dir, args...)
 	var out bytes.Buffer // read only after Wait returns, on whichever side reaps
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Start(); err != nil {
@@ -178,7 +177,7 @@ func repairSubmodules(dir string, gaps []submoduleEntry) []submoduleEntry {
 	var left []submoduleEntry
 	for _, e := range gaps {
 		p := filepath.Join(dir, filepath.FromSlash(e.Path))
-		if e.SHA == "" || !isGitRepo(p) {
+		if e.SHA == "" || !IsGitRepo(p) {
 			// Never initialized at all: there is no partial clone to rescue, and the update
 			// above already tried and failed (its error is in the log).
 			left = append(left, e)
@@ -197,13 +196,13 @@ func repairSubmodules(dir string, gaps []submoduleEntry) []submoduleEntry {
 func repairSubmodule(path, sha string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), submoduleHardTimeout)
 	defer cancel()
-	if out, err := gitx.CmdContext(ctx, path, "fetch", "origin").CombinedOutput(); err != nil {
+	if out, err := CmdContext(ctx, path, "fetch", "origin").CombinedOutput(); err != nil {
 		return fmt.Errorf("fetch: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	// --force because a wedged gitdir's index can disagree with the (empty) working tree; the
 	// caller only ever passes submodules whose working tree holds no files, so there is
 	// nothing of the user's to discard.
-	if out, err := gitx.Combined(path, "checkout", "--detach", "--force", sha); err != nil {
+	if out, err := Combined(path, "checkout", "--detach", "--force", sha); err != nil {
 		return fmt.Errorf("checkout: %v: %s", err, out)
 	}
 	return nil
@@ -216,7 +215,7 @@ func submoduleGaps(dir string) []submoduleEntry {
 	if !hasSubmodules(dir) {
 		return nil
 	}
-	out, err := gitx.Run(dir, "submodule", "status", "--recursive")
+	out, err := Run(dir, "submodule", "status", "--recursive")
 	if err != nil {
 		log.Printf("submodules %s: status failed: %v", dir, err)
 		return nil

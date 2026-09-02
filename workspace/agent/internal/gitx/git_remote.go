@@ -53,26 +53,26 @@ func parseISOUnix(s string) int64 {
 	return 0
 }
 
-// firstLine returns the first line of s (commit subject from a full message).
-func firstLine(s string) string {
+// FirstLine returns the first line of s (commit subject from a full message).
+func FirstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		return s[:i]
 	}
 	return s
 }
 
-// refreshBitbucketAndRetry handles the "stale token despite the near-expiry pre-check" case:
-// bitbucketAuthHeader only refreshes within 2 min of expiry and silently keeps the old token
+// RefreshBitbucketAndRetry handles the "stale token despite the near-expiry pre-check" case:
+// BitbucketAuthHeader only refreshes within 2 min of expiry and silently keeps the old token
 // if that refresh failed transiently, so the first API call can 401 even when a reconnect
 // isn't actually needed (the symptom users hit as "pick GitHub, switch back, and it works").
 // When err is that unauthorized and OAuth creds exist, force one refresh and re-run `retry`
 // with the fresh token; otherwise return err untouched. Token-paste (Basic) has no refresh, so
 // its 401 passes through as a genuine reconnect prompt.
-func refreshBitbucketAndRetry(s *secrets.Data, err error, retry func(auth string) error) error {
-	if !errors.Is(err, errBitbucketUnauthorized) || s.Bitbucket == nil {
+func RefreshBitbucketAndRetry(s *secrets.Data, err error, retry func(auth string) error) error {
+	if !errors.Is(err, ErrBitbucketUnauthorized) || s.Bitbucket == nil {
 		return err
 	}
-	nc, rerr := refreshBitbucket(*s.Bitbucket)
+	nc, rerr := RefreshBitbucket(*s.Bitbucket)
 	if rerr != nil {
 		return err // keep the original unauthorized (a failed refresh means reconnect)
 	}
@@ -83,7 +83,7 @@ func refreshBitbucketAndRetry(s *secrets.Data, err error, retry func(auth string
 }
 
 // GET /connections/git/{host}/repos
-func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
+func HandleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	s, err := secrets.Load()
 	if err != nil {
@@ -104,13 +104,13 @@ func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"host": host, "repos": repos})
 	case "bitbucket.org":
-		auth, err := bitbucketAuthHeader(s)
+		auth, err := BitbucketAuthHeader(s)
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", err.Error())
 			return
 		}
 		repos, err := bitbucketListRepos(auth)
-		err = refreshBitbucketAndRetry(s, err, func(a string) error {
+		err = RefreshBitbucketAndRetry(s, err, func(a string) error {
 			var e error
 			repos, e = bitbucketListRepos(a)
 			return e
@@ -128,10 +128,10 @@ func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 // GET /connections/git/{host}/branches?repo=owner/name — list the remote
 // branches of one repository so the Console can offer a branch dropdown before
 // cloning. Default branch is returned first. GitHub implemented; Bitbucket TBD.
-func handleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
+func HandleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	repo := strings.TrimSpace(r.URL.Query().Get("repo"))
-	if !validRemoteRepo(repo) {
+	if !ValidRemoteRepo(repo) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_repo", "repo=owner/name is required")
 		return
 	}
@@ -154,13 +154,13 @@ func handleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"branches": branches, "default": def})
 	case "bitbucket.org":
-		auth, err := bitbucketAuthHeader(s)
+		auth, err := BitbucketAuthHeader(s)
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", err.Error())
 			return
 		}
 		branches, def, err := bitbucketListBranchesRich(auth, repo)
-		err = refreshBitbucketAndRetry(s, err, func(a string) error {
+		err = RefreshBitbucketAndRetry(s, err, func(a string) error {
 			var e error
 			branches, def, e = bitbucketListBranchesRich(a, repo)
 			return e
@@ -189,7 +189,7 @@ func splitRepo(repo string) (owner, name string, ok bool) {
 // so anything path- or query-shaped (`../`, `?`, `#`, extra `/`) must be rejected.
 var remoteRepoRe = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 
-func validRemoteRepo(repo string) bool {
+func ValidRemoteRepo(repo string) bool {
 	if !remoteRepoRe.MatchString(repo) {
 		return false
 	}
@@ -199,9 +199,9 @@ func validRemoteRepo(repo string) bool {
 	return owner != "." && owner != ".." && name != "." && name != ".."
 }
 
-// escapeRepoPath percent-encodes each segment for embedding in an API URL path
-// (belt-and-braces on top of validRemoteRepo at the handler).
-func escapeRepoPath(repo string) string {
+// EscapeRepoPath percent-encodes each segment for embedding in an API URL path
+// (belt-and-braces on top of ValidRemoteRepo at the handler).
+func EscapeRepoPath(repo string) string {
 	owner, name, ok := splitRepo(repo)
 	if !ok {
 		return url.PathEscape(repo)
@@ -296,16 +296,16 @@ func githubListBranches(token, repo string) ([]remoteBranch, string, error) {
 	return out, def, nil
 }
 
-// githubAccount returns the authenticated GitHub login (e.g. "octocat") and its
+// GithubAccount returns the authenticated GitHub login (e.g. "octocat") and its
 // email (may be "" when the account hides it), via GET /user. Used to show the real
 // account in Connections instead of the "x-access-token" git-username placeholder.
-func githubAccount(token string) (login, email string, err error) {
+func GithubAccount(token string) (login, email string, err error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
 	if err != nil {
 		return "", "", err
 	}
-	githubHeaders(req, token)
+	GithubHeaders(req, token)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", err
@@ -324,11 +324,11 @@ func githubAccount(token string) (login, email string, err error) {
 	return u.Login, u.Email, nil
 }
 
-// bitbucketAccount returns the authenticated Bitbucket handle (username/nickname)
+// BitbucketAccount returns the authenticated Bitbucket handle (username/nickname)
 // and primary email. The handle comes from GET /2.0/user; the email from a second,
 // best-effort GET /2.0/user/emails (empty when the token lacks the email scope).
 // Requires the token's "account" scope; callers fall back to email/placeholder.
-func bitbucketAccount(auth string) (handle, email string, err error) {
+func BitbucketAccount(auth string) (handle, email string, err error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	body, err := bitbucketGet(client, auth, "https://api.bitbucket.org/2.0/user")
 	if err != nil {
@@ -365,7 +365,7 @@ func bitbucketAccount(auth string) (handle, email string, err error) {
 	return handle, email, nil
 }
 
-func githubHeaders(req *http.Request, token string) {
+func GithubHeaders(req *http.Request, token string) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -393,7 +393,7 @@ func githubReposPage(client *http.Client, token, url string) ([]remoteRepo, stri
 	if err != nil {
 		return nil, "", err
 	}
-	githubHeaders(req, token)
+	GithubHeaders(req, token)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", err
@@ -416,15 +416,15 @@ func githubReposPage(client *http.Client, token, url string) ([]remoteRepo, stri
 
 // --- Bitbucket Cloud (read-only listing) ---
 
-// bitbucketAuthHeader returns the Authorization header value for the Bitbucket API.
+// BitbucketAuthHeader returns the Authorization header value for the Bitbucket API.
 // OAuth creds (refreshed on the fly, like the git credential helper) are preferred;
 // a token-paste connection (Atlassian email + API token) falls back to HTTP Basic.
 // May refresh and persist the OAuth token as a side effect.
-func bitbucketAuthHeader(s *secrets.Data) (string, error) {
+func BitbucketAuthHeader(s *secrets.Data) (string, error) {
 	if s.Bitbucket != nil && s.Bitbucket.AccessToken != "" {
 		c := *s.Bitbucket
 		if time.Now().Unix() >= c.Expiry-120 { // refresh within 2 min of expiry
-			if nc, err := refreshBitbucket(c); err == nil {
+			if nc, err := RefreshBitbucket(c); err == nil {
 				c = nc
 				s.Bitbucket = &c
 				_ = s.Save()
@@ -439,10 +439,10 @@ func bitbucketAuthHeader(s *secrets.Data) (string, error) {
 	return "", fmt.Errorf("Bitbucket is not connected")
 }
 
-// errBitbucketUnauthorized marks a 401 from Bitbucket (token stale/rejected). A caller
-// holding OAuth creds can force a token refresh and retry once (see handleListRemoteRepos);
+// ErrBitbucketUnauthorized marks a 401 from Bitbucket (token stale/rejected). A caller
+// holding OAuth creds can force a token refresh and retry once (see HandleListRemoteRepos);
 // a token-paste (Basic) connection surfaces it to the user as a reconnect prompt.
-var errBitbucketUnauthorized = errors.New("bitbucket token rejected (re-connect Bitbucket)")
+var ErrBitbucketUnauthorized = errors.New("bitbucket token rejected (re-connect Bitbucket)")
 
 // --- Bitbucket connect-time credential / scope check ---
 
@@ -468,22 +468,22 @@ func scopeGranted(set map[string]bool, granular, short string) bool {
 
 // Connect-time check outcomes for a pasted Bitbucket credential.
 var (
-	errBBScopeless  = errors.New("Bitbucket rejected the token — create a scoped API token and use your Atlassian account email")
-	errBBNoRepoRead = errors.New("the token lacks the read:repository:bitbucket scope")
+	ErrBBScopeless  = errors.New("Bitbucket rejected the token — create a scoped API token and use your Atlassian account email")
+	ErrBBNoRepoRead = errors.New("the token lacks the read:repository:bitbucket scope")
 )
 
-// bitbucketConnectCheck validates an email+API-token credential the moment the user hits
+// BitbucketConnectCheck validates an email+API-token credential the moment the user hits
 // 接続, so a scopeless token / wrong email / missing scope surfaces immediately instead of
 // as a later opaque list or clone failure. It probes the endpoint the repo picker starts
 // from and inspects the granted scopes (X-OAuth-Scopes). Returns a non-empty warn code for
 // a non-fatal gap (currently "no_write": clone works but push won't); a nil error with an
 // empty warn means the credential is fully usable. Transient failures are treated as
 // "unverified" (allow the connect) rather than blocking a good token on a hiccup.
-func bitbucketConnectCheck(user, token string) (warn string, err error) {
+func BitbucketConnectCheck(user, token string) (warn string, err error) {
 	return bitbucketConnectCheckAt("https://api.bitbucket.org", user, token)
 }
 
-// bitbucketConnectCheckAt is bitbucketConnectCheck with an overridable API base (tests).
+// bitbucketConnectCheckAt is BitbucketConnectCheck with an overridable API base (tests).
 func bitbucketConnectCheckAt(base, user, token string) (warn string, err error) {
 	client := &http.Client{Timeout: 12 * time.Second}
 	req, err := http.NewRequest("GET", base+"/2.0/user/workspaces?pagelen=1", nil)
@@ -499,13 +499,13 @@ func bitbucketConnectCheckAt(base, user, token string) (warn string, err error) 
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusUnauthorized {
-		return "", errBBScopeless
+		return "", ErrBBScopeless
 	}
 	// When the credential is recognized, Bitbucket echoes its scopes regardless of the
 	// status — enforce the minimum (repo read) and warn on a missing push (write) scope.
 	if set := oauthScopeSet(resp.Header.Get("X-OAuth-Scopes")); len(set) > 0 {
 		if !scopeGranted(set, "read:repository:bitbucket", "repository") {
-			return "", errBBNoRepoRead
+			return "", ErrBBNoRepoRead
 		}
 		if !scopeGranted(set, "write:repository:bitbucket", "repository:write") {
 			return "no_write", nil
@@ -515,7 +515,7 @@ func bitbucketConnectCheckAt(base, user, token string) (warn string, err error) 
 	return "", nil // no scope header to inspect: leave unverified rather than false-block
 }
 
-// bitbucketGetStatus does an authorized GET and returns the body AND the HTTP status
+// BitbucketGetStatus does an authorized GET and returns the body AND the HTTP status
 // without interpreting it. Transient failures — a transport error, HTTP 429, or a 5xx —
 // are retried a few times with a short backoff. Without this, the Console's repo/branch
 // pickers surface an intermittent "取得に失敗" that a manual re-open (or switching provider
@@ -524,7 +524,7 @@ func bitbucketConnectCheckAt(base, user, token string) (warn string, err error) 
 // ★ Split from bitbucketGet so callers can differ on what a status MEANS: a 403 is "that
 // repo is private" to the picker and "this connection has no pull request permission" to
 // the work item rail (workitems_bitbucket.go). Same split as jiraRequest / jiraGet.
-func bitbucketGetStatus(client *http.Client, auth, url string) ([]byte, int, error) {
+func BitbucketGetStatus(client *http.Client, auth, url string) ([]byte, int, error) {
 	const attempts = 3
 	var lastErr error
 	var lastBody []byte
@@ -561,7 +561,7 @@ func bitbucketGetStatus(client *http.Client, auth, url string) ([]byte, int, err
 // bitbucketGet does an authorized GET and returns the body, mapping common errors — the
 // shape the repo/branch pickers want.
 func bitbucketGet(client *http.Client, auth, url string) ([]byte, error) {
-	body, status, err := bitbucketGetStatus(client, auth, url)
+	body, status, err := BitbucketGetStatus(client, auth, url)
 	if err != nil {
 		return nil, err
 	}
@@ -569,15 +569,15 @@ func bitbucketGet(client *http.Client, auth, url string) ([]byte, error) {
 	case status == http.StatusOK:
 		return body, nil
 	case status == http.StatusUnauthorized:
-		return nil, errBitbucketUnauthorized // let the caller refresh + retry, don't spin here
+		return nil, ErrBitbucketUnauthorized // let the caller refresh + retry, don't spin here
 	}
-	return nil, fmt.Errorf("bitbucket %d: %s", status, bitbucketErrText(body))
+	return nil, fmt.Errorf("bitbucket %d: %s", status, BitbucketErrText(body))
 }
 
-// bitbucketErrText trims a Bitbucket error body down to something a person can read on
+// BitbucketErrText trims a Bitbucket error body down to something a person can read on
 // one row. Bitbucket answers `{"type":"error","error":{"message":"…"}}`; the message is
 // the whole of the information, so prefer it and fall back to the raw body.
-func bitbucketErrText(body []byte) string {
+func BitbucketErrText(body []byte) string {
 	var e struct {
 		Error struct {
 			Message string `json:"message"`
@@ -713,7 +713,7 @@ func bitbucketListBranchesRich(auth, repo string) ([]remoteBranch, string, error
 	client := &http.Client{Timeout: 15 * time.Second}
 	def := bitbucketDefaultBranch(client, auth, repo) // best-effort
 
-	next := "https://api.bitbucket.org/2.0/repositories/" + escapeRepoPath(repo) +
+	next := "https://api.bitbucket.org/2.0/repositories/" + EscapeRepoPath(repo) +
 		"/refs/branches?pagelen=100&sort=-target.date&fields=values.name,values.target.date,values.target.message,next"
 	out := []remoteBranch{}
 	for page := 0; page < 10 && next != ""; page++ {
@@ -737,7 +737,7 @@ func bitbucketListBranchesRich(auth, repo string) ([]remoteBranch, string, error
 		for _, b := range resp.Values {
 			out = append(out, remoteBranch{
 				Name: b.Name, Unix: parseISOUnix(b.Target.Date), Date: b.Target.Date,
-				Subject: firstLine(b.Target.Message), Default: b.Name == def,
+				Subject: FirstLine(b.Target.Message), Default: b.Name == def,
 			})
 		}
 		next = resp.Next
@@ -746,7 +746,7 @@ func bitbucketListBranchesRich(auth, repo string) ([]remoteBranch, string, error
 }
 
 func bitbucketDefaultBranch(client *http.Client, auth, repo string) string {
-	body, err := bitbucketGet(client, auth, "https://api.bitbucket.org/2.0/repositories/"+escapeRepoPath(repo))
+	body, err := bitbucketGet(client, auth, "https://api.bitbucket.org/2.0/repositories/"+EscapeRepoPath(repo))
 	if err != nil {
 		return ""
 	}

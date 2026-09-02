@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -101,7 +100,7 @@ func TestBitbucketRefreshFallsBackOnlyWhileLegacyCredsRemain(t *testing.T) {
 	}
 
 	legacy := secrets.BitbucketCreds{AccessToken: "stale", RefreshToken: "r0", Key: "k", Secret: "s"}
-	nc, err := refreshBitbucket(legacy)
+	nc, err := RefreshBitbucket(legacy)
 	if err != nil || nc.AccessToken != "by-fallback" {
 		t.Fatalf("legacy creds must still refresh when the bridge is down: %+v %v", nc, err)
 	}
@@ -113,7 +112,7 @@ func TestBitbucketRefreshFallsBackOnlyWhileLegacyCredsRemain(t *testing.T) {
 	// to fall back to, and the error must be the bridge's, not a bogus "revoked token".
 	directCalls = 0
 	migrated := secrets.BitbucketCreds{AccessToken: "stale", RefreshToken: "r0"}
-	if _, err := refreshBitbucket(migrated); err == nil {
+	if _, err := RefreshBitbucket(migrated); err == nil {
 		t.Fatal("a failing bridge with no fallback must be an error")
 	}
 	if directCalls != 0 {
@@ -125,38 +124,11 @@ func TestBitbucketRefreshFallsBackOnlyWhileLegacyCredsRemain(t *testing.T) {
 // surfaces as git prompting for a password on a connection the member never touched.
 func TestBitbucketRefreshWithoutBridgeOrLegacyCredsSaysWhy(t *testing.T) {
 	withAgentHome(t)
-	_, err := refreshBitbucket(secrets.BitbucketCreds{AccessToken: "stale", RefreshToken: "r0"})
+	_, err := RefreshBitbucket(secrets.BitbucketCreds{AccessToken: "stale", RefreshToken: "r0"})
 	if err == nil {
 		t.Fatal("want an error")
 	}
 	if got := err.Error(); !strings.Contains(got, "bridge") {
 		t.Fatalf("the error must name the missing bridge, got %q", got)
-	}
-}
-
-// seedGitOAuthBridge copies env into the store at startup because the cred helper is a
-// separate process. It must be idempotent, and it must CLEAR a stale bridge — a
-// deployment that dropped PUBLIC_BASE_URL would otherwise leave workspaces pointing at
-// an endpoint that no longer answers.
-func TestSeedGitOAuthBridgeIsIdempotentAndClears(t *testing.T) {
-	withAgentHome(t)
-	t.Setenv("AF_CP_BASE_URL", "https://af.example/")
-	t.Setenv("AF_GIT_OAUTH_TOKEN", "afo_tok")
-	seedGitOAuthBridge()
-	seedGitOAuthBridge() // idempotent
-
-	s, err := secrets.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if s.GitOAuthBridge == nil || s.GitOAuthBridge.BaseURL != "https://af.example" || s.GitOAuthBridge.Token != "afo_tok" {
-		t.Fatalf("bridge: %+v", s.GitOAuthBridge)
-	}
-
-	os.Unsetenv("AF_GIT_OAUTH_TOKEN")
-	seedGitOAuthBridge()
-	s, _ = secrets.Load()
-	if s.GitOAuthBridge != nil {
-		t.Fatalf("an unset token must clear the stored bridge, got %+v", s.GitOAuthBridge)
 	}
 }
