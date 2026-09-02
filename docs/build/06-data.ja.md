@@ -1,6 +1,6 @@
 ---
 audience: "スキーマとマイグレーションに触れる人"
-source_of_truth: "`control-plane/migrations/*.sql`（本書はその読み解き。0001〜0028 時点）"
+source_of_truth: "`control-plane/internal/store/migrations/*.sql`（本書はその読み解き。0001〜0028 時点）"
 updated: "2026-07"
 ---
 
