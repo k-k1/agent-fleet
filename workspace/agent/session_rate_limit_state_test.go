@@ -53,6 +53,18 @@ func paneShowing(t *testing.T, name, frame string) session.Meta {
 // tmuxSocketSeq は隔離 tmux サーバに**毎回違う名前**を与える連番。
 var tmuxSocketSeq atomic.Int64
 
+// isolatedTmuxSocket は**誰とも共有しない** tmux ソケット名を返す。
+//
+// 🔥 隔離ソケットの名前を固定すると、`kill-server` を撃つテストどうしが競る（理由は
+// isolateAgentState の注記）。名前の作り方をここ 1 箇所に置いているのは、**同じ規則を
+// 2 度書くと片方だけ古くなる**から —— 実際 `shutdown_isolation_test.go` が同じ名前を
+// 独自に組み立てていて、そこだけ直っていなかった（#311 では所有権の外だった）。
+//
+// この関数がこのファイルに居るのは所有権の都合で、意味の上では tmux 隔離の共有部品である。
+func isolatedTmuxSocket() string {
+	return fmt.Sprintf("af-test-%d-%d", os.Getpid(), tmuxSocketSeq.Add(1))
+}
+
 func isolateAgentState(t *testing.T) {
 	t.Helper()
 	// 🔥 **ソケット名はテストごとに変える。** 以前は `af-test-<pid>` 固定で、この隔離を
@@ -68,7 +80,7 @@ func isolateAgentState(t *testing.T) {
 	//
 	// 連番まで入れるのは `-count=N` のため: テスト名だけだと、同じ名前の**前の周回**の
 	// kill-server と競る。
-	t.Setenv("AF_TMUX_SOCKET", fmt.Sprintf("af-test-%d-%d", os.Getpid(), tmuxSocketSeq.Add(1)))
+	t.Setenv("AF_TMUX_SOCKET", isolatedTmuxSocket())
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	// status ストアは HOME 直下（paths.AgentConfigDir）— 実フリートのマーカーを書かない。
 	t.Setenv("HOME", t.TempDir())
