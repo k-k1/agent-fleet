@@ -1,8 +1,8 @@
 // カタログ分割（ADR 0067 決定 4）の不変条件を守るテスト。
 //
 // 分割の狙いは「各フロントセッションが自分のドメインのファイルにだけ追記する＝衝突しない」
-// ことで、それが成立する条件は 2 つある。どちらも壊れても **アプリは動いてしまう**ので、
-// テストで止めるしかない:
+// ことで、それが成立する条件は 3 つある。どれが壊れても **アプリはそれなりに動いてしまう**
+// ので、テストで止めるしかない:
 //
 //  1. 同じキーが 2 つのドメインファイルに在らないこと。合成は spread なので**後勝ちで
 //     無言に上書き**される —— 2 セッションが同じキーを別ファイルに足すと、片方の文言が
@@ -10,10 +10,14 @@
 //  2. 1 つの接頭辞（"chat" / "settings" …）は 1 ファイルだけが持つこと。これが崩れると
 //     「自分のドメインのファイル」がどれか決まらなくなり、全員が同じファイルを触る元の
 //     状態に戻る（＝分割した意味が消える）。
+//  3. **ディレクトリに在るドメインが、合成にも入っていること。** これは分割して初めて
+//     生まれた失敗の形で、しかも全ゲートをすり抜ける（下記）。
 //
 // ja と en のファイル構成が一致していること（キーの網羅そのものは tsc と i18n.test.ts が
 // 見ている）もここで確かめる。
 import { describe, it, expect } from "vitest";
+import { ja } from "./locales/ja.ts";
+import { en } from "./locales/en.ts";
 
 type Catalog = Record<string, string>;
 const jaModules = import.meta.glob<{ [k: string]: Catalog }>("./locales/ja/*.ts", { eager: true });
@@ -37,6 +41,42 @@ describe("i18n カタログの分割", () => {
   it("ドメインファイルが 1 つ以上あり、ja と en で構成が一致する", () => {
     expect(jaCatalogs.size).toBeGreaterThan(1);
     expect([...enCatalogs.keys()].sort()).toEqual([...jaCatalogs.keys()].sort());
+  });
+
+  // 🔥 ここが無いと、新しいドメインを足したのに ja.ts / en.ts の import と spread を
+  // 忘れても **すべてのゲートが緑のまま通る**（レビュー指摘 R-1・実測で再現済み）:
+  // このファイルの glob はディレクトリを直接読むので「在る」ように見え、tsc も
+  // 未使用ファイルを咎めず、i18n.test.ts の網羅ガードは**合成後の** ja/en どうしを
+  // 突き合わせるので両方足し忘れると差が出ない。t() は画面に生キーを出すだけ。
+  // 新ドメインの追加＝新規 2 ファイル＋合成 2 ファイルなので、後半 2 つを忘れるのが
+  // 最も普通の抜け方で、ウェーブ A 以降は文言追加を伴う＝必ず起きる。
+  //
+  // 逆向き（合成にしか無いキー）も同時に見る。ja.ts / en.ts に直接キーを書くと、
+  // また全員が触る 1 ファイルに戻る＝分割の意味が消えるため。
+  it.each([
+    ["ja", jaCatalogs, ja as Catalog],
+    ["en", enCatalogs, en as Catalog],
+    // ⚠️ タイトルの %s は 1 つだけにする。it.each は残りの引数も順に埋めるので、
+    // 2 つ書くとカタログ Map 全体（4,112 キー）がテスト名に展開される。
+  ] as const)("%s: ドメインファイルと合成ファイルのキー集合が一致する", (locale, catalogs, composed) => {
+    const notComposed: string[] = [];
+    for (const [domain, cat] of catalogs) {
+      const miss = Object.keys(cat).filter((k) => !(k in composed));
+      // ファイルごとにまとめて報告する。1 ドメイン丸ごと欠けているのか、キーが数個
+      // 落ちているのかで、直す場所（import と spread か、ドメインファイル自身か）が違う。
+      if (miss.length > 0) {
+        notComposed.push(
+          `${locale}/${domain}.ts: ${miss.length}/${Object.keys(cat).length} キーが locales/${locale}.ts に無い` +
+            `（例 ${miss.slice(0, 3).join(", ")}）— import と ...${domain} を足し忘れていないか`,
+        );
+      }
+    }
+    expect(notComposed).toEqual([]);
+
+    const fromDomains = new Set<string>();
+    for (const cat of catalogs.values()) for (const k of Object.keys(cat)) fromDomains.add(k);
+    const onlyComposed = Object.keys(composed).filter((k) => !fromDomains.has(k));
+    expect(onlyComposed, `locales/${locale}.ts に直接書かれたキー（ドメインファイルへ移すこと）`).toEqual([]);
   });
 
   it.each(["ja", "en"] as const)("%s: 同じキーが 2 つのファイルに存在しない", (locale) => {
