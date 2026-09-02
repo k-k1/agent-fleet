@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -71,8 +72,8 @@ func TestSystemMembershipIDsIncludeTheDeactivatedOnes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("golden tenant: %v", err)
 	}
-	seed, _ := st.UpsertIdentity(ctx, "", goldenSeedKey, "")
-	probe, _ := st.UpsertIdentity(ctx, "", goldenProbeKey, "")
+	seed, _ := st.UpsertIdentity(ctx, "", runtime.GoldenSeedKey, "")
+	probe, _ := st.UpsertIdentity(ctx, "", runtime.GoldenProbeKey, "")
 	seedMem, err := st.EnsureMembership(ctx, seed.ID, tn.ID, "member")
 	if err != nil {
 		t.Fatalf("seed membership: %v", err)
@@ -112,7 +113,7 @@ func TestSystemMembershipIDsAreEmptyWithoutTheReservedTenant(t *testing.T) {
 func TestUsageDropsTheSystemTenantsRows(t *testing.T) {
 	rows := []store.UsageRow{
 		{TenantSlug: "sales", UserKey: "yamada", Day: "2026-08-21", RunningSecs: 60},
-		{TenantSlug: goldenTenantSlug, UserKey: goldenSeedKey, Day: "2026-08-21", RunningSecs: 1200},
+		{TenantSlug: goldenTenantSlug, UserKey: runtime.GoldenSeedKey, Day: "2026-08-21", RunningSecs: 1200},
 	}
 	got := withoutSystemTenants(rows)
 	if len(got) != 1 || got[0].TenantSlug != "sales" {
@@ -179,7 +180,7 @@ func TestCloudCostFoldsAnOldSystemRowIntoShared(t *testing.T) {
 	if err != nil {
 		t.Fatalf("golden tenant: %v", err)
 	}
-	seed, _ := st.UpsertIdentity(ctx, "", goldenSeedKey, "")
+	seed, _ := st.UpsertIdentity(ctx, "", runtime.GoldenSeedKey, "")
 	seedMem, err := st.EnsureMembership(ctx, seed.ID, tn.ID, "member")
 	if err != nil {
 		t.Fatalf("seed membership: %v", err)

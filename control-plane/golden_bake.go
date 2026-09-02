@@ -63,11 +63,10 @@ import (
 const (
 	goldenTenantSlug = "af-golden"
 	goldenTenantName = "golden snapshot (system)"
-	// The two reserved member keys are declared by the adapters' package: the ecs-ec2
-	// golden reader matches AWS resources against them, and it moved there.
-	goldenSeedKey  = runtime.GoldenSeedKey
-	goldenProbeKey = runtime.GoldenProbeKey
 )
+
+// ⚠️ 予約メンバーキー 2 つ（runtime.GoldenSeedKey / GoldenProbeKey）は adapters 側が
+// 宣言する: ecs-ec2 の golden リーダーが AWS リソースをその名前で照合する。
 
 // goldenBaker drives the series above. One per CP; the reaper ticks it.
 type goldenBaker struct {
@@ -139,12 +138,12 @@ func (b *goldenBaker) run(ctx context.Context, every time.Duration) {
 // a golden has an af-golden-seed membership, and renaming it would orphan that row
 // (and its home volume) with nothing left pointing at it — a workspace nobody can see
 // and nothing will ever clean up.
-func (b *goldenBaker) seedKey(arch string) string  { return archKey(goldenSeedKey, arch) }
-func (b *goldenBaker) probeKey(arch string) string { return archKey(goldenProbeKey, arch) }
-
-// archKey is declared by the adapters' package for the same reason as the two keys
-// above — the golden reader on the ecs-ec2 side derives the same names from AWS tags.
-var archKey = runtime.ArchKey
+func (b *goldenBaker) seedKey(arch string) string {
+	return runtime.ArchKey(runtime.GoldenSeedKey, arch)
+}
+func (b *goldenBaker) probeKey(arch string) string {
+	return runtime.ArchKey(runtime.GoldenProbeKey, arch)
+}
 
 // step advances the bake by at most one move PER ARCHITECTURE. Errors are logged and
 // dropped: a bake is housekeeping, and there is no caller who could do anything about

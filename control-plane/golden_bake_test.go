@@ -345,7 +345,7 @@ func TestGoldenBakeRunsToPublication(t *testing.T) {
 	f := newGoldenFixture(t, &healthy)
 
 	f.baker.step(ctx) // 1: create + start the seed
-	seed := f.rt(t, goldenSeedKey)
+	seed := f.rt(t, runtime.GoldenSeedKey)
 	if seed.starts != 1 || seed.state != "running" {
 		t.Fatalf("seed was not started: %+v", seed)
 	}
@@ -379,13 +379,13 @@ func TestGoldenBakeRunsToPublication(t *testing.T) {
 	candID := f.candidateID(t)
 
 	f.baker.step(ctx) // 6: still copying — nothing may be published, nothing probed
-	if _, probed := f.fac.rts["af-ws-af-golden-"+goldenProbeKey]; probed {
+	if _, probed := f.fac.rts["af-ws-af-golden-"+runtime.GoldenProbeKey]; probed {
 		t.Fatal("probed a snapshot that has not finished copying")
 	}
 
 	f.pool.complete(candID)
 	f.baker.step(ctx) // 7: candidate ready -> create + start the probe
-	probe := f.rt(t, goldenProbeKey)
+	probe := f.rt(t, runtime.GoldenProbeKey)
 	if !probe.seededFromCand {
 		t.Fatal("the probe did not ask for the CANDIDATE — it would have proven nothing")
 	}
@@ -398,7 +398,7 @@ func TestGoldenBakeRunsToPublication(t *testing.T) {
 		t.Fatalf("candidate was not promoted, role = %q", f.role(candID))
 	}
 	// And both reserved workspaces are gone, so no slot and no volume is left behind.
-	for _, key := range []string{goldenSeedKey, goldenProbeKey} {
+	for _, key := range []string{runtime.GoldenSeedKey, runtime.GoldenProbeKey} {
 		if f.hasWorkspace(t, key) {
 			t.Fatalf("%s workspace was left behind after publication", key)
 		}
@@ -474,7 +474,7 @@ func TestGoldenBakeWillNotTakeTheLastSlots(t *testing.T) {
 	// would strand the seed's slot across every later tick.
 	f.pool.blocked = false
 	f.baker.step(ctx)
-	seed := f.rt(t, goldenSeedKey)
+	seed := f.rt(t, runtime.GoldenSeedKey)
 	f.pool.blocked = true
 	f.baker.step(ctx)
 	if !seed.home.Baked {
@@ -490,13 +490,13 @@ func TestGoldenBakeTearsDownASeedThatNeverBoots(t *testing.T) {
 	f := newGoldenFixture(t, &healthy)
 
 	f.baker.step(ctx)
-	if !f.hasWorkspace(t, goldenSeedKey) {
+	if !f.hasWorkspace(t, runtime.GoldenSeedKey) {
 		t.Fatal("no seed workspace was created")
 	}
 
 	f.pool.now = f.pool.now.Add(f.baker.seedBudget + time.Minute)
 	f.baker.step(ctx)
-	if f.hasWorkspace(t, goldenSeedKey) {
+	if f.hasWorkspace(t, runtime.GoldenSeedKey) {
 		t.Fatal("a seed that never booted was left holding its slot")
 	}
 	if n, _ := f.pool.RejectedAttempts(ctx, runtime.EC2ArchX86); n != 0 {
@@ -512,14 +512,14 @@ func TestGoldenBakeTidiesUpWhenAGoldenIsAlreadyPublished(t *testing.T) {
 	f := newGoldenFixture(t, &healthy)
 
 	f.baker.step(ctx) // makes a seed
-	if !f.hasWorkspace(t, goldenSeedKey) {
+	if !f.hasWorkspace(t, runtime.GoldenSeedKey) {
 		t.Fatal("no seed workspace was created")
 	}
 
 	f.pool.snaps["snap-g"] = &runtime.GoldenSnap{ID: "snap-g", Completed: true, Started: f.pool.now}
 	f.pool.roles["snap-g"] = runtime.EC2RoleGolden
 	f.baker.step(ctx)
-	if f.hasWorkspace(t, goldenSeedKey) {
+	if f.hasWorkspace(t, runtime.GoldenSeedKey) {
 		t.Fatal("left a seed behind although the golden is already published")
 	}
 }
@@ -572,7 +572,7 @@ func TestGoldenBakeProbeStillReadsTheCandidateOnASecondRound(t *testing.T) {
 		f.baker.step(ctx)
 		f.pool.completeAnyCandidate()
 	}
-	probe := f.rt(t, goldenProbeKey)
+	probe := f.rt(t, runtime.GoldenProbeKey)
 	if !probe.seededFromCand {
 		t.Fatal("the second round's probe did not ask for the candidate — it would have proven nothing")
 	}
@@ -606,21 +606,21 @@ func TestGoldenBakeTearsDownASeedWhoseStartNeverGotAVolume(t *testing.T) {
 	f := newGoldenFixture(t, &healthy)
 
 	f.baker.step(ctx) // creates the workspace row; the Start below will fail from now on
-	seed := f.rt(t, goldenSeedKey)
+	seed := f.rt(t, runtime.GoldenSeedKey)
 	seed.failStart = true
 	seed.state, seed.home = "none", runtime.GoldenHome{}
-	if !f.hasWorkspace(t, goldenSeedKey) {
+	if !f.hasWorkspace(t, runtime.GoldenSeedKey) {
 		t.Fatal("no seed workspace was created")
 	}
 
 	f.baker.step(ctx)
-	if !f.hasWorkspace(t, goldenSeedKey) {
+	if !f.hasWorkspace(t, runtime.GoldenSeedKey) {
 		t.Fatal("gave up on the seed inside its budget")
 	}
 
 	f.pool.now = f.pool.now.Add(f.baker.seedBudget + time.Minute)
 	f.baker.step(ctx)
-	if f.hasWorkspace(t, goldenSeedKey) {
+	if f.hasWorkspace(t, runtime.GoldenSeedKey) {
 		t.Fatal("a seed that never got a home volume was retried forever")
 	}
 }
@@ -683,13 +683,13 @@ func TestGoldenBakeKeepsOneGoldenPerArch(t *testing.T) {
 // af-golden-seed membership (and its home volume) of every deployment that has ever
 // baked a golden — a workspace nobody can see and nothing will clean up.
 func TestGoldenArchKeysAreStableForX86(t *testing.T) {
-	if got := archKey(goldenSeedKey, runtime.EC2ArchX86); got != goldenSeedKey {
-		t.Errorf("x86_64 seed key = %q, want the original %q", got, goldenSeedKey)
+	if got := runtime.ArchKey(runtime.GoldenSeedKey, runtime.EC2ArchX86); got != runtime.GoldenSeedKey {
+		t.Errorf("x86_64 seed key = %q, want the original %q", got, runtime.GoldenSeedKey)
 	}
-	if got := archKey(goldenSeedKey, ""); got != goldenSeedKey {
-		t.Errorf("an unset arch = %q, want the original %q", got, goldenSeedKey)
+	if got := runtime.ArchKey(runtime.GoldenSeedKey, ""); got != runtime.GoldenSeedKey {
+		t.Errorf("an unset arch = %q, want the original %q", got, runtime.GoldenSeedKey)
 	}
-	if got := archKey(goldenProbeKey, runtime.EC2ArchArm); got != goldenProbeKey+"-arm64" {
+	if got := runtime.ArchKey(runtime.GoldenProbeKey, runtime.EC2ArchArm); got != runtime.GoldenProbeKey+"-arm64" {
 		t.Errorf("arm64 probe key = %q", got)
 	}
 }
@@ -704,11 +704,11 @@ func TestGoldenBakeSweepsAWSLeftoversTheDatabaseForgot(t *testing.T) {
 	f := newGoldenFixture(t, &healthy)
 
 	f.baker.step(ctx) // makes the seed workspace
-	seedName, _, _ := f.baker.mgr.workspaceNames(goldenTenantSlug, goldenSeedKey)
+	seedName, _, _ := f.baker.mgr.workspaceNames(goldenTenantSlug, runtime.GoldenSeedKey)
 
 	// The row disappears while its service and home live on — a destroy racing a
 	// re-create, or a CP that died between the two.
-	mem, ok, err := f.baker.membership(ctx, goldenSeedKey, false)
+	mem, ok, err := f.baker.membership(ctx, runtime.GoldenSeedKey, false)
 	if err != nil || !ok {
 		t.Fatalf("seed membership: %v (found=%v)", err, ok)
 	}
@@ -749,12 +749,12 @@ func TestGoldenBakeDoesNotSweepAWorkspaceItStillHasARowFor(t *testing.T) {
 	f := newGoldenFixture(t, &healthy)
 
 	f.baker.step(ctx) // makes the seed workspace
-	seedName, _, _ := f.baker.mgr.workspaceNames(goldenTenantSlug, goldenSeedKey)
+	seedName, _, _ := f.baker.mgr.workspaceNames(goldenTenantSlug, runtime.GoldenSeedKey)
 	f.pool.snaps["snap-g"] = &runtime.GoldenSnap{ID: "snap-g", Completed: true, Started: f.pool.now}
 	f.pool.roles["snap-g"] = runtime.EC2RoleGolden
 
 	f.baker.step(ctx) // tidy: destroys the seed through its row
-	if f.hasWorkspace(t, goldenSeedKey) {
+	if f.hasWorkspace(t, runtime.GoldenSeedKey) {
 		t.Fatal("the seed workspace was not destroyed")
 	}
 	for _, n := range f.pool.swept {

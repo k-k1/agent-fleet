@@ -209,15 +209,15 @@ func (p *cloudCostPoller) noteAttribution(rows []store.CloudCostRow) {
 	if !attributed {
 		return
 	}
-	s.Attributed = []string{ceTagMembership}
+	s.Attributed = []string{runtime.EC2TagMembership}
 	s.Pending = nil
 	// ★ 生の AWS エラーを出し続けるのをやめ、読み手が取れる行動に置き換える。
 	// ⚠️ 断定するのは af-membership だけ。ポーラーが group by しているのはその 1 軸で、
 	// 他のキーは「有効化されているはずだ」としか言えない——linked アカウントからは
 	// 確かめる手段が無いので、確かめていないことを確かめたと書かない。
 	s.Error = "activation state is not readable from a member account (only the payer may " +
-		"activate), but " + ceTagMembership + " values are coming back in the bill — the axis is on"
+		"activate), but " + runtime.EC2TagMembership + " values are coming back in the bill — the axis is on"
 	p.tagState.Store(s)
 	log.Printf("cost tags: %s is attributed in the bill; the activation state stays unreadable "+
-		"from this account (member of an organization) — not retrying", ceTagMembership)
+		"from this account (member of an organization) — not retrying", runtime.EC2TagMembership)
 }

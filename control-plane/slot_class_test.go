@@ -23,11 +23,11 @@ import (
 // sizingOnlyFactory declares slot classes and nothing else. The real one is the
 // ecs-ec2 factory, whose type is unexported in internal/runtime; the CP only ever
 // asks it for this profile (sizingProfiler).
-type sizingOnlyFactory struct{ sizing workspaceSizing }
+type sizingOnlyFactory struct{ sizing runtime.WorkspaceSizing }
 
 func (sizingOnlyFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
 
-func (f sizingOnlyFactory) SizingProfile() workspaceSizing { return f.sizing }
+func (f sizingOnlyFactory) SizingProfile() runtime.WorkspaceSizing { return f.sizing }
 
 func TestResolveSlotClass(t *testing.T) {
 	ctx := context.Background()
@@ -36,9 +36,9 @@ func TestResolveSlotClass(t *testing.T) {
 	// how the spec string parses into them, is the adapter's business and is tested
 	// there (internal/runtime/slot_class_test.go); stating the profile directly keeps
 	// this test about the resolution order.
-	classSizing := workspaceSizing{
+	classSizing := runtime.WorkspaceSizing{
 		Runtime: "ecs-ec2", DefaultSlotClass: "standard",
-		SlotClasses: []workspaceSlotClass{
+		SlotClasses: []runtime.WorkspaceSlotClass{
 			{ID: "standard", Label: "S", Arch: "x86_64"},
 			{ID: "arm", Label: "A", Arch: "arm64"},
 			{ID: "econ", Label: "E", Arch: "arm64"},
@@ -147,7 +147,7 @@ func TestResolveSlotClass(t *testing.T) {
 		m, tid, mid := newMgr(t)
 		// A single unnamed ladder reports no SlotClasses at all — that is what the
 		// adapter does with a bare spec, and it is asserted there.
-		m.rtFactory = sizingOnlyFactory{sizing: workspaceSizing{Runtime: "ecs-ec2"}}
+		m.rtFactory = sizingOnlyFactory{sizing: runtime.WorkspaceSizing{Runtime: "ecs-ec2"}}
 		if err := m.store.PutUserLimit(ctx, mid, store.UserQuota{SlotClass: "arm"}); err != nil {
 			t.Fatal(err)
 		}
