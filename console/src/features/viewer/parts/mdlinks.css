@@ -1,0 +1,130 @@
+/* link kinds: external opens a new tab (↗); repo-internal opens in the viewer */
+.markdown a.ext-link::after {
+  content: " ↗";
+  font-size: 0.8em;
+  opacity: 0.65;
+}
+.markdown a.repo-link {
+  color: #7fd6a6;
+  text-decoration: underline;
+  text-decoration-style: solid;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.markdown a.repo-link:hover {
+  color: #a6e8c4;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.markdown a.repo-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+:root[data-theme="light"] .markdown a.repo-link {
+  color: #166534;
+}
+:root[data-theme="light"] .markdown a.repo-link:hover {
+  color: #14532d;
+  background: #dcfce7;
+}
+/* Chromium attachment action link: opens a pane in THIS tab, so it deliberately
+   carries neither the external ↗ nor the repo-link's file colour. */
+.markdown a.action-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.markdown a.action-link:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.markdown a.action-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.markdown a.anchor-link {
+  color: var(--accent);
+}
+/* Auto-linked references in prose: a bare commit hash (→ commit pane), a session
+   slug (→ that session's mirror) and an assistant-conversation slug (→ that chat pane).
+   Non-navigating anchors (no href) wired by MarkdownView; a dotted underline
+   distinguishes them from real Markdown links. */
+.markdown a.md-ref-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  border-radius: 3px;
+}
+.markdown a.md-ref-link:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.markdown a.md-ref-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.markdown a.md-commit-link {
+  color: #d6b37f;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 0.9em;
+}
+.markdown a.md-commit-link:hover {
+  color: #e8cfa6;
+}
+:root[data-theme="light"] .markdown a.md-commit-link {
+  color: #92580a;
+}
+.markdown a.md-session-link {
+  color: #7fb0d6;
+}
+.markdown a.md-session-link:hover {
+  color: #a6cee8;
+}
+:root[data-theme="light"] .markdown a.md-session-link {
+  color: #0e4a75;
+}
+/* Assistant-conversation slug ("a…") → that chat pane. Violet keeps it apart from the
+   blue session slug and the amber commit hash. */
+.markdown a.md-conv-link {
+  color: #b39ddb;
+}
+.markdown a.md-conv-link:hover {
+  color: #cdbde8;
+}
+:root[data-theme="light"] .markdown a.md-conv-link {
+  color: #5b21b6;
+}
+/* An existing file path written as inline code (`docs/log/65-drawio-viewer.md`) → that file's
+   pane. The anchor lives INSIDE the <code>, so it inherits the code chip's font and
+   background and only takes the link color; green keeps it apart from the amber commit
+   hash, the blue session slug and the violet conversation slug. */
+.markdown code a.md-path-link {
+  color: #86c78f;
+}
+.markdown code a.md-path-link:hover {
+  color: #a9dcb0;
+}
+:root[data-theme="light"] .markdown code a.md-path-link {
+  color: #1f6b39;
+}
+.markdown code {
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 0.88em;
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  /* Snug horizontal padding + a little outer margin so adjacent inline codes separated
+     by a slash — `Service`/`ServiceSummary` — don't crowd the slash. */
+  padding: 0.1em 0.25em;
+  margin: 0 0.18em;
+}
+.markdown pre {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow: auto;
+}

@@ -1,0 +1,30 @@
+/* Floating action pills by a code selection (→ 送る / 読み上げ). body-portaled group,
+   positioned against the viewport; the pills sit statically inside it (docs/log/19, docs/log/24). */
+.sel-pill-group {
+  position: fixed;
+  z-index: 60;
+  display: inline-flex;
+  gap: 6px;
+}
+.sel-send-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 999px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+.sel-send-pill:hover {
+  background: var(--hover-bg, var(--btn));
+}
+.sel-send-pill:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+

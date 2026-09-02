@@ -1,0 +1,41 @@
+/* Phase 2 text/code editor. The CodeMirror tree stays mounted while view mode is
+   selected so its in-memory undo history is not discarded. `hidden` removes only
+   the inactive shell from layout; no editor content enters layout persistence. */
+.file-surfaces {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Markdown `split`: the source surface and the preview share the row. */
+.file-surfaces.is-split {
+  flex-direction: row;
+}
+.file-surfaces.is-split > .file-editor-shell,
+.file-surfaces.is-split > .file-viewer-shell {
+  flex: 1 1 50%;
+  width: 50%;
+}
+.file-surfaces.is-split > .file-viewer-shell {
+  border-left: 1px solid var(--border);
+}
+/* Side by side needs width for two usable columns. In a narrow pane — a phone,
+   or a file pane in a 3-column layout — stack them instead of squeezing both
+   (docs/log/44 §1.1). Splitting the height keeps the editor's caret and the preview
+   on screen at once, which is the point of the mode. */
+@container filepane (max-width: 640px) {
+  .file-surfaces.is-split {
+    flex-direction: column;
+  }
+  .file-surfaces.is-split > .file-editor-shell,
+  .file-surfaces.is-split > .file-viewer-shell {
+    flex: 1 1 50%;
+    width: auto;
+    height: 50%;
+  }
+  .file-surfaces.is-split > .file-viewer-shell {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}

@@ -1,0 +1,65 @@
+/* 朗読ビュー（docs/log/24, ReaderView）: 読むための版組＋カラオケ・ハイライト。
+   原文の改行・行頭スペースを保つため pre-wrap。単位（.reader-unit）はインライン span。 */
+.reader-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px 32px;
+  margin: 0 auto;
+  max-width: 42em;
+  line-height: 2.1;
+  font-size: var(--reader-size, 17px);
+  font-family: var(--reader-font, "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Noto Serif", serif);
+  color: var(--fg);
+  white-space: pre-wrap; /* 改行・行頭スペースを保持 */
+  overflow-wrap: anywhere;
+}
+.reader-unit {
+  border-radius: 4px;
+  scroll-margin: 20vh 20vw; /* scrollIntoView(center) の余白（縦横どちらの向きでも効く） */
+  transition: background 0.15s ease;
+}
+.reader-unit.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* なろう形式ルビ（<ruby>base<rt>ruby</rt>）の見た目。 */
+.reader-body rt {
+  font-size: 0.5em;
+  opacity: 0.8;
+}
+/* 縦書き: 文字は上→下、列は右→左。max-width/margin を解いて横スクロールで読み進める。 */
+.reader-body.vertical {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  max-width: none;
+  height: 100%;
+  margin: 0;
+  padding: 32px 28px;
+}
+.reader-vtoggle .codicon {
+  font-size: 13px;
+}
+/* ヘッダーの声セレクト（"" = 設定の話者）。ボタン群と同じ高さ感の小型 select。 */
+.reader-voice {
+  font-size: 12px;
+  padding: 2px 4px;
+  color: var(--fg);
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--btn-border, var(--border));
+  border-radius: 4px;
+}
+.reader-voice:disabled {
+  opacity: 0.5;
+}
+/* ヘッダーの本文フォント切替（声セレクトと同じ小型 select の見た目を流用）。 */
+.reader-font {
+  min-width: 5.5em;
+}
+/* ヘッダーの文字サイズ（− 現在値 ＋）。中央は現在値の表示専用でボタンではない。 */
+.reader-size .reader-size-val {
+  min-width: 2.4em;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  pointer-events: none;
+}
