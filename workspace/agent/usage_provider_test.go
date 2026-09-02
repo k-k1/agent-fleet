@@ -26,7 +26,7 @@ func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
 	// 1) result が来なかった: スナップショットを partial で採る。
 	stopped := usagex.Call{Kind: session.KindClaude}
 	snap := claudeUsage{InputTokens: 12, OutputTokens: 34, CacheReadInputTokens: 5600, CacheCreationInputTokens: 78}
-	stopped.FallbackTotals(snap.ledgerTokens(), usagex.MeasuredPartial)
+	stopped.FallbackTotals(snap.LedgerTokens(), usagex.MeasuredPartial)
 	if stopped.Totals.In != 12 || stopped.Totals.Out != 34 ||
 		stopped.Totals.CacheRead != 5600 || stopped.Totals.CacheCreate != 78 {
 		t.Fatalf("停止時のトークンを落とした: %+v", stopped.Totals)
@@ -39,14 +39,14 @@ func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
 	full := usagex.Call{Kind: session.KindClaude, Models: usageModelRows(map[string]claudeModelUsage{
 		"claude-haiku-4-5-20251001": {InputTokens: 1, OutputTokens: 2, CanonicalModel: "claude-haiku-4-5"},
 	})}
-	full.FallbackTotals(snap.ledgerTokens(), usagex.MeasuredPartial)
+	full.FallbackTotals(snap.LedgerTokens(), usagex.MeasuredPartial)
 	if full.Totals.Any() || full.Measured != "" {
 		t.Fatalf("modelUsage のある呼び出しを縮退で上書きした: %+v", full)
 	}
 
 	// 3) 何も取れていない呼び出しは none のまま（0 を「消費 0」と偽らない）。
 	empty := usagex.Call{Kind: session.KindClaude}
-	empty.FallbackTotals(claudeUsage{}.ledgerTokens(), usagex.MeasuredPartial)
+	empty.FallbackTotals(claudeUsage{}.LedgerTokens(), usagex.MeasuredPartial)
 	if empty.Measured != "" || empty.MeasuredOr(empty.Totals) != usagex.MeasuredNone {
 		t.Fatalf("トークンが1つも無いのに partial を名乗った: %+v", empty)
 	}
@@ -71,7 +71,7 @@ func TestClaudeStreamRecordsTokensWhenKilledBeforeResult(t *testing.T) {
 	ctx := usagex.WithTag(context.Background(), usagex.Tag{
 		Feature: usagex.FeatureAssistantChat, Trigger: usagex.TriggerUser, Ref: c.ID,
 	})
-	if _, _, err := (claudeChat{}).sendStream(ctx, c, "hi", func(chatStreamEvent) {}); err == nil {
+	if _, _, err := (claudeChat{}).SendStream(ctx, c, "hi", func(chatStreamEvent) {}); err == nil {
 		t.Fatal("result 前に死んだのに成功扱いになった")
 	}
 
@@ -96,7 +96,7 @@ func TestClaudeStreamRecordsTokensWhenKilledBeforeResult(t *testing.T) {
 // 停止・異常終了が丸ごと measured=none で埋まるので、AST で見張る。
 func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "chat_providers.go", nil, 0)
+	f, err := parser.ParseFile(fset, "internal/chatx/chat_providers.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 			}
 			switch fun := call.Fun.(type) {
 			case *ast.Ident:
-				if fun.Name == "usageModelRows" {
+				if fun.Name == "UsageModelRows" { // 移送で公開名になった
 					uses = true
 				}
 			case *ast.SelectorExpr:
@@ -186,7 +186,7 @@ func TestClaudeLedgerTokensUsesCallTotals(t *testing.T) {
 		InputTokens: 9, OutputTokens: 533, CacheCreationInputTokens: 10015, CacheReadInputTokens: 6002,
 		Iterations: []claudeUsage{{InputTokens: 1}, {InputTokens: 2}},
 	}
-	got := u.ledgerTokens()
+	got := u.LedgerTokens()
 	if got.In != 9 || got.Out != 533 || got.CacheCreate != 10015 || got.CacheRead != 6002 {
 		t.Fatalf("ledgerTokens = %+v", got)
 	}

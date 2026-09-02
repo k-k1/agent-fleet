@@ -14,7 +14,7 @@ type fakeChatProv struct {
 	prompt *string
 }
 
-func (f fakeChatProv) send(_ context.Context, _ *chatConversation, prompt string) (string, error) {
+func (f fakeChatProv) Send(_ context.Context, _ *chatConversation, prompt string) (string, error) {
 	if f.prompt != nil {
 		*f.prompt = prompt
 	}
@@ -109,7 +109,7 @@ func TestCreateOperatorConversation(t *testing.T) {
 	if c.AssistantID != "operator" {
 		t.Fatalf("assistant id = %q", c.AssistantID)
 	}
-	if !c.afWriteEnabled() {
+	if !c.AFWriteEnabled() {
 		t.Fatalf("operator conversation must grant af_write, got tools=%q", c.Tools)
 	}
 	if strings.TrimSpace(c.Persona) == "" {
