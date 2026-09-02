@@ -12,7 +12,6 @@ package mcpsrv
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -336,39 +335,5 @@ func TestDistributeScopesAndStrips(t *testing.T) {
 	// the CP only distributes enabled rows and the local opt-out is applied in the agent.
 	if !byName["wiki"].Enabled {
 		t.Fatal("distributed rows must arrive enabled")
-	}
-}
-
-// --- token ------------------------------------------------------------------------
-
-func TestMCPTokenRoundTrip(t *testing.T) {
-	key := MCPSignKey([]byte("0123456789abcdef0123456789abcdef"))
-	tok := MintMCPToken(key, "membership-1")
-	// Deterministic, so re-injection on every container start is idempotent.
-	if tok != MintMCPToken(key, "membership-1") {
-		t.Fatal("the token must be deterministic per membership")
-	}
-	mid, ok := verifyMCPToken(key, tok)
-	if !ok || mid != "membership-1" {
-		t.Fatalf("verify: %q %v", mid, ok)
-	}
-	bad := []string{
-		"", "nope", "afm_", "afm_bad.tag",
-		MintMCPToken(key, "membership-1") + "x", // tampered tag
-		// 別ブリッジの資格情報。CP の schedule ブリッジ（schedule_bridge.go）が配る
-		// "afs_" 形式で、prefix の枝で落ちる。以前は mintScheduleToken を直接呼んでいたが、
-		// あちらは package main に残るので、形だけを写した文字列にしてある（上の "nope" /
-		// "afm_bad.tag" と同じ扱いのデータ）。
-		"afs_" + base64.RawURLEncoding.EncodeToString([]byte("membership-1")) + ".Zm9vYmFyYmF6cXV1eA", // wrong credential
-	}
-	for _, b := range bad {
-		if _, ok := verifyMCPToken(key, b); ok {
-			t.Fatalf("must reject %q", b)
-		}
-	}
-	// A different master key must not validate: the MCP token is its own credential, so a
-	// memo/schedule token leak grants nothing here (and vice versa).
-	if _, ok := verifyMCPToken(MCPSignKey([]byte("ffffffffffffffffffffffffffffffff")), tok); ok {
-		t.Fatal("a token from another deployment key must be rejected")
 	}
 }

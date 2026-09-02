@@ -181,3 +181,7 @@ func (a mcpServerAPI) distribute(w http.ResponseWriter, r *http.Request, mv stor
 func (a mcpServerAPI) withMCPToken(h func(http.ResponseWriter, *http.Request, store.MembershipView)) http.HandlerFunc {
 	return a.inner.WithMCPToken(h)
 }
+
+// verifyMCPToken is used by control-plane/mcp_token_test.go, which stays in package
+// main so the cross-bridge case can mint a REAL schedule token (see that file).
+var verifyMCPToken = mcpsrv.VerifyMCPToken

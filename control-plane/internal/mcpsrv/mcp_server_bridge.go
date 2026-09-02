@@ -42,10 +42,10 @@ func mcpTokenTag(signKey []byte, membershipID string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
 }
 
-// verifyMCPToken checks the tag and returns the embedded membership id. It does NOT
+// VerifyMCPToken checks the tag and returns the embedded membership id. It does NOT
 // resolve tenant/role — that is a live store lookup by the caller, so a revoked
 // membership stops working immediately rather than until the token rotates.
-func verifyMCPToken(signKey []byte, token string) (membershipID string, ok bool) {
+func VerifyMCPToken(signKey []byte, token string) (membershipID string, ok bool) {
 	body, hasPrefix := strings.CutPrefix(strings.TrimSpace(token), "afm_")
 	if !hasPrefix {
 		return "", false
@@ -70,7 +70,7 @@ func verifyMCPToken(signKey []byte, token string) (membershipID string, ok bool)
 // from the live store, never from the request.
 func (a ServerAPI) mcpTokenMembership(r *http.Request) (store.MembershipView, *APIError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := verifyMCPToken(MCPSignKey(a.cp.TokenSignMaster()), tok)
+	mid, ok := VerifyMCPToken(MCPSignKey(a.cp.TokenSignMaster()), tok)
 	if !ok {
 		return store.MembershipView{}, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid mcp token"}
 	}
