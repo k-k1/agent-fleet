@@ -122,6 +122,27 @@ if [ -n "$HOSTED_ZONE" ]; then
 fi
 command -v crane >/dev/null || say_missing "crane が無い（GHCR → ECR を index ごと運ぶのに要る）"
 
+# ★ 控えのパラメータが**いまのテンプレート**と噛み合うか。
+#
+# 🔥 これが無いと、00〜20 を立てた**後で** CFN が「必須パラメータが足りない」と拒む —— 立て
+# 始めてから足りないと分かるのが一番高い、というこの preflight の趣旨そのものの穴だった。
+# 控えは配備を撮った日のもので、テンプレートはそれから育つ（実例: 2026-08-23 の控えと
+# 2026-09-02 のテンプレート）。**Default を持たない引数**だけが必須である。
+for slug in 00-network 10-data 20-platform 30-ingress 40-ec2-pool; do
+  f="$(af_params_file "$slug")"; t="$CFN_DIR/$slug.yaml"
+  [ -r "$f" ] && [ -r "$t" ] || continue
+  missing="$(awk '
+    /^[A-Za-z]/        { inp = ($0 ~ /^Parameters:/); name = ""; next }
+    !inp               { next }
+    /^  [A-Za-z0-9]+:/ { name = $1; sub(":", "", name); req[name] = 1; next }
+    /^    Default:/    { if (name != "") delete req[name] }
+    END                { for (k in req) print k }
+  ' "$t" | sort)"
+  for k in $missing; do
+    grep -q "^$k=" "$f" || say_missing "params/$slug に必須パラメータ $k が無い（テンプレートが控えより新しい）"
+  done
+done
+
 # ★ テンプレートが 51,200 バイトを超えるなら S3 経由が要る（af_cfn_deploy が切り替える）。
 # ここでは「切り替え先が用意できるか」だけを先に言う —— 20-platform を立てた後でしか
 # バケットは引けないので、まだ無いのは正常。**af_cfn_deploy は毎回サイズを測る**ので、
