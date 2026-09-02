@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // rateLimitFixture isolates the state store (HOME 直下) and replaces the two side
@@ -63,7 +64,7 @@ func newRateLimitFixture(t *testing.T) *rateLimitFixture {
 
 func setRateLimitPref(t *testing.T, on bool) {
 	t.Helper()
-	p := uiPrefsPath()
+	p := uiprefs.Path()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		t.Fatal(err)
 	}

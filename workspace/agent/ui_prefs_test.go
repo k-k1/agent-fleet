@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -65,7 +66,7 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 	if got := chatAutoTurnModel(); got != "" {
 		t.Fatalf("auto-turn model default = %q", got)
 	}
-	if chatQuietCompletionEnabled() {
+	if uiprefs.ChatQuietCompletion() {
 		t.Fatal("quiet completion must default OFF")
 	}
 	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokens {
@@ -84,7 +85,7 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 	if got := chatAutoTurnModel(); got != "haiku" {
 		t.Fatalf("auto-turn model = %q", got)
 	}
-	if !chatQuietCompletionEnabled() {
+	if !uiprefs.ChatQuietCompletion() {
 		t.Fatal("quiet completion should be ON")
 	}
 	if got := chatAutoCompactTokenThreshold(); got != 80000 {
@@ -149,11 +150,11 @@ func TestPutUIPrefsBacksUpAShrinkingWrite(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT = %d", rec.Code)
 	}
-	if got := readUIPrefs()["iconSet"]; got != "vscode" {
+	if got := uiprefs.Read()["iconSet"]; got != "vscode" {
 		t.Fatalf("write must not be refused: iconSet = %v", got)
 	}
 	// 直前の版が残っていること＝復旧の手がかりがある。
-	b, err := os.ReadFile(uiPrefsBackupPath())
+	b, err := os.ReadFile(uiprefs.BackupPath())
 	if err != nil {
 		t.Fatalf("no backup kept: %v", err)
 	}
@@ -172,7 +173,7 @@ func TestPutUIPrefsBacksUpAShrinkingWrite(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second PUT = %d", rec.Code)
 	}
-	b2, err := os.ReadFile(uiPrefsBackupPath())
+	b2, err := os.ReadFile(uiprefs.BackupPath())
 	if err != nil || string(b2) != string(b) {
 		t.Fatalf("backup must survive later benign writes: %v", err)
 	}

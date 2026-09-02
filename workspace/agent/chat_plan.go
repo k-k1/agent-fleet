@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // 圧縮の2ブロック出力を仕切る記号。モデルが素で書かない綴りにする（会話本文に偶然
@@ -113,7 +114,7 @@ func planModel() string { return envOr("AF_PLAN_MODEL", "sonnet") }
 // compactPrompt builds the compaction turn's instruction: one reply carrying the plan
 // block (原文で運ぶ) and the summary block (背景). 既存計画があれば差分更新を指示する。
 func compactPrompt(c *chatConversation) string {
-	lang := uiLocale()
+	lang := uiprefs.Locale()
 	var b strings.Builder
 	if p := strings.TrimSpace(c.Plan); p != "" {
 		b.WriteString(planUpdateInstructionFor(lang) + "\n\n" + p + "\n\n---\n\n")
@@ -184,7 +185,7 @@ func clampPlan(s string) string {
 	if len(r) <= planMaxRunes {
 		return t
 	}
-	return strings.TrimSpace(string(r[:planMaxRunes])) + "\n\n" + planTruncatedNote(uiLocale())
+	return strings.TrimSpace(string(r[:planMaxRunes])) + "\n\n" + planTruncatedNote(uiprefs.Locale())
 }
 
 func planTruncatedNote(lang string) string {
@@ -224,7 +225,7 @@ func injectPlan(c *chatConversation, agent, prompt string) (string, bool) {
 	if plan == "" || providerHasResume(c, agent) {
 		return prompt, false
 	}
-	return planPreambleFor(uiLocale()) + "\n\n" + plan + "\n\n---\n\n" + prompt, true
+	return planPreambleFor(uiprefs.Locale()) + "\n\n" + plan + "\n\n---\n\n" + prompt, true
 }
 
 // injectCarryover prepends everything that must survive a provider-session reset:
@@ -331,7 +332,7 @@ func refreshPlan(ctx context.Context, c *chatConversation) (bool, error) {
 	ctx = withUsageTag(ctx, usageTag{
 		Feature: usageFeaturePlanUpdate, Trigger: usageTriggerManual, Ref: c.ID,
 	})
-	lang := uiLocale()
+	lang := uiprefs.Locale()
 	reply, err := oneShotHeadless(ctx, planRefreshPersonaFor(lang), planRefreshPrompt(c, lang), planModel())
 	if err != nil {
 		return false, fmt.Errorf("plan refresh failed: %w", err)

@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 func TestMCPWiringIsLive(t *testing.T) {
@@ -60,7 +61,7 @@ func TestMCPWiringIsLive(t *testing.T) {
 		"ShellCreateTarget":          func(t *testing.T) { sameFunc(t, w.ShellCreateTarget, shellCreateTarget) },
 		"ShellSendTarget":            func(t *testing.T) { sameFunc(t, w.ShellSendTarget, shellSendTarget) },
 		"SessionIsShell":             func(t *testing.T) { sameFunc(t, w.SessionIsShell, sessionIsShell) },
-		"ReadUIPrefs":                func(t *testing.T) { sameFunc(t, w.ReadUIPrefs, readUIPrefs) },
+		"ReadUIPrefs":                func(t *testing.T) { sameFunc(t, w.ReadUIPrefs, uiprefs.Read) },
 		"EnsureClaudeSettingsWiring": func(t *testing.T) { sameFunc(t, w.EnsureClaudeSettingsWiring, ensureClaudeSettingsWiring) },
 		"RepoAnyDirFromPath":         func(t *testing.T) { sameFunc(t, w.RepoAnyDirFromPath, repoAnyDirFromPath) },
 		"ReadBuildPins":              func(t *testing.T) { sameFunc(t, w.ReadBuildPins, readBuildPins) },

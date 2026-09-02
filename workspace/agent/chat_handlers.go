@@ -14,6 +14,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // --- HTTP handlers ---
@@ -129,7 +130,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	lang := uiLocale()
+	lang := uiprefs.Locale()
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
 		title = chatDefaultTitle(lang)

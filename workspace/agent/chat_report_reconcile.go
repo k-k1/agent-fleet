@@ -37,6 +37,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 const (
@@ -481,7 +482,7 @@ type reportSink func(name, convID, kind, reason string, rows []instrRow) reportS
 // かかってもリコンサイラの単一 goroutine を塞がない。
 func deliverReportCard(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
 	res := recordSessionReport(name, convID, kind, reason, rows)
-	if res == reportSinkOK && chatAutoTurnEnabled() && !quietReport(kind, reason) {
+	if res == reportSinkOK && uiprefs.ChatAutoTurn() && !quietReport(kind, reason) {
 		reportAutoTurns.schedule(convID)
 	}
 	return res
@@ -496,7 +497,7 @@ func deliverReportCard(name, convID, kind, reason string, rows []instrRow) repor
 // だけ。異常系（中断・失敗・exit）と訂正打ち切り（reopen-capped）はオペレーターの
 // 判断・行動（自動再開・原因説明）が要るので従来どおり回す。
 func quietReport(kind, reason string) bool {
-	if !chatQuietCompletionEnabled() {
+	if !uiprefs.ChatQuietCompletion() {
 		return false
 	}
 	return reason == "" && (kind == reportKindAnswerReady || kind == reportKindReopened)

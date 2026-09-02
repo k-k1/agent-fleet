@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // compactSummaryPromptFor は現行セッションへ流す引き継ぎ指示。後任アシスタントが読む前提の
@@ -198,7 +199,7 @@ const chatCtxAutoCompactTokensMin = 20_000
 // 優先順: 設定（設定 > アシスタント「自動圧縮の閾値」・ui-prefs
 // assistantAutoCompactTokens）→ 環境変数（デプロイ/E2E 用）→ 既定。
 func chatAutoCompactTokenThreshold() int {
-	if v, ok := readUIPrefs()["assistantAutoCompactTokens"].(float64); ok && v > 0 {
+	if v, ok := uiprefs.Read()["assistantAutoCompactTokens"].(float64); ok && v > 0 {
 		if n := int(v); n >= chatCtxAutoCompactTokensMin {
 			return n
 		}
@@ -224,7 +225,7 @@ func chatAutoCompactTokenThreshold() int {
 // 90% is not overflow, so the turn itself may well still succeed; if it doesn't,
 // the 第3段 recovery takes over.
 func maybeAutoCompact(ctx context.Context, c *chatConversation, prov chatProvider) bool {
-	if !chatAutoCompactEnabled() {
+	if !uiprefs.ChatAutoCompact() {
 		return false
 	}
 	if c.Context == nil {
@@ -257,7 +258,7 @@ func injectHandoff(c *chatConversation, prompt string) (string, bool) {
 	if strings.TrimSpace(c.PendingHandoff) == "" {
 		return prompt, false
 	}
-	return handoffPreambleFor(uiLocale()) + "\n\n" + c.PendingHandoff + "\n\n---\n\n" + prompt, true
+	return handoffPreambleFor(uiprefs.Locale()) + "\n\n" + c.PendingHandoff + "\n\n---\n\n" + prompt, true
 }
 
 // handleChatCompact (POST /chat/conversations/{id}/compact) runs the compaction

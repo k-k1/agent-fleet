@@ -39,6 +39,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 const (
@@ -268,7 +269,7 @@ func rateLimitFollowUp(m session.Meta, st rateLimitState, now time.Time, alive b
 // scheduleRateLimitResume registers the one-shot resume when it is wanted and not yet
 // in place. 返り値は更新後の状態（呼び出し側が書く）。
 func scheduleRateLimitResume(m session.Meta, st rateLimitState, now time.Time) rateLimitState {
-	if st.ScheduleID != "" || !rateLimitAutoResumeEnabled() || st.ScheduleTries >= maxRateLimitScheduleTries {
+	if st.ScheduleID != "" || !uiprefs.RateLimitAutoResume() || st.ScheduleTries >= maxRateLimitScheduleTries {
 		return st
 	}
 	at, source, ok := rateLimitResetAt(session.UUID(m.Dir, m.Name), now)
@@ -432,7 +433,7 @@ func deleteRateLimitSchedule(id string) {
 // （docs/log/47 §3-4 の再開文と同じ方針）。言語は表示言語に合わせる — 会話ごとの言語を
 // 持たない以上、その利用者が読み書きしている言語が最良の推定。
 func rateLimitResumePrompt() string {
-	return rateLimitResumePromptFor(uiLocale())
+	return rateLimitResumePromptFor(uiprefs.Locale())
 }
 
 func rateLimitResumePromptFor(locale string) string {
@@ -453,7 +454,7 @@ func isRateLimitResumePrompt(prompt string) bool {
 }
 
 func rateLimitScheduleLabel(name string) string {
-	if uiLocale() == "en" {
+	if uiprefs.Locale() == "en" {
 		return "auto-resume after usage limit (" + name + ")"
 	}
 	return "利用上限リセット後の自動再開（" + name + "）"

@@ -11,6 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // replyMarkerRe は行頭の箇条書き/番号マーカーだけを剥がす。記号（- * ・ >）は空白の有無に
@@ -93,7 +94,7 @@ func replySuggestModel() string { return envOr("AF_SUGGEST_MODEL", "haiku") }
 // replySuggestEnabled: ui-prefs の replySuggest スイッチ（Console の✨ボタン表示 = 既定 ON）。
 // キー欠落/不正は true（フロント DEFAULTS.replySuggestEnabled と一致）。
 func replySuggestEnabled() bool {
-	v, ok := readUIPrefs()["replySuggest"].(bool)
+	v, ok := uiprefs.Read()["replySuggest"].(bool)
 	return !ok || v
 }
 
@@ -264,7 +265,7 @@ func cleanSuggestedReplies(s string) []string {
 }
 
 func runReplySuggestLLM(ctx context.Context, turns []transcript.Turn) ([]string, error) {
-	lang := uiLocale() // 指示文の言語だけ（候補そのものは会話の言語 — replySuggestPersona 参照）
+	lang := uiprefs.Locale() // 指示文の言語だけ（候補そのものは会話の言語 — replySuggestPersona 参照）
 	reply, err := oneShotHeadless(ctx, replySuggestPersona(lang), replySuggestPrompt(turns, lang), replySuggestModel())
 	if err != nil {
 		return nil, fmt.Errorf("reply suggestion failed: %w", err)

@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // handleAgentModels (GET /agents/{kind}/models) returns the launch-time model
@@ -43,7 +44,7 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		for _, model := range list {
 			seen[strings.ToLower(model.ID)] = true
 		}
-		for _, id := range claudeCustomModelsPref() {
+		for _, id := range uiprefs.ClaudeCustomModels() {
 			if key := strings.ToLower(id); !seen[key] {
 				list = append(list, agents.ModelChoice{ID: id, Label: id})
 				seen[key] = true
@@ -63,7 +64,7 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		// （ui-prefs opencodeCatalog）に従い、並びは Go 先頭＋id 昇順に正規化する
 		// （daemon 由来と CLI 由来で上流順が違うため）。モデル指定の検証は
 		// handleCreateSession が整形前の全カタログで行うので、明示指定は握り潰さない。
-		list = opencode.Catalog(opencode.Models(), opencodeCatalogPref())
+		list = opencode.Catalog(opencode.Models(), uiprefs.OpencodeCatalog())
 	case "agy":
 		list = agy.Models()
 	case "copilot":

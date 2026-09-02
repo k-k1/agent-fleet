@@ -32,6 +32,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // reportLink is the v1 arm record (session-report/<name>.json): 1セッション = 1bit。
@@ -277,7 +278,7 @@ func reportPreambleFor(lang string) string {
 // Content（＝表示用の事実）ではなく、ここで組み直す（docs/log/28 P6）: オペレーターへの指示は
 // 表示言語で、しかも自動走行/自動再開のトグルは**この瞬間**の設定で決まる。
 func reportsPrompt(reports []*chatMessage) string {
-	lang := uiLocale()
+	lang := uiprefs.Locale()
 	var parts []string
 	for _, m := range reports {
 		parts = append(parts, reportPromptFor(*m, lang))
@@ -294,7 +295,7 @@ func injectPendingReports(c *chatConversation, content string) (string, []*chatM
 	if len(pending) == 0 {
 		return content, nil
 	}
-	return reportsPrompt(pending) + "\n\n---\n\n" + userMessageHeader(uiLocale()) + "\n" + content, pending
+	return reportsPrompt(pending) + "\n\n---\n\n" + userMessageHeader(uiprefs.Locale()) + "\n" + content, pending
 }
 
 // userMessageHeader separates the injected reports from what the user actually typed.
@@ -415,7 +416,7 @@ func deliverSessionReport(name, convID, kind, reason string) {
 	if recordSessionReport(name, convID, kind, reason, nil) != reportSinkOK {
 		return
 	}
-	if chatAutoTurnEnabled() {
+	if uiprefs.ChatAutoTurn() {
 		runReportAutoTurn(convID)
 	}
 }

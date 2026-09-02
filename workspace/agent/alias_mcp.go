@@ -16,6 +16,7 @@ package main
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // --- main → mcpx -----------------------------------------------------------
@@ -104,7 +105,7 @@ func init() {
 		ShellSendTarget:   shellSendTarget,
 		SessionIsShell:    sessionIsShell,
 
-		ReadUIPrefs:                readUIPrefs,
+		ReadUIPrefs:                uiprefs.Read,
 		EnsureClaudeSettingsWiring: ensureClaudeSettingsWiring,
 
 		RepoAnyDirFromPath: repoAnyDirFromPath,

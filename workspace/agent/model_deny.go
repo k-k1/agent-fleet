@@ -24,6 +24,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // normModelToken は id/別名を突き合わせ用の正規形にする。区切り（/ . _ 空白）を
@@ -71,7 +72,7 @@ func modelMatchesHidden(requested, hidden string) bool {
 // 全部隠すような壊れた設定は無視して素の一覧に戻す。ライブカタログの kind は
 // 「空カタログ＝既定で起動」が元から正常状態なので、この保護は要らない。
 func hiddenModelsFor(kind string) []string {
-	raw, ok := readUIPrefs()["hiddenModels"].(map[string]any)
+	raw, ok := uiprefs.Read()["hiddenModels"].(map[string]any)
 	if !ok {
 		return nil
 	}

@@ -23,6 +23,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // chatStep is one "作業過程" item of an assistant turn (docs/log/19): the narration the model
@@ -288,7 +289,7 @@ func (c *chatConversation) languageRule() string {
 	if c.SeedVerb == "translate" || c.AssistantID == "translate" {
 		return ""
 	}
-	switch chatOutputLanguage() {
+	switch uiprefs.ChatOutputLanguage() {
 	case "ja":
 		return langRuleJA
 	case "en":
@@ -301,7 +302,7 @@ func (c *chatConversation) languageRule() string {
 // (or the generic chat persona), followed by the global output rule and, when the user
 // pinned an output language, a language directive.
 func (c *chatConversation) personaOf() string {
-	lang := uiLocale()
+	lang := uiprefs.Locale()
 	base := chatPersonaFor(lang)
 	if strings.TrimSpace(c.Persona) != "" {
 		base = c.Persona

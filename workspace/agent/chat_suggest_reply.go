@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // chatReplySuggestPrompt は直近メッセージ（末尾窓）を文脈に、返信候補の生成を指示する。
@@ -34,7 +35,7 @@ func chatReplySuggestPrompt(msgs []chatMessage, lang string) string {
 }
 
 func runChatReplySuggestLLM(ctx context.Context, msgs []chatMessage) ([]string, error) {
-	lang := uiLocale()
+	lang := uiprefs.Locale()
 	reply, err := oneShotHeadless(ctx, replySuggestPersona(lang), chatReplySuggestPrompt(msgs, lang), replySuggestModel())
 	if err != nil {
 		return nil, fmt.Errorf("chat reply suggestion failed: %w", err)
