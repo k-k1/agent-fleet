@@ -432,7 +432,10 @@ func TestShippedDefaultSlotClassesParse(t *testing.T) {
 // met a branch's 0030_user_limit_slot_class in migrations-pg). This test is the cheap
 // half of the fix — the other half refuses to start (sqlStore.migrate).
 func TestMigrationVersionsAreUniquePerDialect(t *testing.T) {
-	for _, dir := range []string{"migrations", "migrations-pg"} {
+	// 2026-09-02: 両系列は internal/store へ移った（ADR 0067 / CP-STORE）。
+	// //go:embed が自分のディレクトリより上を見られないので、SQL は embed する
+	// パッケージと一緒に動く。ここが読むのはディスク上の実体なので追随させる。
+	for _, dir := range []string{"internal/store/migrations", "internal/store/migrations-pg"} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatalf("%s: %v", dir, err)

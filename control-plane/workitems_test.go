@@ -35,7 +35,7 @@ func newWorkItemEnv(t *testing.T, state string) *workItemEnv {
 	}
 	t.Cleanup(func() { st.Close() })
 	ctx := context.Background()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)

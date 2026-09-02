@@ -14,7 +14,7 @@ func TestNotificationStoreMembershipSeenAndDedup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(context.Background()); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(context.Background())
@@ -48,7 +48,7 @@ func TestUsageNotificationStateRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(context.Background()); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(context.Background())
@@ -70,7 +70,7 @@ func TestUsageObservationCreatesOneResetNotification(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(context.Background()); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(context.Background())

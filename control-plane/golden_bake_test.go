@@ -256,7 +256,7 @@ func newGoldenFixture(t *testing.T, agentHealthy *bool) *goldenFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.EnsureDefaultTenant(ctx); err != nil {

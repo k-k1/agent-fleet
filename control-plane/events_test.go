@@ -50,7 +50,7 @@ func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.migrate(context.Background()); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(context.Background())

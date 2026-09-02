@@ -27,7 +27,7 @@ func newFSProxyTest(t *testing.T, agent http.Handler) (agentProxyAPI, *resolved,
 		server.Close()
 		t.Fatal(err)
 	}
-	if err := store.migrate(context.Background()); err != nil {
+	if err := store.Migrate(context.Background()); err != nil {
 		server.Close()
 		store.Close()
 		t.Fatal(err)

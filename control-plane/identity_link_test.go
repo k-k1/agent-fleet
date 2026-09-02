@@ -26,7 +26,7 @@ func newLinkStore(t *testing.T) *sqlStore {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.migrate(t.Context()); err != nil {
+	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return st
@@ -35,7 +35,7 @@ func newLinkStore(t *testing.T) *sqlStore {
 func countRows(t *testing.T, st *sqlStore, table string) int {
 	t.Helper()
 	var n int
-	if err := st.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM `+table).Scan(&n); err != nil {
+	if err := st.DB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM `+table).Scan(&n); err != nil {
 		t.Fatalf("count %s: %v", table, err)
 	}
 	return n
