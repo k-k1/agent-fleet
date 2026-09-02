@@ -108,9 +108,10 @@ var (
 // runtime.AWSConfigFor`. runtime.AWSConfigFor is itself a variable — the one seam the
 // live AWS harness swaps to point a whole run at a test account (docs/log/64 §64.23) —
 // and a var here would capture its value at package init. The swap would then reach the
-// two CP-side readers and NOT the four adapters, which would go on holding real AWS: a
-// split-brain nobody would see, because every call still succeeds. Dispatching per call
-// keeps one door.
+// four adapters — they read runtime.AWSConfigFor from inside that package on every call
+// (runtime_ecs.go / runtime_ecs_ec2.go) — and NOT the two readers on this side, which
+// would go on holding real AWS: a split-brain nobody would see, because every call still
+// succeeds. Dispatching per call keeps one door.
 //
 // It is the only name in this file whose far side is a var. The rest are funcs.
 func awsConfigFor(ctx context.Context, region string) (aws.Config, error) {
