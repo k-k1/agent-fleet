@@ -190,6 +190,9 @@ func main() {
 	// codex.Serve() の RuntimeSupervisor が daemon を所有する）。AF attaches
 	// a read-only observer per loaded thread: compaction state, rate limits, and
 	// the model-switch observation log (docs/log/27 P1).
+	// ここで daemon を起こすことはしない（docs/log/27 §7 補遺）: 需要——managed の
+	// Resume と TUI の起動——が起こし、需要ゼロが続けば畳む。張るのは継ぎ目と
+	// オブザーバだけ。
 	startCodexAppServer()
 	// managed セッション（docs/log/27 P2: opencode / P3: codex）を再接続する — Agent
 	// 再起動を挟んでも tmux の tui セッションが生き残るのと同じ体感にする（§6 の

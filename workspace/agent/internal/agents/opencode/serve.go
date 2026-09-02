@@ -35,6 +35,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -60,9 +61,36 @@ type Supervisor struct {
 	// stopping marks a deliberate teardown (Restart/Shutdown) so the waiter doesn't
 	// record it as a crash or trigger reconciliation.
 	stopping bool
+	// watching: 需要ゼロ監視（agents.WatchIdle、idlestop.go）が 1 本回っている。
+	watching bool
 }
 
 var supervisor = &Supervisor{}
+
+// dependents は共有 daemon を必要としているものの総数。
+//
+// TUI ルートの opencode は serve を使わない（buildProgram は自前の SQLite ストアに
+// 直接つなぐ）ので、codex と違って数えるのは managed ハンドルだけ。ただし OAuth の
+// device フローだけは「未接続のまま daemon を起こす」唯一の経路なので、その最中は
+// 需要として数えないと、ログインの途中で足元の daemon を畳んでしまう。
+//
+// live ではなく **登録済み** ハンドル数で数える理由は codex 側と同じ: daemon が死ぬと
+// runtimeLost が alive を落とすので、live だと復旧すべき場面が需要ゼロに見える。
+func dependents() int {
+	handlesMu.Lock()
+	n := len(handles)
+	handlesMu.Unlock()
+	if oauthBusy() {
+		n++
+	}
+	return n
+}
+
+// idleGraceEnv / defaultIdleGrace: 需要ゼロがこれだけ続いたら daemon を畳む。
+// 0 で自動停止を無効化。serve は実測 RSS 約 305 MB あるので、managed を使っていない
+// 間ずっと居座らせる理由はない。
+const idleGraceEnv = "AF_OPENCODE_SERVE_IDLE_SEC"
+const defaultIdleGrace = 2 * time.Minute
 
 // Serve returns the package-wide supervisor instance.
 func Serve() *Supervisor { return supervisor }
@@ -102,9 +130,19 @@ func healthy(addr string) bool {
 	return res.StatusCode < 500
 }
 
+// ErrNotConnected: opencode が未接続（鍵も Console ログインも無料枠の明示も無い）
+// なので共有 daemon を起こさない。serve は認証を見ずに listen できてしまうが、
+// 実測 RSS 約 305 MB — 使わないワークスペースでそれを常駐させる理由はない。
+var ErrNotConnected = errors.New("opencode が未接続のため serve を起動しません")
+
 // Ensure starts (or adopts) the shared serve daemon, idempotently. Returns the
 // base URL and the runtime generation the caller should stamp on its handles.
-func (s *Supervisor) Ensure() (string, int, error) {
+func (s *Supervisor) Ensure() (string, int, error) { return s.ensure(false) }
+
+// ensure は Ensure の実体。allowUnauthed は OAuth device フロー専用の抜け道:
+// あの経路は「daemon の API を使ってログインする」ので、未接続を理由に起動を
+// 断ると永久にログインできない（鶏と卵）。それ以外の入口は必ず false で入ること。
+func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	if s.Disabled() {
 		return "", 0, errors.New("opencode serve is disabled (AF_OPENCODE_SERVE_DISABLE=1)")
 	}
@@ -122,9 +160,15 @@ func (s *Supervisor) Ensure() (string, int, error) {
 		s.cmd = nil
 		s.up = true
 		s.stopping = false
+		s.armIdleWatchLocked()
 		go s.monitorEvents(addr, s.gen)
 		log.Printf("opencode serve: adopted running daemon at %s (gen %d)", addr, s.gen)
 		return addr, s.gen, nil
+	}
+	// ここから先は新しいプロセスを起こす＝メモリを新たに払う。未接続なら払わない。
+	// （adopt は既に払われている分なので上で素通し済み。）
+	if !allowUnauthed && !Connected() {
+		return "", 0, ErrNotConnected
 	}
 	host, port, err := splitServeAddr(addr)
 	if err != nil {
@@ -147,6 +191,7 @@ func (s *Supervisor) Ensure() (string, int, error) {
 			s.up = true
 			s.stopping = false
 			gen := s.gen
+			s.armIdleWatchLocked()
 			go s.waitDaemon(cmd, gen)
 			go s.monitorEvents(addr, gen)
 			log.Printf("opencode serve: started (gen %d, pid %d, %s)", gen, cmd.Process.Pid, addr)
@@ -156,6 +201,53 @@ func (s *Supervisor) Ensure() (string, int, error) {
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait() // reap: waitDaemon is only started on success — Kill alone leaves a zombie
 	return "", 0, errors.New("opencode serve が時間内に起動しませんでした")
+}
+
+// armIdleWatchLocked starts the "需要ゼロで畳む" watcher, at most one at a time.
+// 呼び出し側は s.mu を保持していること。
+func (s *Supervisor) armIdleWatchLocked() {
+	if s.watching {
+		return
+	}
+	s.watching = true
+	go agents.WatchIdle("opencode serve", dependents, s.stopIfIdle,
+		agents.IdleGrace(idleGraceEnv, defaultIdleGrace))
+}
+
+// stopIfIdle は需要ゼロを **ロック内で再確認してから** daemon を畳む。監視ループの
+// 判定と停止の間に Resume や OAuth 開始が走ると、動いているものの足元を抜くことに
+// なるので、ここだけは競合を潰す。false = 需要が戻っていた（監視続行）。
+func (s *Supervisor) stopIfIdle() bool {
+	s.mu.Lock()
+	if !s.up {
+		s.watching = false
+		s.mu.Unlock()
+		return true // 既に落ちている（daemon death 等）— 監視は降りる
+	}
+	if dependents() > 0 {
+		s.mu.Unlock()
+		return false
+	}
+	addr := serveAddr()
+	cmd := s.cmd
+	s.stopping, s.up, s.watching = true, false, false
+	s.mu.Unlock()
+
+	if cmd == nil {
+		// adopt した daemon はプロセスハンドルが無くシグナルを送れない。監視を降りる
+		// だけにして、次に owned で起こし直したときに効かせる。
+		log.Printf("opencode serve: 需要ゼロだが adopt した daemon なので停止できません")
+	} else {
+		// 需要ゼロ＝走っている managed turn は無いので drain は要らない。
+		stopProcess(cmd, addr)
+		log.Printf("opencode serve: 停止しました（需要ゼロ）")
+	}
+	s.mu.Lock()
+	s.cmd = nil
+	s.mu.Unlock()
+	// stopping は戻さない: 遅れて届く SSE 断（monitorEvents）を「意図しない喪失」と
+	// 読み違えないため。次の Ensure が成功時に false へ戻す。
+	return true
 }
 
 // splitServeAddr derives --hostname/--port from the configured http URL.
@@ -259,6 +351,7 @@ func (s *Supervisor) Shutdown() {
 	cmd := s.cmd
 	s.stopping = true
 	s.up = false
+	s.watching = false
 	s.mu.Unlock()
 	s.drain(addr)
 	stopProcess(cmd, addr)

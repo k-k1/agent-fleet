@@ -40,6 +40,8 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 const codexAppServerEnv = "AF_CODEX_APP_SERVER_ADDR"
@@ -141,33 +143,63 @@ func orDash(s string) string {
 	return s
 }
 
-// startCodexAppServer ensures the shared local server (owned by the codex
+// startCodexAppServer wires the shared local server (owned by the codex
 // RuntimeSupervisor since P3 — daemon 起動・generation・exit recording は
-// codex.Serve() 側、docs/log/27 §10.2-2) and connects the AF read-only observer.
-// Failure is deliberately non-fatal: buildProgram sees no env and launches the
-// traditional direct TUI, preserving Codex availability at the cost of live
-// compaction state; managed codex sessions then fail Resume with runtime_failed.
+// codex.Serve() 側、docs/log/27 §10.2-2) into package main and starts the AF
+// read-only observer.
+//
+// 起動時に daemon を上げるのはやめた: 未ログインでも、codex を一度も使わなくても
+// 約 110 MB（native 62 MB＋node シム 48 MB、実測）が常駐していた。冷起動は 217 ms
+// （実測）なので、需要——managed の Resume と TUI の BuildLaunch——で起こすほうが
+// 素直。ここでやるのは (1) 台帳を持たない codex package へ「TUI ルートで生きている
+// セッション数」を渡す継ぎ目の登録、(2) 前の Agent プロセスが残した daemon の
+// 引き取り、(3) daemon の生涯をまたぐオブザーバの常設、の 3 つだけ。
+//
+// オブザーバは writer とは SEPARATE な read-only ソケット: thread スコープの通知は
+// 接続ごと（docs/log/27 §12.1-1）で、writer は自分が start/resume した thread しか
+// 見ない — TUI（CLI ルート）の thread を覆うのはオブザーバの仕事。
 func startCodexAppServer() {
 	if codex.Serve().Disabled() {
 		_ = os.Unsetenv(codexAppServerEnv)
 		return
 	}
-	// Ensure spawns (or adopts) the daemon, exports AF_CODEX_APP_SERVER_ADDR and
-	// holds the managed writer connection. The observer below is a SEPARATE
-	// read-only socket: thread-scoped notifications are per-connection (docs/log/27
-	// §12.1-1), and the writer only sees threads it started/resumed itself — the
-	// observer keeps covering the TUI (CLI-route) threads.
-	if _, _, err := codex.Serve().Ensure(); err != nil {
-		log.Printf("codex app-server unavailable; using direct TUI: %v", err)
-		return
+	// 継ぎ目は AdoptIfRunning より先に張ること: Ensure が需要ゼロ監視を張る際に
+	// TUIDependents を読むので、後から差し替えると「TUI セッションが 0 に見える窓」が
+	// できて、生きている TUI の backend を畳みかねない。
+	codex.TUIDependents = liveCodexTUISessions
+	codex.DaemonUp = wakeCodexObserver
+	codex.Serve().AdoptIfRunning()
+	go superviseCodexObserver()
+}
+
+// liveCodexTUISessions counts the codex sessions running on the CLI route whose
+// backend is the shared app-server (`codex --remote`). They are dependents of the
+// daemon exactly like managed handles: kill it under them and the TUI's
+// conversation stops dead. tmux は 1 発（list-sessions）で数える。
+func liveCodexTUISessions() int { return countCodexTUISessions(tmuxx.LiveSessionNames()) }
+
+// countCodexTUISessions is the pure half, so the filter can be tested without
+// creating a session in the fleet's own tmux namespace (LiveSessionNames only
+// reports names carrying session.TmuxPrefix, so a test would have to plant a
+// `claude_*` session that the Console would then show as an orphan).
+//
+// live のキーは **接頭辞を剥いだセッション名**（tmuxx.LiveSessionNames）。実 tmux で
+// 確認済み: `claude_skggere` → `skggere`。ここを取り違えると常に 0 になり、
+// 生きている TUI セッションの backend を需要ゼロ判定が引き抜く。
+func countCodexTUISessions(live map[string]bool) int {
+	if len(live) == 0 {
+		return 0
 	}
-	addr := codex.Serve().Addr()
-	conn, err := connectCodexAppServer(addr)
-	if err != nil {
-		log.Printf("codex app-server observer connect failed (daemon stays up): %v", err)
-		return
+	n := 0
+	for _, m := range session.ListMetas() {
+		if m.Kind != session.KindCodex || m.Archived || m.DriverKind() == session.DriverManaged {
+			continue
+		}
+		if live[m.Name] {
+			n++
+		}
 	}
-	go monitorCodexAppServer(conn, addr)
+	return n
 }
 
 func connectCodexAppServer(addr string) (*websocket.Conn, error) {
@@ -385,69 +417,90 @@ func (o *codexObserver) observeThreadLifecycle(msg codexAppServerMessage) {
 	}
 }
 
-func monitorCodexAppServer(conn *websocket.Conn, addr string) {
+// codexObserverWake carries "the daemon is up again" from the supervisor
+// (codex.DaemonUp) to the observer's reconnect wait. Buffered 1 + non-blocking
+// send: a wake that nobody is waiting for is dropped, never queued.
+var codexObserverWake = make(chan struct{}, 1)
+
+func wakeCodexObserver() {
+	select {
+	case codexObserverWake <- struct{}{}:
+	default:
+	}
+}
+
+// superviseCodexObserver keeps ONE read-only observer alive across the daemon's
+// whole life, including the stretches where there IS no daemon: the shared
+// app-server is now started on demand and stopped again once nothing needs it
+// (docs/log/27 §7 補遺), so "not listening" is a normal resting state, not a
+// failure. While it is down we wait — woken immediately by DaemonUp when a
+// session brings it back, and otherwise polling on a capped backoff so an
+// adopted/externally-started daemon is still picked up.
+func superviseCodexObserver() {
+	backoff := time.Second
 	for {
-		func() {
-			obs := newCodexObserver(conn)
-			stop := make(chan struct{})
-			defer close(stop)
-			go func() {
-				obs.sweep() // threads loaded before this connection existed
-				t := time.NewTicker(codexObserverSweepInterval)
-				defer t.Stop()
-				for {
-					select {
-					case <-stop:
-						return
-					case <-t.C:
-						obs.sweep()
-					}
+		if codex.Serve().Disabled() {
+			log.Printf("codex app-server: observer stopped (server disabled)")
+			return
+		}
+		conn, err := connectCodexAppServer(codex.Serve().Addr())
+		if err != nil {
+			select {
+			case <-codexObserverWake:
+				backoff = time.Second
+			case <-time.After(backoff):
+				if backoff *= 2; backoff > 60*time.Second {
+					backoff = 60 * time.Second
 				}
-			}()
-			for {
-				_, raw, err := conn.ReadMessage()
-				if err != nil {
-					_ = conn.Close()
-					codex.ClearCompacting()
-					log.Printf("codex app-server monitor disconnected: %v", err)
-					return
-				}
-				var msg codexAppServerMessage
-				if json.Unmarshal(raw, &msg) != nil {
-					continue
-				}
-				if msg.Method == "" {
-					obs.handleResponse(msg)
-					continue
-				}
-				// Server-initiated requests (method + id, e.g. approvals aimed at
-				// the driving TUI) fall through harmlessly: no case matches, and we
-				// must not answer on the TUI's behalf.
-				obs.observeThreadLifecycle(msg)
-				handleCodexAppServerEvent(raw)
 			}
-		}()
-		// The app-server remains authoritative for the TUI even if only AF's
-		// observer socket dropped. Reconnect so later events are not silently
-		// missed; attachments are per connection, so the fresh observer's first
-		// sweep re-attaches every loaded thread. Exponential backoff（上限 60s）で
-		// 恒久不在時のビジーリトライを避け、無効化されていたら脱出する。
-		backoff := time.Second
+			continue
+		}
+		backoff = time.Second
+		// Attachments are per connection, so each fresh observer's first sweep
+		// re-attaches every loaded thread.
+		observeCodexAppServer(conn)
+	}
+}
+
+// observeCodexAppServer runs one observer connection until its socket drops.
+func observeCodexAppServer(conn *websocket.Conn) {
+	obs := newCodexObserver(conn)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		obs.sweep() // threads loaded before this connection existed
+		t := time.NewTicker(codexObserverSweepInterval)
+		defer t.Stop()
 		for {
-			time.Sleep(backoff)
-			if codex.Serve().Disabled() {
-				log.Printf("codex app-server: observer stopped (server disabled)")
+			select {
+			case <-stop:
 				return
-			}
-			var err error
-			conn, err = connectCodexAppServer(addr)
-			if err == nil {
-				break
-			}
-			if backoff *= 2; backoff > 60*time.Second {
-				backoff = 60 * time.Second
+			case <-t.C:
+				obs.sweep()
 			}
 		}
+	}()
+	for {
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			_ = conn.Close()
+			codex.ClearCompacting()
+			log.Printf("codex app-server monitor disconnected: %v", err)
+			return
+		}
+		var msg codexAppServerMessage
+		if json.Unmarshal(raw, &msg) != nil {
+			continue
+		}
+		if msg.Method == "" {
+			obs.handleResponse(msg)
+			continue
+		}
+		// Server-initiated requests (method + id, e.g. approvals aimed at
+		// the driving TUI) fall through harmlessly: no case matches, and we
+		// must not answer on the TUI's behalf.
+		obs.observeThreadLifecycle(msg)
+		handleCodexAppServerEvent(raw)
 	}
 }
 
