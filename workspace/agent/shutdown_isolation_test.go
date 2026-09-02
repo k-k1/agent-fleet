@@ -6,8 +6,6 @@ package main
 // ことを、AF_TMUX_SOCKET で隔離した専用サーバ上の実 tmux で確認する。
 
 import (
-	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -38,7 +36,14 @@ func TestOwnedLiveSessionsScopedToOwnMetas(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
-	sock := fmt.Sprintf("af-test-%d", os.Getpid())
+	// 🔥 **ソケット名を固定しない。** ここは `af-test-<pid>` を自前で組んでいたので、
+	// pid はプロセス内で不変 ＝ `-count=N` の**前の周回**（と、同じ名前を使っていた他の
+	// テスト）と 1 つの tmux サーバを共有していた。各周回の Cleanup が `kill-server` を
+	// 撃つが、**tmux はコマンドを受け取った時点で返り、サーバの終了は非同期**なので、
+	// 次の `new-session` が死にかけのサーバへ繋がって `server exited unexpectedly` で
+	// 落ちる。実測 2026-09-02（無負荷・`-count=30`）: **11/30 失敗 → 0/30**。
+	// 名前の作り方は session_rate_limit_state_test.go の isolatedTmuxSocket に 1 本化した。
+	sock := isolatedTmuxSocket()
 	t.Setenv("AF_TMUX_SOCKET", sock)
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	// 専用ソケットに対してのみ kill-server が許される（dev/04 §4.11）。
