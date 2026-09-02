@@ -205,7 +205,7 @@ var _ RuntimeFactory = (*ecsFactory)(nil)
 // question the banner is read for.
 func (f *ecsFactory) WorkspaceImage() string { return f.cfg.workspaceImage }
 
-// awsConfigFor is where every AWS client this deployment builds gets its credentials.
+// AWSConfigFor is where every AWS client this deployment builds gets its credentials.
 // In production it is the default chain — which on ECS means the CP task role, i.e. the
 // only identity that matters — and it exists as a variable for exactly one reason: so
 // the live E2E can run the PRODUCT under a copy of that task role while its own
@@ -215,7 +215,7 @@ func (f *ecsFactory) WorkspaceImage() string { return f.cfg.workspaceImage }
 // permissions at all, and the live E2E went green through every round of it, because it
 // was running as the deployer. "Passed against real AWS" is not "passed with the
 // permissions of production". (docs/log/64 §64.22.3 / §64.23.)
-var awsConfigFor = func(ctx context.Context, region string) (aws.Config, error) {
+var AWSConfigFor = func(ctx context.Context, region string) (aws.Config, error) {
 	return awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region))
 }
 
@@ -223,9 +223,9 @@ var awsConfigFor = func(ctx context.Context, region string) (aws.Config, error) 
 // constructs the ECS/EFS/SSM clients once, then reads the placement from AF_ECS_*.
 // Credentials are resolved lazily by the SDK (task role on ECS), so this does no
 // network I/O at boot.
-func newECSFactory(m *manager) (RuntimeFactory, error) {
+func newECSFactory(mcfg Config) (RuntimeFactory, error) {
 	region := os.Getenv("AF_ECS_REGION")
-	ac, err := awsConfigFor(context.Background(), region)
+	ac, err := AWSConfigFor(context.Background(), region)
 	if err != nil {
 		return nil, fmt.Errorf("aws config: %w", err)
 	}
@@ -240,8 +240,8 @@ func newECSFactory(m *manager) (RuntimeFactory, error) {
 		taskRole:       os.Getenv("AF_ECS_TASK_ROLE"),
 		infraRole:      os.Getenv("AF_ECS_INFRA_ROLE"),
 		logGroup:       os.Getenv("AF_ECS_LOG_GROUP"),
-		workspaceImage: envOr("AF_ECS_WORKSPACE_IMAGE", m.image),
-		sessionCmd:     m.sessionCmd,
+		workspaceImage: envOr("AF_ECS_WORKSPACE_IMAGE", mcfg.Image),
+		sessionCmd:     mcfg.SessionCmd,
 		cpu:            envOr("AF_ECS_TASK_CPU", "1024"),
 		memory:         envOr("AF_ECS_TASK_MEMORY", "2048"),
 		// Deployment default working disk in GiB. 0 keeps Fargate's free 20 GiB; a
@@ -253,16 +253,16 @@ func newECSFactory(m *manager) (RuntimeFactory, error) {
 		// not — the free tier also carries the image layers and /tmp. Shipping 0 meant
 		// the feature was inert in every deployment. Set AF_ECS_WS_DISK_GB=0 to go back
 		// to the free tier (and with it, home entirely on EFS).
-		diskGiB:  envInt("AF_ECS_WS_DISK_GB", ecsDefaultWorkDiskGiB),
-		posixUID: int64(envInt("AF_ECS_POSIX_UID", 1000)),
-		posixGID: int64(envInt("AF_ECS_POSIX_GID", 1000)),
+		diskGiB:  EnvInt("AF_ECS_WS_DISK_GB", ecsDefaultWorkDiskGiB),
+		posixUID: int64(EnvInt("AF_ECS_POSIX_UID", 1000)),
+		posixGID: int64(EnvInt("AF_ECS_POSIX_GID", 1000)),
 		// How long the BACKGROUND readiness watch keeps polling /healthz after Start
 		// returns (observability only — nothing waits on it, see watchReady). Sized
 		// over the whole convergence, not under the ALB idle timeout: a Fargate cold
 		// pull plus a fresh home's boot-install runs past 100s (docs/log/62 §62.3), and a
 		// budget shorter than that would just log a false "not ready" every Start.
 		// Same reasoning as runtime_native's 300s health wait.
-		startTimeout: time.Duration(envInt("AF_ECS_START_TIMEOUT_SEC", 300)) * time.Second,
+		startTimeout: time.Duration(EnvInt("AF_ECS_START_TIMEOUT_SEC", 300)) * time.Second,
 	}
 	log.Printf("runtime=ecs region=%s cluster=%s namespace=%s efs=%s", cfg.region, cfg.cluster, cfg.namespaceArn, cfg.efsFileSystem)
 	// CP タスクより後に作られたワークスペースは Service Connect の別名で引けない
@@ -758,14 +758,14 @@ func appendEFSTenantTag(slug string, tags []efstypes.Tag) []efstypes.Tag {
 	if slug == "" {
 		return tags
 	}
-	return append(tags, efstypes.Tag{Key: aws.String(ec2TagTenant), Value: aws.String(slug)})
+	return append(tags, efstypes.Tag{Key: aws.String(EC2TagTenant), Value: aws.String(slug)})
 }
 
 func appendECSTenantTag(slug string, tags []ecstypes.Tag) []ecstypes.Tag {
 	if slug == "" {
 		return tags
 	}
-	return append(tags, ecstypes.Tag{Key: aws.String(ec2TagTenant), Value: aws.String(slug)})
+	return append(tags, ecstypes.Tag{Key: aws.String(EC2TagTenant), Value: aws.String(slug)})
 }
 
 func efsVolume(name, fsID, apID string) ecstypes.Volume {
@@ -894,7 +894,7 @@ func strOrNil(s string) *string {
 	return aws.String(s)
 }
 
-func envInt(key string, def int) int {
+func EnvInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n

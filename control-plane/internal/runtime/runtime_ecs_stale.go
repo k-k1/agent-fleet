@@ -102,11 +102,11 @@ func ecsStampKey(service string) string     { return "ecs-stamp:" + service }
 // existed, or a deployment whose image is not in ECR), no readable tag (deleted,
 // AccessDenied), not an ECR reference at all. Never nag on a guess.
 func (e *ecsRuntime) Stale(ctx context.Context) bool {
-	was := freshness.get(ecsStampKey(e.name), ecsStaleTTL, func() string { return e.runningImageStamp(ctx) })
+	was := Freshness.get(ecsStampKey(e.name), ecsStaleTTL, func() string { return e.runningImageStamp(ctx) })
 	if was == "" {
 		return false
 	}
-	now := freshness.get(ecrFingerprintKey(e.cfg.workspaceImage), ecsStaleTTL, func() string { return e.imageFingerprint(ctx) })
+	now := Freshness.get(ecrFingerprintKey(e.cfg.workspaceImage), ecsStaleTTL, func() string { return e.imageFingerprint(ctx) })
 	return now != "" && now != was
 }
 
@@ -137,10 +137,10 @@ func (e *ecsRuntime) stampImage(ctx context.Context) map[string]string {
 	key := ecrFingerprintKey(e.cfg.workspaceImage)
 	fp := e.imageFingerprint(ctx)
 	if fp == "" {
-		fp = freshness.peek(key)
+		fp = Freshness.peek(key)
 	}
-	freshness.set(key, fp)
-	freshness.set(ecsStampKey(e.name), fp)
+	Freshness.set(key, fp)
+	Freshness.set(ecsStampKey(e.name), fp)
 	if fp == "" {
 		return nil
 	}

@@ -3,9 +3,10 @@ package main
 import (
 	"net/http"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // manager owns the set of per-membership Workspace runtimes. As of P3-2 (docs/14)
@@ -195,18 +196,7 @@ func (m *manager) workspaceNames(slug, key string) (name, network, dataDir strin
 // workspaceNames); we keep the trailing segment(s) and swap the root. Idempotent
 // when the path is already current. See docs/log/p3-10-packaging.md §20.3(B).
 func (m *manager) rootedDataDir(ws Workspace) string {
-	if ws.DataDir == "" {
-		return ws.DataDir
-	}
-	segs := strings.Split(filepath.ToSlash(strings.TrimRight(ws.DataDir, "/")), "/")
-	n := 2 // <slug>/<key>
-	if ws.TenantID == m.defaultTenantID {
-		n = 1 // <key>
-	}
-	if n > len(segs) {
-		n = len(segs)
-	}
-	return filepath.Join(append([]string{m.dataRoot}, segs[len(segs)-n:]...)...)
+	return runtime.RootedDataDir(m.dataRoot, m.defaultTenantID, runtime.Workspace(ws))
 }
 
 // runtimeFor builds the Runtime for a workspace through the profile-selected
@@ -214,7 +204,10 @@ func (m *manager) rootedDataDir(ws Workspace) string {
 // of the CP uses; the state/stop-only sites below also route through it (secretKey
 // "") so no concrete adapter leaks into manager.
 func (m *manager) runtimeFor(ws Workspace, secretKey string, extraEnv ...string) Runtime {
-	return m.rtFactory.New(ws, secretKey, extraEnv)
+	// The conversion is the seam: the adapters declare their own copy of this record
+	// (internal/runtime/deps.go) so they need not import the store while it is being
+	// moved in parallel. Field-for-field identical, so a divergence stops compiling here.
+	return m.rtFactory.New(runtime.Workspace(ws), secretKey, extraEnv)
 }
 
 // evictTenantCache drops the memoized runtimes for a tenant so they are rebuilt

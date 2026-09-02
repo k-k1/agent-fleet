@@ -32,22 +32,22 @@ import (
 	"time"
 )
 
-// agentBootBudget は「まだ起動途中だ」と名乗ってよい上限。同期猶予（startHealthWait）を
+// AgentBootBudget は「まだ起動途中だ」と名乗ってよい上限。同期猶予（startHealthWait）を
 // 超えたあとも、この期限までは State() が "starting" を返す。
 //
 // 300 秒なのは native の rootfs 経路・ECS の startTimeout と同じ根拠（cold pull ＋
 // entrypoint の boot-install ＋ CLI 自己更新の実測 約60 秒を包む）。**必ず時限式**に
 // するのが肝で、収束しない "starting" は Console から停止も再作成もできない箱になる
 // （docs/log/70 §70.14.6 の実害）。期限が切れたら素直に running（コンテナは在る）へ落ちる。
-const agentBootBudget = 300 * time.Second
+const AgentBootBudget = 300 * time.Second
 
-// agentReadyWait は「Agent に用がある API」がその場で待ってよい上限（AF_AGENT_READY_WAIT_SEC）。
+// AgentReadyWait は「Agent に用がある API」がその場で待ってよい上限（AF_AGENT_READY_WAIT_SEC）。
 // 既定 55 秒は ALB の idle timeout 60 秒（deploy/aws/ecs/cfn/30-ingress.yaml）の内側に
 // 収めるため — HTTP ハンドラの中で待つ以上、ここを超えた瞬間に応答そのものが 504 で
 // 消える（docs/log/62 §62.5 で計測済み）。待ちきれなければ 409 workspace_starting を返す。
 // 起動は裏で続くので、利用者/Console の再試行が次に通る。
-func agentReadyWait() time.Duration {
-	if n := envInt("AF_AGENT_READY_WAIT_SEC", 0); n > 0 {
+func AgentReadyWait() time.Duration {
+	if n := EnvInt("AF_AGENT_READY_WAIT_SEC", 0); n > 0 {
 		return time.Duration(n) * time.Second
 	}
 	return 55 * time.Second
@@ -61,7 +61,7 @@ func agentReadyWait() time.Duration {
 //
 // ★ これは「これを過ぎたら失敗」ではなく「これを過ぎたら starting を名乗って返る」。
 func agentHealthWait(def time.Duration) time.Duration {
-	if n := envInt("AF_AGENT_HEALTH_WAIT_SEC", 0); n > 0 {
+	if n := EnvInt("AF_AGENT_HEALTH_WAIT_SEC", 0); n > 0 {
 		return time.Duration(n) * time.Second
 	}
 	return def
@@ -90,14 +90,14 @@ func agentHealthy(ctx context.Context, endpoint string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// waitAgentHealthy polls the Agent's /healthz until it answers 200 or the
+// WaitAgentHealthy polls the Agent's /healthz until it answers 200 or the
 // timeout lapses. Shared by the docker and native local adapters (ECS has its
 // own converge loop) and by ensureWorkspaceReady.
 //
 // 返るエラーは 2 種類で、意味がまるで違う:
 //   - agentNotReadyError … まだ来ていないだけ。起動は続いている。
 //   - ctx のキャンセル   … 呼び出し側が去った（リクエスト打ち切り・lease 喪失）。
-func waitAgentHealthy(ctx context.Context, endpoint string, timeout time.Duration) error {
+func WaitAgentHealthy(ctx context.Context, endpoint string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		// キャンセル済み ctx で最大タイムアウトまでポーリングし続けない

@@ -45,11 +45,11 @@ type Runtime interface {
 	Name() string                     // container / display name
 }
 
-// workspaceAlive reports whether a State() value means "there is a live container /
+// WorkspaceAlive reports whether a State() value means "there is a live container /
 // process behind this workspace right now". Anything that would destroy state under a
 // running workspace (wiping the home bind-mount) must test THIS, not `== "running"`:
 // a workspace whose Agent has not answered yet is still a container writing to disk.
-func workspaceAlive(state string) bool { return state == "running" || state == "starting" }
+func WorkspaceAlive(state string) bool { return state == "running" || state == "starting" }
 
 // runtimeDestroyer tears down everything a Workspace owns that OUTLIVES its container:
 // the home data, and on the cloud adapters the per-membership resources the CP created
@@ -69,10 +69,10 @@ type runtimeDestroyer interface {
 	Destroy(context.Context) ([]string, error)
 }
 
-// destroyRuntime runs the adapter's teardown. The "does not support" error is unreachable
+// DestroyRuntime runs the adapter's teardown. The "does not support" error is unreachable
 // with the four adapters in tree and exists so a future adapter fails loudly rather than
 // leaking resources quietly.
-func destroyRuntime(ctx context.Context, rt Runtime) ([]string, error) {
+func DestroyRuntime(ctx context.Context, rt Runtime) ([]string, error) {
 	d, ok := rt.(runtimeDestroyer)
 	if !ok {
 		return nil, fmt.Errorf("runtime %T does not support destroy", rt)
@@ -87,7 +87,7 @@ type runtimeOperationFencer interface {
 	AcquireOperationFence(context.Context) (func(), error)
 }
 
-type runtimeStartFencer interface {
+type StartFencer interface {
 	AbortUncommittedStart(context.Context) error
 	CommitStart()
 }
@@ -99,17 +99,12 @@ func acquireRuntimeOperationFence(ctx context.Context, rt Runtime) (func(), erro
 	return func() {}, nil
 }
 
-func (m *manager) acquireWorkspaceOperationFence(ctx context.Context, workspaceID string, rt Runtime) (func(), error) {
-	releaseDB, err := m.store.AcquireWorkspaceOperationFence(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	releaseRuntime, err := acquireRuntimeOperationFence(ctx, rt)
-	if err != nil {
-		releaseDB()
-		return nil, err
-	}
-	return func() { releaseRuntime(); releaseDB() }, nil
+// AcquireOperationFence is the exported half of the CP's workspace fence: the DB lease
+// is the CP's to take (it owns the store), the OS-level fence is the adapter's. The CP
+// composes the two in alias_runtime.go so the order — DB first, runtime second, both
+// released in reverse — stays in one place.
+func AcquireOperationFence(ctx context.Context, rt Runtime) (func(), error) {
+	return acquireRuntimeOperationFence(ctx, rt)
 }
 
 // dockerRuntime is the first Runtime adapter; the ECS adapter (P3-7) must satisfy
@@ -141,13 +136,13 @@ type RuntimeFactory interface {
 
 var _ RuntimeFactory = (*dockerFactory)(nil)
 
-// runtimeDocsMounter marks the adapters that hand the container its role-scoped docs by
+// DocsMounter marks the adapters that hand the container its role-scoped docs by
 // bind-mounting <dataDir>/docs (docker, native). The start path stages that directory
 // only for them; an adapter without a host seam — ECS — leaves it alone, and its
 // container pulls the same subset over the CP's /internal/docs (docs_bridge.go).
-type runtimeDocsMounter interface{ mountsStagedDocs() }
+type DocsMounter interface{ mountsStagedDocs() }
 
-// newRuntimeFactory selects the Runtime adapter by deployment profile (AF_RUNTIME):
+// NewFactory selects the Runtime adapter by deployment profile (AF_RUNTIME):
 // "" / "local" / "docker" → Docker Engine (compose, the on-prem default); "ecs" /
 // "aws" → AWS ECS on Fargate (P3-7); "ecs-ec2" → the same ECS substrate on the EC2
 // launch type with a pool of slots and a persistent per-user EBS home (docs/log/64,
@@ -161,23 +156,23 @@ type runtimeDocsMounter interface{ mountsStagedDocs() }
 // trades a proven, two-resource Fargate workspace for a six-resource one on a
 // substrate with no production mileage, so a deployment must opt in and can fall back
 // by editing this one value — not by reverting code.
-func newRuntimeFactory(profile string, m *manager) (RuntimeFactory, error) {
+func NewFactory(profile string, mcfg Config) (RuntimeFactory, error) {
 	switch profile {
 	case "", "local", "docker":
 		return &dockerFactory{
-			image:       m.image,
-			agentHost:   m.agentHost,
-			memory:      m.memory,
-			sessionCmd:  m.sessionCmd,
-			extraEnv:    m.extraEnv,
-			rootDataDir: m.rootedDataDir,
+			image:       mcfg.Image,
+			agentHost:   mcfg.AgentHost,
+			memory:      mcfg.Memory,
+			sessionCmd:  mcfg.SessionCmd,
+			extraEnv:    mcfg.ExtraEnv,
+			rootDataDir: mcfg.rootedDataDir,
 		}, nil
 	case "ecs", "aws":
-		return newECSFactory(m)
+		return newECSFactory(mcfg)
 	case "ecs-ec2":
-		return newECSEC2Factory(m)
+		return newECSEC2Factory(mcfg)
 	case "native", "wsl":
-		return newNativeFactory(m)
+		return newNativeFactory(mcfg)
 	default:
 		return nil, fmt.Errorf("unknown AF_RUNTIME profile %q (want local|ecs|ecs-ec2|native)", profile)
 	}

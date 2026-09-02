@@ -25,34 +25,34 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 )
 
-// goldenBakePool is what the baker needs from the deployment's runtime profile. Only
+// GoldenBakePool is what the baker needs from the deployment's runtime profile. Only
 // ecs-ec2 implements it; on every other profile the baker simply never runs, which is
 // correct — nothing else seeds new homes from a shared snapshot.
-type goldenBakePool interface {
-	// workspaceImage is the image string a golden must be stamped with to be usable.
-	workspaceImage() string
-	// poolLabel identifies the slot pool, for logs.
-	poolLabel() string
-	// bakeArches lists the CPU architectures this deployment needs a golden for —
+type GoldenBakePool interface {
+	// WorkspaceImage is the image string a golden must be stamped with to be usable.
+	WorkspaceImage() string
+	// PoolLabel identifies the slot pool, for logs.
+	PoolLabel() string
+	// BakeArches lists the CPU architectures this deployment needs a golden for —
 	// one per distinct architecture among the declared slot classes, the default
 	// class's first. A golden is a home full of BINARIES, so there is no such thing
 	// as one golden for two architectures (docs/log/70 §70.6).
-	bakeArches() []string
-	// goldenFor returns the newest COMPLETED snapshot carrying this role for the
+	BakeArches() []string
+	// GoldenFor returns the newest COMPLETED snapshot carrying this role for the
 	// running image AND this architecture, plus anything still pending.
 	// ("", false) means neither.
-	goldenFor(ctx context.Context, role, arch string) (snap goldenSnap, found bool, err error)
-	// bakeBlocked reports that starting a NEW bake would take the last slot from a
+	GoldenFor(ctx context.Context, role, arch string) (snap GoldenSnap, found bool, err error)
+	// BakeBlocked reports that starting a NEW bake would take the last slot from a
 	// real user. It gates only the first step: abandoning a bake half way through
 	// would strand the seed's slot, which is the opposite of the intent.
-	bakeBlocked(ctx context.Context) (bool, string, error)
-	// snapshotHome captures a detached-or-stopped home as a golden CANDIDATE for arch.
-	snapshotHome(ctx context.Context, volumeID, workspace, arch string) (string, error)
-	// setGoldenRole moves a snapshot between the golden roles (candidate → golden on a
+	BakeBlocked(ctx context.Context) (bool, string, error)
+	// SnapshotHome captures a detached-or-stopped home as a golden CANDIDATE for arch.
+	SnapshotHome(ctx context.Context, volumeID, workspace, arch string) (string, error)
+	// SetGoldenRole moves a snapshot between the golden roles (candidate → golden on a
 	// passing probe, candidate → rejected on a failing one). reason is recorded when
 	// non-empty.
-	setGoldenRole(ctx context.Context, snapshotID, role, reason string) error
-	// dropSupersededGoldens deletes every published golden AND every leftover candidate
+	SetGoldenRole(ctx context.Context, snapshotID, role, reason string) error
+	// DropSupersededGoldens deletes every published golden AND every leftover candidate
 	// OF THIS ARCHITECTURE except keepID. Called only after a candidate has been
 	// promoted, so the pool never pays for two — and so that a second CP replica that
 	// baked its own candidate in the same window does not leave it billing forever.
@@ -60,23 +60,23 @@ type goldenBakePool interface {
 	// ⚠️ The arch scope is load-bearing, not tidiness: without it, publishing the arm64
 	// golden would delete the x86_64 one, and every new x86_64 member would silently
 	// go back to an empty home.
-	dropSupersededGoldens(ctx context.Context, keepID, arch string) error
-	// rejectedAttempts counts the candidates this image has already burned. It is the
+	DropSupersededGoldens(ctx context.Context, keepID, arch string) error
+	// RejectedAttempts counts the candidates this image has already burned. It is the
 	// give-up counter: a bake that fails for a reason that is not going to change
 	// (an image whose home genuinely cannot boot) must stop taking a slot every tick.
-	rejectedAttempts(ctx context.Context, arch string) (int, error)
-	// seedClassFor is a slot class that runs on arch, for the seed and probe
+	RejectedAttempts(ctx context.Context, arch string) (int, error)
+	// SeedClassFor is a slot class that runs on arch, for the seed and probe
 	// workspaces to be placed with. "" when the deployment declared no classes.
-	seedClassFor(arch string) string
-	// sweepOrphans deletes the AWS side of a reserved bake workspace that the database
+	SeedClassFor(arch string) string
+	// SweepOrphans deletes the AWS side of a reserved bake workspace that the database
 	// has no row for — the service (only while it is carrying no task) and its detached
 	// home volume — and returns what it removed, empty when there was nothing. The
 	// caller has already established that nothing owns the name.
-	sweepOrphans(ctx context.Context, workspace string) ([]string, error)
+	SweepOrphans(ctx context.Context, workspace string) ([]string, error)
 }
 
-// goldenSnap is the little that the state machine needs to know about a snapshot.
-type goldenSnap struct {
+// GoldenSnap is the little that the state machine needs to know about a snapshot.
+type GoldenSnap struct {
 	ID        string
 	Completed bool
 	Failed    bool
@@ -86,8 +86,8 @@ type goldenSnap struct {
 	Started time.Time
 }
 
-// goldenHome is the seed's home volume as the state machine sees it.
-type goldenHome struct {
+// GoldenHome is the seed's home volume as the state machine sees it.
+type GoldenHome struct {
 	VolumeID string
 	// Capturable is "not attached to a running slot" — the same rule bake-golden.sh
 	// applies, for the same reason (§64.28.2).
@@ -99,29 +99,29 @@ type goldenHome struct {
 	Created time.Time
 }
 
-// goldenSeedRuntime is what the baker needs from the seed workspace's own runtime,
+// GoldenSeedRuntime is what the baker needs from the seed workspace's own runtime,
 // beyond the ordinary Runtime interface (Start / Stop / State).
-type goldenSeedRuntime interface {
-	// seedFromCandidate makes THIS workspace build its new home from an unpublished
+type GoldenSeedRuntime interface {
+	// SeedFromCandidate makes THIS workspace build its new home from an unpublished
 	// candidate instead of the published golden. Set on the probe only.
-	seedFromCandidate()
-	// homeForBake reports the workspace's home volume, whether it is safe to snapshot
+	SeedFromCandidate()
+	// HomeForBake reports the workspace's home volume, whether it is safe to snapshot
 	// right now (i.e. not attached to a RUNNING slot), whether boot-install has been
-	// confirmed on it (markHomeBaked), and when the volume was created — the anchor
+	// confirmed on it (MarkHomeBaked), and when the volume was created — the anchor
 	// for the seed's own deadline. volumeID is "" when there is no home yet.
-	homeForBake(ctx context.Context) (h goldenHome, err error)
-	// markHomeBaked records that this home has finished boot-install and is worth
+	HomeForBake(ctx context.Context) (h GoldenHome, err error)
+	// MarkHomeBaked records that this home has finished boot-install and is worth
 	// capturing. Called once, after the seed's Agent answers.
-	markHomeBaked(ctx context.Context, volumeID string) error
-	// releaseForBake unmounts and detaches the home. This is the CP-side equivalent of
+	MarkHomeBaked(ctx context.Context, volumeID string) error
+	// ReleaseForBake unmounts and detaches the home. This is the CP-side equivalent of
 	// the 15-minute wait an operator running bake-golden.sh has to sit through
 	// (§64.28.2): in here the umount is a call, not a shutdown to wait for.
-	releaseForBake(ctx context.Context) error
+	ReleaseForBake(ctx context.Context) error
 }
 
 var (
-	_ goldenBakePool    = (*ecsEC2Factory)(nil)
-	_ goldenSeedRuntime = (*ecsEC2Runtime)(nil)
+	_ GoldenBakePool    = (*ecsEC2Factory)(nil)
+	_ GoldenSeedRuntime = (*ecsEC2Runtime)(nil)
 )
 
 // --- golden の同一性（docs/log/72 §72.6.4） ------------------------------------------
@@ -154,7 +154,7 @@ func goldenIdentityFor(ctx context.Context, api ecrAPI, image string) goldenIden
 	if api == nil || image == "" {
 		return id
 	}
-	id.fp = freshness.get(goldenFPCacheKey(image), ecsStaleTTL, func() string {
+	id.fp = Freshness.get(goldenFPCacheKey(image), ecsStaleTTL, func() string {
 		return hashImageFingerprint(ecrImageFingerprint(ctx, api, image))
 	})
 	return id
@@ -195,17 +195,16 @@ func (id goldenIdentity) stampTags() []ec2types.Tag {
 
 // --- pool side -----------------------------------------------------------------
 
-func (f *ecsEC2Factory) workspaceImage() string { return f.base.WorkspaceImage() }
-func (f *ecsEC2Factory) poolLabel() string      { return f.pool.pool }
+func (f *ecsEC2Factory) PoolLabel() string { return f.pool.pool }
 
 // imageIdentity is workspaceImage() plus the content it currently resolves to.
 func (f *ecsEC2Factory) imageIdentity(ctx context.Context) goldenIdentity {
-	return goldenIdentityFor(ctx, f.base.ecr, f.workspaceImage())
+	return goldenIdentityFor(ctx, f.base.ecr, f.WorkspaceImage())
 }
 
-// bakeArches is the declared classes' distinct architectures, default class first
+// BakeArches is the declared classes' distinct architectures, default class first
 // so the arch most members land on gets its golden soonest.
-func (f *ecsEC2Factory) bakeArches() []string {
+func (f *ecsEC2Factory) BakeArches() []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(a string) {
@@ -221,10 +220,10 @@ func (f *ecsEC2Factory) bakeArches() []string {
 	return out
 }
 
-// seedClassFor picks a class on the given architecture. The FIRST declared one, not
+// SeedClassFor picks a class on the given architecture. The FIRST declared one, not
 // the cheapest or the biggest: the seed exists to run boot-install once, and which
 // rung it does that on changes nothing about the home it produces.
-func (f *ecsEC2Factory) seedClassFor(arch string) string {
+func (f *ecsEC2Factory) SeedClassFor(arch string) string {
 	for _, c := range f.pool.classes {
 		if c.arch == arch {
 			return c.id
@@ -249,24 +248,24 @@ func snapshotArch(s ec2types.Snapshot) string {
 // and every home is built empty.
 func archOrX86(a string) string {
 	if a == "" {
-		return ec2ArchX86
+		return EC2ArchX86
 	}
 	return a
 }
 
-func (f *ecsEC2Factory) goldenFor(ctx context.Context, role, arch string) (goldenSnap, bool, error) {
+func (f *ecsEC2Factory) GoldenFor(ctx context.Context, role, arch string) (GoldenSnap, bool, error) {
 	out, err := f.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 		OwnerIds: []string{"self"},
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, f.pool.pool),
-			tagFilter(ec2TagRole, role),
+			tagFilter(EC2TagPool, f.pool.pool),
+			tagFilter(EC2TagRole, role),
 		},
 	})
 	if err != nil {
-		return goldenSnap{}, false, err
+		return GoldenSnap{}, false, err
 	}
 	id := f.imageIdentity(ctx)
-	var best goldenSnap
+	var best GoldenSnap
 	found := false
 	for i := range out.Snapshots {
 		s := out.Snapshots[i]
@@ -278,7 +277,7 @@ func (f *ecsEC2Factory) goldenFor(ctx context.Context, role, arch string) (golde
 		if snapshotArch(s) != arch || !id.matches(s.Tags) {
 			continue
 		}
-		g := goldenSnap{
+		g := GoldenSnap{
 			ID:        aws.ToString(s.SnapshotId),
 			Completed: s.State == ec2types.SnapshotStateCompleted,
 			Failed:    s.State == ec2types.SnapshotStateError,
@@ -297,15 +296,15 @@ func (f *ecsEC2Factory) goldenFor(ctx context.Context, role, arch string) (golde
 	return best, found, nil
 }
 
-// bakeBlocked keeps the baker off the last slot. A pool at its cap means the next
+// BakeBlocked keeps the baker off the last slot. A pool at its cap means the next
 // person to arrive would be evicting somebody; taking that slot for housekeeping is
 // not a trade this feature gets to make (the cost of not baking is a slow first start,
 // which is exactly what the golden is for and therefore nobody's emergency).
-func (f *ecsEC2Factory) bakeBlocked(ctx context.Context) (bool, string, error) {
+func (f *ecsEC2Factory) BakeBlocked(ctx context.Context) (bool, string, error) {
 	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, f.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleSlot),
+			tagFilter(EC2TagPool, f.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleSlot),
 			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
 		},
 	})
@@ -328,17 +327,17 @@ func (f *ecsEC2Factory) bakeBlocked(ctx context.Context) (bool, string, error) {
 // (docs/log/64 §64.30). Two copies of "needs two free" would drift, and the screen's job is
 // precisely to explain the baker's decisions.
 func bakeCapacityBlocked(inUse, maxSlots int) (bool, string) {
-	if inUse+bakeReservedSlots > maxSlots {
+	if inUse+BakeReservedSlots > maxSlots {
 		return true, fmt.Sprintf("%d/%d slots in use; a bake needs two free", inUse, maxSlots)
 	}
 	return false, ""
 }
 
-// bakeReservedSlots is the "two free" above as a number other code can subtract. The
+// BakeReservedSlots is the "two free" above as a number other code can subtract. The
 // tenant-quota check (poolBudget) has to leave the same room, and a deployment that
 // allocated every slot would never re-bake its golden — a failure whose only symptom is
 // "new members start slowly", noticed weeks later if at all.
-const bakeReservedSlots = 2
+const BakeReservedSlots = 2
 
 // --- what the pool screen shows about a bake in flight (docs/log/64 §64.30) -----------
 
@@ -359,13 +358,13 @@ type ec2BakeHome struct {
 // only after the home was captured, a captured home only after boot-install finished,
 // and so on, so the first case that matches is the truthful one even when a previous
 // step's leftovers are still around.
-func describeBake(g *ec2GoldenView, arch string, homes map[string]ec2BakeHome, slotRunning map[string]bool,
+func describeBake(g *EC2GoldenView, arch string, homes map[string]ec2BakeHome, slotRunning map[string]bool,
 	cand ec2types.SnapshotState, blocked bool, slotsInUse int) {
-	seedWS, seed, haveSeed := findBakeHome(homes, goldenSeedKey, arch)
+	seedWS, seed, haveSeed := findBakeHome(homes, GoldenSeedKey, arch)
 	if haveSeed {
 		g.Seed = &ec2BakeWorkspaceView{Workspace: seedWS, VolumeID: seed.VolumeID, InstanceID: seed.InstanceID}
 	}
-	if probeWS, probe, ok := findBakeHome(homes, goldenProbeKey, arch); ok {
+	if probeWS, probe, ok := findBakeHome(homes, GoldenProbeKey, arch); ok {
 		g.Probe = &ec2BakeWorkspaceView{Workspace: probeWS, VolumeID: probe.VolumeID, InstanceID: probe.InstanceID}
 	}
 	switch {
@@ -395,9 +394,9 @@ func describeBake(g *ec2GoldenView, arch string, homes map[string]ec2BakeHome, s
 	case g.Rejected != "":
 		g.Phase = ec2BakePhaseRejected
 	case blocked:
-		g.Phase, g.SlotsInUse = ec2BakePhaseBlocked, slotsInUse
+		g.Phase, g.SlotsInUse = EC2BakePhaseBlocked, slotsInUse
 	default:
-		g.Phase = ec2BakePhaseIdle
+		g.Phase = EC2BakePhaseIdle
 	}
 }
 
@@ -406,7 +405,7 @@ func describeBake(g *ec2GoldenView, arch string, homes map[string]ec2BakeHome, s
 // af-ws-<tenant>-<key>) — and per architecture, because arm64's seed is a different
 // workspace from x86_64's (archKey).
 func findBakeHome(homes map[string]ec2BakeHome, key, arch string) (string, ec2BakeHome, bool) {
-	want := archKey(key, arch)
+	want := ArchKey(key, arch)
 	for ws, h := range homes {
 		if ws == want || strings.HasSuffix(ws, "-"+want) {
 			return ws, h, true
@@ -445,13 +444,13 @@ func bakeStamp(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-func (f *ecsEC2Factory) snapshotHome(ctx context.Context, volumeID, workspace, arch string) (string, error) {
+func (f *ecsEC2Factory) SnapshotHome(ctx context.Context, volumeID, workspace, arch string) (string, error) {
 	// ⚠️ The identity is taken HERE, at capture time, and both halves are stamped in the
 	// same CreateSnapshot call. Reading it again later would let an image that moved
 	// mid-bake stamp a candidate with content it was not baked from.
 	tags := []ec2types.Tag{
-		{Key: aws.String(ec2TagPool), Value: aws.String(f.pool.pool)},
-		{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleGoldenCandidate)},
+		{Key: aws.String(EC2TagPool), Value: aws.String(f.pool.pool)},
+		{Key: aws.String(EC2TagRole), Value: aws.String(EC2RoleGoldenCandidate)},
 		{Key: aws.String(ec2TagArch), Value: aws.String(arch)},
 		{Key: aws.String(ec2TagBakeStarted), Value: aws.String(time.Now().UTC().Format(time.RFC3339))},
 		{Key: aws.String("Name"), Value: aws.String("af-golden-candidate-" + arch)},
@@ -459,7 +458,7 @@ func (f *ecsEC2Factory) snapshotHome(ctx context.Context, volumeID, workspace, a
 	tags = append(tags, f.imageIdentity(ctx).stampTags()...)
 	out, err := f.ec2.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
 		VolumeId:    aws.String(volumeID),
-		Description: aws.String("agent-fleet golden home candidate (" + f.workspaceImage() + ", " + arch + ")"),
+		Description: aws.String("agent-fleet golden home candidate (" + f.WorkspaceImage() + ", " + arch + ")"),
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeSnapshot,
 			Tags:         tags,
@@ -469,37 +468,37 @@ func (f *ecsEC2Factory) snapshotHome(ctx context.Context, volumeID, workspace, a
 		return "", err
 	}
 	id := aws.ToString(out.SnapshotId)
-	log.Printf("golden: baking %s from %s (image %s, %s)", id, workspace, f.workspaceImage(), arch)
+	log.Printf("golden: baking %s from %s (image %s, %s)", id, workspace, f.WorkspaceImage(), arch)
 	return id, nil
 }
 
-// setGoldenRole is a CreateTags, which OVERWRITES a key that is already there — the
+// SetGoldenRole is a CreateTags, which OVERWRITES a key that is already there — the
 // promotion and the rejection are both one call, and both are idempotent.
 //
 // ★ Never DeleteTags-then-CreateTags. A CP that died between the two would leave a
 // snapshot with no af-role at all: invisible to every lookup, matched by no cleanup,
 // and billed forever.
-func (f *ecsEC2Factory) setGoldenRole(ctx context.Context, snapshotID, role, reason string) error {
-	tags := []ec2types.Tag{{Key: aws.String(ec2TagRole), Value: aws.String(role)}}
+func (f *ecsEC2Factory) SetGoldenRole(ctx context.Context, snapshotID, role, reason string) error {
+	tags := []ec2types.Tag{{Key: aws.String(EC2TagRole), Value: aws.String(role)}}
 	switch role {
-	case ec2RoleGolden:
+	case EC2RoleGolden:
 		tags = append(tags, ec2types.Tag{Key: aws.String("Name"), Value: aws.String("af-golden")})
-	case ec2RoleGoldenRejected:
+	case EC2RoleGoldenRejected:
 		tags = append(tags, ec2types.Tag{Key: aws.String("Name"), Value: aws.String("af-golden-rejected")})
 	}
 	if reason != "" {
-		tags = append(tags, ec2types.Tag{Key: aws.String(ec2TagBakeReason), Value: aws.String(reason)})
+		tags = append(tags, ec2types.Tag{Key: aws.String(EC2TagBakeReason), Value: aws.String(reason)})
 	}
 	_, err := f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{Resources: []string{snapshotID}, Tags: tags})
 	return err
 }
 
-func (f *ecsEC2Factory) rejectedAttempts(ctx context.Context, arch string) (int, error) {
+func (f *ecsEC2Factory) RejectedAttempts(ctx context.Context, arch string) (int, error) {
 	out, err := f.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 		OwnerIds: []string{"self"},
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, f.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleGoldenRejected),
+			tagFilter(EC2TagPool, f.pool.pool),
+			tagFilter(EC2TagRole, EC2RoleGoldenRejected),
 		},
 	})
 	if err != nil {
@@ -520,16 +519,16 @@ func (f *ecsEC2Factory) rejectedAttempts(ctx context.Context, arch string) (int,
 	return n, nil
 }
 
-func (f *ecsEC2Factory) dropSupersededGoldens(ctx context.Context, keepID, arch string) error {
+func (f *ecsEC2Factory) DropSupersededGoldens(ctx context.Context, keepID, arch string) error {
 	// ★ Rejected candidates are NOT swept. They are the record of why an image has no
 	// golden, and they are also the give-up counter — deleting them would put the baker
 	// straight back into retrying an image it has already proven cannot boot.
-	for _, role := range []string{ec2RoleGolden, ec2RoleGoldenCandidate} {
+	for _, role := range []string{EC2RoleGolden, EC2RoleGoldenCandidate} {
 		out, err := f.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 			OwnerIds: []string{"self"},
 			Filters: []ec2types.Filter{
-				tagFilter(ec2TagPool, f.pool.pool),
-				tagFilter(ec2TagRole, role),
+				tagFilter(EC2TagPool, f.pool.pool),
+				tagFilter(EC2TagRole, role),
 			},
 		})
 		if err != nil {
@@ -551,19 +550,19 @@ func (f *ecsEC2Factory) dropSupersededGoldens(ctx context.Context, keepID, arch 
 
 // --- seed / probe runtime side ---------------------------------------------------
 
-func (e *ecsEC2Runtime) seedFromCandidate() { e.seedRole = ec2RoleGoldenCandidate }
+func (e *ecsEC2Runtime) SeedFromCandidate() { e.seedRole = EC2RoleGoldenCandidate }
 
-// homeForBake answers the same question bake-golden.sh's guard asks, and with the same
+// HomeForBake answers the same question bake-golden.sh's guard asks, and with the same
 // rule (§64.28.2): a home attached to a STOPPED slot is safe to capture, because the
 // instance stop unmounted it on the way down; a home attached to a RUNNING slot is not.
-// The baker normally gets there via releaseForBake — this is the check that makes the
+// The baker normally gets there via ReleaseForBake — this is the check that makes the
 // resume path safe when a previous tick already detached it.
-func (e *ecsEC2Runtime) homeForBake(ctx context.Context) (goldenHome, error) {
+func (e *ecsEC2Runtime) HomeForBake(ctx context.Context) (GoldenHome, error) {
 	vol, err := e.homeVolume(ctx)
 	if err != nil || vol == nil {
-		return goldenHome{}, err
+		return GoldenHome{}, err
 	}
-	h := goldenHome{
+	h := GoldenHome{
 		VolumeID: aws.ToString(vol.VolumeId),
 		Baked:    ec2TagValue(vol.Tags, ec2TagBakeReady) != "",
 	}
@@ -583,7 +582,7 @@ func (e *ecsEC2Runtime) homeForBake(ctx context.Context) (goldenHome, error) {
 	return h, nil
 }
 
-func (e *ecsEC2Runtime) markHomeBaked(ctx context.Context, volumeID string) error {
+func (e *ecsEC2Runtime) MarkHomeBaked(ctx context.Context, volumeID string) error {
 	_, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{volumeID},
 		Tags: []ec2types.Tag{{
@@ -593,7 +592,7 @@ func (e *ecsEC2Runtime) markHomeBaked(ctx context.Context, volumeID string) erro
 	return err
 }
 
-// sweepOrphans deletes what is left in AWS of a reserved bake workspace whose database
+// SweepOrphans deletes what is left in AWS of a reserved bake workspace whose database
 // row is gone. It exists because the two sides can come apart: the bake creates a
 // service and a 50 GiB home under a name, and if the row that pointed at them is
 // deleted while they survive — a destroy racing a re-create, a CP that died between the
@@ -610,7 +609,7 @@ func (e *ecsEC2Runtime) markHomeBaked(ctx context.Context, volumeID string) erro
 // owns it) plus two refusals here: a service still carrying a task is left alone, and so
 // is a volume that is attached or that a snapshot is still reading — a bake in flight
 // must not be swept out from under itself.
-func (f *ecsEC2Factory) sweepOrphans(ctx context.Context, workspace string) ([]string, error) {
+func (f *ecsEC2Factory) SweepOrphans(ctx context.Context, workspace string) ([]string, error) {
 	var removed []string
 	svc, err := f.base.ecs.DescribeServices(ctx, &ecs.DescribeServicesInput{
 		Cluster:  aws.String(f.base.cfg.cluster),
@@ -639,8 +638,8 @@ func (f *ecsEC2Factory) sweepOrphans(ctx context.Context, workspace string) ([]s
 	}
 	vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, f.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleHome),
+			tagFilter(EC2TagPool, f.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleHome),
 			tagFilter(ec2TagWorkspace, workspace),
 		},
 	})
@@ -688,9 +687,9 @@ func (f *ecsEC2Factory) snapshotInProgress(ctx context.Context, volumeID string)
 	return false, nil
 }
 
-// releaseForBake is releaseSlot under a name that says why it is being called. The
+// ReleaseForBake is releaseSlot under a name that says why it is being called. The
 // operator's script cannot do this at all — nothing in the normal lifecycle detaches a
 // merely stopped home, which is what made the documented procedure a dead end
 // (§64.28.2). In the CP the umount is one SSM call away, so the bake pays seconds
 // instead of the slot-sleep timer, and the slot goes straight back to the pool.
-func (e *ecsEC2Runtime) releaseForBake(ctx context.Context) error { return e.releaseSlot(ctx) }
+func (e *ecsEC2Runtime) ReleaseForBake(ctx context.Context) error { return e.releaseSlot(ctx) }
