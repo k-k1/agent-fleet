@@ -618,7 +618,7 @@ func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
-	runtime := shareStopRuntime{stopped: make(chan struct{})}
+	rt := shareStopRuntime{stopped: make(chan struct{})}
 	mgr := &manager{store: st, rts: map[string]cachedRT{}}
 	lock := mgr.startLockFor(workspace.ID)
 	lock.Lock() // the approval path holds this across its Agent operation
@@ -626,17 +626,17 @@ func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 	go func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/workspace/stop", nil)
-		newWorkspaceAPI(mgr, false).stop(rec, req, &resolved{rt: runtime, ws: workspace, mv: store.MembershipView{MembershipID: membership.ID}})
+		newWorkspaceAPI(mgr, false).stop(rec, req, &resolved{rt: rt, ws: workspace, mv: store.MembershipView{MembershipID: membership.ID}})
 		close(done)
 	}()
 	select {
-	case <-runtime.stopped:
+	case <-rt.stopped:
 		t.Fatal("workspace stopped while an approved operation held the lifecycle lock")
 	case <-time.After(50 * time.Millisecond):
 	}
 	lock.Unlock()
 	select {
-	case <-runtime.stopped:
+	case <-rt.stopped:
 	case <-time.After(time.Second):
 		t.Fatal("workspace stop did not continue after approval released the lifecycle lock")
 	}
@@ -751,8 +751,8 @@ func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 		localA.Unlock()
 		t.Fatalf("cross-manager downgrade status=%d body=%s", blocked.Code, blocked.Body.String())
 	}
-	runtime := &shareLifecycleRuntime{}
-	resolvedOwner := &resolved{rt: runtime, ws: workspace, mv: ownerViews[0]}
+	rt := &shareLifecycleRuntime{}
+	resolvedOwner := &resolved{rt: rt, ws: workspace, mv: ownerViews[0]}
 	for _, invoke := range []func(http.ResponseWriter, *http.Request, *resolved){
 		newWorkspaceAPI(managerB, false).start,
 		newWorkspaceAPI(managerB, false).stop,
@@ -766,9 +766,9 @@ func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 			t.Fatalf("cross-manager lifecycle status=%d body=%s", rec.Code, rec.Body.String())
 		}
 	}
-	if runtime.stops.Load() != 0 || runtime.starts.Load() != 0 {
+	if rt.stops.Load() != 0 || rt.starts.Load() != 0 {
 		localA.Unlock()
-		t.Fatalf("blocked lifecycle reached runtime: starts=%d stops=%d", runtime.starts.Load(), runtime.stops.Load())
+		t.Fatalf("blocked lifecycle reached runtime: starts=%d stops=%d", rt.starts.Load(), rt.stops.Load())
 	}
 	localA.Unlock()
 	changed, err := st.FinalizeSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, store.NowTS())
@@ -852,11 +852,11 @@ func TestLifecycleLeaseHeartbeatAndFencingCheckpoint(t *testing.T) {
 		old.Close()
 		t.Fatalf("new holder acquired=%v err=%v", acquired, err)
 	}
-	runtime := &shareLifecycleRuntime{}
+	rt := &shareLifecycleRuntime{}
 	if err := old.checkpoint(ctx); err == nil {
-		_ = runtime.Start(ctx) // represents the next wipe/start stage
+		_ = rt.Start(ctx) // represents the next wipe/start stage
 	}
-	if runtime.starts.Load() != 0 {
+	if rt.starts.Load() != 0 {
 		old.Close()
 		t.Fatal("expired holder advanced past its fencing checkpoint")
 	}
