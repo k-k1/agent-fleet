@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"math"
@@ -92,13 +92,13 @@ func TestCDPBrowserIDNormalization(t *testing.T) {
 	// What a caller can actually copy: the bare GUID, DevToolsActivePort line 2,
 	// or the full advertised socket URL.
 	for _, raw := range []string{guid, "  " + guid + "\n", "/devtools/browser/" + guid, "ws://127.0.0.1:9222/devtools/browser/" + guid} {
-		if got := normalizeCDPBrowserID(raw); got != guid {
-			t.Fatalf("normalizeCDPBrowserID(%q)=%q", raw, got)
+		if got := NormalizeCDPBrowserID(raw); got != guid {
+			t.Fatalf("NormalizeCDPBrowserID(%q)=%q", raw, got)
 		}
 	}
 	for _, raw := range []string{"", "  ", "http://evil.invalid/x", "a/b"} {
-		if got := normalizeCDPBrowserID(raw); got != "" {
-			t.Fatalf("normalizeCDPBrowserID(%q)=%q want empty", raw, got)
+		if got := NormalizeCDPBrowserID(raw); got != "" {
+			t.Fatalf("NormalizeCDPBrowserID(%q)=%q want empty", raw, got)
 		}
 	}
 }

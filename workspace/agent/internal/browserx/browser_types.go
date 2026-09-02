@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"errors"
@@ -181,7 +181,7 @@ func zoomedLayout(base browserViewport, zoom float64) browserViewport {
 }
 
 func browserTargetURL(port int, path string) (string, error) {
-	if port < 1 || port > 65535 || reservedBrowserAgentPort(port) {
+	if port < 1 || port > 65535 || ReservedBrowserAgentPort(port) {
 		return "", errors.New("port must be 1..65535 and must not be the workspace agent port")
 	}
 	ref, err := parseBrowserPath(path)
@@ -240,7 +240,7 @@ func allowedTopLevelBrowserURL(u *url.URL) bool {
 		}
 	}
 	p, err := strconv.Atoi(port)
-	return err == nil && p >= 1 && p <= 65535 && !reservedBrowserAgentPort(p)
+	return err == nil && p >= 1 && p <= 65535 && !ReservedBrowserAgentPort(p)
 }
 
 func normalizeLoopbackURL(u *url.URL) *url.URL {
@@ -271,7 +271,7 @@ func forbiddenBrowserResource(rawURL string) bool {
 	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
 		p, _ := strconv.Atoi(u.Port())
-		return reservedBrowserAgentPort(p)
+		return ReservedBrowserAgentPort(p)
 	}
 	switch host {
 	case "host.docker.internal", "gateway.docker.internal", "metadata.google.internal", "instance-data.ec2.internal", "kubernetes.default.svc":
@@ -292,7 +292,7 @@ func forbiddenBrowserResource(rawURL string) bool {
 	return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
-func reservedBrowserAgentPort(port int) bool {
+func ReservedBrowserAgentPort(port int) bool {
 	if port == browserAgentPort {
 		return true
 	}

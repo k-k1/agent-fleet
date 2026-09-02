@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"context"
@@ -91,7 +91,7 @@ type browserPage struct {
 	refreshing    atomic.Bool
 }
 
-func defaultBrowserManagerConfig() browserManagerConfig {
+func DefaultBrowserManagerConfig() browserManagerConfig {
 	fps := browserConfigInt("AF_BROWSER_MAX_FPS", 12, 1, 30)
 	return browserManagerConfig{
 		MaxPages:       browserConfigInt("AF_BROWSER_PAGE_LIMIT", 2, 1, 16),
@@ -104,9 +104,9 @@ func defaultBrowserManagerConfig() browserManagerConfig {
 	}
 }
 
-var workspaceBrowserManager = newBrowserManager(defaultBrowserManagerConfig())
+var WorkspaceBrowserManager = NewBrowserManager(DefaultBrowserManagerConfig())
 
-func newBrowserManager(config browserManagerConfig) *browserManager {
+func NewBrowserManager(config browserManagerConfig) *browserManager {
 	if config.MaxPages <= 0 {
 		config.MaxPages = 2
 	}
