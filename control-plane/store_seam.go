@@ -16,11 +16,16 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// ⚠️ A closure, not the function value. awsConfigFor dispatches per call into
-// runtime.AWSConfigFor — the variable the live AWS harness swaps to point a whole run at
-// a test account (docs/log/64 §64.22.3 / §64.23). Assigning the function value here would
-// resolve it at package init, and the swap would then reach the runtime adapters but not
-// the store: a split-brain nobody would see, because every call still succeeds.
+// ⚠️ 経由するのは awsConfigFor（runtime_seam.go の**関数**）であって
+// runtime.AWSConfigFor そのものではない。後者はライブ AWS ハーネスが 1 回の実行まるごと
+// テストアカウントへ向けるために差し替える**変数**（docs/log/64 §64.22.3 / §64.23）なので、
+// ここに直に `store.AWSConfigFor = runtime.AWSConfigFor` と書くと **init 時点の値で凍り**、
+// 差し替えは runtime アダプタ（毎回この変数を読む）にだけ届いて store には届かない
+// —— どの呼び出しも成功したままなので誰にも見えない split-brain になる。
+//
+// awsConfigFor は関数なので、その値を代入しても本体が毎回 runtime.AWSConfigFor を読む
+// （#298 で var から関数へ直された理由がこれ）。下のクロージャはその間接をひと目で
+// 見えるようにしているだけで、`store.AWSConfigFor = awsConfigFor` と等価である。
 func init() {
 	store.AWSConfigFor = func(ctx context.Context, region string) (aws.Config, error) {
 		return awsConfigFor(ctx, region)
