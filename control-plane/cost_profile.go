@@ -12,33 +12,32 @@ import (
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// costProfile is declared by the adapters' package: cost_profile.go used to hang a
-// CostProfile() method on each of the four factory types, and Go only allows that in
-// the package that declares them (internal/runtime/profiles.go). The alias keeps the
-// CP-side name — cloudcost.go embeds it, and the JSON is unchanged.
-type costProfile = runtime.CostProfile
+// ⚠️ runtime.CostProfile は adapters 側が宣言する。この file はかつて 4 つの factory 型に
+// CostProfile() メソッドを生やしており、Go はそれを宣言元パッケージでしか許さない
+// （internal/runtime/profiles.go）。
 
 // costProfiler is the optional RuntimeFactory capability, like sizingProfiler.
 type costProfiler interface {
-	CostProfile() costProfile
+	CostProfile() runtime.CostProfile
 }
 
 // cloudCostProfile reports the deployment's profile. An adapter that does not declare
 // one has no AWS bill — that is the safe default, because the failure mode of guessing
 // "available" is showing somebody an empty cost page and letting them conclude the
 // deployment is free.
-func (m *manager) cloudCostProfile() costProfile {
+func (m *manager) cloudCostProfile() runtime.CostProfile {
 	if f, ok := m.rtFactory.(costProfiler); ok {
 		return f.CostProfile()
 	}
-	return costProfile{Runtime: "local"}
+	return runtime.CostProfile{Runtime: "local"}
 }
 
 // costProfileHandler (GET /api/cost/profile) — any signed-in identity may read it. It
 // says nothing about money, only what KIND of deployment this is, and the Console needs
 // it before it can decide whether to draw the tab at all.
-func (a adminAPI) costProfileHandler(w http.ResponseWriter, _ *http.Request, _ Identity) {
+func (a adminAPI) costProfileHandler(w http.ResponseWriter, _ *http.Request, _ store.Identity) {
 	writeJSON(w, http.StatusOK, a.mgr.cloudCostProfile())
 }

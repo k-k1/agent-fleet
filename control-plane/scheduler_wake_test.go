@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func TestWakeDecision(t *testing.T) {
@@ -36,7 +39,7 @@ func TestWakeDecision(t *testing.T) {
 
 func TestExpandSchedulePrompt(t *testing.T) {
 	slot := time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC) // 09:00 JST
-	sch := Schedule{
+	sch := store.Schedule{
 		ID: "sch_ab12", SpecLabel: "毎朝9時レビュー", TZ: "Asia/Tokyo",
 		LastRun: "2026-07-22T00:00:00Z", // 09:00 JST previous day
 		Prompt: "date={{date}} time={{time}} dt={{datetime}} tz={{tz}} " +
@@ -53,7 +56,7 @@ func TestExpandSchedulePrompt(t *testing.T) {
 func TestExpandSchedulePromptEmptyMeta(t *testing.T) {
 	// Blank tz defaults to UTC; a never-run schedule renders {{last_run}} as empty.
 	slot := time.Date(2026, 7, 23, 9, 0, 0, 0, time.UTC)
-	sch := Schedule{ID: "sch_x", Prompt: "tz={{tz}} last=[{{last_run}}] t={{time}}"}
+	sch := store.Schedule{ID: "sch_x", Prompt: "tz={{tz}} last=[{{last_run}}] t={{time}}"}
 	got := expandSchedulePrompt(sch, slot)
 	want := "tz=UTC last=[] t=09:00"
 	if got != want {
@@ -80,7 +83,7 @@ func TestScheduleIdempotencyKey(t *testing.T) {
 
 func TestBuildInjectBody(t *testing.T) {
 	slot := time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)
-	sch := Schedule{
+	sch := store.Schedule{
 		ID: "sch_1", AgentKind: "codex", Model: "gpt-x", Repo: "/home/dev/repos/x",
 		OwnerConv: "conv1", TZ: "UTC", Prompt: "run at {{time}}", Report: true,
 	}
@@ -125,7 +128,7 @@ func TestBuildInjectBody(t *testing.T) {
 func TestBuildInjectBodyDefaultsKind(t *testing.T) {
 	// Blank kind defaults to claude and yields the tui (empty) driver.
 	var m map[string]any
-	_ = json.Unmarshal(buildInjectBody(Schedule{ID: "s"}, time.Now()), &m)
+	_ = json.Unmarshal(buildInjectBody(store.Schedule{ID: "s"}, time.Now()), &m)
 	if m["kind"] != "claude" || m["driver"] != "" {
 		t.Fatalf("kind/driver = %v/%v, want claude/empty", m["kind"], m["driver"])
 	}
@@ -146,7 +149,7 @@ func TestInjectSession(t *testing.T) {
 	defer srv.Close()
 
 	f := &wakeFirer{}
-	sch := Schedule{ID: "sch_1", AgentKind: "claude", OwnerConv: "conv1", Prompt: "hi", Report: true}
+	sch := store.Schedule{ID: "sch_1", AgentKind: "claude", OwnerConv: "conv1", Prompt: "hi", Report: true}
 	body := buildInjectBody(sch, time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC))
 	name, err := f.injectSession(context.Background(), stubRuntime{endpoint: srv.URL, token: "tok"}, body)
 	if err != nil {
@@ -191,11 +194,11 @@ func TestInjectSessionAgentError(t *testing.T) {
 // safe: it must NOT be spelled as the member opt-in being off, whose entrypoint branch
 // also tears down the ~/.local shadow and reverts to the baked pin.
 func TestUnattendedStartEnvIsNotOptOut(t *testing.T) {
-	if unattendedStartEnv == "AF_AGENT_SELF_UPDATE=0" {
+	if runtime.UnattendedStartEnv == "AF_AGENT_SELF_UPDATE=0" {
 		t.Fatal("unattended start must not reuse the opt-in-off env: that branch uninstalls the ~/.local CLI shadow")
 	}
-	if !strings.HasSuffix(unattendedStartEnv, "=1") || !strings.HasPrefix(unattendedStartEnv, "AF_") {
-		t.Fatalf("unexpected unattended marker %q", unattendedStartEnv)
+	if !strings.HasSuffix(runtime.UnattendedStartEnv, "=1") || !strings.HasPrefix(runtime.UnattendedStartEnv, "AF_") {
+		t.Fatalf("unexpected unattended marker %q", runtime.UnattendedStartEnv)
 	}
 }
 

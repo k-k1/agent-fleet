@@ -4,6 +4,9 @@ import (
 	"context"
 	"log"
 	"net/http"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Deployment-wide session overview (P3-9 admin). A flat, cross-user list so an
@@ -52,7 +55,7 @@ func (a adminAPI) allSessions(w http.ResponseWriter, r *http.Request) {
 			log.Printf("admin sessions: list members tenant=%s: %v", t.Slug, err)
 			continue
 		}
-		byMembership := make(map[string]MemberInfo, len(members))
+		byMembership := make(map[string]store.MemberInfo, len(members))
 		for _, m := range members {
 			byMembership[m.MembershipID] = m
 		}
@@ -79,13 +82,13 @@ func (a adminAPI) allSessions(w http.ResponseWriter, r *http.Request) {
 
 // tenantsInScope returns the tenants an admin view should span: exactly the one
 // when tenantID is set (already gate-checked by tenantScope), else all.
-func (m *manager) tenantsInScope(ctx context.Context, tenantID string) ([]Tenant, *apiError) {
+func (m *manager) tenantsInScope(ctx context.Context, tenantID string) ([]store.Tenant, *apiError) {
 	if tenantID != "" {
 		t, err := m.store.GetTenant(ctx, tenantID)
 		if err != nil {
 			return nil, internalErr(err)
 		}
-		return []Tenant{t}, nil
+		return []store.Tenant{t}, nil
 	}
 	ts, err := m.store.ListTenants(ctx)
 	if err != nil {
@@ -97,7 +100,7 @@ func (m *manager) tenantsInScope(ctx context.Context, tenantID string) ([]Tenant
 // sessionsForOverview returns a workspace's sessions for the admin overview: live
 // from the Agent when running (with a computed Started), else the DB mirror marked
 // stopped/resumable. Mirrors workspaceAPI.sessionsList so the two views agree.
-func (m *manager) sessionsForOverview(ctx context.Context, ws Workspace, rt Runtime, state string) []sessionWire {
+func (m *manager) sessionsForOverview(ctx context.Context, ws store.Workspace, rt runtime.Runtime, state string) []sessionWire {
 	if state == "running" {
 		if list, err := m.agentSessions(ctx, rt); err == nil {
 			for i := range list {

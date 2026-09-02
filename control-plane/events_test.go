@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // eventsStub は stub Agent を外から動かすノブと、そこへ届いた poll の回数。
@@ -45,7 +47,7 @@ func (s *eventsStub) waitPolls(n int64, deadline time.Time) {
 // /sessions and /notifications, and the resolved record pointing at it.
 func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
 	t.Helper()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,9 +58,9 @@ func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
 	tenant, _ := st.EnsureDefaultTenant(context.Background())
 	id, _ := st.UpsertIdentity(context.Background(), "events@example.com", "events", "")
 	m, _ := st.EnsureMembership(context.Background(), id.ID, tenant.ID, "member")
-	ws := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: m.ID,
+	ws := store.Workspace{ID: store.NewID(), TenantID: tenant.ID, MembershipID: m.ID,
 		ContainerName: "af-ws-events", Network: "af-net-events", DataDir: t.TempDir(),
-		AgentPort: "7700", AgentToken: "tok", State: "running", CreatedAt: nowTS()}
+		AgentPort: "7700", AgentToken: "tok", State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(context.Background(), ws); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +101,7 @@ func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
 		workItemsAPI{memberAuth{mgr}, st},
 		5 * time.Millisecond, time.Hour /* ping 実質 OFF（ping テストだけ上書き） */}
 	res := &resolved{rt: stubRuntime{endpoint: srv.URL, token: "tok"}, ws: ws,
-		mv: MembershipView{MembershipID: m.ID}}
+		mv: store.MembershipView{MembershipID: m.ID}}
 	return a, res
 }
 

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // marksFixture は所有者 1・共有先 1（権限は permission）・部外者 1 の共有を組み立てて、
@@ -18,10 +20,10 @@ type marksFixture struct {
 	api       sessionShareAPI
 	catalogID string
 
-	recipientIdent Identity
-	recipientView  MembershipView
-	strangerIdent  Identity
-	strangerView   MembershipView
+	recipientIdent store.Identity
+	recipientView  store.MembershipView
+	strangerIdent  store.Identity
+	strangerView   store.MembershipView
 
 	agentMarks []any
 	seenPOST   map[string]any
@@ -31,7 +33,7 @@ type marksFixture struct {
 func newMarksFixture(t *testing.T, permission string) *marksFixture {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,9 +51,9 @@ func newMarksFixture(t *testing.T, permission string) *marksFixture {
 	recipientViews, _ := st.ListMemberships(ctx, recipientIdentity.ID)
 	strangerViews, _ := st.ListMemberships(ctx, strangerIdentity.ID)
 
-	workspace := Workspace{ID: "ws-owner", TenantID: tenant.ID, MembershipID: owner.ID,
+	workspace := store.Workspace{ID: "ws-owner", TenantID: tenant.ID, MembershipID: owner.ID,
 		ContainerName: "owner", Network: "test", DataDir: "/data/owner", AgentPort: "1", AgentToken: "tok",
-		State: "running", CreatedAt: nowTS()}
+		State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
@@ -91,20 +93,20 @@ func newMarksFixture(t *testing.T, permission string) *marksFixture {
 		rt: stubRuntime{endpoint: agent.URL, token: "tok"}, ws: workspace,
 	}}}
 	f.api = newSessionShareAPI(mgr)
-	catalog := SharedSessionCatalog{ID: f.catalogID, WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID,
-		Name: "session-1", Kind: "claude", WorkingCopyID: "wc-1", LastSeen: nowTS()}
-	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []SharedSessionCatalog{catalog}); err != nil {
+	catalog := store.SharedSessionCatalog{ID: f.catalogID, WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID,
+		Name: "session-1", Kind: "claude", WorkingCopyID: "wc-1", LastSeen: store.NowTS()}
+	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []store.SharedSessionCatalog{catalog}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutSessionShare(ctx, SessionShare{ID: "share-1", TenantID: tenant.ID, OwnerMembershipID: owner.ID,
+	if err := st.PutSessionShare(ctx, store.SessionShare{ID: "share-1", TenantID: tenant.ID, OwnerMembershipID: owner.ID,
 		RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: "session-1", Permission: permission,
-		CreatedAt: nowTS(), UpdatedAt: nowTS()}); err != nil {
+		CreatedAt: store.NowTS(), UpdatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 	return f
 }
 
-func (f *marksFixture) call(method, query string, body string, ident Identity, mv MembershipView) *httptest.ResponseRecorder {
+func (f *marksFixture) call(method, query string, body string, ident store.Identity, mv store.MembershipView) *httptest.ResponseRecorder {
 	url := "/api/shared-sessions/" + f.catalogID + "/marks"
 	if query != "" {
 		url += "?" + query

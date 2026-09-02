@@ -8,6 +8,8 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -40,7 +42,7 @@ func tenantSel(r *http.Request) string {
 
 // withMembership adapts a handler needing (identity, active membership) —
 // lightweight per-member CRUD, no workspace build. 401/403/409 mirror withResolved.
-func (a memberAuth) withMembership(h func(http.ResponseWriter, *http.Request, Identity, MembershipView)) http.HandlerFunc {
+func (a memberAuth) withMembership(h func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := a.mgr.resolveIdentity(r)
 		if id.key == "" {
@@ -77,7 +79,7 @@ func (a memberAuth) withResolved(h func(http.ResponseWriter, *http.Request, *res
 
 // withIdentity adapts a handler needing only the upserted caller identity
 // (PAT CRUD, tenant picker).
-func (a memberAuth) withIdentity(h func(http.ResponseWriter, *http.Request, Identity)) http.HandlerFunc {
+func (a memberAuth) withIdentity(h func(http.ResponseWriter, *http.Request, store.Identity)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, aerr := a.mgr.identityFor(r.Context(), r)
 		if aerr != nil {
@@ -92,21 +94,21 @@ func (a memberAuth) withIdentity(h func(http.ResponseWriter, *http.Request, Iden
 // "super_admin" (writes 401/403 and reports ok=false). withSuperAdmin is the
 // wrapper form for handlers gated at the top; this callable form serves gates
 // taken mid-handler (adminAPI.tenantScope).
-func (a memberAuth) superAdminFor(w http.ResponseWriter, r *http.Request) (Identity, bool) {
+func (a memberAuth) superAdminFor(w http.ResponseWriter, r *http.Request) (store.Identity, bool) {
 	ident, aerr := a.mgr.identityFor(r.Context(), r)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
-		return Identity{}, false
+		return store.Identity{}, false
 	}
 	if ident.Role != "super_admin" {
 		writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "super_admin required"})
-		return Identity{}, false
+		return store.Identity{}, false
 	}
 	return ident, true
 }
 
 // withSuperAdmin gates a deployment-wide admin handler on identity.Role.
-func (a memberAuth) withSuperAdmin(h func(http.ResponseWriter, *http.Request, Identity)) http.HandlerFunc {
+func (a memberAuth) withSuperAdmin(h func(http.ResponseWriter, *http.Request, store.Identity)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := a.superAdminFor(w, r)
 		if !ok {
@@ -131,11 +133,11 @@ func (a memberAuth) withSuperAdmin(h func(http.ResponseWriter, *http.Request, Id
 // are on the unauthenticated /login — but "not secret" is not a reason to widen a
 // gate; the caller has to have a use for it (決定 19 の *編集* のゲートは別で、
 // そちらは withSuperAdmin のまま).
-func (a memberAuth) anyTenantAdminFor(w http.ResponseWriter, r *http.Request) (Identity, bool) {
+func (a memberAuth) anyTenantAdminFor(w http.ResponseWriter, r *http.Request) (store.Identity, bool) {
 	ident, aerr := a.mgr.identityFor(r.Context(), r)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
-		return Identity{}, false
+		return store.Identity{}, false
 	}
 	if ident.Role == "super_admin" {
 		return ident, true
@@ -146,7 +148,7 @@ func (a memberAuth) anyTenantAdminFor(w http.ResponseWriter, r *http.Request) (I
 	ms, err := a.mgr.store.ListMemberships(r.Context(), ident.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
-		return Identity{}, false
+		return store.Identity{}, false
 	}
 	for _, mv := range ms {
 		if mv.Role == "tenant_admin" {
@@ -154,11 +156,11 @@ func (a memberAuth) anyTenantAdminFor(w http.ResponseWriter, r *http.Request) (I
 		}
 	}
 	writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "tenant admin required"})
-	return Identity{}, false
+	return store.Identity{}, false
 }
 
 // withAnyTenantAdmin is the wrapper form of anyTenantAdminFor.
-func (a memberAuth) withAnyTenantAdmin(h func(http.ResponseWriter, *http.Request, Identity)) http.HandlerFunc {
+func (a memberAuth) withAnyTenantAdmin(h func(http.ResponseWriter, *http.Request, store.Identity)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := a.anyTenantAdminFor(w, r)
 		if !ok {
@@ -173,24 +175,24 @@ func (a memberAuth) withAnyTenantAdmin(h func(http.ResponseWriter, *http.Request
 // caller's identity and the target tenant. Writes 401/403/404 and returns ok=false
 // on failure. slug comes from the path on some routes and the body on others, so
 // it is passed explicitly (hence a mid-handler call, not a with* wrapper).
-func (a memberAuth) tenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (Identity, Tenant, bool) {
+func (a memberAuth) tenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (store.Identity, store.Tenant, bool) {
 	ident, aerr := a.mgr.identityFor(r.Context(), r)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
-		return Identity{}, Tenant{}, false
+		return store.Identity{}, store.Tenant{}, false
 	}
 	t, ok, err := a.mgr.store.GetTenantBySlug(r.Context(), slug)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
-		return Identity{}, Tenant{}, false
+		return store.Identity{}, store.Tenant{}, false
 	}
 	if !ok {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
-		return Identity{}, Tenant{}, false
+		return store.Identity{}, store.Tenant{}, false
 	}
 	if !a.mgr.tenantAdminFor(r.Context(), ident, t.ID) {
 		writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "tenant admin required"})
-		return Identity{}, Tenant{}, false
+		return store.Identity{}, store.Tenant{}, false
 	}
 	return ident, t, true
 }

@@ -15,11 +15,13 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 type scheduleAPI struct {
 	memberAuth
-	store ScheduleStore
+	store store.ScheduleStore
 }
 
 func newScheduleAPI(m *manager) scheduleAPI { return scheduleAPI{memberAuth{m}, m.store} }
@@ -76,7 +78,7 @@ func withSchedulerWarning(d scheduleDTO) scheduleDTO {
 	return d
 }
 
-func scheduleToDTO(s Schedule) scheduleDTO {
+func scheduleToDTO(s store.Schedule) scheduleDTO {
 	d := scheduleDTO{
 		ID: s.ID, SpecKind: s.SpecKind, Spec: s.Spec, SpecLabel: s.SpecLabel, TZ: s.TZ,
 		WakePolicy: s.WakePolicy, SessionMode: s.SessionMode, ReuseTarget: s.ReuseTarget,
@@ -96,7 +98,7 @@ func scheduleToDTO(s Schedule) scheduleDTO {
 }
 
 // applyScheduleDefaults fills the optional policy fields so the operator can omit them.
-func applyScheduleDefaults(s *Schedule) {
+func applyScheduleDefaults(s *store.Schedule) {
 	if s.TZ == "" {
 		s.TZ = "UTC"
 	}
@@ -119,8 +121,8 @@ func applyScheduleDefaults(s *Schedule) {
 
 // validateScheduleDTO normalizes + validates a create input into a Schedule (id/ledger
 // unset). It enforces the enum fields and the spec/tz, and requires a prompt.
-func validateScheduleDTO(mv MembershipView, in scheduleDTO) (Schedule, *apiError) {
-	s := Schedule{
+func validateScheduleDTO(mv store.MembershipView, in scheduleDTO) (store.Schedule, *apiError) {
+	s := store.Schedule{
 		MembershipID: mv.MembershipID, TenantID: mv.TenantID,
 		OwnerConv: strings.TrimSpace(in.OwnerConv),
 		SpecKind:  strings.TrimSpace(in.SpecKind), Spec: strings.TrimSpace(in.Spec),
@@ -135,16 +137,16 @@ func validateScheduleDTO(mv MembershipView, in scheduleDTO) (Schedule, *apiError
 	}
 	applyScheduleDefaults(&s)
 	if strings.TrimSpace(s.Prompt) == "" {
-		return Schedule{}, &apiError{http.StatusBadRequest, "bad_prompt", "prompt is required"}
+		return store.Schedule{}, &apiError{http.StatusBadRequest, "bad_prompt", "prompt is required"}
 	}
 	if aerr := validateScheduleFields(s); aerr != nil {
-		return Schedule{}, aerr
+		return store.Schedule{}, aerr
 	}
 	return s, nil
 }
 
 // validateScheduleFields checks the enums + spec/tz shared by create and update.
-func validateScheduleFields(s Schedule) *apiError {
+func validateScheduleFields(s store.Schedule) *apiError {
 	if err := validateSpec(s.SpecKind, s.Spec, s.TZ); err != nil {
 		return &apiError{http.StatusBadRequest, "bad_spec", err.Error()}
 	}
@@ -181,20 +183,20 @@ func oneOf(v string, allowed ...string) bool {
 
 // getOwned fetches a schedule and asserts the caller owns it (404 otherwise, so a
 // foreign id is indistinguishable from a missing one).
-func (a scheduleAPI) getOwned(r *http.Request, id string, mv MembershipView) (Schedule, *apiError) {
+func (a scheduleAPI) getOwned(r *http.Request, id string, mv store.MembershipView) (store.Schedule, *apiError) {
 	sch, ok, err := a.store.GetSchedule(r.Context(), id)
 	if err != nil {
-		return Schedule{}, internalErr(err)
+		return store.Schedule{}, internalErr(err)
 	}
 	if !ok || sch.MembershipID != mv.MembershipID {
-		return Schedule{}, &apiError{http.StatusNotFound, "not_found", "schedule not found"}
+		return store.Schedule{}, &apiError{http.StatusNotFound, "not_found", "schedule not found"}
 	}
 	return sch, nil
 }
 
 // --- handlers -------------------------------------------------------------------
 
-func (a scheduleAPI) list(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a scheduleAPI) list(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	rows, err := a.store.ListSchedules(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -207,7 +209,7 @@ func (a scheduleAPI) list(w http.ResponseWriter, r *http.Request, mv MembershipV
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (a scheduleAPI) create(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a scheduleAPI) create(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	var in scheduleDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
@@ -223,10 +225,10 @@ func (a scheduleAPI) create(w http.ResponseWriter, r *http.Request, mv Membershi
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", err.Error()})
 		return
 	}
-	s.ID = "sch_" + newID()
+	s.ID = "sch_" + store.NewID()
 	s.Enabled = true
 	s.NextRun = next
-	s.CreatedAt = nowTS()
+	s.CreatedAt = store.NowTS()
 	s.UpdatedAt = s.CreatedAt
 	if err := a.store.CreateSchedule(r.Context(), s); err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -237,7 +239,7 @@ func (a scheduleAPI) create(w http.ResponseWriter, r *http.Request, mv Membershi
 
 // update patches a schedule. Nil pointer fields are left unchanged; when the spec or tz
 // changes the next fire is recomputed so the ledger stays consistent with the new spec.
-func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	id := r.PathValue("id")
 	sch, aerr := a.getOwned(r, id, mv)
 	if aerr != nil {
@@ -275,7 +277,7 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv Membershi
 		}
 		sch.NextRun = next
 	}
-	sch.UpdatedAt = nowTS()
+	sch.UpdatedAt = store.NowTS()
 	if err := a.store.UpdateSchedule(r.Context(), sch); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -290,7 +292,7 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv Membershi
 	writeJSON(w, http.StatusOK, scheduleToDTO(sch))
 }
 
-func (a scheduleAPI) delete(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a scheduleAPI) delete(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	id := r.PathValue("id")
 	if _, aerr := a.getOwned(r, id, mv); aerr != nil {
 		writeAPIErr(w, aerr)
@@ -303,7 +305,7 @@ func (a scheduleAPI) delete(w http.ResponseWriter, r *http.Request, mv Membershi
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
 }
 
-func (a scheduleAPI) pause(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a scheduleAPI) pause(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	id := r.PathValue("id")
 	if _, aerr := a.getOwned(r, id, mv); aerr != nil {
 		writeAPIErr(w, aerr)
@@ -311,14 +313,14 @@ func (a scheduleAPI) pause(w http.ResponseWriter, r *http.Request, mv Membership
 	}
 	// Clear next_run so a paused schedule is never due (the due query also filters
 	// enabled=1, but an empty next_run makes the paused state explicit).
-	if err := a.store.SetScheduleEnabled(r.Context(), id, mv.MembershipID, false, "", nowTS()); err != nil {
+	if err := a.store.SetScheduleEnabled(r.Context(), id, mv.MembershipID, false, "", store.NowTS()); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	a.writeOne(w, r, id, mv)
 }
 
-func (a scheduleAPI) resume(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a scheduleAPI) resume(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	id := r.PathValue("id")
 	sch, aerr := a.getOwned(r, id, mv)
 	if aerr != nil {
@@ -340,7 +342,7 @@ func (a scheduleAPI) resume(w http.ResponseWriter, r *http.Request, mv Membershi
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", err.Error()})
 		return
 	}
-	if err := a.store.SetScheduleEnabled(r.Context(), id, mv.MembershipID, true, next, nowTS()); err != nil {
+	if err := a.store.SetScheduleEnabled(r.Context(), id, mv.MembershipID, true, next, store.NowTS()); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -352,7 +354,7 @@ func (a scheduleAPI) resume(w http.ResponseWriter, r *http.Request, mv Membershi
 // alive, idempotency) — ADR0021 decision 8. It does not fire inline (a cold wake could
 // exceed the bridge request timeout). Requires the scheduler goroutine to be enabled and
 // the schedule to be enabled (a paused schedule must be resumed first).
-func (a scheduleAPI) runNow(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a scheduleAPI) runNow(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	id := r.PathValue("id")
 	sch, aerr := a.getOwned(r, id, mv)
 	if aerr != nil {
@@ -370,7 +372,7 @@ func (a scheduleAPI) runNow(w http.ResponseWriter, r *http.Request, mv Membershi
 	next := now.Add(-jitterForSchedule(sch)).Format(time.RFC3339)
 	// Flag manual_fire_pending too so the resulting run history row is tagged as a manual
 	// run-now rather than an automatic scheduled fire (both go through the same ticker path).
-	if err := a.store.MarkManualFirePending(r.Context(), id, mv.MembershipID, next, nowTS()); err != nil {
+	if err := a.store.MarkManualFirePending(r.Context(), id, mv.MembershipID, next, store.NowTS()); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -384,7 +386,7 @@ func (a scheduleAPI) runNow(w http.ResponseWriter, r *http.Request, mv Membershi
 	writeJSON(w, http.StatusOK, withSchedulerWarning(scheduleToDTO(sch)))
 }
 
-func (a scheduleAPI) runs(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a scheduleAPI) runs(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	id := r.PathValue("id")
 	if _, aerr := a.getOwned(r, id, mv); aerr != nil {
 		writeAPIErr(w, aerr)
@@ -407,7 +409,7 @@ func (a scheduleAPI) runs(w http.ResponseWriter, r *http.Request, mv MembershipV
 
 // writeOne re-reads and returns a schedule DTO — the shared tail of the toggle handlers
 // so the operator sees the resulting state (including the recomputed next_run).
-func (a scheduleAPI) writeOne(w http.ResponseWriter, r *http.Request, id string, mv MembershipView) {
+func (a scheduleAPI) writeOne(w http.ResponseWriter, r *http.Request, id string, mv store.MembershipView) {
 	sch, aerr := a.getOwned(r, id, mv)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -443,7 +445,7 @@ type schedulePatch struct {
 
 // apply overlays the non-nil fields onto sch and reports whether the timing (spec_kind/
 // spec/tz) changed, so the caller knows to recompute next_run.
-func (p schedulePatch) apply(sch *Schedule) (specChanged bool) {
+func (p schedulePatch) apply(sch *store.Schedule) (specChanged bool) {
 	set := func(dst *string, v *string) {
 		if v != nil {
 			*dst = strings.TrimSpace(*v)

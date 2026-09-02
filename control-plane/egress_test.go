@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func TestEgressPolicy(t *testing.T) {
@@ -69,7 +71,7 @@ func TestEgressBatcher(t *testing.T) {
 
 func TestEgressStore(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -91,7 +93,7 @@ func TestEgressStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	by := map[string]EgressStat{}
+	by := map[string]store.EgressStat{}
 	for _, e := range rows {
 		by[e.Host] = e
 	}
@@ -111,7 +113,7 @@ func TestEgressStore(t *testing.T) {
 // would-block audit row per host.
 func TestEgressIngestHandler(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -137,7 +139,7 @@ func TestEgressIngestHandler(t *testing.T) {
 		t.Fatalf("authorized: want 204 got %d", w.Code)
 	}
 	stats, _ := st.ListEgress(ctx, "2000-01-01", 100)
-	by := map[string]EgressStat{}
+	by := map[string]store.EgressStat{}
 	for _, e := range stats {
 		by[e.Host] = e
 	}
@@ -161,7 +163,7 @@ func TestEgressIngestHandler(t *testing.T) {
 
 func TestAllowlistStore(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -170,9 +172,9 @@ func TestAllowlistStore(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	add := func(entry, state string) string {
-		id := newID()
-		if err := st.AddAllowlist(ctx, AllowlistEntry{
-			ID: id, Entry: entry, State: state, AddedBy: "op@x", AddedAt: nowTS(),
+		id := store.NewID()
+		if err := st.AddAllowlist(ctx, store.AllowlistEntry{
+			ID: id, Entry: entry, State: state, AddedBy: "op@x", AddedAt: store.NowTS(),
 		}); err != nil {
 			t.Fatalf("add: %v", err)
 		}
@@ -220,7 +222,7 @@ func TestAllowlistStore(t *testing.T) {
 
 func TestEffectivePolicyEndpoint(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -228,7 +230,7 @@ func TestEffectivePolicyEndpoint(t *testing.T) {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	_ = st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: "extra.internal", State: "active", AddedAt: nowTS()})
+	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: "extra.internal", State: "active", AddedAt: store.NowTS()})
 	_ = st.SetSetting(ctx, "egress_mode", "enforce")
 	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil)
 

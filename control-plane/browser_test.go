@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 type browserTestRuntime struct {
@@ -35,15 +37,15 @@ func (r browserTestRuntime) Name() string     { return "browser-test" }
 type browserTestEnv struct {
 	mgr       *manager
 	mux       *http.ServeMux
-	store     *sqlStore
-	tenant    Tenant
-	workspace Workspace
+	store     *store.SQL
+	tenant    store.Tenant
+	workspace store.Workspace
 }
 
-func newBrowserTestEnv(t *testing.T, rt Runtime) browserTestEnv {
+func newBrowserTestEnv(t *testing.T, rt runtime.Runtime) browserTestEnv {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -63,8 +65,8 @@ func newBrowserTestEnv(t *testing.T, rt Runtime) browserTestEnv {
 	if err != nil {
 		t.Fatalf("membership: %v", err)
 	}
-	workspace := Workspace{ID: "ws-browser", TenantID: tenant.ID, MembershipID: membership.ID,
-		ContainerName: "browser", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	workspace := store.Workspace{ID: "ws-browser", TenantID: tenant.ID, MembershipID: membership.ID,
+		ContainerName: "browser", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatalf("workspace: %v", err)
 	}

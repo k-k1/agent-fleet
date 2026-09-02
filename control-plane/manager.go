@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // manager owns the set of per-membership Workspace runtimes. As of P3-2 (docs/14)
@@ -28,7 +29,7 @@ type manager struct {
 	shareLocks             map[string]*sync.Mutex // per-owner share ACL/catalog/approval serialization
 	activityLocks          map[string]*sync.Mutex
 	activityProtectedUntil map[string]time.Time
-	store                  Store
+	store                  store.Store
 	conns                  *connRegistry // P3-9: live activity/attachment tracking for idle-stop
 	// idleForecasts は reaper が毎スイープで置いていく「この Workspace はいつ止まるか /
 	// なぜ止まらないか」（docs/log/75 P4）。管理画面はここを読むだけで、判定をやり直さない。
@@ -41,7 +42,7 @@ type manager struct {
 
 	// rtFactory is the profile-selected Runtime adapter builder (Docker locally,
 	// ECS on AWS; P3-7). Every runtime is constructed through it — see runtimeFor.
-	rtFactory RuntimeFactory
+	rtFactory runtime.RuntimeFactory
 
 	// costPoller is the Cost Explorer poller when this deployment has an AWS bill and
 	// the credentials to read it (docs/log/67, ADR 0048), else nil. Held only so the API can
@@ -165,17 +166,17 @@ func internalErr(err error) *apiError {
 
 // cachedRT memoizes a built runtime + its workspace record per membership.
 type cachedRT struct {
-	rt Runtime
-	ws Workspace
+	rt runtime.Runtime
+	ws store.Workspace
 }
 
 // resolved is the full per-request resolution: runtime + workspace record +
 // identity + selected membership. Handlers needing tenant/quota context use this.
 type resolved struct {
-	rt    Runtime
-	ws    Workspace
-	ident Identity
-	mv    MembershipView
+	rt    runtime.Runtime
+	ws    store.Workspace
+	ident store.Identity
+	mv    store.MembershipView
 }
 
 // workspaceNames derives the container/network/home for a (tenant, user). The
@@ -195,7 +196,7 @@ func (m *manager) workspaceNames(slug, key string) (name, network, dataDir strin
 // part is the suffix (<key> for the default tenant, <slug>/<key> otherwise, per
 // workspaceNames); we keep the trailing segment(s) and swap the root. Idempotent
 // when the path is already current. See docs/log/p3-10-packaging.md §20.3(B).
-func (m *manager) rootedDataDir(ws Workspace) string {
+func (m *manager) rootedDataDir(ws store.Workspace) string {
 	return runtime.RootedDataDir(m.dataRoot, m.defaultTenantID, runtime.Workspace(ws))
 }
 
@@ -203,7 +204,7 @@ func (m *manager) rootedDataDir(ws Workspace) string {
 // factory (Docker locally, ECS on AWS). It is the one construction call the rest
 // of the CP uses; the state/stop-only sites below also route through it (secretKey
 // "") so no concrete adapter leaks into manager.
-func (m *manager) runtimeFor(ws Workspace, secretKey string, extraEnv ...string) Runtime {
+func (m *manager) runtimeFor(ws store.Workspace, secretKey string, extraEnv ...string) runtime.Runtime {
 	// The conversion is the seam: the adapters declare their own copy of this record
 	// (internal/runtime/deps.go) so they need not import the store while it is being
 	// moved in parallel. Field-for-field identical, so a divergence stops compiling here.

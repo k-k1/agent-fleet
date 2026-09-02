@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 type fsStateRuntime struct {
@@ -19,38 +21,38 @@ type fsStateRuntime struct {
 
 func (r fsStateRuntime) State(context.Context) string { return r.state }
 
-func newFSProxyTest(t *testing.T, agent http.Handler) (agentProxyAPI, *resolved, *sqlStore, func()) {
+func newFSProxyTest(t *testing.T, agent http.Handler) (agentProxyAPI, *resolved, *store.SQL, func()) {
 	t.Helper()
 	server := httptest.NewServer(agent)
-	store, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		server.Close()
 		t.Fatal(err)
 	}
-	if err := store.Migrate(context.Background()); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		server.Close()
-		store.Close()
+		st.Close()
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	tenant, _ := store.EnsureDefaultTenant(ctx)
-	identity, _ := store.UpsertIdentity(ctx, "fs@example.com", "fs", "")
-	membership, _ := store.EnsureMembership(ctx, identity.ID, tenant.ID, "member")
-	workspace := Workspace{ID: "ws1", TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "fs", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
-	if err := store.CreateWorkspace(ctx, workspace); err != nil {
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	identity, _ := st.UpsertIdentity(ctx, "fs@example.com", "fs", "")
+	membership, _ := st.EnsureMembership(ctx, identity.ID, tenant.ID, "member")
+	workspace := store.Workspace{ID: "ws1", TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "fs", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: store.NowTS()}
+	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
-	mgr := &manager{store: store, conns: newConnRegistry()}
+	mgr := &manager{store: st, conns: newConnRegistry()}
 	proxy := newAgentProxyAPI(mgr)
 	res := &resolved{
 		rt:    stubRuntime{endpoint: server.URL, token: "agent-token"},
 		ws:    workspace,
-		ident: Identity{ID: "user1"},
-		mv:    MembershipView{MembershipID: membership.ID},
+		ident: store.Identity{ID: "user1"},
+		mv:    store.MembershipView{MembershipID: membership.ID},
 	}
-	return proxy, res, store, func() {
+	return proxy, res, st, func() {
 		server.Close()
-		store.Close()
+		st.Close()
 	}
 }
 
@@ -75,7 +77,7 @@ func doCPFSFilePut(proxy agentProxyAPI, res *resolved, body, contentType string)
 func TestCPFSFilePutProxiesExactBodyAndAuditsOnlyPath(t *testing.T) {
 	body := cpPutBody("repos/app/a.txt", "secret source\n")
 	var called atomic.Int32
-	proxy, res, store, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	proxy, res, st, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called.Add(1)
 		if r.Method != http.MethodPut || r.URL.Path != "/fs/file" {
 			t.Errorf("upstream request = %s %s", r.Method, r.URL.Path)
@@ -97,7 +99,7 @@ func TestCPFSFilePutProxiesExactBodyAndAuditsOnlyPath(t *testing.T) {
 	if rec.Code != http.StatusOK || called.Load() != 1 {
 		t.Fatalf("status=%d called=%d body=%s", rec.Code, called.Load(), rec.Body.String())
 	}
-	rows, err := store.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
+	rows, err := st.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("audit rows=%+v err=%v", rows, err)
 	}
@@ -117,7 +119,7 @@ func ioReadAll(r *http.Request) ([]byte, error) {
 }
 
 func TestCPFSFilePutAuditsWriteStateUnknown(t *testing.T) {
-	proxy, res, store, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	proxy, res, st, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":{"code":"write_state_unknown","message":"directory fsync failed"}}`))
@@ -128,7 +130,7 @@ func TestCPFSFilePutAuditsWriteStateUnknown(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "write_state_unknown") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rows, err := store.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
+	rows, err := st.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("audit rows=%+v err=%v", rows, err)
 	}
@@ -139,7 +141,7 @@ func TestCPFSFilePutAuditsWriteStateUnknown(t *testing.T) {
 }
 
 func TestCPFSFilePutDoesNotAuditOrdinaryFailure(t *testing.T) {
-	proxy, res, store, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	proxy, res, st, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write([]byte(`{"error":{"code":"revision_conflict","message":"changed"}}`))
@@ -149,14 +151,14 @@ func TestCPFSFilePutDoesNotAuditOrdinaryFailure(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rows, err := store.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
+	rows, err := st.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("ordinary failure audit rows=%+v err=%v", rows, err)
 	}
 }
 
 func TestCPFSFilePutInvalidAuditPathIsFixedToken(t *testing.T) {
-	proxy, res, store, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	proxy, res, st, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":{"code":"write_state_unknown","message":"injected"}}`))
@@ -166,7 +168,7 @@ func TestCPFSFilePutInvalidAuditPathIsFixedToken(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rows, err := store.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
+	rows, err := st.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
 	if err != nil || len(rows) != 1 || rows[0].Target != "<invalid-path>" {
 		t.Fatalf("audit rows=%+v err=%v", rows, err)
 	}
@@ -174,7 +176,7 @@ func TestCPFSFilePutInvalidAuditPathIsFixedToken(t *testing.T) {
 
 func TestCPFSFilePutRejectsMalformedBodyBeforeProxy(t *testing.T) {
 	var called atomic.Int32
-	proxy, res, store, cleanup := newFSProxyTest(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	proxy, res, st, cleanup := newFSProxyTest(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		called.Add(1)
 	}))
 	defer cleanup()
@@ -214,7 +216,7 @@ func TestCPFSFilePutRejectsMalformedBodyBeforeProxy(t *testing.T) {
 	if called.Load() != 0 {
 		t.Fatalf("malformed requests reached Agent %d times", called.Load())
 	}
-	rows, err := store.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
+	rows, err := st.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("malformed body audit rows=%+v err=%v", rows, err)
 	}

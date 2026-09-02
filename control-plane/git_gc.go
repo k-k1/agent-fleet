@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // gitGC periodically maintains the internal bare repositories (docs/reference/
@@ -29,8 +31,8 @@ import (
 // lookup + the LFS object ledger it reconciles. Standalone components should
 // depend on the sub-interfaces they use, not the full Store.
 type gitGCStore interface {
-	TenantStore
-	LFSObjectStore
+	store.TenantStore
+	store.LFSObjectStore
 }
 
 type gitGC struct {
@@ -43,8 +45,8 @@ type gitGC struct {
 	lfsGrace time.Duration
 }
 
-func newGitGC(store gitGCStore, dataRoot string, interval, lfsGrace time.Duration) *gitGC {
-	return &gitGC{store: store, dataRoot: dataRoot, interval: interval, lfsGrace: lfsGrace}
+func newGitGC(st gitGCStore, dataRoot string, interval, lfsGrace time.Duration) *gitGC {
+	return &gitGC{store: st, dataRoot: dataRoot, interval: interval, lfsGrace: lfsGrace}
 }
 
 func (g *gitGC) run(ctx context.Context) {

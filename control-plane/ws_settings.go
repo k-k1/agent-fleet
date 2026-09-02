@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Per-workspace member settings owned by the Control Plane. Unlike the toolchain
@@ -70,8 +72,8 @@ func parseWSSettings(s string) wsSettings {
 // キャッシュ破棄（evictMembershipCache）だけは memberAuth 経由の a.mgr を直接呼ぶ。
 type wsSettingsAPI struct {
 	memberAuth
-	store   WorkspaceStore
-	tenants TenantStore
+	store   store.WorkspaceStore
+	tenants store.TenantStore
 }
 
 func newWSSettingsAPI(m *manager) wsSettingsAPI {
@@ -79,7 +81,7 @@ func newWSSettingsAPI(m *manager) wsSettingsAPI {
 }
 
 // tenantAllowsAgentUpdate reports the operator gate for a workspace's tenant.
-func (a wsSettingsAPI) tenantAllowsAgentUpdate(r *http.Request, ws Workspace) bool {
+func (a wsSettingsAPI) tenantAllowsAgentUpdate(r *http.Request, ws store.Workspace) bool {
 	t, err := a.tenants.GetTenant(r.Context(), ws.TenantID)
 	if err != nil {
 		return false
@@ -144,7 +146,7 @@ func (a wsSettingsAPI) addPreview(r *http.Request, res *resolved, st wsSettings,
 // ★ 起動中かどうかは preview_slug 列の有無で決める。Workspace ごとにランタイムの状態を
 // 問い合わせない —— テナントのメンバー数だけ往復が増えるうえ、ここで欲しいのは
 // 「コンテナが動いているか」ではなく「**プレビューの URL が今あるか**」そのものである。
-func (a wsSettingsAPI) sharedPreviews(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a wsSettingsAPI) sharedPreviews(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	ctx := r.Context()
 	domain := a.mgr.previewDomain
 	items := []map[string]any{}
@@ -158,7 +160,7 @@ func (a wsSettingsAPI) sharedPreviews(w http.ResponseWriter, r *http.Request, _ 
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	byMembership := make(map[string]MemberInfo, len(members))
+	byMembership := make(map[string]store.MemberInfo, len(members))
 	for _, m := range members {
 		byMembership[m.MembershipID] = m
 	}

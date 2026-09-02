@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // buildMux は CP の全ルートを登録した mux を返す（docs/log/23 P0-2 で main() から抽出、
@@ -559,8 +561,8 @@ func registerScheduleRoutes(mux *http.ServeMux, cfg config) {
 // scheduleMember wraps a membership-scoped schedule handler in the gateway member auth so
 // the Console can reach it, dropping the Identity that withMembership also resolves (the
 // schedule handlers key everything off mv.MembershipID).
-func scheduleMember(s scheduleAPI, h func(http.ResponseWriter, *http.Request, MembershipView)) http.HandlerFunc {
-	return s.withMembership(func(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func scheduleMember(s scheduleAPI, h func(http.ResponseWriter, *http.Request, store.MembershipView)) http.HandlerFunc {
+	return s.withMembership(func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 		h(w, r, mv)
 	})
 }

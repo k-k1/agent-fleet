@@ -15,6 +15,8 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func scheduleSignKey(master32 []byte) []byte {
@@ -61,18 +63,18 @@ func verifyScheduleToken(signKey []byte, token string) (membershipID string, ok 
 // scheduleTokenMembership authenticates a /internal/schedules request by its Bearer
 // schedule token and resolves the live membership (a revoked membership -> 401).
 // Tenant/role come from the live store, never the token.
-func (a scheduleAPI) scheduleTokenMembership(r *http.Request) (MembershipView, *apiError) {
+func (a scheduleAPI) scheduleTokenMembership(r *http.Request) (store.MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	mid, ok := verifyScheduleToken(scheduleSignKey(a.mgr.tokenSignMaster()), tok)
 	if !ok {
-		return MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid schedule token"}
+		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid schedule token"}
 	}
 	mv, ok, err := a.mgr.store.GetMembershipByID(r.Context(), mid)
 	if err != nil {
-		return MembershipView{}, internalErr(err)
+		return store.MembershipView{}, internalErr(err)
 	}
 	if !ok {
-		return MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "membership not active"}
+		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "membership not active"}
 	}
 	return mv, nil
 }
@@ -80,7 +82,7 @@ func (a scheduleAPI) scheduleTokenMembership(r *http.Request) (MembershipView, *
 // withScheduleToken adapts a membership-scoped schedule handler to the internal token
 // face — the SAME handler bodies the (future) session face would use; only the
 // membership resolution differs.
-func (a scheduleAPI) withScheduleToken(h func(http.ResponseWriter, *http.Request, MembershipView)) http.HandlerFunc {
+func (a scheduleAPI) withScheduleToken(h func(http.ResponseWriter, *http.Request, store.MembershipView)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		mv, aerr := a.scheduleTokenMembership(r)
 		if aerr != nil {

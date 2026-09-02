@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // テナント削除（docs/log/61 §61.18）。**空のものだけ**消せる——DB の行は、クラウドや
@@ -15,11 +17,11 @@ func callDeleteTenant(mgr *manager, slug string) *httptest.ResponseRecorder {
 	r.Header.Set("X-Forwarded-Email", "boss@acme.co.jp")
 	r.SetPathValue("slug", slug)
 	w := httptest.NewRecorder()
-	newAdminAPI(mgr).deleteTenant(w, r, Identity{ID: "I-boss", Role: "super_admin"})
+	newAdminAPI(mgr).deleteTenant(w, r, store.Identity{ID: "I-boss", Role: "super_admin"})
 	return w
 }
 
-func tenantStillThere(t *testing.T, st *sqlStore, slug string) {
+func tenantStillThere(t *testing.T, st *store.SQL, slug string) {
 	t.Helper()
 	if _, ok, err := st.GetTenantBySlug(context.Background(), slug); err != nil || !ok {
 		t.Errorf("the tenant was deleted despite the refusal (ok=%v err=%v)", ok, err)
@@ -70,9 +72,9 @@ func TestDeleteTenantRefusesWhileAnInternalRepoExists(t *testing.T) {
 	if err := st.DeleteWorkspace(ctx, "W-1"); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
-	if err := st.CreateGitRepo(ctx, GitRepo{
-		ID: newID(), TenantID: tn.ID, Name: "tools", DefaultBranch: "main",
-		CreatedBy: "boss-acme-co-jp", CreatedAt: nowTS(),
+	if err := st.CreateGitRepo(ctx, store.GitRepo{
+		ID: store.NewID(), TenantID: tn.ID, Name: "tools", DefaultBranch: "main",
+		CreatedBy: "boss-acme-co-jp", CreatedAt: store.NowTS(),
 	}); err != nil {
 		t.Fatalf("repo: %v", err)
 	}
@@ -159,7 +161,7 @@ func TestDeleteTenantRemovesTheEmptyTenantAndKeepsTheHistory(t *testing.T) {
 	}
 }
 
-func mustMembers(t *testing.T, st *sqlStore, tenantID string) []MemberInfo {
+func mustMembers(t *testing.T, st *store.SQL, tenantID string) []store.MemberInfo {
 	t.Helper()
 	ms, err := st.ListMembersByTenant(context.Background(), tenantID)
 	if err != nil {

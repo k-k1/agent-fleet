@@ -18,43 +18,28 @@ import (
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// The sizing vocabulary and its three types are declared by the adapters' package:
-// this file used to hang a SizingProfile() method on each of the four factory types,
-// and Go only allows that in the package that declares them
-// (internal/runtime/profiles.go). Aliased here so every CP-side reader — the handler
-// below, tenant_slot_class.go, the JSON — is unchanged.
-const (
-	memMeaningLimit = runtime.MemMeaningLimit
-	memMeaningSlot  = runtime.MemMeaningSlot
-
-	diskMeaningWork  = runtime.DiskMeaningWork
-	diskMeaningHome  = runtime.DiskMeaningHome
-	diskMeaningQuota = runtime.DiskMeaningQuota
-)
-
-type (
-	workspaceSizing    = runtime.WorkspaceSizing
-	workspaceSlotClass = runtime.WorkspaceSlotClass
-	workspaceSlot      = runtime.WorkspaceSlot
-)
-
+// ⚠️ サイジングの語彙（runtime.MemMeaning* / DiskMeaning*）とその 3 型は adapters 側が
+// 宣言する。この file はかつて 4 つの factory 型に SizingProfile() メソッドを生やしており、
+// Go はそれを宣言元パッケージでしか許さない（internal/runtime/profiles.go）。
+//
 // sizingProfiler is the optional RuntimeFactory capability. Same shape as
 // WorkspaceImage(): adapters that have nothing special to say don't implement it.
 type sizingProfiler interface {
-	SizingProfile() workspaceSizing
+	SizingProfile() runtime.WorkspaceSizing
 }
 
 // workspaceSizing reports the deployment's profile, falling back to the historical
 // docker/Fargate description for an adapter that does not declare one.
-func (m *manager) workspaceSizing() workspaceSizing {
+func (m *manager) workspaceSizing() runtime.WorkspaceSizing {
 	if f, ok := m.rtFactory.(sizingProfiler); ok {
 		return f.SizingProfile()
 	}
-	return workspaceSizing{
+	return runtime.WorkspaceSizing{
 		Runtime: "local", CPUEffective: true,
-		MemMeaning: memMeaningLimit, DiskMeaning: diskMeaningQuota,
+		MemMeaning: runtime.MemMeaningLimit, DiskMeaning: runtime.DiskMeaningQuota,
 	}
 }
 
@@ -63,6 +48,6 @@ func (m *manager) workspaceSizing() workspaceSizing {
 // that consumes it is tenant_admin-only, but the instance type a person's own
 // workspace runs on is visible from inside that workspace anyway (nproc, cgroup), so
 // gating it would protect nothing while forcing the Console to guess.
-func (a adminAPI) workspaceSizingProfile(w http.ResponseWriter, _ *http.Request, _ Identity) {
+func (a adminAPI) workspaceSizingProfile(w http.ResponseWriter, _ *http.Request, _ store.Identity) {
 	writeJSON(w, http.StatusOK, a.mgr.workspaceSizing())
 }

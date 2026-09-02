@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // previewTestRuntime is a minimal Runtime stub whose Token() lets the fake Agent
@@ -31,7 +33,7 @@ func (r previewTestRuntime) Name() string                 { return "preview-test
 func newPreviewTenantTestEnv(t *testing.T, agentURL string) (mux *http.ServeMux) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -59,9 +61,9 @@ func newPreviewTenantTestEnv(t *testing.T, agentURL string) (mux *http.ServeMux)
 	if err != nil {
 		t.Fatalf("membership security: %v", err)
 	}
-	for _, ws := range []Workspace{
-		{ID: "ws-default", TenantID: dflt.ID, MembershipID: memDefault.ID, ContainerName: "default", Network: "n", DataDir: "d1", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()},
-		{ID: "ws-security", TenantID: sec.ID, MembershipID: memSecurity.ID, ContainerName: "security", Network: "n", DataDir: "d2", AgentPort: "2", AgentToken: "t", State: "running", CreatedAt: nowTS()},
+	for _, ws := range []store.Workspace{
+		{ID: "ws-default", TenantID: dflt.ID, MembershipID: memDefault.ID, ContainerName: "default", Network: "n", DataDir: "d1", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: store.NowTS()},
+		{ID: "ws-security", TenantID: sec.ID, MembershipID: memSecurity.ID, ContainerName: "security", Network: "n", DataDir: "d2", AgentPort: "2", AgentToken: "t", State: "running", CreatedAt: store.NowTS()},
 	} {
 		if err := st.CreateWorkspace(ctx, ws); err != nil {
 			t.Fatal(err)
@@ -70,8 +72,8 @@ func newPreviewTenantTestEnv(t *testing.T, agentURL string) (mux *http.ServeMux)
 
 	mgr := &manager{
 		rts: map[string]cachedRT{
-			memDefault.ID:  {rt: previewTestRuntime{endpoint: agentURL, token: "tok-default"}, ws: Workspace{ID: "ws-default", TenantID: dflt.ID, MembershipID: memDefault.ID}},
-			memSecurity.ID: {rt: previewTestRuntime{endpoint: agentURL, token: "tok-security"}, ws: Workspace{ID: "ws-security", TenantID: sec.ID, MembershipID: memSecurity.ID}},
+			memDefault.ID:  {rt: previewTestRuntime{endpoint: agentURL, token: "tok-default"}, ws: store.Workspace{ID: "ws-default", TenantID: dflt.ID, MembershipID: memDefault.ID}},
+			memSecurity.ID: {rt: previewTestRuntime{endpoint: agentURL, token: "tok-security"}, ws: store.Workspace{ID: "ws-security", TenantID: sec.ID, MembershipID: memSecurity.ID}},
 		},
 		store:           st,
 		authMode:        "dev",

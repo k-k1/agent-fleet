@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // agentHTTPClient is the CP→Agent client for control-loop calls (scheduler,
@@ -58,7 +60,7 @@ var agentStatsClient = &http.Client{Timeout: 5 * time.Second, Transport: newAgen
 // The returned map carries only the axes the Agent could actually read — a missing
 // key means "not measurable", never zero. Callers merge it into the stats map, so
 // keys are deliberately identical to the docker path's.
-func (m *manager) agentStats(ctx context.Context, rt Runtime) (map[string]any, error) {
+func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[string]any, error) {
 	if rt.Endpoint() == "" {
 		return nil, fmt.Errorf("agent /workspace/stats: no endpoint")
 	}
@@ -119,7 +121,7 @@ func (m *manager) agentStats(ctx context.Context, rt Runtime) (map[string]any, e
 // shell/ssm sessions are excluded: they are lightweight terminals (a local shell or
 // a remote SSM tunnel), not agent runs, so they are unmetered by the session quota
 // (see isUnmeteredKind).
-func (m *manager) countSessions(ctx context.Context, rt Runtime) (int, error) {
+func (m *manager) countSessions(ctx context.Context, rt runtime.Runtime) (int, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", rt.Endpoint()+"/sessions", nil)
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
@@ -160,7 +162,7 @@ func isUnmeteredKind(kind string) bool {
 }
 
 // agentSessions fetches the Agent's full session list (for the DB mirror).
-func (m *manager) agentSessions(ctx context.Context, rt Runtime) ([]sessionWire, error) {
+func (m *manager) agentSessions(ctx context.Context, rt runtime.Runtime) ([]sessionWire, error) {
 	env, err := m.agentSessionsEnv(ctx, rt)
 	return env.Sessions, err
 }
@@ -176,7 +178,7 @@ type agentSessionsEnvelope struct {
 
 // agentSessionsEnv is agentSessions plus the workspace-level busy signals that ride
 // the same response, so the reaper needs no extra request per sweep.
-func (m *manager) agentSessionsEnv(ctx context.Context, rt Runtime) (agentSessionsEnvelope, error) {
+func (m *manager) agentSessionsEnv(ctx context.Context, rt runtime.Runtime) (agentSessionsEnvelope, error) {
 	var body agentSessionsEnvelope
 	req, _ := http.NewRequestWithContext(ctx, "GET", rt.Endpoint()+"/sessions", nil)
 	if rt.Token() != "" {

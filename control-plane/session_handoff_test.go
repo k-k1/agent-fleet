@@ -8,23 +8,25 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // handoffAPIFixture — 所有者 1 人・共有先候補 1 人・Agent スタブ 1 台。
 type handoffAPIFixture struct {
-	st        *sqlStore
+	st        *store.SQL
 	api       sessionHandoffAPI
 	res       *resolved
-	owner     Membership
-	recipient Membership
-	tenant    Tenant
+	owner     store.Membership
+	recipient store.Membership
+	tenant    store.Tenant
 	agentHits map[string]int
 }
 
 func newHandoffAPIFixture(t *testing.T, sessions []map[string]any) handoffAPIFixture {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +40,8 @@ func newHandoffAPIFixture(t *testing.T, sessions []map[string]any) handoffAPIFix
 	owner, _ := st.EnsureMembership(ctx, oi.ID, tenant.ID, "member")
 	recipient, _ := st.EnsureMembership(ctx, ri.ID, tenant.ID, "member")
 	ownerViews, _ := st.ListMemberships(ctx, oi.ID)
-	ws := Workspace{ID: "ws-owner", TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "owner",
-		Network: "test", DataDir: "/data/owner", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: nowTS()}
+	ws := store.Workspace{ID: "ws-owner", TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "owner",
+		Network: "test", DataDir: "/data/owner", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
@@ -130,9 +132,9 @@ func TestHandoffRecipientsListsSharedMembers(t *testing.T) {
 	ctx := context.Background()
 	f := newHandoffAPIFixture(t, oneSession)
 	// 共有規則を張ってから同期させる（catalog 行は同期で作られる）。
-	if err := f.st.PutSessionShare(ctx, SessionShare{ID: "share-1", TenantID: f.tenant.ID,
+	if err := f.st.PutSessionShare(ctx, store.SessionShare{ID: "share-1", TenantID: f.tenant.ID,
 		OwnerMembershipID: f.owner.ID, RecipientMembershipID: f.recipient.ID, ScopeType: "session",
-		ScopeKey: "session-1", Permission: "ro", CreatedAt: nowTS(), UpdatedAt: nowTS()}); err != nil {
+		ScopeKey: "session-1", Permission: "ro", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 	rec := f.getRecipients(t, "session-1")

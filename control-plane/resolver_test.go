@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // docs/log/23 P2-W2: manager.mu を DB I/O 跨ぎで保持する直列化をやめた際の要件 —
@@ -23,7 +24,7 @@ func TestBuildResolvedSingleFlight(t *testing.T) {
 	t.Cleanup(func() { runtime.DockerInspectOut = prev })
 
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

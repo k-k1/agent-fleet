@@ -151,11 +151,9 @@ type slotCapacityReporter interface {
 	MaxSlots() int
 }
 
-// poolBudget is declared by the adapters' package (internal/runtime/deps.go): the EC2
-// pool status DTO embeds it, and that DTO moved with the adapter. The type and its OK()
-// went along because a Go alias cannot carry methods. Everything on this side — the
-// totalling below, the admin API, the pool screen's JSON — is unchanged.
-type poolBudget = runtime.PoolBudget
+// ⚠️ runtime.PoolBudget は adapters 側（internal/runtime/deps.go）が宣言する。EC2 プールの
+// status DTO がこれを埋め込んでおり、DTO ごとアダプタと一緒に動いた。OK() メソッドも
+// 一緒なのは、Go のエイリアスがメソッドを運べないため。
 
 // poolBudget totals the tenants' concurrency quotas against the pool cap.
 //
@@ -164,16 +162,16 @@ type poolBudget = runtime.PoolBudget
 // the one it replaced. Pass "" to read what is stored.
 //
 // ok=false on every runtime without a pool. That is the whole answer there, not "fine".
-func (m *manager) poolBudget(ctx context.Context, overrideTenantID string, overrideMax int) (poolBudget, bool, error) {
+func (m *manager) poolBudget(ctx context.Context, overrideTenantID string, overrideMax int) (runtime.PoolBudget, bool, error) {
 	cap, ok := m.rtFactory.(slotCapacityReporter)
 	if !ok {
-		return poolBudget{}, false, nil
+		return runtime.PoolBudget{}, false, nil
 	}
 	ts, err := m.store.ListTenants(ctx)
 	if err != nil {
-		return poolBudget{}, true, err
+		return runtime.PoolBudget{}, true, err
 	}
-	b := poolBudget{MaxSlots: cap.MaxSlots(), Reserved: bakeReservedSlots}
+	b := runtime.PoolBudget{MaxSlots: cap.MaxSlots(), Reserved: runtime.BakeReservedSlots}
 	b.Capacity = b.MaxSlots - b.Reserved
 	for _, t := range ts {
 		// A suspended tenant runs nothing, so counting it would make an operator lower

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // docs/log/61 P1 — 同一人物の判定。何を固定しているか:
@@ -19,9 +21,9 @@ import (
 //   - email が一致しなければ新規 identity で、それが本人に見えること
 //   - AUTH=proxy / AUTH=dev は何も変わらないこと（IdP subject が無いモード）
 
-func newLinkStore(t *testing.T) *sqlStore {
+func newLinkStore(t *testing.T) *store.SQL {
 	t.Helper()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -32,7 +34,7 @@ func newLinkStore(t *testing.T) *sqlStore {
 	return st
 }
 
-func countRows(t *testing.T, st *sqlStore, table string) int {
+func countRows(t *testing.T, st *store.SQL, table string) int {
 	t.Helper()
 	var n int
 	if err := st.DB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM `+table).Scan(&n); err != nil {
@@ -44,8 +46,8 @@ func countRows(t *testing.T, st *sqlStore, table string) int {
 // linkOf は「realm を持たない、ごく普通のログイン 1 回」。realm（規則 1.5・
 // docs/log/61 §61.15）を試すテストは IdentityLink を直に組み立てる — 既定で空にして
 // あるのは、realm 無しの行が従来どおりに振る舞うことこそ移行の要件だから。
-func linkOf(provider, subject, email string, emailJoin bool) IdentityLink {
-	return IdentityLink{
+func linkOf(provider, subject, email string, emailJoin bool) store.IdentityLink {
+	return store.IdentityLink{
 		Provider: provider, Subject: subject, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: emailJoin,
 	}

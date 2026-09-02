@@ -10,6 +10,9 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // identity is what the AuthGateway resolves a request to.
@@ -52,7 +55,7 @@ func (m *manager) resolveUser(r *http.Request) string { return m.resolveIdentity
 //   - no join by email. The (provider, subject) pair is the only key, because that
 //     issuer belongs to the subsidiary and its assertion about an address is not
 //     proof of being that person (LinkIdentity's rule 2').
-func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error) {
+func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint string) (store.Identity, error) {
 	if ref, ok := loginRefFrom(ctx); ok {
 		tenantDefined := isTenantProviderID(ref.provider)
 		if tenantDefined {
@@ -62,7 +65,7 @@ func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint strin
 		// cookie, not the provider object, and rule 1.5 must never guess one. The
 		// callback stamped it at login, and LinkIdentity keeps a recorded realm when
 		// it is handed an empty one (docs/log/61 §61.15).
-		ident, _, err := m.store.LinkIdentity(ctx, IdentityLink{
+		ident, _, err := m.store.LinkIdentity(ctx, store.IdentityLink{
 			Provider: ref.provider, Subject: ref.subject, Email: email,
 			FallbackKey: key, RoleHint: roleHint, EmailJoin: !tenantDefined,
 		})
@@ -77,8 +80,8 @@ func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint strin
 // answering 500 would send an operator looking for a fault that does not exist.
 // The normal path refuses it at the callback, before a session exists.
 func identityErr(err error) *apiError {
-	if errors.Is(err, errIdentityClaimed) {
-		return &apiError{http.StatusForbidden, "email_taken", errIdentityClaimed.Error()}
+	if errors.Is(err, store.ErrIdentityClaimed) {
+		return &apiError{http.StatusForbidden, "email_taken", store.ErrIdentityClaimed.Error()}
 	}
 	return internalErr(err)
 }
@@ -121,7 +124,7 @@ func (m *manager) roleHintFor(email string) string {
 // would still administer the tenant from a session cookie that stays valid for
 // up to AF_SESSION_TTL, and could put themselves straight back on the roster
 // (docs/log/61 §61.10.7 の穴 2).
-func (m *manager) tenantAdminFor(ctx context.Context, ident Identity, tID string) bool {
+func (m *manager) tenantAdminFor(ctx context.Context, ident store.Identity, tID string) bool {
 	if ident.Role == "super_admin" {
 		return true
 	}
@@ -131,14 +134,14 @@ func (m *manager) tenantAdminFor(ctx context.Context, ident Identity, tID string
 
 // identityFor upserts and returns the caller's identity (used by /api/tenants and
 // admin RBAC). 401 if the gateway gave no identity.
-func (m *manager) identityFor(ctx context.Context, r *http.Request) (Identity, *apiError) {
+func (m *manager) identityFor(ctx context.Context, r *http.Request) (store.Identity, *apiError) {
 	id := m.resolveIdentity(r)
 	if id.key == "" {
-		return Identity{}, &apiError{http.StatusUnauthorized, "unauthenticated", "no gateway identity"}
+		return store.Identity{}, &apiError{http.StatusUnauthorized, "unauthenticated", "no gateway identity"}
 	}
 	ident, err := m.upsertIdentity(ctx, id.email, id.key, m.roleHintFor(id.email))
 	if err != nil {
-		return Identity{}, identityErr(err)
+		return store.Identity{}, identityErr(err)
 	}
 	return ident, nil
 }
@@ -155,7 +158,7 @@ func (m *manager) identityFor(ctx context.Context, r *http.Request) (Identity, *
 // An invite-run deployment lives entirely in 1; a small single-tenant one lives
 // entirely in 2 and never opens the invite screen. Steps 3 and 4 are exactly what
 // they were, so a deployment that sets no auto_join_domains sees no change.
-func (m *manager) membershipsFor(ctx context.Context, ident Identity) ([]MembershipView, *apiError) {
+func (m *manager) membershipsFor(ctx context.Context, ident store.Identity) ([]store.MembershipView, *apiError) {
 	ms, err := m.store.ListMemberships(ctx, ident.ID)
 	if err != nil {
 		return nil, internalErr(err)
@@ -175,10 +178,10 @@ func (m *manager) membershipsFor(ctx context.Context, ident Identity) ([]Members
 			// tenant claimed this domain and the lowest slug won by rule, which is a
 			// decision an administrator has to be able to find afterwards (§61.9.8).
 			log.Printf("WARNING: auto-join: %s matched more than one tenant; joined %q (lowest slug)", ident.Email, t.Slug)
-			_ = m.store.InsertAudit(ctx, AuditLog{
-				ID: newID(), TenantID: t.ID, ActorKind: "system", ActorID: ident.ID,
+			_ = m.store.InsertAudit(ctx, store.AuditLog{
+				ID: store.NewID(), TenantID: t.ID, ActorKind: "system", ActorID: ident.ID,
 				Action: "tenant.auto_join_conflict", Target: t.Slug,
-				Detail: "domain claimed by multiple tenants; lowest slug won", At: nowTS(),
+				Detail: "domain claimed by multiple tenants; lowest slug won", At: store.NowTS(),
 			})
 		}
 		ms, err = m.store.ListMemberships(ctx, ident.ID)
@@ -238,7 +241,7 @@ func (m *manager) hasAnyMembershipRow(ctx context.Context, identityID, tenantID 
 // providers accepts every one of them, so without this a subsidiary's own IdP would
 // be a way into every such tenant in the deployment. The subsidiary's administrator
 // controls that issuer, so the only tenant its assertions may open is theirs.
-func (m *manager) checkTenantProvider(ctx context.Context, mv MembershipView) *apiError {
+func (m *manager) checkTenantProvider(ctx context.Context, mv store.MembershipView) *apiError {
 	prov := sessionProviderFrom(ctx)
 	if slug, _, ok := parseTenantProviderID(prov); ok && slug != mv.TenantSlug {
 		return &apiError{http.StatusForbidden, "provider_required",
@@ -267,7 +270,7 @@ func (m *manager) checkTenantProvider(ctx context.Context, mv MembershipView) *a
 // container, not a place a person is sitting. Enforcing here would mean a tenant that
 // allowlists its office silently blocks every agent inside its own workspaces
 // (ADR 0047 決定 3). Revoking that access is the membership's job, as it always was.
-func (m *manager) checkTenantIP(ctx context.Context, ident Identity, mv MembershipView) *apiError {
+func (m *manager) checkTenantIP(ctx context.Context, ident store.Identity, mv store.MembershipView) *apiError {
 	if ident.Role == "super_admin" {
 		return nil
 	}
@@ -309,24 +312,24 @@ func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string)
 // resolveMembership maps a request's identity + selected tenant to its identity and
 // membership WITHOUT building/creating a workspace — for lightweight per-member
 // resources (e.g. SSM host bookmarks) that don't need a running container.
-func (m *manager) resolveMembership(ctx context.Context, key, email, tenantSel string) (Identity, MembershipView, *apiError) {
+func (m *manager) resolveMembership(ctx context.Context, key, email, tenantSel string) (store.Identity, store.MembershipView, *apiError) {
 	ident, err := m.upsertIdentity(ctx, email, key, m.roleHintFor(email))
 	if err != nil {
-		return Identity{}, MembershipView{}, identityErr(err)
+		return store.Identity{}, store.MembershipView{}, identityErr(err)
 	}
 	ms, aerr := m.membershipsFor(ctx, ident)
 	if aerr != nil {
-		return Identity{}, MembershipView{}, aerr
+		return store.Identity{}, store.MembershipView{}, aerr
 	}
 	mv, aerr := selectMembership(ms, tenantSel)
 	if aerr != nil {
-		return Identity{}, MembershipView{}, aerr
+		return store.Identity{}, store.MembershipView{}, aerr
 	}
 	if aerr := m.checkTenantProvider(ctx, mv); aerr != nil {
-		return Identity{}, MembershipView{}, aerr
+		return store.Identity{}, store.MembershipView{}, aerr
 	}
 	if aerr := m.checkTenantIP(ctx, ident, mv); aerr != nil {
-		return Identity{}, MembershipView{}, aerr
+		return store.Identity{}, store.MembershipView{}, aerr
 	}
 	return ident, mv, nil
 }
@@ -334,7 +337,7 @@ func (m *manager) resolveMembership(ctx context.Context, key, email, tenantSel s
 // selectMembership picks the active membership for a request. tenantSel (slug or
 // id) is required when the person belongs to more than one tenant; a single
 // membership is auto-selected.
-func selectMembership(ms []MembershipView, tenantSel string) (MembershipView, *apiError) {
+func selectMembership(ms []store.MembershipView, tenantSel string) (store.MembershipView, *apiError) {
 	switch {
 	case tenantSel != "":
 		for _, x := range ms {
@@ -342,11 +345,11 @@ func selectMembership(ms []MembershipView, tenantSel string) (MembershipView, *a
 				return x, nil
 			}
 		}
-		return MembershipView{}, &apiError{http.StatusForbidden, "forbidden_tenant", "not a member of tenant " + tenantSel}
+		return store.MembershipView{}, &apiError{http.StatusForbidden, "forbidden_tenant", "not a member of tenant " + tenantSel}
 	case len(ms) == 1:
 		return ms[0], nil
 	default:
-		return MembershipView{}, &apiError{http.StatusConflict, "tenant_selection_required", "specify X-AF-Tenant; you belong to multiple tenants"}
+		return store.MembershipView{}, &apiError{http.StatusConflict, "tenant_selection_required", "specify X-AF-Tenant; you belong to multiple tenants"}
 	}
 }
 
@@ -359,7 +362,7 @@ func selectMembership(ms []MembershipView, tenantSel string) (MembershipView, *a
 // 注: evict*Cache との競合はベストエフォート（ビルド中に evict されると直後の
 // キャッシュ格納が旧 env のまま残り得るが、ポリシー変更は「次のコンテナ起動で
 // 反映」というこれまでの意味論の範囲内）。
-func (m *manager) buildResolved(ctx context.Context, ident Identity, mv MembershipView) (*resolved, *apiError) {
+func (m *manager) buildResolved(ctx context.Context, ident store.Identity, mv store.MembershipView) (*resolved, *apiError) {
 	if c, ok := m.cachedRTFor(mv.MembershipID); ok {
 		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv}, nil
 	}
@@ -482,7 +485,7 @@ func (m *manager) resolveByMembership(ctx context.Context, identityID, membershi
 }
 
 // resolve returns just the runtime (proxy/terminal handlers).
-func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (Runtime, *apiError) {
+func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (runtime.Runtime, *apiError) {
 	res, aerr := m.resolveFull(ctx, key, email, tenantSel)
 	if aerr != nil {
 		return nil, aerr

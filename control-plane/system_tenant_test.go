@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // 予約テナントは管理画面のテナント一覧に出さない（docs/log/61 §61.18）。焼き直しのたびに
@@ -24,7 +27,7 @@ func TestListTenantsHidesTheSystemTenant(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodGet, "/api/admin/tenants", nil)
 	w := httptest.NewRecorder()
-	newAdminAPI(mgr).listTenants(w, r, Identity{ID: "I-1", Role: "super_admin"})
+	newAdminAPI(mgr).listTenants(w, r, store.Identity{ID: "I-1", Role: "super_admin"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("listTenants = %d %s", w.Code, w.Body.String())
 	}
@@ -69,8 +72,8 @@ func TestSystemMembershipIDsIncludeTheDeactivatedOnes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("golden tenant: %v", err)
 	}
-	seed, _ := st.UpsertIdentity(ctx, "", goldenSeedKey, "")
-	probe, _ := st.UpsertIdentity(ctx, "", goldenProbeKey, "")
+	seed, _ := st.UpsertIdentity(ctx, "", runtime.GoldenSeedKey, "")
+	probe, _ := st.UpsertIdentity(ctx, "", runtime.GoldenProbeKey, "")
 	seedMem, err := st.EnsureMembership(ctx, seed.ID, tn.ID, "member")
 	if err != nil {
 		t.Fatalf("seed membership: %v", err)
@@ -108,9 +111,9 @@ func TestSystemMembershipIDsAreEmptyWithoutTheReservedTenant(t *testing.T) {
 // 稼働時間の面からも予約テナントは消す。テナント一覧から消しておきながらここに
 // 「af-golden / af-golden-seed」の行が残ると、隠した意味が無くなる。
 func TestUsageDropsTheSystemTenantsRows(t *testing.T) {
-	rows := []UsageRow{
+	rows := []store.UsageRow{
 		{TenantSlug: "sales", UserKey: "yamada", Day: "2026-08-21", RunningSecs: 60},
-		{TenantSlug: goldenTenantSlug, UserKey: goldenSeedKey, Day: "2026-08-21", RunningSecs: 1200},
+		{TenantSlug: goldenTenantSlug, UserKey: runtime.GoldenSeedKey, Day: "2026-08-21", RunningSecs: 1200},
 	}
 	got := withoutSystemTenants(rows)
 	if len(got) != 1 || got[0].TenantSlug != "sales" {
@@ -125,7 +128,7 @@ func TestUsageDropsTheSystemTenantsRows(t *testing.T) {
 // **足す**こと — PutCloudCost は置き換えなので、足さずに 2 行返すと後の行が前の行の
 // 金額を消す。
 func TestFoldSystemMembershipsSumsIntoTheSharedBucket(t *testing.T) {
-	rows := []CloudCostRow{
+	rows := []store.CloudCostRow{
 		{Day: "2026-08-21", MembershipID: "", TenantID: "", Service: "Amazon EC2", Unblended: 100, Amortized: 100},
 		{Day: "2026-08-21", MembershipID: "M-seed", TenantID: "T-golden", Service: "Amazon EC2", Unblended: 25, Amortized: 25, Estimated: true},
 		{Day: "2026-08-21", MembershipID: "M-real", TenantID: "T-sales", Service: "Amazon EC2", Unblended: 7, Amortized: 7},
@@ -134,7 +137,7 @@ func TestFoldSystemMembershipsSumsIntoTheSharedBucket(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("rows = %+v, want the shared row and the real member's row", got)
 	}
-	var shared, real CloudCostRow
+	var shared, real store.CloudCostRow
 	for _, r := range got {
 		if r.MembershipID == "" {
 			shared = r
@@ -159,7 +162,7 @@ func TestFoldSystemMembershipsSumsIntoTheSharedBucket(t *testing.T) {
 
 // 予約テナントの無いデプロイでは 1 行も動かさない。
 func TestFoldSystemMembershipsIsANoOpWithoutReservedMemberships(t *testing.T) {
-	rows := []CloudCostRow{
+	rows := []store.CloudCostRow{
 		{Day: "2026-08-21", MembershipID: "M-real", Service: "Amazon EC2", Unblended: 7},
 	}
 	got := foldSystemMemberships(rows, nil)
@@ -177,13 +180,13 @@ func TestCloudCostFoldsAnOldSystemRowIntoShared(t *testing.T) {
 	if err != nil {
 		t.Fatalf("golden tenant: %v", err)
 	}
-	seed, _ := st.UpsertIdentity(ctx, "", goldenSeedKey, "")
+	seed, _ := st.UpsertIdentity(ctx, "", runtime.GoldenSeedKey, "")
 	seedMem, err := st.EnsureMembership(ctx, seed.ID, tn.ID, "member")
 	if err != nil {
 		t.Fatalf("seed membership: %v", err)
 	}
 	day := "2026-07-01"
-	if err := st.PutCloudCost(ctx, []string{day}, []CloudCostRow{
+	if err := st.PutCloudCost(ctx, []string{day}, []store.CloudCostRow{
 		{Day: day, MembershipID: "", Service: "Amazon Route 53", Unblended: 50, Currency: "USD"},
 		{Day: day, MembershipID: seedMem.ID, TenantID: tn.ID, Service: "Amazon EC2", Unblended: 20, Currency: "USD"},
 	}); err != nil {

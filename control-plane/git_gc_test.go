@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // TestLFSGCPrune drives the real referenced-oid enumeration + orphan prune. It
@@ -22,7 +24,7 @@ func TestLFSGCPrune(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 	dataRoot := filepath.Join(tmp, "data")
-	st, err := openSQLite(filepath.Join(tmp, "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(tmp, "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -31,7 +33,7 @@ func TestLFSGCPrune(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	dflt, _ := st.EnsureDefaultTenant(ctx)
-	if err := st.CreateGitRepo(ctx, GitRepo{ID: newID(), TenantID: dflt.ID, Name: "shared", DefaultBranch: "main", CreatedAt: nowTS()}); err != nil {
+	if err := st.CreateGitRepo(ctx, store.GitRepo{ID: store.NewID(), TenantID: dflt.ID, Name: "shared", DefaultBranch: "main", CreatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 	bare := filepath.Join(dataRoot, "git", "default", "shared.git")

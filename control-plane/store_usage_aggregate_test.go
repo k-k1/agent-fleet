@@ -5,11 +5,14 @@ package main
 // internal/store/store_sqlite_test.go に同居していた理由は「同じパッケージ
 // だったから」以上のものではなかった。
 
-import "testing"
+import (
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"testing"
+)
 
 // aggregateUsage must sum per member across days and compute hours.
 func TestAggregateUsage(t *testing.T) {
-	rows := []UsageRow{
+	rows := []store.UsageRow{
 		{TenantID: "default", TenantSlug: "default", MembershipID: "m1", UserKey: "a", Day: "2026-06-30", RunningSecs: 3600},
 		{TenantID: "default", TenantSlug: "default", MembershipID: "m1", UserKey: "a", Day: "2026-07-01", RunningSecs: 1800},
 		{TenantID: "default", TenantSlug: "default", MembershipID: "m2", UserKey: "b", Day: "2026-07-01", RunningSecs: 900},

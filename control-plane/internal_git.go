@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Internal git provider — management face (docs/reference/internal-git-provider,
@@ -26,7 +28,7 @@ func (a gitServerAPI) cloneURL(slug, name string) string {
 	return strings.TrimRight(a.publicBaseURL, "/") + "/git/" + slug + "/" + name + ".git"
 }
 
-func (a gitServerAPI) repoDTO(slug string, g GitRepo) map[string]any {
+func (a gitServerAPI) repoDTO(slug string, g store.GitRepo) map[string]any {
 	return map[string]any{
 		"name":           g.Name,
 		"default_branch": g.DefaultBranch,
@@ -38,7 +40,7 @@ func (a gitServerAPI) repoDTO(slug string, g GitRepo) map[string]any {
 
 // reposList (GET /api/internal-git/repos) lists the tenant's internal repos for
 // the RepoPicker/GitTab.
-func (a gitServerAPI) reposList(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a gitServerAPI) reposList(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	repos, err := a.store.ListGitReposByTenant(r.Context(), mv.TenantID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -54,7 +56,7 @@ func (a gitServerAPI) reposList(w http.ResponseWriter, r *http.Request, _ Identi
 // repoCreate (POST /api/internal-git/repos {name}) creates a bare repo on disk
 // and its ledger row, then returns the clone URL. Idempotent-ish: a duplicate
 // name is a 409.
-func (a gitServerAPI) repoCreate(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a gitServerAPI) repoCreate(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	if a.publicBaseURL == "" {
 		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "not_configured", "internal git requires PUBLIC_BASE_URL"})
 		return
@@ -97,13 +99,13 @@ func (a gitServerAPI) repoCreate(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "init_failed", strings.TrimSpace(string(out))})
 		return
 	}
-	g := GitRepo{
-		ID:            newID(),
+	g := store.GitRepo{
+		ID:            store.NewID(),
 		TenantID:      mv.TenantID,
 		Name:          name,
 		DefaultBranch: branch,
 		CreatedBy:     mv.MembershipID,
-		CreatedAt:     nowTS(),
+		CreatedAt:     store.NowTS(),
 	}
 	if err := a.store.CreateGitRepo(r.Context(), g); err != nil {
 		_ = os.RemoveAll(dir) // roll back the bare so a retry isn't blocked by an orphan
@@ -139,15 +141,15 @@ func (a gitServerAPI) enforceGitRepoQuota(ctx context.Context, tenantID string) 
 // auditGit records an internal-git mutation in the audit ledger. Best-effort:
 // a logging failure never blocks the operation.
 func (a gitServerAPI) auditGit(ctx context.Context, tenantID, actorID, action, target, detail string) {
-	_ = a.store.InsertAudit(ctx, AuditLog{
-		ID: newID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
-		Action: action, Target: target, Detail: detail, At: nowTS(),
+	_ = a.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
+		Action: action, Target: target, Detail: detail, At: store.NowTS(),
 	})
 }
 
 // repoDelete (DELETE /api/internal-git/repos/{name}) removes the ledger row and
 // the bare. Tenant-scoped: only repos owned by the caller's tenant.
-func (a gitServerAPI) repoDelete(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a gitServerAPI) repoDelete(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	name := r.PathValue("name")
 	if !validRepoName(name) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "invalid repo name"})
@@ -176,7 +178,7 @@ func (a gitServerAPI) repoDelete(w http.ResponseWriter, r *http.Request, ident I
 // repoRename (POST /api/internal-git/repos/{name}/rename {new_name}) renames a
 // repo: the ledger row and the on-disk bare move together. Existing clones keep
 // their old origin URL and must update the remote to the new clone_url.
-func (a gitServerAPI) repoRename(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a gitServerAPI) repoRename(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	oldName := r.PathValue("name")
 	if !validRepoName(oldName) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "invalid repo name"})
@@ -233,7 +235,7 @@ func (a gitServerAPI) repoRename(w http.ResponseWriter, r *http.Request, ident I
 
 // branches (GET /api/internal-git/repos/{name}/branches) reads the bare's refs
 // directly (no clone) for the RepoPicker branch list.
-func (a gitServerAPI) branches(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a gitServerAPI) branches(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	name := r.PathValue("name")
 	if !validRepoName(name) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "invalid repo name"})

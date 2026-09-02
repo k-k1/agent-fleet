@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // Untyped so they flex to int64/uint64 at each use site (e.g. admin_stats' disk
@@ -83,9 +81,6 @@ func formatMemHuman(b int64) string {
 // package's init never runs in internal/runtime's own test binary, so the adapters
 // would have called a nil func under `go test ./internal/runtime`.
 //
-// fargateCPUUnits stays reachable by name for the callers that present a size choice.
-var fargateCPUUnits = runtime.FargateCPUUnits
-
 // memClampNote is a short human explanation used in API/audit output when a requested
 // value is clamped, so an admin sees why the effective cap differs from their input.
 func memClampNote(requested, effective int64) string {

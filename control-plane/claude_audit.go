@@ -8,6 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Claude self-operation audit (docs/log/20 M5, A-第2段). claude runs untrusted inside the
@@ -51,8 +54,8 @@ type ctResp struct {
 
 // extractClaudeAudits turns transcript turns into audit rows (pure, for testing). Only
 // assistant turns' change/exec tool_use parts count; ID/At are filled by the caller.
-func extractClaudeAudits(msgs []ctTurn, tenantID, session string) []AuditLog {
-	var out []AuditLog
+func extractClaudeAudits(msgs []ctTurn, tenantID, session string) []store.AuditLog {
+	var out []store.AuditLog
 	for _, t := range msgs {
 		if t.Role != "assistant" {
 			continue
@@ -69,7 +72,7 @@ func extractClaudeAudits(msgs []ctTurn, tenantID, session string) []AuditLog {
 			if target == "" {
 				target = p.Info
 			}
-			out = append(out, AuditLog{
+			out = append(out, store.AuditLog{
 				TenantID: tenantID, ActorKind: "claude", ActorID: session,
 				Action: action, Target: target, At: t.TS,
 			})
@@ -164,7 +167,7 @@ func (a *claudeAuditor) cleanupCursors(ctx context.Context, liveWS, checked, liv
 	}
 }
 
-func (a *claudeAuditor) auditSession(ctx context.Context, ws Workspace, rt Runtime, name string) {
+func (a *claudeAuditor) auditSession(ctx context.Context, ws store.Workspace, rt runtime.Runtime, name string) {
 	key := claudeAuditCursorPrefix + ws.ID + ":" + name
 	cur, _ := a.mgr.store.GetSetting(ctx, key)
 	firstTime := cur == ""
@@ -185,9 +188,9 @@ func (a *claudeAuditor) auditSession(ctx context.Context, ws Workspace, rt Runti
 	// (compaction/fork) skip this round rather than risk duplicates — just re-baseline.
 	if !firstTime && !resp.Reset {
 		for _, a0 := range extractClaudeAudits(resp.Messages, ws.TenantID, name) {
-			a0.ID = newID()
+			a0.ID = store.NewID()
 			if a0.At == "" {
-				a0.At = nowTS()
+				a0.At = store.NowTS()
 			}
 			if err := a.mgr.store.InsertAudit(ctx, a0); err != nil {
 				// カーソルを進めると監査行がサイレント欠落する。据え置いて次回再試行

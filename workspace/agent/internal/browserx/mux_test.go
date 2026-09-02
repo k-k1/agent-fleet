@@ -18,57 +18,28 @@ import (
 // のはハンドラが r.PathValue("id") を読むからで、ハンドラを直接呼ぶ形では {id} が空になり
 // テストが本物のリクエストを再現しなくなる。
 //
-// ⚠️ ここは routes.go の写しなので、放っておけば必ずずれる。ずれを赤くするのが下の
-// TestBrowserRoutesMatchAgentRouteTable（Phase 0 の routes.golden と突き合わせる）。
-// **routes.go を書き換えたら golden が動き、この表も直すまで赤いまま**になる。
+// ★ 表そのものは browserx が 1 つだけ持つ（mux.go の Routes）。回収（ADR 0067 決定 2）
+// までは routes.go とここに同じ 15 本が別々に書かれており、**写しは黙って腐る**状態
+// だった。いまはここも routes.go も同じ Routes() を登録する。
 //
 // なお `/healthz` まで要る W5 の live サーバ（TestBrowserLiveServerHelper）は、CP の
 // browser_live_e2e_test.go が `go test -c .` で **root パッケージ**をビルドして起動する
 // ため、package main（workspace/agent/browser_live_helper_test.go）に残してある。
 func buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	for _, r := range browserRoutes() {
-		mux.HandleFunc(r.pattern, r.handler)
-	}
+	RegisterRoutes(mux)
 	return mux
-}
-
-type browserRoute struct {
-	pattern string
-	handler http.HandlerFunc
-}
-
-// browserRoutes は routes.go の browser 節と 1 対 1 に対応する（順序も合わせてある）。
-func browserRoutes() []browserRoute {
-	return []browserRoute{
-		{"POST /browser/pages", HandleBrowserPagesCreate},
-		{"GET /browser/pages/{id}", HandleBrowserPageGet},
-		{"DELETE /browser/pages/{id}", HandleBrowserPageDelete},
-		{"GET /ws/browser", HandleBrowserWebSocket},
-
-		{"GET /browser/attach-targets", HandleBrowserAttachTargets},
-		{"POST /browser/attachments", HandleBrowserAttachmentCreate},
-		{"GET /browser/attachments", HandleBrowserAttachmentList},
-		{"GET /browser/attachments/{id}", HandleBrowserAttachmentGet},
-		{"DELETE /browser/attachments/{id}", HandleBrowserAttachmentDelete},
-		{"POST /browser/attachments/{id}/control-mode", HandleBrowserAttachmentControlMode},
-		{"GET /browser/attachments/{id}/targets", HandleBrowserAttachmentSiblingTargets},
-		{"POST /browser/attachments/{id}/retarget", HandleBrowserAttachmentRetarget},
-		{"POST /browser/attachments/{id}/handoff", HandleBrowserAttachmentHandoff},
-		{"POST /browser/attachments/{id}/handoff-result", HandleBrowserAttachmentHandoffResult},
-		{"GET /ws/browser-attachments", HandleBrowserAttachmentWebSocket},
-	}
 }
 
 // agentRouteGoldenPath: Phase 0（ADR 0067 決定 6）が撮った Agent の全ルート表。
 const agentRouteGoldenPath = "../../testdata/routes.golden"
 
-// TestBrowserRoutesMatchAgentRouteTable: 上の表が、実際に組み上がる Agent のルート表
-// （routes.golden）の browser 節と完全に一致すること。
+// TestBrowserRoutesMatchAgentRouteTable: browserx が持つ表（mux.go の Routes）が、実際に
+// 組み上がる Agent のルート表（routes.golden）の browser 節と完全に一致すること。
 //
-// 上の buildMux は routes.go の写しであり、写しは黙って腐る——routes.go で 1 本増えても
-// browserx のテストは全部緑のまま通ってしまう。golden は本物の mux から取られているので、
-// これを唯一の突き合わせ先にすれば、写しのずれは必ず赤くなる。
+// 写しは消えたが、**登録の呼び忘れ**は残る失敗の形である: routes.go の
+// browserx.RegisterRoutes(mux) が消えても、Routes() 自体は正しいままなのでこのパッケージの
+// テストは全部緑になる。golden は本物の mux から取られているので、そこだけが気付ける。
 func TestBrowserRoutesMatchAgentRouteTable(t *testing.T) {
 	f, err := os.Open(filepath.Clean(agentRouteGoldenPath))
 	if err != nil {
@@ -96,8 +67,8 @@ func TestBrowserRoutesMatchAgentRouteTable(t *testing.T) {
 	}
 
 	var got []string
-	for _, r := range browserRoutes() {
-		got = append(got, r.pattern)
+	for _, r := range Routes() {
+		got = append(got, r.Pattern)
 	}
 	sort.Strings(got)
 	sort.Strings(want)

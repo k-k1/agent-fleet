@@ -6,11 +6,16 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"runtime"
+	// ⚠️ 標準ライブラリの runtime。CP 自身の internal/runtime を素の `runtime` で
+	// 綴る（他 41 ファイルと同じ）ために、**衝突する側**へ別名を付けている。
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Resource metrics surfaced as small chips in the Console WsBar.
@@ -30,7 +35,7 @@ import (
 // --- Host stats (super_admin only) ---
 
 func readHostStats() (load1 float64, ncpu int, memUsed, memTotal uint64) {
-	ncpu = runtime.NumCPU()
+	ncpu = goruntime.NumCPU()
 	if b, err := os.ReadFile("/proc/loadavg"); err == nil {
 		if f := strings.Fields(string(b)); len(f) > 0 {
 			load1, _ = strconv.ParseFloat(f[0], 64)
@@ -62,7 +67,7 @@ func readHostStats() (load1 float64, ncpu int, memUsed, memTotal uint64) {
 
 // hostStats serves host load / memory（docs/log/23 残③: adminAPI のメソッドとして
 // 登録側で withSuperAdmin に包む）.
-func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ Identity) {
+func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ store.Identity) {
 	load1, ncpu, memUsed, memTotal := readHostStats()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"load1": load1, "ncpu": ncpu, "mem_used": memUsed, "mem_total": memTotal,
@@ -317,7 +322,7 @@ func containerStats(ctx context.Context, name string) map[string]any {
 // events tick. Callers that already know the state pass a closure over it; the rest
 // pass a memoized one so it is paid at most once, and only when the local read
 // already failed.
-func workspaceStats(ctx context.Context, m *manager, rt Runtime, state func() string) map[string]any {
+func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state func() string) map[string]any {
 	out := containerStats(ctx, rt.Name())
 	if out["running"] != true {
 		// ⚠️ The Console disables 強制停止 on exactly this field, so a docker read that

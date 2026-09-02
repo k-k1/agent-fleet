@@ -30,6 +30,8 @@ import (
 	"log"
 	"net/http"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func docsSignKey(master32 []byte) []byte {
@@ -81,18 +83,18 @@ func newDocsAPI(m *manager) docsAPI { return docsAPI{mgr: m} }
 
 // docsTokenMembership authenticates a /internal/docs request by its Bearer docs token
 // and resolves the live membership (revoked → 401).
-func (a docsAPI) docsTokenMembership(r *http.Request) (MembershipView, *apiError) {
+func (a docsAPI) docsTokenMembership(r *http.Request) (store.MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	mid, ok := verifyDocsToken(docsSignKey(a.mgr.tokenSignMaster()), tok)
 	if !ok {
-		return MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid docs token"}
+		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid docs token"}
 	}
 	mv, ok, err := a.mgr.store.GetMembershipByID(r.Context(), mid)
 	if err != nil {
-		return MembershipView{}, internalErr(err)
+		return store.MembershipView{}, internalErr(err)
 	}
 	if !ok {
-		return MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "membership not active"}
+		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "membership not active"}
 	}
 	return mv, nil
 }

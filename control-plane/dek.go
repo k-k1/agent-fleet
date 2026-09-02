@@ -7,6 +7,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // legacyDEK returns the raw DEK the Phase 2 / pre-P3-3 path derived as
@@ -23,7 +25,7 @@ func (m *manager) legacyDEK(userKey string) []byte {
 // stored wrapped by the tenant KEK (docs/15 P3-3). On first use it mints the
 // legacy DEK, wraps it via the custodian, and persists it. Returns "" in dev
 // (no master/custodian) so the Agent stores secrets in plaintext as before.
-func (m *manager) resolveDEK(ctx context.Context, ws Workspace, userKey string) (string, error) {
+func (m *manager) resolveDEK(ctx context.Context, ws store.Workspace, userKey string) (string, error) {
 	if len(m.master32) == 0 || m.custodian == nil {
 		return "", nil
 	}

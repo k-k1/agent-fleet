@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Git LFS file-locking API for the internal git provider (docs/reference/
@@ -14,7 +16,7 @@ import (
 // follow their repo on delete/rename.
 
 // lfsLockDTO renders a lock in the wire shape git-lfs expects.
-func lfsLockDTO(l LFSLock) map[string]any {
+func lfsLockDTO(l store.LFSLock) map[string]any {
 	owner := l.OwnerName
 	if owner == "" {
 		owner = l.OwnerID
@@ -70,9 +72,9 @@ func (a gitServerAPI) lfsLockCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ownerName, _ := a.store.MembershipOwnerName(r.Context(), membershipID)
-	lock := LFSLock{
-		ID: newID(), TenantID: mv.TenantID, RepoName: name, Path: body.Path,
-		RefName: lfsRefName(body.Ref), OwnerID: membershipID, OwnerName: ownerName, LockedAt: nowTS(),
+	lock := store.LFSLock{
+		ID: store.NewID(), TenantID: mv.TenantID, RepoName: name, Path: body.Path,
+		RefName: lfsRefName(body.Ref), OwnerID: membershipID, OwnerName: ownerName, LockedAt: store.NowTS(),
 	}
 	if err := a.store.CreateLFSLock(r.Context(), lock); err != nil {
 		// Lost a race on the (tenant, repo, path) uniqueness → report the winner.

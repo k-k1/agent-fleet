@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 	"sync"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // gib / mib / kib are defined in mem.go (package-wide 1024-based size constants).
@@ -12,32 +14,32 @@ import (
 // stats/sessions views. Mirrors the resolution in stop-workspace/clean-home
 // (UpsertIdentity → GetMembership → GetWorkspaceByMembership). hasWS is false
 // when the member has never started a workspace.
-func (a adminAPI) resolveMember(r *http.Request, slug, key string) (mem Membership, ws Workspace, hasWS bool, aerr *apiError) {
+func (a adminAPI) resolveMember(r *http.Request, slug, key string) (mem store.Membership, ws store.Workspace, hasWS bool, aerr *apiError) {
 	ctx := r.Context()
 	t, ok, err := a.mgr.store.GetTenantBySlug(ctx, slug)
 	if err != nil {
-		return Membership{}, Workspace{}, false, internalErr(err)
+		return store.Membership{}, store.Workspace{}, false, internalErr(err)
 	}
 	if !ok {
-		return Membership{}, Workspace{}, false, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"}
+		return store.Membership{}, store.Workspace{}, false, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"}
 	}
 	ident, ok, err := a.mgr.store.GetIdentityByUserKey(ctx, key)
 	if err != nil {
-		return Membership{}, Workspace{}, false, internalErr(err)
+		return store.Membership{}, store.Workspace{}, false, internalErr(err)
 	}
 	if !ok {
-		return Membership{}, Workspace{}, false, &apiError{http.StatusNotFound, "no_membership", "not a member"}
+		return store.Membership{}, store.Workspace{}, false, &apiError{http.StatusNotFound, "no_membership", "not a member"}
 	}
 	mem, ok, err = a.mgr.store.GetMembership(ctx, ident.ID, t.ID)
 	if err != nil {
-		return Membership{}, Workspace{}, false, internalErr(err)
+		return store.Membership{}, store.Workspace{}, false, internalErr(err)
 	}
 	if !ok {
-		return Membership{}, Workspace{}, false, &apiError{http.StatusNotFound, "no_membership", "not a member"}
+		return store.Membership{}, store.Workspace{}, false, &apiError{http.StatusNotFound, "no_membership", "not a member"}
 	}
 	ws, hasWS, err = a.mgr.store.GetWorkspaceByMembership(ctx, mem.ID)
 	if err != nil {
-		return Membership{}, Workspace{}, false, internalErr(err)
+		return store.Membership{}, store.Workspace{}, false, internalErr(err)
 	}
 	return mem, ws, hasWS, nil
 }
@@ -102,13 +104,13 @@ func (a adminAPI) memberSessions(w http.ResponseWriter, r *http.Request) {
 	rt := a.mgr.runtimeFor(ws, "")
 	if rt.State(ctx) == "running" {
 		if list, err := a.mgr.agentSessions(ctx, rt); err == nil {
-			rows := make([]SessionRow, 0, len(list))
+			rows := make([]store.SessionRow, 0, len(list))
 			for _, s := range list {
 				state := "stopped"
 				if s.Alive {
 					state = "running"
 				}
-				rows = append(rows, SessionRow{
+				rows = append(rows, store.SessionRow{
 					Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 					Label: s.Label, CreatedAt: s.CreatedAt, State: state,
 				})

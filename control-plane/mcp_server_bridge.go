@@ -19,6 +19,8 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func mcpSignKey(master32 []byte) []byte {
@@ -66,24 +68,24 @@ func verifyMCPToken(signKey []byte, token string) (membershipID string, ok bool)
 // mcpTokenMembership authenticates a /internal/mcp-servers request by its Bearer MCP
 // token and resolves the live membership (a revoked membership -> 401). Tenant comes
 // from the live store, never from the request.
-func (a mcpServerAPI) mcpTokenMembership(r *http.Request) (MembershipView, *apiError) {
+func (a mcpServerAPI) mcpTokenMembership(r *http.Request) (store.MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	mid, ok := verifyMCPToken(mcpSignKey(a.mgr.tokenSignMaster()), tok)
 	if !ok {
-		return MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid mcp token"}
+		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid mcp token"}
 	}
 	mv, ok, err := a.mgr.store.GetMembershipByID(r.Context(), mid)
 	if err != nil {
-		return MembershipView{}, internalErr(err)
+		return store.MembershipView{}, internalErr(err)
 	}
 	if !ok {
-		return MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "membership not active"}
+		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "membership not active"}
 	}
 	return mv, nil
 }
 
 // withMCPToken adapts a membership-scoped handler to the internal token face.
-func (a mcpServerAPI) withMCPToken(h func(http.ResponseWriter, *http.Request, MembershipView)) http.HandlerFunc {
+func (a mcpServerAPI) withMCPToken(h func(http.ResponseWriter, *http.Request, store.MembershipView)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		mv, aerr := a.mcpTokenMembership(r)
 		if aerr != nil {
