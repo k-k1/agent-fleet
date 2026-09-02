@@ -34,9 +34,13 @@ type mainStubProvider struct {
 	err   error
 }
 
+// 🔥 **ターンの開始と模擬の記録は chatx の作法どおりに通す。** `c.TurnModel` へ直接
+// 代入すると**ターンの区切りを跨いで値が残り**、「stored conversation に漏れていないこと」を
+// 見ている検査が落ちる（実際に落として気付いた）。移送前の modelChatProv と同じ手順。
 func (p mainStubProvider) Send(_ context.Context, c *chatx.ChatConversation, _ string) (string, error) {
+	c.StartTurn()
 	if p.model != "" {
-		c.TurnModel = p.model
+		c.NoteTurnModel(p.model)
 	}
 	return p.reply, p.err
 }

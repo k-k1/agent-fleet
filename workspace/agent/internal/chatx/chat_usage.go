@@ -150,7 +150,7 @@ func (t *claudeCtx) observeResult(u ClaudeUsage, modelUsage map[string]ClaudeMod
 func (t *claudeCtx) apply(c *ChatConversation) {
 	setChatContext(c, t.snap.InputTokens, t.snap.CacheReadInputTokens,
 		t.snap.CacheCreationInputTokens, t.window, t.model)
-	c.noteTurnModel(t.model)
+	c.NoteTurnModel(t.model)
 }
 
 // codexUsage は codex exec --json の turn.completed が運ぶ usage。input_tokens は

@@ -198,7 +198,7 @@ type ChatConversation struct {
 	// Console: it is scratch for one turn, while chatMessage.Model is the record.
 	// Every provider clears it on entry and sets it only on success, so a failed or
 	// non-answering call can never lend its model to the next appended message.
-	TurnModel string
+	TurnModel string `json:"-"` // 🔥 公開名にしたので **明示的に永続化から外す**（未公開の頃は自動で外れていた）
 	// modelOverride swaps the model for the NEXT provider call only (unexported =
 	// never persisted). 自動ターン専用モデル（設定 > アシスタント）が使う: 報告処理の
 	// 定型ターンだけを軽量モデルで回し、利用者ターン・圧縮の要約ターンは会話本来の
@@ -214,11 +214,11 @@ type ChatConversation struct {
 // send/sendStream — including the ones that end up not reporting a model at all, so a
 // previous call in the same request (an auto-compaction turn, a retry after recovery)
 // cannot leak its model into this turn's message.
-func (c *ChatConversation) startTurn() { c.TurnModel = "" }
+func (c *ChatConversation) StartTurn() { c.TurnModel = "" }
 
 // noteTurnModel records the model that actually drove this turn. Providers call it at
 // their success point only.
-func (c *ChatConversation) noteTurnModel(model string) { c.TurnModel = strings.TrimSpace(model) }
+func (c *ChatConversation) NoteTurnModel(model string) { c.TurnModel = strings.TrimSpace(model) }
 
 // afToolsEnabled reports whether the fleet MCP tools attach to this chat at all (read
 // or write grant). New conversations set Tools; pre-assistant conversations only have

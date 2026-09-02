@@ -80,9 +80,9 @@ type modelChatProv struct {
 }
 
 func (p modelChatProv) Send(_ context.Context, c *ChatConversation, _ string) (string, error) {
-	c.startTurn()
+	c.StartTurn()
 	if p.model != "" {
-		c.noteTurnModel(p.model)
+		c.NoteTurnModel(p.model)
 	}
 	return p.reply, nil
 }

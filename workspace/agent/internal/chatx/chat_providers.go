@@ -175,7 +175,7 @@ type claudeResult struct {
 }
 
 func (ClaudeChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
-	c.startTurn()
+	c.StartTurn()
 	// 使用量台帳（ADR 0029 §3）: 呼び出しの開始時点で記録を defer に積む。成功・エラー
 	// result・exec 失敗・パース失敗のどの経路を通っても必ず1回だけ行が残る。
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
@@ -278,7 +278,7 @@ type streamLine struct {
 }
 
 func (ClaudeChat) SendStream(ctx context.Context, c *ChatConversation, prompt string, emit func(ChatStreamEvent)) (string, []chatStep, error) {
-	c.startTurn()
+	c.StartTurn()
 	// 使用量台帳（ADR 0029 §3）— send と同じく全経路で1回記録する。
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
 	defer usagex.RecordCall(ctx, &call, time.Now())
@@ -420,7 +420,7 @@ func stderrOr(err error, stderr *bytes.Buffer) string {
 type codexChat struct{}
 
 func (codexChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
-	c.startTurn()
+	c.StartTurn()
 	// 使用量台帳（ADR 0029 §3）。codex はどのイベントにもモデルを載せない（実測）ので、
 	// -m を渡した時だけ requested、未指定なら default_unknown に縮退する。
 	model := chatModelFor(c, session.KindCodex) // ピン留めが別 kind ならこの CLI の設定から解決
@@ -464,7 +464,7 @@ func (codexChat) Send(ctx context.Context, c *ChatConversation, prompt string) (
 	call.OK = true
 	// codex はモデルを名乗らないので、記録できるのは -m で渡した値だけ（未指定なら
 	// codex 自身の既定＝こちらからは不明なので空のまま）。
-	c.noteTurnModel(model)
+	c.NoteTurnModel(model)
 	// codex の input_tokens は cached を含む（chat_usage.go）: fresh = input - cached。
 	setChatContext(c, usage.InputTokens-usage.CachedInputTokens, usage.CachedInputTokens,
 		0, 0, chatCtxModelFor(c, session.KindCodex))
@@ -614,7 +614,7 @@ func tomlString(s string) string {
 type opencodeChat struct{}
 
 func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
-	c.startTurn()
+	c.StartTurn()
 	pinned := chatModelFor(c, session.KindOpencode)                   // ピン留めが別 kind ならこの CLI の設定から解決
 	call := usagex.Call{Kind: session.KindOpencode, ModelReq: pinned} // 使用量台帳（ADR 0029 §3）
 	defer usagex.RecordCall(ctx, &call, time.Now())
@@ -663,9 +663,9 @@ func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string
 	// opencode はイベントに実モデルを載せる（parseOpencodeRunEvents）。取れなかった
 	// 版では --model に渡した値へ退がる（渡していなければ空＝非表示）。
 	if model != "" {
-		c.noteTurnModel(model)
+		c.NoteTurnModel(model)
 	} else {
-		c.noteTurnModel(pinned)
+		c.NoteTurnModel(pinned)
 	}
 	setChatContext(c, usage.Input, usage.Cache.Read, usage.Cache.Write, 0, chatCtxModelFor(c, session.KindOpencode))
 	return reply, nil
@@ -971,7 +971,7 @@ func opencodeErrText(name, msg, ref string) string {
 type agyChat struct{}
 
 func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
-	c.startTurn()
+	c.StartTurn()
 	// 使用量台帳（ADR 0029 §3）: agy は素のテキストしか返さないので measured=none —
 	// トークンは 0 ではなく「未計測」として、回数だけを数える。
 	call := usagex.Call{Kind: session.KindAgy, ModelReq: chatModelFor(c, session.KindAgy), Measured: usagex.MeasuredNone}
@@ -1004,7 +1004,7 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (st
 		return "", errors.New("no response from agy")
 	}
 	call.OK = true
-	c.noteTurnModel(model) // 渡した --model のみ（agy は名乗らない）
+	c.NoteTurnModel(model) // 渡した --model のみ（agy は名乗らない）
 	return reply, nil
 }
 
@@ -1186,7 +1186,7 @@ type cursorResult struct {
 }
 
 func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
-	c.startTurn()
+	c.StartTurn()
 	// 使用量台帳（ADR 0029 §3）。cursor は result にモデルを載せない（実測）ので requested
 	// 止まり。"auto" は --model を渡さない＝解決後のモデル不明なので default_unknown。
 	call := usagex.Call{Kind: session.KindCursor}
@@ -1229,7 +1229,7 @@ func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 	call.OK = true
 	// 台帳の ModelReq と同じ基準: --model を渡した時だけ記録し、auto/未指定は空
 	// （cursor 側で解決されたモデルは result に出ないので推測しない）。
-	c.noteTurnModel(call.ModelReq)
+	c.NoteTurnModel(call.ModelReq)
 	setChatContext(c, r.Usage.InputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens, 0,
 		chatCtxModelFor(c, session.KindCursor))
 	return reply, nil

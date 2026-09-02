@@ -96,7 +96,7 @@ func TestClaudeStreamRecordsTokensWhenKilledBeforeResult(t *testing.T) {
 // 停止・異常終了が丸ごと measured=none で埋まるので、AST で見張る。
 func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "chat_providers.go", nil, 0)
+	f, err := parser.ParseFile(fset, "internal/chatx/chat_providers.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 			}
 			switch fun := call.Fun.(type) {
 			case *ast.Ident:
-				if fun.Name == "usageModelRows" {
+				if fun.Name == "UsageModelRows" { // 移送で公開名になった
 					uses = true
 				}
 			case *ast.SelectorExpr:
