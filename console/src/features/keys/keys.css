@@ -203,6 +203,51 @@
   padding: 1px 8px;
   flex: none;
 }
+/* ---- palette: session rows (the セッション mode) ----
+   Four parts on one line: kind icon, display name, working copy (project [+ worktree]),
+   state chip. The chip is the rail's own .session-state (sessions.css) so the colours can
+   never disagree with the left pane — only the sizing is nudged for this denser row. */
+.cp-item.cp-sess {
+  gap: 8px;
+}
+/* Stopped rows read as "not running now" the same way the rail's do. */
+.cp-item.cp-sess.cp-stopped .sess-kic {
+  opacity: 0.55;
+}
+.cp-item.cp-sess.cp-stopped .cp-title {
+  color: var(--muted);
+}
+.cp-sess-where {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 46%;
+  font-size: 11px;
+  color: var(--muted);
+}
+.cp-sess-repo,
+.cp-sess-wt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-sess-wt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+/* The chip keeps its own margin-left:auto from sessions.css, which would push it away
+   from the working copy — the palette row's own gap already separates them. */
+.cp-item .session-state {
+  margin-left: 0;
+  font-size: 10px;
+}
+
 /* Shortcut keycaps on the right of a palette row. Holds a chord sequence (leader + seq
    keys, or a single direct accelerator), so it lays its Kbd chips out in a row and never
    shrinks — the title ellipsizes to make room instead. */

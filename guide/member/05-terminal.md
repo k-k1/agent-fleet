@@ -47,12 +47,24 @@ even when they're displayed wrapped. No need to copy a long URL and paste it bac
 ### Command palette
 
 **Ctrl+P** (macOS: **⌘P**) opens the **command palette** — an entry point for searching
-in-screen actions, sessions, and repositories by name, and running or navigating with the
+sessions, in-screen actions, and repositories by name, and running or navigating with the
 keyboard alone. You can change this key in Settings →
 **Keyboard**.
 
-- **↑ ↓ / Enter** — pick a result and run / open it. For files and changed files, **Ctrl+Enter** (macOS: **⌘Enter**) opens them in another pane.
-- **Tab**, or **Ctrl+P / ⌘P** again — switches the search scope between "Commands", "Changed files", and "Files".
+It opens on **"Sessions"**, the list of your sessions with their working copy, worktree and
+status badge. The order is the order you most likely want:
+
+1. sessions **waiting for you** (a question, a plan to approve, a permission prompt), the one
+   that started waiting most recently at the top;
+2. the rest of the running sessions;
+3. stopped sessions at the foot (the ones that were folded away with an unanswered question
+   first). Archived sessions are not listed.
+
+The order is fixed at the moment you open the palette, so a session that changes state while
+you are reading does not move under your cursor — only its badge follows.
+
+- **↑ ↓ / Enter** — pick a result and run / open it. For sessions, files and changed files, **Ctrl+Enter** (macOS: **⌘Enter**) opens them in another pane.
+- **Tab**, or **Ctrl+P / ⌘P** again — switches the search scope between "Sessions", "Commands", "Changed files", and "Files".
 - **Esc** — closes it and returns to where you were working before opening it.
 
 When the terminal has focus and **"Terminal input priority"** is turned on in settings, Ctrl+P is

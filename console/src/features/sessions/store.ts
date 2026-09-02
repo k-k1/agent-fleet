@@ -9,6 +9,7 @@ import { pushHealthy, pushStamp } from "../../core/push/events.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { toast } from "../../ui/toast.ts";
 import { t as tr } from "../../lib/i18n/index.ts";
+import { noteSessions } from "./waiting.ts";
 import type { Session } from "../../types/session.ts";
 
 interface SessionsStore {
@@ -39,6 +40,10 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   openStart: () => set((s) => ({ startTick: s.startTick + 1 })),
 
   applyList(list: Session[]) {
+    // 「人待ちに入った瞬間」を観測できるのはここだけ（poll も push も applyList を通る）。
+    // 下の変化比較より前に置くのは、published かどうかとは無関係に**届いた一覧を全部**
+    // 見るため。遷移が無ければ何も書かないので、4 秒ごとの呼び出しでも実質ただの比較。
+    noteSessions(list);
     const s = JSON.stringify(list);
     if (s !== ser) {
       ser = s;

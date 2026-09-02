@@ -85,6 +85,23 @@ export function workingCopyLabel(folder: string, repo?: Repo): { project: string
   return { project, branch: repo?.branch || "" };
 }
 
+// worktreeTag — WHICH worktree of the project this working copy is: the "@<slug>" half
+// of a worktree folder name ("webshop@checkout-validation" → "checkout-validation").
+// "" for a base clone, so a caller can render it as an optional second half after the
+// project name (workingCopyLabel's `project`).
+//
+// The repo entry decides whether this IS a worktree; the folder name only supplies the
+// slug. A worktree whose folder carries no "@" (created with a custom directory name)
+// falls back to its branch — the folder alone would then say nothing. With no repo entry
+// at all (repos not loaded yet, or the folder is gone) the "@" split is all we have.
+export function worktreeTag(folder: string, repo?: Repo): string {
+  const at = folder.indexOf("@");
+  const slug = at > 0 ? folder.slice(at + 1) : "";
+  if (!repo) return slug;
+  if (!repo.worktree) return "";
+  return slug || repo.branch || "";
+}
+
 // sessionsInFolder returns the sessions running in one working-copy folder, newest
 // first (createdAt desc, matching the old per-dir grouping order).
 export function sessionsInFolder(sessions: Session[], folderName: string): Session[] {
