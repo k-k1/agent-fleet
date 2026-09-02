@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"bytes"
@@ -183,7 +183,7 @@ func TestBrowserAttachmentLivePortCollision(t *testing.T) {
 		lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 		if readErr == nil && len(lines) == 2 {
 			activePort, _ = strconv.Atoi(strings.TrimSpace(lines[0]))
-			wantBrowserID = normalizeCDPBrowserID(strings.TrimSpace(lines[1]))
+			wantBrowserID = NormalizeCDPBrowserID(strings.TrimSpace(lines[1]))
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -726,7 +726,7 @@ func liveDevToolsPort(t *testing.T, profile string) (int, string) {
 		if err == nil && len(lines) == 2 {
 			port, convErr := strconv.Atoi(strings.TrimSpace(lines[0]))
 			if convErr == nil && port > 0 {
-				return port, normalizeCDPBrowserID(strings.TrimSpace(lines[1]))
+				return port, NormalizeCDPBrowserID(strings.TrimSpace(lines[1]))
 			}
 		}
 		time.Sleep(50 * time.Millisecond)

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -28,15 +29,15 @@ func TestBrowserLiveServerHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := defaultBrowserManagerConfig()
+	config := browserx.DefaultBrowserManagerConfig()
 	if os.Getenv("AF_BROWSER_LIVE_ALLOW_NO_SANDBOX") == "1" {
-		config.CDPFactory = launchPipeCDPWithoutSandboxForTest
+		config.CDPFactory = browserx.LaunchPipeCDPWithoutSandboxForTest
 	}
-	manager := newBrowserManager(config)
-	previous := workspaceBrowserManager
-	workspaceBrowserManager = manager
+	manager := browserx.NewBrowserManager(config)
+	previous := browserx.WorkspaceBrowserManager
+	browserx.WorkspaceBrowserManager = manager
 	defer func() {
-		workspaceBrowserManager = previous
+		browserx.WorkspaceBrowserManager = previous
 		manager.Close()
 	}()
 

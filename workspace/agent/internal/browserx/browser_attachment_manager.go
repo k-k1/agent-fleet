@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"context"
@@ -118,7 +118,7 @@ func defaultBrowserAttachmentManagerConfig() browserAttachmentManagerConfig {
 	}
 }
 
-var workspaceBrowserAttachmentManager = newBrowserAttachmentManager(defaultBrowserAttachmentManagerConfig())
+var WorkspaceBrowserAttachmentManager = newBrowserAttachmentManager(defaultBrowserAttachmentManagerConfig())
 
 func newBrowserAttachmentManager(config browserAttachmentManagerConfig) *browserAttachmentManager {
 	if config.UnviewedTTL <= 0 {
@@ -153,18 +153,18 @@ func newBrowserAttachmentManager(config browserAttachmentManagerConfig) *browser
 	}
 }
 
-func (m *browserAttachmentManager) Discover(port int) (browserAttachTargetsResponse, error) {
+func (m *browserAttachmentManager) Discover(port int) (BrowserAttachTargetsResponse, error) {
 	discovery, err := m.config.Discover(port, m.config.DiscoveryTimeout)
 	if err != nil {
-		return browserAttachTargetsResponse{}, err
+		return BrowserAttachTargetsResponse{}, err
 	}
-	return browserAttachTargetsResponse{Targets: discovery.Targets, BrowserID: discovery.BrowserID}, nil
+	return BrowserAttachTargetsResponse{Targets: discovery.Targets, BrowserID: discovery.BrowserID}, nil
 }
 
 // ListSiblingTargets answers "what else could this attachment switch to" for
 // Retarget's picker: the other targets on the SAME Chromium instance. The
 // port itself never crosses this boundary (an attachment response never
-// includes it — see browserAttachmentResponse), so this is the only way a
+// includes it — see BrowserAttachmentResponse), so this is the only way a
 // caller who only holds an attachment id can discover candidates at all.
 func (m *browserAttachmentManager) ListSiblingTargets(id string) (browserAttachmentSiblingTargetsResponse, error) {
 	a, err := m.lookupActive(id)
@@ -187,25 +187,25 @@ func (m *browserAttachmentManager) ListSiblingTargets(id string) (browserAttachm
 	return browserAttachmentSiblingTargetsResponse{Targets: targets}, nil
 }
 
-func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (browserAttachmentResponse, error) {
+func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (BrowserAttachmentResponse, error) {
 	if err := validateCDPPort(req.Port); err != nil {
-		return browserAttachmentResponse{}, err
+		return BrowserAttachmentResponse{}, err
 	}
 	if req.TargetID == "" || len(req.TargetID) > browserAttachmentMaxTargetID || !utf8.ValidString(req.TargetID) {
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "targetId is invalid", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "targetId is invalid", nil)
 	}
-	if len(req.Label) > browserAttachmentMaxLabel || !utf8.ValidString(req.Label) {
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "label is invalid", nil)
+	if len(req.Label) > BrowserAttachmentMaxLabel || !utf8.ValidString(req.Label) {
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "label is invalid", nil)
 	}
 	wantBrowser := ""
 	if req.BrowserID != "" {
-		if wantBrowser = normalizeCDPBrowserID(req.BrowserID); wantBrowser == "" {
-			return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "browserId is invalid", nil)
+		if wantBrowser = NormalizeCDPBrowserID(req.BrowserID); wantBrowser == "" {
+			return BrowserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "browserId is invalid", nil)
 		}
 	}
 	viewport, err := normalizeAttachmentViewport(req.Viewport)
 	if err != nil {
-		return browserAttachmentResponse{}, err
+		return BrowserAttachmentResponse{}, err
 	}
 
 	m.createMu.Lock()
@@ -213,24 +213,24 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "attachment manager is closed", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "attachment manager is closed", nil)
 	}
 	targetKey := fmt.Sprintf("%d:%s", req.Port, req.TargetID)
 	if _, exists := m.targets[targetKey]; exists {
 		m.mu.Unlock()
-		return browserAttachmentResponse{}, attachmentError(http.StatusConflict, "browser_already_attached", "target already has an active attachment", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusConflict, "browser_already_attached", "target already has an active attachment", nil)
 	}
 	m.mu.Unlock()
 
 	discovery, err := m.config.Discover(req.Port, m.config.DiscoveryTimeout)
 	if err != nil {
-		return browserAttachmentResponse{}, err
+		return BrowserAttachmentResponse{}, err
 	}
 	// The caller told us which Chromium instance it means. A port collision is
 	// silent on the Chromium side (the loser binds the other loopback family), so
 	// this is the check that keeps an attach off another session's browser.
 	if wantBrowser != "" && !strings.EqualFold(wantBrowser, discovery.BrowserID) {
-		return browserAttachmentResponse{}, attachmentError(http.StatusConflict, "cdp_browser_mismatch",
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusConflict, "cdp_browser_mismatch",
 			"port "+strconv.Itoa(req.Port)+" is served by a different Chromium instance than browserId", nil)
 	}
 	var target *browserAttachTarget
@@ -241,7 +241,7 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 		}
 	}
 	if target == nil {
-		return browserAttachmentResponse{}, attachmentError(http.StatusNotFound, "cdp_target_not_found", "CDP page target does not exist", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusNotFound, "cdp_target_not_found", "CDP page target does not exist", nil)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), m.config.CommandTimeout)
 	cdp, err := m.config.Dial(ctx, req.Port, discovery.DebuggerURL)
@@ -249,9 +249,9 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 	if err != nil {
 		var apiErr *browserAttachmentAPIError
 		if errors.As(err, &apiErr) {
-			return browserAttachmentResponse{}, err
+			return BrowserAttachmentResponse{}, err
 		}
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_unreachable", "CDP endpoint is unreachable", err)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_unreachable", "CDP endpoint is unreachable", err)
 	}
 	cleanup := true
 	defer func() {
@@ -260,13 +260,13 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 		}
 	}()
 	if err := m.call(cdp, "", "Target.setDiscoverTargets", map[string]any{"discover": true}, nil); err != nil {
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium disconnected during attach", err)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium disconnected during attach", err)
 	}
 	var attached struct {
 		SessionID string `json:"sessionId"`
 	}
 	if err := m.call(cdp, "", "Target.attachToTarget", map[string]any{"targetId": req.TargetID, "flatten": true}, &attached); err != nil || attached.SessionID == "" {
-		return browserAttachmentResponse{}, attachmentError(http.StatusNotFound, "cdp_target_not_found", "CDP page target disappeared before attach", err)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusNotFound, "cdp_target_not_found", "CDP page target disappeared before attach", err)
 	}
 	for _, command := range []struct {
 		method string
@@ -280,7 +280,7 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 	} {
 		if err := m.call(cdp, attached.SessionID, command.method, command.params, nil); err != nil {
 			_ = m.call(cdp, "", "Target.detachFromTarget", map[string]any{"sessionId": attached.SessionID}, nil)
-			return browserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium disconnected during attach", err)
+			return BrowserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium disconnected during attach", err)
 		}
 	}
 	state := attachmentStateAttached
@@ -297,7 +297,7 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 	if m.closed {
 		m.mu.Unlock()
 		_ = m.call(cdp, "", "Target.detachFromTarget", map[string]any{"sessionId": attached.SessionID}, nil)
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "attachment manager is closed", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "attachment manager is closed", nil)
 	}
 	m.attachments[a.id] = a
 	m.targets[targetKey] = a.id
@@ -318,19 +318,19 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 // script that drives many tabs in turn (e.g. posting several drafts) used to
 // mean closing the pane and asking the agent to mint a brand new attachment
 // link for every tab switch.
-func (m *browserAttachmentManager) Retarget(id string, req browserAttachmentRetargetRequest) (browserAttachmentResponse, error) {
+func (m *browserAttachmentManager) Retarget(id string, req browserAttachmentRetargetRequest) (BrowserAttachmentResponse, error) {
 	if req.TargetID == "" || len(req.TargetID) > browserAttachmentMaxTargetID || !utf8.ValidString(req.TargetID) {
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "targetId is invalid", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "targetId is invalid", nil)
 	}
 	wantBrowser := ""
 	if req.BrowserID != "" {
-		if wantBrowser = normalizeCDPBrowserID(req.BrowserID); wantBrowser == "" {
-			return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "browserId is invalid", nil)
+		if wantBrowser = NormalizeCDPBrowserID(req.BrowserID); wantBrowser == "" {
+			return BrowserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "browserId is invalid", nil)
 		}
 	}
 	a, err := m.lookupActive(id)
 	if err != nil {
-		return browserAttachmentResponse{}, err
+		return BrowserAttachmentResponse{}, err
 	}
 
 	// Excludes a concurrent Delete on the same attachment (see Delete's own
@@ -341,7 +341,7 @@ func (m *browserAttachmentManager) Retarget(id string, req browserAttachmentReta
 	a.mu.Lock()
 	if a.terminal {
 		a.mu.Unlock()
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium is no longer connected", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium is no longer connected", nil)
 	}
 	port, oldTargetKey, oldTargetID, oldSessionID, oldCDP, viewport := a.port, a.targetKey, a.targetID, a.sessionID, a.cdp, a.viewport
 	a.mu.Unlock()
@@ -356,16 +356,16 @@ func (m *browserAttachmentManager) Retarget(id string, req browserAttachmentReta
 	m.mu.Lock()
 	if _, exists := m.targets[newTargetKey]; exists {
 		m.mu.Unlock()
-		return browserAttachmentResponse{}, attachmentError(http.StatusConflict, "browser_already_attached", "target already has an active attachment", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusConflict, "browser_already_attached", "target already has an active attachment", nil)
 	}
 	m.mu.Unlock()
 
 	discovery, err := m.config.Discover(port, m.config.DiscoveryTimeout)
 	if err != nil {
-		return browserAttachmentResponse{}, err
+		return BrowserAttachmentResponse{}, err
 	}
 	if wantBrowser != "" && !strings.EqualFold(wantBrowser, discovery.BrowserID) {
-		return browserAttachmentResponse{}, attachmentError(http.StatusConflict, "cdp_browser_mismatch",
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusConflict, "cdp_browser_mismatch",
 			"port "+strconv.Itoa(port)+" is served by a different Chromium instance than browserId", nil)
 	}
 	var target *browserAttachTarget
@@ -376,7 +376,7 @@ func (m *browserAttachmentManager) Retarget(id string, req browserAttachmentReta
 		}
 	}
 	if target == nil {
-		return browserAttachmentResponse{}, attachmentError(http.StatusNotFound, "cdp_target_not_found", "CDP page target does not exist", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusNotFound, "cdp_target_not_found", "CDP page target does not exist", nil)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), m.config.CommandTimeout)
@@ -385,9 +385,9 @@ func (m *browserAttachmentManager) Retarget(id string, req browserAttachmentReta
 	if err != nil {
 		var apiErr *browserAttachmentAPIError
 		if errors.As(err, &apiErr) {
-			return browserAttachmentResponse{}, err
+			return BrowserAttachmentResponse{}, err
 		}
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_unreachable", "CDP endpoint is unreachable", err)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_unreachable", "CDP endpoint is unreachable", err)
 	}
 	cleanup := true
 	defer func() {
@@ -396,13 +396,13 @@ func (m *browserAttachmentManager) Retarget(id string, req browserAttachmentReta
 		}
 	}()
 	if err := m.call(newCDP, "", "Target.setDiscoverTargets", map[string]any{"discover": true}, nil); err != nil {
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium disconnected during attach", err)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium disconnected during attach", err)
 	}
 	var attached struct {
 		SessionID string `json:"sessionId"`
 	}
 	if err := m.call(newCDP, "", "Target.attachToTarget", map[string]any{"targetId": req.TargetID, "flatten": true}, &attached); err != nil || attached.SessionID == "" {
-		return browserAttachmentResponse{}, attachmentError(http.StatusNotFound, "cdp_target_not_found", "CDP page target disappeared before attach", err)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusNotFound, "cdp_target_not_found", "CDP page target disappeared before attach", err)
 	}
 	for _, command := range []struct {
 		method string
@@ -416,7 +416,7 @@ func (m *browserAttachmentManager) Retarget(id string, req browserAttachmentReta
 	} {
 		if err := m.call(newCDP, attached.SessionID, command.method, command.params, nil); err != nil {
 			_ = m.call(newCDP, "", "Target.detachFromTarget", map[string]any{"sessionId": attached.SessionID}, nil)
-			return browserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium disconnected during attach", err)
+			return BrowserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium disconnected during attach", err)
 		}
 	}
 
@@ -427,7 +427,7 @@ func (m *browserAttachmentManager) Retarget(id string, req browserAttachmentReta
 	a.mu.Lock()
 	if a.terminal {
 		a.mu.Unlock()
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium is no longer connected", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadGateway, "cdp_disconnected", "Chromium is no longer connected", nil)
 	}
 	a.mu.Unlock()
 
@@ -492,15 +492,15 @@ func (m *browserAttachmentManager) Retarget(id string, req browserAttachmentReta
 	return resp, nil
 }
 
-func (m *browserAttachmentManager) Get(id string) (browserAttachmentResponse, error) {
+func (m *browserAttachmentManager) Get(id string) (BrowserAttachmentResponse, error) {
 	if !validAttachmentID(id) {
-		return browserAttachmentResponse{}, attachmentError(http.StatusNotFound, "browser_attachment_not_found", "browser attachment does not exist", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusNotFound, "browser_attachment_not_found", "browser attachment does not exist", nil)
 	}
 	m.mu.Lock()
 	a := m.attachments[id]
 	m.mu.Unlock()
 	if a == nil {
-		return browserAttachmentResponse{}, attachmentError(http.StatusNotFound, "browser_attachment_not_found", "browser attachment does not exist", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusNotFound, "browser_attachment_not_found", "browser attachment does not exist", nil)
 	}
 	return a.response(), nil
 }
@@ -516,7 +516,7 @@ func (m *browserAttachmentManager) List() browserAttachmentListResponse {
 	}
 	m.mu.Unlock()
 	sort.Slice(live, func(i, j int) bool { return live[i].createdAt.After(live[j].createdAt) })
-	items := make([]browserAttachmentResponse, 0, len(live))
+	items := make([]BrowserAttachmentResponse, 0, len(live))
 	for _, a := range live {
 		items = append(items, a.response())
 	}
@@ -564,7 +564,7 @@ func (m *browserAttachmentManager) Delete(id string) {
 	_ = cdp.Close()
 }
 
-func (m *browserAttachmentManager) UpdateHandoff(id string, req browserAttachmentHandoffRequest) (browserAttachmentResponse, error) {
+func (m *browserAttachmentManager) UpdateHandoff(id string, req browserAttachmentHandoffRequest) (BrowserAttachmentResponse, error) {
 	if req.CompletionLabel == "" {
 		req.CompletionLabel = "操作完了"
 	}
@@ -572,11 +572,11 @@ func (m *browserAttachmentManager) UpdateHandoff(id string, req browserAttachmen
 		req.ControlMode = attachmentControlUser
 	}
 	if err := validateHandoffRequest(req); err != nil {
-		return browserAttachmentResponse{}, err
+		return BrowserAttachmentResponse{}, err
 	}
 	a, err := m.lookupActive(id)
 	if err != nil {
-		return browserAttachmentResponse{}, err
+		return BrowserAttachmentResponse{}, err
 	}
 	a.mu.Lock()
 	a.controlMode = req.ControlMode
@@ -599,20 +599,20 @@ func (m *browserAttachmentManager) UpdateHandoff(id string, req browserAttachmen
 	a.notifyJSON(map[string]any{"type": "handoff", "handoff": resp.Handoff, "controlMode": req.ControlMode})
 	// Durable BEFORE returning: a crash between this and SetHandoffResult must
 	// still leave a row for the startup sweep to find once a result exists.
-	recordBrowserHandoffRequested(req.SessionName, a.id, req.Message)
+	RecordBrowserHandoffRequested(req.SessionName, a.id, req.Message)
 	return resp, nil
 }
 
 // SetControlMode changes only the attachment's current input/rendering mode.
 // Handoff metadata/result and expiry are deliberately left untouched: callers
 // use UpdateHandoff when they intend to create or reset a handoff workflow.
-func (m *browserAttachmentManager) SetControlMode(id, mode string) (browserAttachmentResponse, error) {
+func (m *browserAttachmentManager) SetControlMode(id, mode string) (BrowserAttachmentResponse, error) {
 	if !validAttachmentControlMode(mode) {
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_control_mode", "controlMode must be view-only, user-control, or locked", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_control_mode", "controlMode must be view-only, user-control, or locked", nil)
 	}
 	a, err := m.lookupActive(id)
 	if err != nil {
-		return browserAttachmentResponse{}, err
+		return BrowserAttachmentResponse{}, err
 	}
 	a.mu.Lock()
 	a.controlMode = mode
@@ -628,18 +628,18 @@ func (m *browserAttachmentManager) SetControlMode(id, mode string) (browserAttac
 	return resp, nil
 }
 
-func (m *browserAttachmentManager) SetHandoffResult(id, result string) (browserAttachmentResponse, error) {
+func (m *browserAttachmentManager) SetHandoffResult(id, result string) (BrowserAttachmentResponse, error) {
 	if result != "completed" && result != "cancelled" {
-		return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_handoff_result", "result must be completed or cancelled", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_handoff_result", "result must be completed or cancelled", nil)
 	}
 	a, err := m.lookupActive(id)
 	if err != nil {
-		return browserAttachmentResponse{}, err
+		return BrowserAttachmentResponse{}, err
 	}
 	a.mu.Lock()
 	if a.handoff == nil {
 		a.mu.Unlock()
-		return browserAttachmentResponse{}, attachmentError(http.StatusConflict, "browser_handoff_not_pending", "browser attachment has no pending handoff", nil)
+		return BrowserAttachmentResponse{}, attachmentError(http.StatusConflict, "browser_handoff_not_pending", "browser attachment has no pending handoff", nil)
 	}
 	a.handoff.Result = result
 	a.handoff.ControlMode = attachmentControlLocked
@@ -656,11 +656,11 @@ func (m *browserAttachmentManager) SetHandoffResult(id, result string) (browserA
 	// (docs/log/53 完了通知節). Off the request goroutine: a human's button click
 	// must return immediately, not block on resuming a stopped session or on
 	// the CLI's own delivery-confirmation round trip (up to 45s — see
-	// agentSendToSession). The ledger row already on disk (recordBrowserHandoffRequested)
+	// agentSendToSession). The ledger row already on disk (RecordBrowserHandoffRequested)
 	// is what makes this crash-safe: undeliveredBrowserHandoffs retries at the
 	// next Agent start if this goroutine never gets to run.
-	if row, ok := resolveBrowserHandoff(sessionName, a.id, result); ok {
-		go deliverBrowserHandoff(sessionName, row)
+	if row, ok := ResolveBrowserHandoff(sessionName, a.id, result); ok {
+		go DeliverBrowserHandoff(sessionName, row)
 	}
 	return resp, nil
 }
@@ -859,13 +859,13 @@ func (m *browserAttachmentManager) Close() {
 	}
 }
 
-func (a *browserAttachment) response() browserAttachmentResponse {
+func (a *browserAttachment) response() BrowserAttachmentResponse {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.responseLocked()
 }
 
-func (a *browserAttachment) responseLocked() browserAttachmentResponse {
+func (a *browserAttachment) responseLocked() BrowserAttachmentResponse {
 	var handoff *browserAttachmentHandoffResponse
 	if a.handoff != nil {
 		copy := *a.handoff
@@ -876,7 +876,7 @@ func (a *browserAttachment) responseLocked() browserAttachmentResponse {
 		copy := a.expiresAt
 		expiresAt = &copy
 	}
-	return browserAttachmentResponse{
+	return BrowserAttachmentResponse{
 		ID: a.id, State: a.state, Title: a.displayTitleLocked(), URL: a.url,
 		OpenURL: "/open/browser-attachment/" + a.id, ExpiresAt: expiresAt,
 		Viewer: a.viewer != nil, ControlMode: a.controlMode, Handoff: handoff,
