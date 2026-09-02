@@ -12,21 +12,22 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// tenantAPI serves the caller-facing tenant picker（docs/log/23 残③: memberAuth 埋め
-// 込み + TenantStore の narrow view。登録側で withIdentity に包む）。
-type tenantAPI struct {
-	memberAuth
+// Tenants serves the caller-facing tenant picker（docs/log/23 残③: CP の解決 +
+// TenantStore の narrow view。登録側で withIdentity に包む）。CP 側の受け皿は
+// control-plane/alias_tenant.go の tenantAPI で、そちらが memberAuth を埋め込む。
+type Tenants struct {
+	cp    CP
 	store store.TenantStore
 }
 
-func newTenantAPI(m *manager) tenantAPI { return tenantAPI{memberAuth{m}, m.store} }
+func NewTenants(cp CP, ts store.TenantStore) Tenants { return Tenants{cp, ts} }
 
-// list (GET /api/tenants) returns the caller's memberships for the Console
+// List (GET /api/tenants) returns the caller's memberships for the Console
 // tenant picker (docs/14 P3-2). Single-membership users get one entry, so the
 // Console can auto-select and hide the picker.
-func (a tenantAPI) list(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+func (a Tenants) List(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	isSuper := ident.Role == "super_admin"
-	ms, aerr := a.mgr.membershipsFor(r.Context(), ident)
+	ms, aerr := a.cp.MembershipsFor(r.Context(), ident)
 	if aerr != nil {
 		// ★ A super_admin with no membership still gets an answer (docs/log/61 §61.10.2
 		// + 決定 23). Bootstrapping a deployment with AF_PROVISION=invite used to
@@ -36,7 +37,7 @@ func (a tenantAPI) list(w http.ResponseWriter, r *http.Request, ident store.Iden
 		// to create the first tenant could not reach the screen that creates it.
 		// The admin API itself was always reachable (it gates on identityFor), so
 		// this only ever blocked the UI; it is still not a workable procedure.
-		if aerr.code == "not_provisioned" && isSuper {
+		if aerr.Code == "not_provisioned" && isSuper {
 			writeJSON(w, http.StatusOK, map[string]any{"tenants": []any{}, "super_admin": true})
 			return
 		}
@@ -50,8 +51,8 @@ func (a tenantAPI) list(w http.ResponseWriter, r *http.Request, ident store.Iden
 		allowUpd := false
 		var provs []string
 		if t, err := a.store.GetTenant(r.Context(), m.TenantID); err == nil {
-			allowUpd = parseLimits(t.Limits).AllowAgentSelfUpdate
-			provs = splitCSVLower(t.AllowedProviders)
+			allowUpd = a.cp.ParseLimits(t.Limits).AllowAgentSelfUpdate
+			provs = a.cp.SplitCSVLower(t.AllowedProviders)
 		}
 		out = append(out, map[string]any{
 			"slug": m.TenantSlug, "name": m.TenantName, "role": m.Role,
@@ -65,19 +66,23 @@ func (a tenantAPI) list(w http.ResponseWriter, r *http.Request, ident store.Iden
 	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
 }
 
-// adminAPI is the tenant/membership admin handler set（docs/log/23 残③）: tenant
-// CRUD, memberships, quotas plus the deployment-wide admin views (usage.go,
-// audit.go, admin_sessions.go, admin_stats.go, metrics.go hostStats). The
+// Admin is the tenant/membership admin handler set（docs/log/23 残③）: tenant
+// CRUD, memberships, quotas, the tenant's own network rule and machine class. The
 // handlers span most sub-stores (tenant / identity / membership / workspace /
 // quota / usage / audit / session index), so no narrow view — they reach the
-// full store via a.mgr.store. Handlers gated up-front register through
-// withSuperAdmin; per-tenant ones gate mid-handler via memberAuth.tenantAdminFor
+// full store via a.cp.Store(). Handlers gated up-front register through
+// withSuperAdmin; per-tenant ones gate mid-handler via CP.TenantAdminFor
 // (slug comes from the path on some routes and the body on others).
-type adminAPI struct{ memberAuth }
+//
+// ⚠️ The CP's own adminAPI (control-plane/alias_tenant.go) carries MORE than this:
+// the deployment-wide admin views (usage.go, audit.go, admin_sessions.go,
+// admin_stats.go, metrics.go hostStats, cloudcost.go) are still its methods and
+// stayed in package main. Only the tenant family moved here.
+type Admin struct{ cp CP }
 
-func newAdminAPI(m *manager) adminAPI { return adminAPI{memberAuth{m}} }
+func NewAdmin(cp CP) Admin { return Admin{cp} }
 
-// listTenants (GET /api/admin/tenants) — overview for the admin UI.
+// ListTenants (GET /api/admin/tenants) — overview for the admin UI.
 // super_admin sees every tenant; a tenant_admin sees only the tenants they
 // administer. The super_admin flag lets the Console hide deployment-wide controls
 // (create tenant, tenant quotas, clean-home, role grants) for tenant_admins.
@@ -88,24 +93,24 @@ func newAdminAPI(m *manager) adminAPI { return adminAPI{memberAuth{m}} }
 // （cloudcost.go）が乗っている。store で消すと、そちらが「テナントの分からない行」を
 // 作りはじめる。Console は横断ビュー（セッション/稼働時間/費用/監査/MCP）のテナント
 // フィルタにもこの一覧を渡しているので、ここ 1 か所で全部の面から消える。
-func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	isSuper := ident.Role == "super_admin"
 
 	var tenants []store.Tenant
 	if isSuper {
-		ts, err := a.mgr.store.ListTenants(r.Context())
+		ts, err := a.cp.Store().ListTenants(r.Context())
 		if err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
 		}
 		for _, t := range ts {
-			if isSystemTenantSlug(t.Slug) {
+			if a.cp.IsSystemTenantSlug(t.Slug) {
 				continue
 			}
 			tenants = append(tenants, t)
 		}
 	} else {
-		ms, err := a.mgr.store.ListMemberships(r.Context(), ident.ID)
+		ms, err := a.cp.Store().ListMemberships(r.Context(), ident.ID)
 		if err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
@@ -114,7 +119,7 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident stor
 			if m.Role != "tenant_admin" {
 				continue
 			}
-			if t, err := a.mgr.store.GetTenant(r.Context(), m.TenantID); err == nil {
+			if t, err := a.cp.Store().GetTenant(r.Context(), m.TenantID); err == nil {
 				tenants = append(tenants, t)
 			}
 		}
@@ -122,9 +127,9 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident stor
 
 	out := make([]map[string]any, 0, len(tenants))
 	for _, t := range tenants {
-		members, _ := a.mgr.store.ListMembersByTenant(r.Context(), t.ID)
-		running, _ := a.mgr.countRunningInTenant(r.Context(), t.ID)
-		lim := parseLimits(t.Limits)
+		members, _ := a.cp.Store().ListMembersByTenant(r.Context(), t.ID)
+		running, _ := a.cp.CountRunningInTenant(r.Context(), t.ID)
+		lim := a.cp.ParseLimits(t.Limits)
 		out = append(out, map[string]any{
 			"slug": t.Slug, "name": t.Name, "status": t.Status, "isolation": t.Isolation,
 			"users": len(members), "running": running,
@@ -152,13 +157,13 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident stor
 	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
 }
 
-// setTenantLogin (PUT /api/admin/tenants/{slug}/login) stores the per-tenant login
+// SetTenantLogin (PUT /api/admin/tenants/{slug}/login) stores the per-tenant login
 // rules (docs/log/61 §61.9.7). super_admin only, deliberately: two of the three fields
 // reach past the tenant. auto_join_domains widens the DEPLOYMENT's entry gate — a
 // whole email domain gets in — and allowed_providers decides which IdP is trusted
 // to say who someone is. Those are the operator's calls (決定 24/25), while what a
 // tenant_admin owns is the roster inside their own tenant.
-func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+func (a Admin) SetTenantLogin(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	var body struct {
 		AllowedProviders string `json:"allowed_providers"`
 		AutoJoinDomains  string `json:"auto_join_domains"`
@@ -166,22 +171,22 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident s
 		HiddenProviders  string `json:"hidden_providers"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	t, ok, err := a.mgr.store.GetTenantBySlug(r.Context(), r.PathValue("slug"))
+	t, ok, err := a.cp.Store().GetTenantBySlug(r.Context(), r.PathValue("slug"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_tenant", "unknown tenant"})
 		return
 	}
-	provs := splitCSVLower(body.AllowedProviders)
-	autoJoin := splitDomainCSV(body.AutoJoinDomains)
-	allowed := splitDomainCSV(body.AllowedDomains)
-	hidden := splitCSVLower(body.HiddenProviders)
+	provs := a.cp.SplitCSVLower(body.AllowedProviders)
+	autoJoin := a.cp.SplitDomainCSV(body.AutoJoinDomains)
+	allowed := a.cp.SplitDomainCSV(body.AllowedDomains)
+	hidden := a.cp.SplitCSVLower(body.HiddenProviders)
 
 	// Naming a provider the deployment does not have would silently produce a login
 	// page with no buttons, so refuse it here rather than at 3am.
@@ -193,6 +198,7 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident s
 	// produce a button nobody here can use, since the tenant gate pins such a session
 	// to its own tenant anyway (決定 32-3).
 	var ownIdP map[string]bool
+	known := a.cp.KnownProviderIDs()
 	// ★ hidden_providers is validated by the same rule, and for the same reason: a
 	// typo there is silent (the button simply keeps appearing) and nothing else in
 	// the system will ever mention it. It is checked TOGETHER with allowed_providers
@@ -201,7 +207,7 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident s
 	for _, p := range append(append([]string(nil), provs...), hidden...) {
 		if slug, name, isTenant := auth.ParseTenantProviderID(p); isTenant {
 			if ownIdP == nil {
-				rows, err := a.mgr.store.ListTenantIdPs(r.Context(), t.ID)
+				rows, err := a.cp.Store().ListTenantIdPs(r.Context(), t.ID)
 				if err != nil {
 					writeAPIErr(w, internalErr(err))
 					return
@@ -212,14 +218,14 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident s
 				}
 			}
 			if slug != t.Slug || !ownIdP[name] {
-				writeAPIErr(w, &apiError{http.StatusBadRequest, "unknown_provider",
+				writeAPIErr(w, &APIError{http.StatusBadRequest, "unknown_provider",
 					"tenant " + t.Slug + " has no sign-in method named " + p})
 				return
 			}
 			continue
 		}
-		if a.mgr.knownProviderIDs != nil && !a.mgr.knownProviderIDs[p] {
-			writeAPIErr(w, &apiError{http.StatusBadRequest, "unknown_provider",
+		if known != nil && !known[p] {
+			writeAPIErr(w, &APIError{http.StatusBadRequest, "unknown_provider",
 				"no login provider named " + p + " is enabled on this deployment"})
 			return
 		}
@@ -228,7 +234,7 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident s
 	// wins") exists for rows that predate this check; the check exists so nobody
 	// has to rely on it. Rejecting on save is the only place a human is present to
 	// read the reason.
-	rules, err := a.mgr.store.ListTenantLoginRules(r.Context())
+	rules, err := a.cp.Store().ListTenantLoginRules(r.Context())
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -240,7 +246,7 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident s
 		for _, d := range autoJoin {
 			for _, od := range other.AutoJoinDomains {
 				if d == od {
-					writeAPIErr(w, &apiError{http.StatusConflict, "auto_join_conflict",
+					writeAPIErr(w, &APIError{http.StatusConflict, "auto_join_conflict",
 						"domain " + d + " is already an auto-join domain of tenant " + other.Slug})
 					return
 				}
@@ -248,33 +254,33 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident s
 		}
 	}
 
-	if err := a.mgr.store.SetTenantLogin(r.Context(), t.ID, joinCSV(provs), joinCSV(autoJoin), joinCSV(allowed), joinCSV(hidden)); err != nil {
+	if err := a.cp.Store().SetTenantLogin(r.Context(), t.ID, a.cp.JoinCSV(provs), a.cp.JoinCSV(autoJoin), a.cp.JoinCSV(allowed), a.cp.JoinCSV(hidden)); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	// These rules ARE the entry gate; a cached copy would keep letting people in.
-	a.mgr.tenantLogin.invalidate()
-	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+	a.cp.InvalidateTenantLogin()
+	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
 		Action: "tenant.login_rules", Target: t.Slug,
-		Detail: "providers=" + joinCSV(provs) + " auto_join=" + joinCSV(autoJoin) +
-			" allowed=" + joinCSV(allowed) + " hidden=" + joinCSV(hidden),
+		Detail: "providers=" + a.cp.JoinCSV(provs) + " auto_join=" + a.cp.JoinCSV(autoJoin) +
+			" allowed=" + a.cp.JoinCSV(allowed) + " hidden=" + a.cp.JoinCSV(hidden),
 		At: store.NowTS(),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tenant": t.Slug, "allowed_providers": joinCSV(provs),
-		"auto_join_domains": joinCSV(autoJoin), "allowed_domains": joinCSV(allowed),
-		"hidden_providers": joinCSV(hidden),
+		"tenant": t.Slug, "allowed_providers": a.cp.JoinCSV(provs),
+		"auto_join_domains": a.cp.JoinCSV(autoJoin), "allowed_domains": a.cp.JoinCSV(allowed),
+		"hidden_providers": a.cp.JoinCSV(hidden),
 	})
 }
 
-// listMembers (GET /api/admin/tenants/{slug}/members).
-func (a adminAPI) listMembers(w http.ResponseWriter, r *http.Request) {
-	_, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+// ListMembers (GET /api/admin/tenants/{slug}/members).
+func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
+	_, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	members, err := a.mgr.store.ListMembersByTenant(r.Context(), t.ID)
+	members, err := a.cp.Store().ListMembersByTenant(r.Context(), t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -282,7 +288,7 @@ func (a adminAPI) listMembers(w http.ResponseWriter, r *http.Request) {
 	// Removed members stay on the ADMIN roster (and only here) so the rest of the
 	// offboarding sequence — stop the workspace, wipe the home — is still
 	// reachable after access has been revoked (docs/log/61 §61.10.6).
-	removed, err := a.mgr.store.ListRemovedMembersByTenant(r.Context(), t.ID)
+	removed, err := a.cp.Store().ListRemovedMembersByTenant(r.Context(), t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -290,7 +296,7 @@ func (a adminAPI) listMembers(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(members)+len(removed))
 	add := func(list []store.MemberInfo, status string) {
 		for _, m := range list {
-			container, state := a.mgr.workspaceStateByMembership(r.Context(), m.MembershipID)
+			container, state := a.cp.WorkspaceStateByMembership(r.Context(), m.MembershipID)
 			row := map[string]any{
 				"user_key": m.UserKey, "email": m.Email, "role": m.MemberRole,
 				"super_admin": m.IdentityRole == "super_admin",
@@ -301,12 +307,12 @@ func (a adminAPI) listMembers(w http.ResponseWriter, r *http.Request) {
 			// 誰が止めているか」。ここで再計算しないのが要点で、画面が自前で導出すると
 			// reaper が実際に見ているもの（在席・ピン・背景作業）とズレて、調べるための
 			// 画面が別の答えを出す。稼働中の Workspace にしか意味が無い。
-			if wsRow, ok, _ := a.mgr.store.GetWorkspaceByMembership(r.Context(), m.MembershipID); ok {
-				if f, has := a.mgr.idleForecastFor(wsRow.ID); has && state == "running" {
+			if wsRow, ok, _ := a.cp.Store().GetWorkspaceByMembership(r.Context(), m.MembershipID); ok {
+				if f, has := a.cp.IdleForecastFor(wsRow.ID); has && state == "running" {
 					row["idle"] = f
 				}
 			}
-			if ul, ok, _ := a.mgr.store.GetUserLimit(r.Context(), m.MembershipID); ok {
+			if ul, ok, _ := a.cp.Store().GetUserLimit(r.Context(), m.MembershipID); ok {
 				row["max_sessions"] = ul.MaxSessions
 				row["mem_limit"] = ul.MemLimit
 				row["cpu_limit"] = ul.CPULimit
@@ -321,37 +327,37 @@ func (a adminAPI) listMembers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tenant": t.Slug, "members": out})
 }
 
-// stopWorkspace (POST /api/admin/stop-workspace {tenant_slug,user_key}).
-func (a adminAPI) stopWorkspace(w http.ResponseWriter, r *http.Request) {
+// StopWorkspace (POST /api/admin/stop-workspace {tenant_slug,user_key}).
+func (a Admin) StopWorkspace(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
 		TenantSlug string `json:"tenant_slug"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	_, t, ok := a.tenantAdminFor(w, r, body.TenantSlug)
+	_, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
 	if !ok {
 		return
 	}
-	ident, err := a.mgr.store.UpsertIdentity(r.Context(), "", body.UserKey, "")
+	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	mem, ok, err := a.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
-	if err := a.mgr.stopWorkspaceByMembership(r.Context(), mem.ID); err != nil {
+	if err := a.cp.StopWorkspaceByMembership(r.Context(), mem.ID); err != nil {
 		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
-			writeAPIErr(w, workspaceLifecycleLeaseError(err))
+			writeAPIErr(w, a.cp.WorkspaceLifecycleLeaseError(err))
 			return
 		}
 		writeAPIErr(w, internalErr(err))
@@ -360,7 +366,7 @@ func (a adminAPI) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"stopped": body.UserKey, "tenant": t.Slug})
 }
 
-// cleanHome (POST /api/admin/clean-home {tenant_slug,user_key}) wipes a
+// CleanHome (POST /api/admin/clean-home {tenant_slug,user_key}) wipes a
 // member's workspace home except auth/connection state. Same target resolution as
 // stop-workspace; the container is stopped first.
 //
@@ -373,49 +379,49 @@ func (a adminAPI) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 //
 // ★ This widens a permission, so it is audited: who wiped whose home in which
 // tenant, always.
-func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request) {
+func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
 		TenantSlug string `json:"tenant_slug"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	caller, t, ok := a.tenantAdminFor(w, r, body.TenantSlug)
+	caller, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
 	if !ok {
 		return
 	}
-	ident, err := a.mgr.store.UpsertIdentity(r.Context(), "", body.UserKey, "")
+	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	mem, ok, err := a.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
-	if err := a.mgr.cleanHomeByMembership(r.Context(), mem.ID); err != nil {
+	if err := a.cp.CleanHomeByMembership(r.Context(), mem.ID); err != nil {
 		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
-			writeAPIErr(w, workspaceLifecycleLeaseError(err))
+			writeAPIErr(w, a.cp.WorkspaceLifecycleLeaseError(err))
 			return
 		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
 		Action: "workspace.clean_home", Target: ident.UserKey, At: store.NowTS(),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug})
 }
 
-// destroyWorkspace (DELETE /api/admin/workspaces {tenant_slug,user_key}) is the
+// DestroyWorkspace (DELETE /api/admin/workspaces {tenant_slug,user_key}) is the
 // irreversible one: it deletes the home and every per-membership resource the runtime
 // created, then the DB row. ADR 0045 決定 13-2.
 //
@@ -434,52 +440,52 @@ func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request) {
 //
 // tenant_admin (their own tenant) or super_admin — the same gate as clean-home, which is
 // already "destroy this person's work" in every sense except the billing.
-func (a adminAPI) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
+func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
 		TenantSlug string `json:"tenant_slug"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	caller, t, ok := a.tenantAdminFor(w, r, body.TenantSlug)
+	caller, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
 	if !ok {
 		return
 	}
-	ident, found, err := a.mgr.store.GetIdentityByUserKey(r.Context(), body.UserKey)
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !found {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
-	mem, ok, err := a.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
 	if mem.Status == "active" {
-		writeAPIErr(w, &apiError{http.StatusConflict, "membership_active",
+		writeAPIErr(w, &APIError{http.StatusConflict, "membership_active",
 			"remove the membership first; an active member's workspace cannot be destroyed"})
 		return
 	}
-	leftovers, err := a.mgr.destroyWorkspaceByMembership(r.Context(), mem.ID)
+	leftovers, err := a.cp.DestroyWorkspaceByMembership(r.Context(), mem.ID)
 	if err != nil {
 		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
-			writeAPIErr(w, workspaceLifecycleLeaseError(err))
+			writeAPIErr(w, a.cp.WorkspaceLifecycleLeaseError(err))
 			return
 		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeAuditDestroy(r, a.mgr.store, t.ID, caller.ID, ident.UserKey, leftovers)
+	writeAuditDestroy(r, a.cp.Store(), t.ID, caller.ID, ident.UserKey, leftovers)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"destroyed": ident.UserKey, "tenant": t.Slug, "leftovers": leftovers,
 	})
@@ -500,22 +506,22 @@ func writeAuditDestroy(r *http.Request, st store.Store, tenantID, actorID, userK
 	})
 }
 
-// createTenant (POST /api/admin/tenants {slug,name}).
-func (a adminAPI) createTenant(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+// CreateTenant (POST /api/admin/tenants {slug,name}).
+func (a Admin) CreateTenant(w http.ResponseWriter, r *http.Request, _ store.Identity) {
 	var body struct {
 		Slug string `json:"slug"`
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	slug := sanitizeUser(body.Slug)
+	slug := a.cp.SanitizeUser(body.Slug)
 	if slug == "" || slug == auth.DefaultTenantSlug {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid slug"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid slug"})
 		return
 	}
-	if t, ok, err := a.mgr.store.GetTenantBySlug(r.Context(), slug); err != nil {
+	if t, ok, err := a.cp.Store().GetTenantBySlug(r.Context(), slug); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	} else if ok {
@@ -526,7 +532,7 @@ func (a adminAPI) createTenant(w http.ResponseWriter, r *http.Request, _ store.I
 	if name == "" {
 		name = slug
 	}
-	t, err := a.mgr.store.CreateTenant(r.Context(), slug, name)
+	t, err := a.cp.Store().CreateTenant(r.Context(), slug, name)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -534,9 +540,9 @@ func (a adminAPI) createTenant(w http.ResponseWriter, r *http.Request, _ store.I
 	writeJSON(w, http.StatusOK, map[string]any{"slug": t.Slug, "name": t.Name})
 }
 
-// addMembership (POST /api/admin/memberships {email|user_key, tenant_slug, role}).
+// AddMembership (POST /api/admin/memberships {email|user_key, tenant_slug, role}).
 // Pre-creates the target identity if needed (invite-by-key/email).
-func (a adminAPI) addMembership(w http.ResponseWriter, r *http.Request) {
+func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email      string `json:"email"`
 		UserKey    string `json:"user_key"`
@@ -544,19 +550,19 @@ func (a adminAPI) addMembership(w http.ResponseWriter, r *http.Request) {
 		Role       string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	caller, t, ok := a.tenantAdminFor(w, r, body.TenantSlug)
+	caller, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
 	if !ok {
 		return
 	}
 	key := body.UserKey
 	if key == "" {
-		key = sanitizeUser(body.Email)
+		key = a.cp.SanitizeUser(body.Email)
 	}
 	if key == "" {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "email or user_key required"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "email or user_key required"})
 		return
 	}
 	// Only a super_admin may mint a tenant_admin (privilege escalation); a
@@ -574,12 +580,12 @@ func (a adminAPI) addMembership(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
-	ident, err := a.mgr.store.UpsertIdentity(r.Context(), body.Email, key, "")
+	ident, err := a.cp.Store().UpsertIdentity(r.Context(), body.Email, key, "")
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	mem, err := a.mgr.store.EnsureMembership(r.Context(), ident.ID, t.ID, role)
+	mem, err := a.cp.Store().EnsureMembership(r.Context(), ident.ID, t.ID, role)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -589,15 +595,15 @@ func (a adminAPI) addMembership(w http.ResponseWriter, r *http.Request) {
 	// where that would undo an offboarding on the person's next visit) — so an
 	// invite, which IS an explicit decision, does it here.
 	if mem.Status != "active" {
-		if err := a.mgr.store.SetMembershipStatus(r.Context(), mem.ID, "active"); err != nil {
+		if err := a.cp.Store().SetMembershipStatus(r.Context(), mem.ID, "active"); err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
 		}
 	}
 	// Being on a roster is an entry-gate term now (docs/log/61 §61.9.6) — an invited
 	// person must be able to sign in immediately, not after the cache expires.
-	a.mgr.tenantLogin.invalidate()
-	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+	a.cp.InvalidateTenantLogin()
+	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
 		Action: "membership.add", Target: ident.UserKey, Detail: "role=" + role, At: store.NowTS(),
 	})
@@ -608,28 +614,28 @@ func (a adminAPI) addMembership(w http.ResponseWriter, r *http.Request) {
 // the one being invited, or — when the invite names only a user_key — the one
 // already on that identity. An invite with no address at all cannot be checked, so
 // a tenant that set a guard refuses it rather than letting it through unexamined.
-func (a adminAPI) checkInviteDomain(r *http.Request, t store.Tenant, email, key string) *apiError {
-	domains := splitDomainCSV(t.AllowedDomains)
+func (a Admin) checkInviteDomain(r *http.Request, t store.Tenant, email, key string) *APIError {
+	domains := a.cp.SplitDomainCSV(t.AllowedDomains)
 	if len(domains) == 0 {
 		return nil
 	}
 	if email == "" {
-		if ident, ok, err := a.mgr.store.GetIdentityByUserKey(r.Context(), key); err == nil && ok {
+		if ident, ok, err := a.cp.Store().GetIdentityByUserKey(r.Context(), key); err == nil && ok {
 			email = ident.Email
 		}
 	}
 	if email == "" {
-		return &apiError{http.StatusBadRequest, "email_required",
-			"tenant " + t.Slug + " restricts invites to " + joinCSV(domains) + "; invite by email address"}
+		return &APIError{http.StatusBadRequest, "email_required",
+			"tenant " + t.Slug + " restricts invites to " + a.cp.JoinCSV(domains) + "; invite by email address"}
 	}
-	if !domainMatches(domains, email) {
-		return &apiError{http.StatusForbidden, "domain_not_allowed",
-			"tenant " + t.Slug + " only accepts members from: " + joinCSV(domains)}
+	if !a.cp.DomainMatches(domains, email) {
+		return &APIError{http.StatusForbidden, "domain_not_allowed",
+			"tenant " + t.Slug + " only accepts members from: " + a.cp.JoinCSV(domains)}
 	}
 	return nil
 }
 
-// removeMembership (DELETE /api/admin/memberships {tenant_slug,user_key}) takes
+// RemoveMembership (DELETE /api/admin/memberships {tenant_slug,user_key}) takes
 // somebody off a tenant's roster — the transfer/leaver operation docs/log/61 §61.10.6
 // found missing, and the one that P3 makes load-bearing: once the roster is also
 // the entry gate (§61.9.6), being unable to remove a row means being unable to
@@ -644,7 +650,7 @@ func (a adminAPI) checkInviteDomain(r *http.Request, t store.Tenant, email, key 
 // Reinstating is just re-inviting — EnsureMembership reactivates.
 //
 // tenant_admin (their own tenant) or super_admin, matching who owns the roster.
-func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
+func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
 		TenantSlug string `json:"tenant_slug"`
@@ -657,29 +663,29 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 		Purge bool `json:"purge"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	caller, t, ok := a.tenantAdminFor(w, r, body.TenantSlug)
+	caller, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
 	if !ok {
 		return
 	}
-	ident, found, err := a.mgr.store.GetIdentityByUserKey(r.Context(), body.UserKey)
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !found {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
-	mem, ok, err := a.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
 	// ★ Your own membership: allowed, but never the LAST one. What has no undo from
@@ -692,7 +698,7 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 	// memberships other than this one, so a row that is already inactive is not
 	// counted as the way back in.
 	if ident.ID == caller.ID {
-		mine, err := a.mgr.store.ListMemberships(r.Context(), ident.ID) // active only
+		mine, err := a.cp.Store().ListMemberships(r.Context(), ident.ID) // active only
 		if err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
@@ -704,32 +710,32 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if others == 0 {
-			writeAPIErr(w, &apiError{http.StatusBadRequest, "self_removal",
+			writeAPIErr(w, &APIError{http.StatusBadRequest, "self_removal",
 				"you cannot remove your own last membership; ask another administrator"})
 			return
 		}
 	}
-	if err := a.mgr.store.SetMembershipStatus(r.Context(), mem.ID, "inactive"); err != nil {
+	if err := a.cp.Store().SetMembershipStatus(r.Context(), mem.ID, "inactive"); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	// Drop the cached runtime as well as the login caches: the workspace stays on
 	// disk, but nothing should keep serving it from memory for this membership.
-	a.mgr.evictMembershipCache(mem.ID)
-	a.mgr.tenantLogin.invalidate()
+	a.cp.EvictMembershipCache(mem.ID)
+	a.cp.InvalidateTenantLogin()
 	detail := "status=inactive (workspace and home kept)"
 	var leftovers []string
 	if body.Purge {
-		leftovers, err = a.mgr.destroyWorkspaceByMembership(r.Context(), mem.ID)
+		leftovers, err = a.cp.DestroyWorkspaceByMembership(r.Context(), mem.ID)
 		if err != nil {
 			// The membership IS deactivated at this point — say so rather than
 			// returning a bare 500 that reads as "nothing happened".
-			_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+			_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
 				ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
 				Action: "membership.remove", Target: ident.UserKey,
 				Detail: "status=inactive; purge FAILED: " + err.Error(), At: store.NowTS(),
 			})
-			writeAPIErr(w, &apiError{http.StatusInternalServerError, "purge_failed",
+			writeAPIErr(w, &APIError{http.StatusInternalServerError, "purge_failed",
 				"the membership was deactivated but the workspace could not be destroyed: " + err.Error()})
 			return
 		}
@@ -738,7 +744,7 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 			detail += "; NOT deleted: " + strings.Join(leftovers, ", ")
 		}
 	}
-	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
 		Action: "membership.remove", Target: ident.UserKey,
 		Detail: detail, At: store.NowTS(),
@@ -749,7 +755,7 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// deleteMembership (DELETE /api/admin/tenants/{slug}/members/{key}) removes the row
+// DeleteMembership (DELETE /api/admin/tenants/{slug}/members/{key}) removes the row
 // itself — the third and last step of the clean-up sequence (docs/log/61 §61.18):
 //
 //	メンバーを外す → Workspace を破棄 → メンバーを完全に削除
@@ -767,7 +773,7 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 // An ACTIVE member is somebody at their desk. A membership whose workspace row is still
 // there owns a home, an EBS volume and EFS access points; deleting the row would leave
 // them billing with nothing in the database pointing at them — the exact leak
-// destroyWorkspace exists to close.
+// DestroyWorkspace exists to close.
 //
 // ★ And a reserved membership is refused outright (system_tenant.go): the golden baker
 // recreates the seed and the probe on its next tick, so deleting them mid-bake only
@@ -775,39 +781,39 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 //
 // tenant_admin (their own tenant) or super_admin — the same gate as destroyWorkspace,
 // which is what has to have happened first.
-func (a adminAPI) deleteMembership(w http.ResponseWriter, r *http.Request) {
+func (a Admin) DeleteMembership(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	caller, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+	caller, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	if isSystemTenantSlug(t.Slug) {
-		writeAPIErr(w, &apiError{http.StatusConflict, "system_membership",
+	if a.cp.IsSystemTenantSlug(t.Slug) {
+		writeAPIErr(w, &APIError{http.StatusConflict, "system_membership",
 			"this membership belongs to the deployment, not to a person; the golden bake recreates it"})
 		return
 	}
-	mem, _, hasWS, aerr := a.resolveMember(r, t.Slug, key)
+	mem, _, hasWS, aerr := a.cp.ResolveMember(r, t.Slug, key)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
 	if mem.Status == "active" {
-		writeAPIErr(w, &apiError{http.StatusConflict, "membership_active",
+		writeAPIErr(w, &APIError{http.StatusConflict, "membership_active",
 			"remove the membership first; an active member's row cannot be deleted"})
 		return
 	}
 	if hasWS {
-		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_present",
+		writeAPIErr(w, &APIError{http.StatusConflict, "workspace_present",
 			"destroy the workspace first; deleting the row would leave the home and its cloud resources billing"})
 		return
 	}
-	if err := a.mgr.store.DeleteMembership(r.Context(), mem.ID); err != nil {
+	if err := a.cp.Store().DeleteMembership(r.Context(), mem.ID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	a.mgr.evictMembershipCache(mem.ID)
-	a.mgr.tenantLogin.invalidate()
-	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+	a.cp.EvictMembershipCache(mem.ID)
+	a.cp.InvalidateTenantLogin()
+	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
 		Action: "membership.delete", Target: key,
 		Detail: "membership row and its per-membership rows deleted; audit, cost and occupancy history kept",
@@ -816,7 +822,7 @@ func (a adminAPI) deleteMembership(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": key, "tenant": t.Slug})
 }
 
-// deleteTenant (DELETE /api/admin/tenants/{slug}) removes an EMPTY tenant. super_admin
+// DeleteTenant (DELETE /api/admin/tenants/{slug}) removes an EMPTY tenant. super_admin
 // only, and it is the operation the product was missing entirely: tenants could be
 // created and never removed, so a throwaway one kept its slot — on the production deployment two
 // left over from the hand-baking era blocked the pool until the golden bake stopped too.
@@ -836,74 +842,74 @@ func (a adminAPI) deleteMembership(w http.ResponseWriter, r *http.Request) {
 // member is off the roster NOBODY can delete those repos any more. They have to go while
 // a member is still there. Deleting them from here instead was rejected: an operation
 // whose name is "delete this tenant" must not silently destroy repositories.
-func (a adminAPI) deleteTenant(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+func (a Admin) DeleteTenant(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	ctx := r.Context()
 	slug := r.PathValue("slug")
-	if isSystemTenantSlug(slug) {
-		writeAPIErr(w, &apiError{http.StatusConflict, "system_tenant",
+	if a.cp.IsSystemTenantSlug(slug) {
+		writeAPIErr(w, &APIError{http.StatusConflict, "system_tenant",
 			"this tenant belongs to the deployment itself and is recreated automatically"})
 		return
 	}
 	if slug == auth.DefaultTenantSlug {
-		writeAPIErr(w, &apiError{http.StatusConflict, "default_tenant",
+		writeAPIErr(w, &APIError{http.StatusConflict, "default_tenant",
 			"the default tenant is recreated at every start and cannot be deleted"})
 		return
 	}
-	t, ok, err := a.mgr.store.GetTenantBySlug(ctx, slug)
+	t, ok, err := a.cp.Store().GetTenantBySlug(ctx, slug)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_tenant", "unknown tenant"})
 		return
 	}
-	active, err := a.mgr.store.ListMembersByTenant(ctx, t.ID)
+	active, err := a.cp.Store().ListMembersByTenant(ctx, t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if len(active) > 0 {
-		writeAPIErr(w, &apiError{http.StatusConflict, "tenant_not_empty",
+		writeAPIErr(w, &APIError{http.StatusConflict, "tenant_not_empty",
 			"remove this tenant's members first (" + strconv.Itoa(len(active)) + " left)"})
 		return
 	}
-	wss, err := a.mgr.store.ListWorkspaces(ctx, t.ID)
+	wss, err := a.cp.Store().ListWorkspaces(ctx, t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if len(wss) > 0 {
-		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_present",
+		writeAPIErr(w, &APIError{http.StatusConflict, "workspace_present",
 			"destroy the workspaces of this tenant's removed members first (" + strconv.Itoa(len(wss)) + " left)"})
 		return
 	}
-	repos, err := a.mgr.store.ListGitReposByTenant(ctx, t.ID)
+	repos, err := a.cp.Store().ListGitReposByTenant(ctx, t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if len(repos) > 0 {
-		writeAPIErr(w, &apiError{http.StatusConflict, "git_repos_present",
+		writeAPIErr(w, &APIError{http.StatusConflict, "git_repos_present",
 			"delete this tenant's " + strconv.Itoa(len(repos)) + " internal git repositories first — " +
 				"they can only be deleted while a member is still on the roster"})
 		return
 	}
-	removed, err := a.mgr.store.ListRemovedMembersByTenant(ctx, t.ID)
+	removed, err := a.cp.Store().ListRemovedMembersByTenant(ctx, t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	if err := a.mgr.store.DeleteTenant(ctx, t.ID); err != nil {
+	if err := a.cp.Store().DeleteTenant(ctx, t.ID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	a.mgr.evictTenantCache(t.ID)
-	a.mgr.tenantLogin.invalidate()
+	a.cp.EvictTenantCache(t.ID)
+	a.cp.InvalidateTenantLogin()
 	// ⚠️ Written AFTER the delete, and with the slug in Target: the audit view resolves
 	// tenant_id → slug through ListTenants (audit.go), so this row's tenant column will
 	// be blank from now on. The name has to be inside the entry itself.
-	_ = a.mgr.store.InsertAudit(ctx, store.AuditLog{
+	_ = a.cp.Store().InsertAudit(ctx, store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
 		Action: "tenant.delete", Target: t.Slug,
 		Detail: "tenant \"" + t.Name + "\" deleted; " + strconv.Itoa(len(removed)) +
@@ -915,8 +921,8 @@ func (a adminAPI) deleteTenant(w http.ResponseWriter, r *http.Request, ident sto
 	})
 }
 
-// setTenantLimits (PUT /api/admin/tenants/{slug}/limits) — docs/16 P3-4.
-func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+// SetTenantLimits (PUT /api/admin/tenants/{slug}/limits) — docs/16 P3-4.
+func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, _ store.Identity) {
 	var body struct {
 		MaxWorkspaces int   `json:"max_workspaces"`
 		MaxSessions   int   `json:"max_sessions"`
@@ -949,11 +955,11 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ stor
 		TerminalHistoryRetentionDays int  `json:"terminal_history_retention_days"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
 	if d := body.TerminalHistoryRetentionDays; d != 0 && d != 1 && d != 7 && d != 30 {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_retention", "terminal history retention must be 0, 1, 7, or 30 days"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_retention", "terminal history retention must be 0, 1, 7, or 30 days"})
 		return
 	}
 	// The int quotas were stored with NO validation at all. 0 means unlimited on every
@@ -971,7 +977,7 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ stor
 		{"max_workspace_disk_gb", int64(body.MaxWorkspaceDiskGB)},
 	} {
 		if q.v < 0 {
-			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_limit", q.name + " cannot be negative (0 = unlimited)"})
+			writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_limit", q.name + " cannot be negative (0 = unlimited)"})
 			return
 		}
 	}
@@ -979,21 +985,25 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ stor
 	for _, v := range []string{body.SessionIdleTimeout, body.InteractionIdleTimeout, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery} {
 		if v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
-				writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_duration", "invalid idle timeout: " + v})
+				writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_duration", "invalid idle timeout: " + v})
 				return
 			}
 		}
 	}
-	t, ok, err := a.mgr.store.GetTenantBySlug(r.Context(), r.PathValue("slug"))
+	t, ok, err := a.cp.Store().GetTenantBySlug(r.Context(), r.PathValue("slug"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_tenant", "unknown tenant"})
 		return
 	}
-	lj, _ := json.Marshal(tenantLimits{
+	// ⚠️ The blob is ENCODED by the CP (limits.go's tenantLimits), not here — Limits is
+	// only the projection that carries these values across the seam. Whichever side
+	// holds the json tags has to be the only one, or a field added there would be
+	// dropped on every save from here.
+	lim := Limits{
 		MaxWorkspaces:      body.MaxWorkspaces,
 		MaxSessions:        body.MaxSessions,
 		MaxGitRepos:        body.MaxGitRepos,
@@ -1013,14 +1023,14 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ stor
 		HomeBackupEvery:              body.HomeBackupEvery,
 		AllowAgentSelfUpdate:         body.AllowAgentSelfUpdate,
 		TerminalHistoryRetentionDays: body.TerminalHistoryRetentionDays,
-	})
-	if err := a.mgr.store.SetTenantLimits(r.Context(), t.ID, string(lj)); err != nil {
+	}
+	if err := a.cp.StoreTenantLimits(r.Context(), t.ID, lim); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	// Rebuild cached runtimes for this tenant so the new gate reaches the next
 	// container start (the gate is injected as env when the runtime is built).
-	a.mgr.evictTenantCache(t.ID)
+	a.cp.EvictTenantCache(t.ID)
 	// ⚠️ A WARNING, not a gate, and the save above has already happened. Three reasons:
 	//
 	//  1. It is not an invariant this endpoint can hold. Ec2MaxSlots is CP env and the
@@ -1051,14 +1061,14 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ stor
 	}
 	// A failure to read it is not a reason to fail the save — the save is done, and the
 	// budget is advice. Say nothing rather than something wrong.
-	if b, ok, err := a.mgr.poolBudget(r.Context(), "", 0); ok && err == nil && !b.OK() {
+	if b, ok, err := a.cp.PoolBudget(r.Context(), "", 0); ok && err == nil && !b.OK() {
 		resp["pool_budget"] = b
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// setUserLimit (PUT /api/admin/user-limits) — per-membership override.
-func (a adminAPI) setUserLimit(w http.ResponseWriter, r *http.Request) {
+// SetUserLimit (PUT /api/admin/user-limits) — per-membership override.
+func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email       string `json:"email"`
 		UserKey     string `json:"user_key"`
@@ -1077,40 +1087,40 @@ func (a adminAPI) setUserLimit(w http.ResponseWriter, r *http.Request) {
 		SlotClass string `json:"slot_class"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	_, t, ok := a.tenantAdminFor(w, r, body.TenantSlug)
+	_, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
 	if !ok {
 		return
 	}
 	key := body.UserKey
 	if key == "" {
-		key = sanitizeUser(body.Email)
+		key = a.cp.SanitizeUser(body.Email)
 	}
 	if key == "" {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "email or user_key required"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "email or user_key required"})
 		return
 	}
-	ident, err := a.mgr.store.UpsertIdentity(r.Context(), "", key, "")
+	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", key, "")
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	mem, ok, err := a.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "user is not a member of " + t.Slug})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "user is not a member of " + t.Slug})
 		return
 	}
 	q := store.UserQuota{
 		MaxSessions: body.MaxSessions, DiskGB: body.DiskGB,
 		MemLimit: body.MemLimit, CPULimit: body.CPULimit, SlotClass: strings.TrimSpace(body.SlotClass),
 	}
-	if err := a.mgr.store.PutUserLimit(r.Context(), mem.ID, q); err != nil {
+	if err := a.cp.Store().PutUserLimit(r.Context(), mem.ID, q); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -1118,9 +1128,9 @@ func (a adminAPI) setUserLimit(w http.ResponseWriter, r *http.Request) {
 	// ephemeral storage), so drop the cached runtime — the new values reach the next
 	// container start. Also compute the effective post-clamp values so the caller sees
 	// what will actually be applied rather than what they typed.
-	a.mgr.evictMembershipCache(mem.ID)
-	effMem, effCPU, effDisk := a.mgr.resolveWorkspaceSize(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
-	effClass, classNote := a.mgr.resolveSlotClass(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
+	a.cp.EvictMembershipCache(mem.ID)
+	effMem, effCPU, effDisk := a.cp.ResolveWorkspaceSize(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
+	effClass, classNote := a.cp.ResolveSlotClass(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user_key": key, "tenant": t.Slug, "max_sessions": body.MaxSessions, "disk_gb": body.DiskGB,
 		"mem_limit": body.MemLimit, "mem_effective": effMem,
@@ -1131,56 +1141,56 @@ func (a adminAPI) setUserLimit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// setMembershipRole (PUT /api/admin/membership-role
+// SetMembershipRole (PUT /api/admin/membership-role
 // {tenant_slug, user_key, role}) grants or revokes a member's tenant-scoped admin
 // role (member | tenant_admin). super_admin only: minting a tenant_admin is a
 // privilege escalation kept to the deployment operator (a tenant_admin cannot
 // promote others). Deployment-wide super_admin stays env-only (SUPER_ADMIN_EMAILS).
-func (a adminAPI) setMembershipRole(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+func (a Admin) SetMembershipRole(w http.ResponseWriter, r *http.Request, _ store.Identity) {
 	var body struct {
 		UserKey    string `json:"user_key"`
 		TenantSlug string `json:"tenant_slug"`
 		Role       string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
 	role := "member"
 	if body.Role == "tenant_admin" {
 		role = "tenant_admin"
 	}
-	t, ok, err := a.mgr.store.GetTenantBySlug(r.Context(), body.TenantSlug)
+	t, ok, err := a.cp.Store().GetTenantBySlug(r.Context(), body.TenantSlug)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_tenant", "unknown tenant"})
 		return
 	}
-	ident, err := a.mgr.store.UpsertIdentity(r.Context(), "", body.UserKey, "")
+	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	mem, ok, err := a.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member of " + t.Slug})
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member of " + t.Slug})
 		return
 	}
-	if err := a.mgr.store.SetMembershipRole(r.Context(), mem.ID, role); err != nil {
+	if err := a.cp.Store().SetMembershipRole(r.Context(), mem.ID, role); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user_key": body.UserKey, "tenant": t.Slug, "role": role})
 }
 
-// poolStatus (GET /api/admin/ec2-pool) reports the EC2 slot pool: how many boxes are
+// PoolStatus (GET /api/admin/ec2-pool) reports the EC2 slot pool: how many boxes are
 // provisioned, which are asleep, whose home is on which one, what is hibernating, and
 // whether the golden snapshot still matches the running image (docs/log/64 §64.18.6).
 //
@@ -1190,8 +1200,8 @@ func (a adminAPI) setMembershipRole(w http.ResponseWriter, r *http.Request, _ st
 // On every other runtime profile it answers {"runtime": ...} with no pool, and the
 // Console hides the screen. Reporting an empty pool instead would read as "your slots all
 // vanished" on a Fargate deployment.
-func (a adminAPI) poolStatus(w http.ResponseWriter, r *http.Request, _ store.Identity) {
-	st, ok, err := a.mgr.poolStatus(r.Context())
+func (a Admin) PoolStatus(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+	st, ok, err := a.cp.PoolStatus(r.Context())
 	if !ok {
 		writeJSON(w, http.StatusOK, map[string]any{"runtime": "other"})
 		return
