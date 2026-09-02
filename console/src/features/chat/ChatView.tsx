@@ -14,7 +14,6 @@ import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
 import { useDragScroll } from "../../lib/dragScroll.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
-import { prettyModel } from "../../lib/modelName.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings, setSetting, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
@@ -46,9 +45,7 @@ import {
   workVoiceOpts,
   type TtsController,
   type TtsEndReason,
-  type TtsOptions,
 } from "./tts.ts";
-import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../mirror/turnTts.ts";
 import { ContextBar } from "../mirror/ContextBar.tsx";
 import { ChatPlan } from "./ChatPlan.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -65,6 +62,7 @@ import { reportText } from "./report.ts";
 import { formatMsgTS } from "./parts/chatFormat.ts";
 import { ChatMarkdown, StreamingMarkdown } from "./parts/ChatMarkdown.tsx";
 import { ChatSteps } from "./parts/ChatSteps.tsx";
+import { AssistantTurn } from "./parts/AssistantTurn.tsx";
 import { ChatCopyButton } from "./parts/ChatCopyButton.tsx";
 import { ChatPastedThumb } from "./parts/ChatPastedThumb.tsx";
 import { kindClass } from "../../lib/sessionkind.ts";
@@ -1626,182 +1624,5 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         )}
       </div>
     </div>
-  );
-}
-
-// AssistantTurn renders one completed assistant reply and its footer. It owns a ref to the
-// bubble body so the footer's read control can karaoke-read the RENDERED Markdown (docs/log/24):
-// readTurn (features/mirror/turnTts) walks the .markdown DOM into blocks, speaks it sentence
-// by sentence, and highlights the block whose sentence is playing (.tts-active) with scroll
-// follow — the same engine the mirror/ReaderView use. Live streaming stays plain (the bubble
-// re-renders every ~120ms, which would wipe any DOM highlight); karaoke is offered only once
-// the turn is complete, i.e. here.
-function AssistantTurn({
-  text,
-  steps,
-  ts,
-  agentName,
-  model,
-  voice,
-  highlight,
-}: {
-  text: string;
-  steps?: ChatStep[];
-  ts: number;
-  agentName: string;
-  model?: string;
-  voice?: Partial<TtsOptions>;
-  highlight?: string | null;
-}) {
-  const ttsEnabled = useSettings().ttsEnabled;
-  const tr = useT();
-  const bodyRef = useRef<HTMLDivElement | null>(null);
-  const handleRef = useRef<TurnReadHandle | null>(null);
-  const [state, setState] = useState<"idle" | "playing" | "paused">("idle");
-  // Floating "ここから読み上げ" pill anchored to a mouse selection inside the bubble.
-  const [selPill, setSelPill] = useState<{ x: number; y: number; block: number } | null>(null);
-  const autoLitRef = useRef<HTMLElement | null>(null);
-
-  // 自動読み上げは最終回答の確定後にこの完成済み DOM へ移るため、
-  // startTts から通知された文を本文ブロックへ対応付けて光らせる。
-  useEffect(() => {
-    const body = bodyRef.current;
-    if (!body || !highlight) {
-      autoLitRef.current?.classList.remove("tts-active");
-      autoLitRef.current = null;
-      return;
-    }
-    const norm = (s: string) => s.replace(/\s+/g, "");
-    const needle = norm(highlight).slice(0, 16);
-    if (!needle) return;
-    const target = collectBlocks(body).find((b) => norm(b.textContent || "").includes(needle));
-    if (!target) return;
-    if (autoLitRef.current && autoLitRef.current !== target) autoLitRef.current.classList.remove("tts-active");
-    target.classList.add("tts-active");
-    autoLitRef.current = target;
-    target.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [highlight]);
-  useEffect(() => () => autoLitRef.current?.classList.remove("tts-active"), []);
-
-  // Stop this bubble's reading if the pane/component goes away mid-read.
-  useEffect(() => () => handleRef.current?.stop("replaced"), []);
-
-  const start = (fromBlock: number) => {
-    const body = bodyRef.current;
-    if (!body) return;
-    handleRef.current?.stop("replaced");
-    // onEnd fires once on natural end AND on preemption (TopBar stop / another playback),
-    // so the footer always falls back to the idle "読み上げ" state.
-    const h = readTurn(body, t("chat.label"), fromBlock, () => {
-      handleRef.current = null;
-      setState("idle");
-    }, voice);
-    if (h) {
-      handleRef.current = h;
-      setState("playing");
-    }
-  };
-  const pause = () => {
-    handleRef.current?.pause();
-    setState("paused");
-  };
-  const resume = () => {
-    handleRef.current?.resume();
-    setState("playing");
-  };
-  const stop = () => {
-    handleRef.current?.stop();
-    handleRef.current = null;
-    setState("idle");
-  };
-
-  // After a mouse selection inside the bubble, surface a "ここから読み上げ" pill at the
-  // selection head — reading (re)starts from the block the selection begins in. Desktop
-  // mouse only (touch selection emits no mouseup); the footer button still reads from top.
-  const onMouseUp = () => {
-    const body = bodyRef.current;
-    const sel = window.getSelection();
-    if (!ttsEnabled || !body || !sel || sel.isCollapsed || sel.rangeCount === 0) {
-      setSelPill(null);
-      return;
-    }
-    const range = sel.getRangeAt(0);
-    if (!body.contains(range.startContainer)) {
-      setSelPill(null);
-      return;
-    }
-    const idx = blockIndexAt(collectBlocks(body), range.startContainer);
-    if (idx < 0) {
-      setSelPill(null);
-      return;
-    }
-    const rect = range.getBoundingClientRect();
-    setSelPill({ x: Math.round(rect.left), y: Math.round(rect.top - 34), block: idx });
-  };
-  const startFromSelection = () => {
-    if (!selPill) return;
-    start(selPill.block);
-    setSelPill(null);
-    window.getSelection()?.removeAllRanges();
-  };
-
-  return (
-    <>
-      <div className="chat-role">
-        {agentName}
-        {/* The model that answered, faint beside the agent name — the mirror's turn
-            header contract (.mt-model) applied to the chat. Recorded per turn, so a
-            thread that changed model (or fell back to another backend) shows what each
-            reply was actually produced with. title keeps the raw id copyable. */}
-        {model && (
-          <span className="chat-model" title={model}>
-            {prettyModel(model)}
-          </span>
-        )}
-      </div>
-      {/* 作業過程（ツール応答）は最終回答の上に折りたたんで表示（既定は畳む・保持）。 */}
-      {steps && steps.length > 0 && <ChatSteps steps={steps} />}
-      <div className="chat-body" ref={bodyRef} onMouseUp={onMouseUp}>
-        {text && <ChatMarkdown source={text} breaks />}
-      </div>
-      {selPill && (
-        <div className="sel-pill-group" style={{ left: selPill.x, top: Math.max(4, selPill.y) }}>
-          <button
-            type="button"
-            className="sel-send-pill"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={startFromSelection}
-          >
-            <Icon name="unmute" /> {tr("chat.read_from_here")}
-          </button>
-        </div>
-      )}
-      <div className="chat-msg-foot">
-        {ts > 0 && <span className="cm-time">{formatMsgTS(ts)}</span>}
-        {ttsEnabled && text.trim() && (
-          state === "idle" ? (
-            <button type="button" className="ghost cm-copy" title={tr("chat.read_title")} onClick={() => start(0)}>
-              <Icon name="unmute" /> {tr("chat.read")}
-            </button>
-          ) : (
-            <>
-              {state === "playing" ? (
-                <button type="button" className="ghost cm-copy" title={tr("chat.pause")} onClick={pause}>
-                  <Icon name="debug-pause" /> {tr("chat.pause")}
-                </button>
-              ) : (
-                <button type="button" className="ghost cm-copy" title={tr("chat.resume")} onClick={resume}>
-                  <Icon name="play" /> {tr("chat.resume")}
-                </button>
-              )}
-              <button type="button" className="ghost cm-copy" title={tr("chat.stop")} onClick={stop}>
-                <Icon name="debug-stop" /> {tr("chat.stop")}
-              </button>
-            </>
-          )
-        )}
-        <ChatCopyButton text={text} />
-      </div>
-    </>
   );
 }
