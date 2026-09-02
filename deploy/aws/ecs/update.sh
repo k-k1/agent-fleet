@@ -68,6 +68,13 @@ if [ -z "$PROFILE" ] || [ -z "$REGION" ]; then usage; exit 2; fi
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -n "$TEMPLATE" ] || TEMPLATE="$HERE/cfn/30-ingress.yaml"
 AWS=(aws --profile "$PROFILE" --region "$REGION")
+# shellcheck source=deploy/aws/ecs/env.sh
+# af_cfn_deploy（51,200 バイトを超えたら S3 経由）と af_stack_output だけのために読む。
+# ⚠️ af_env_init は呼ばない —— このスクリプトは「生きている配備を更新する」ためのもので、
+# 控えが無くても動くのが取り柄である。バケットは 20-platform の出力から引く。
+. "$HERE/env.sh"
+AF_STACK_PLATFORM="$(af_stack_param "$STACK" PlatformStackName)"
+: "${AF_STACK_PLATFORM:=af-ecs-platform}"
 
 run() {  # dry-run 対応。読み取りは常に実行し、書き込みだけここを通す。
   if [ "$DRY" = 1 ]; then echo "DRY: $*"; return 0; fi
@@ -188,8 +195,10 @@ if [ "$DRY" = 1 ]; then
   echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --parameter-overrides ImageTag=$VERSION"
 else
   set +e
-  out="$("${AWS[@]}" cloudformation deploy --stack-name "$STACK" \
-    --template-file "$TEMPLATE" --parameter-overrides "ImageTag=$VERSION" \
+  # ⚠️ af_cfn_deploy を通すこと（env.sh）。テンプレートが 51,200 バイトを超えたら S3 経由に
+  # 切り替わる —— 2026-09-01 に 30-ingress がそこを越え、**リリース配備が全部止まっていた**。
+  out="$(af_cfn_deploy "$STACK" "$TEMPLATE" \
+    --parameter-overrides "ImageTag=$VERSION" \
     --no-fail-on-empty-changeset 2>&1)"
   rc=$?
   set -e
