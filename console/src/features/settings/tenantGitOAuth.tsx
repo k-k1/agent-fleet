@@ -154,10 +154,15 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
           Pull requests: Read を後から足した場合はメンバーの再接続が要る
           （既存トークンには古い権限が焼かれている・docs/log/80 §80.19.3）。 */}
       {app.provider === "bitbucket" && <p className="admin-hint">{tr("tenant.git_oauth_bb_scopes")}</p>}
+      {/* ★ 3LO アプリは既定で「開発中」＝作成者本人しか認可できない。作った管理者が試すと
+          通ってしまうので登録時のテストをすり抜け、他のメンバー全員が Atlassian 側の
+          「You don't have access to this app」で止まる —— しかも認可画面より手前なので
+          af には何も返ってこず、無言で未接続のままになる。 */}
       {app.provider === "jira" && (
         <>
           <p className="admin-hint">{tr("tenant.git_oauth_jira_access")}</p>
           <p className="admin-hint">{tr("tenant.git_oauth_jira_scopes")}</p>
+          <p className="admin-hint">{tr("tenant.git_oauth_jira_sharing")}</p>
         </>
       )}
       <p className="admin-hint">

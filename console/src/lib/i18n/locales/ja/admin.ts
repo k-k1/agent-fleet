@@ -487,6 +487,7 @@ export const admin = {
   "tenant.git_oauth_jira_access": "アプリ作成時の Access type は Resource-level を推奨します（認可したサイト 1 つだけに権限が限られます）。Account-level はアカウント内の全サイトに恒久的な権限を渡すことになります。",
   "tenant.git_oauth_bb_scopes": "Bitbucket は認可 URL にスコープを載せないので、コンシューマの Permissions がそのまま権限になります。Account: Read と Repositories: Read/Write（clone / push 用）に加え、課題管理レールに PR を出すなら Pull requests: Read も入れてください。後から足した場合、既に接続済みのメンバーは接続し直しが必要です（古い権限がトークンに焼かれているため）。",
   "tenant.git_oauth_jira_scopes": "Jira は Atlassian の 3LO アプリです（Bitbucket のコンシューマとは別に登録します）。Permissions に Jira API を追加し、read:jira-work / read:jira-user / write:jira-work の 3 つを許可してください（write は「作業の報告をコメントする」に要ります）。offline_access は Permissions の一覧には出てきません —— OAuth 側のスコープで、af が認可 URL に付けるので設定は不要です。",
+  "tenant.git_oauth_jira_sharing": "アプリの Distribution で Sharing を有効にしてください。3LO アプリは既定で「開発中」で、そのままだと作成者本人しか認可できません —— 他のメンバーは Atlassian の「You don't have access to this app」で止まり、af には何も返らないので無言で未接続のままになります。有効化には Vendor name・Contact link・Privacy policy URL の入力が要り、これらは認可するメンバーに見えます（個人名や私用アドレスではなく、会社名と問い合わせ窓口を入れてください）。Marketplace には載りません。",
   "tenant.git_oauth_gh_device": "GitHub はデバイスフローを使うため secret もコールバックも不要です。ただしアプリ側で「Enable Device Flow」を有効にしてください（無効だと接続開始で失敗します）。",
   "tenant.git_oauth_where": "アプリの登録先:",
   "tenant.git_oauth_remove": "登録を削除",
