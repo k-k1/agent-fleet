@@ -149,6 +149,19 @@ func withMCPFlags(t *testing.T, write, selfReport, chromium bool) {
 	t.Cleanup(func() { setFlags(ow, os, oc) })
 }
 
+// withWriteEnabled は `--write` 相当のフラグを一時的に据える。
+//
+// ⚠️ **後始末まで含めて 1 つの部品にしてある。** 移送のとき、元の
+// `old := mcpWriteEnabled / … / t.Cleanup(復元)` を `setWriteEnabled(true)` だけに
+// 置き換えてしまい、**復元が落ちていた**（無害だったのは、たまたま既定 false に依存する
+// テストが 1 本も無かったから）。1 本入った瞬間に順序依存になり、しかも何も警告しない。
+func withWriteEnabled(t *testing.T, v bool) {
+	t.Helper()
+	old := writeEnabled()
+	setWriteEnabled(v)
+	t.Cleanup(func() { setWriteEnabled(old) })
+}
+
 func setFlags(write, selfReport, chromium bool) {
 	setWriteEnabled(write)
 	setSelfReportOnly(selfReport)
