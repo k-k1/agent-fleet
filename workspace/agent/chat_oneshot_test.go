@@ -19,6 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 func TestClaudeOneShotArgs(t *testing.T) {
@@ -139,21 +140,21 @@ func TestUsageLedgerLive(t *testing.T) {
 	useTempUsageDir(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	ctx = withUsageTag(ctx, usageTag{
-		Feature: usageFeatureTitleSession, Trigger: usageTriggerManual, Ref: "slot99",
+	ctx = usagex.WithTag(ctx, usagex.Tag{
+		Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerManual, Ref: "slot99",
 	})
 	if _, err := oneShotHeadless(ctx, titleSuggestPersona("ja"),
 		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します",
 		titleModel()); err != nil {
 		t.Fatalf("oneShotHeadless: %v", err)
 	}
-	rows := readUsageRows()
+	rows := usagex.ReadRows()
 	if len(rows) == 0 {
 		t.Fatal("台帳に1行も落ちていない")
 	}
 	r := rows[0]
 	t.Logf("row = %+v", r)
-	if r.Feature != usageFeatureTitleSession || r.Trigger != usageTriggerManual || r.Ref != "slot99" {
+	if r.Feature != usagex.FeatureTitleSession || r.Trigger != usagex.TriggerManual || r.Ref != "slot99" {
 		t.Fatalf("タグが行に乗っていない: %+v", r)
 	}
 	if !r.OK || r.Kind == "" {
@@ -163,13 +164,13 @@ func TestUsageLedgerLive(t *testing.T) {
 		t.Skipf("claude 以外（%s）で実行された — 以降はコスト実測の検証なのでスキップ", r.Kind)
 	}
 	// claude だけはモデル・トークン・コストが全部実測で返る（docs/log/46 §0）。
-	if r.ModelSrc != usageModelReported || r.Model == "" || r.ModelRaw == "" {
+	if r.ModelSrc != usagex.ModelReported || r.Model == "" || r.ModelRaw == "" {
 		t.Fatalf("モデルが報告値として記録されていない: %+v", r)
 	}
 	if r.Model == r.ModelRaw {
 		t.Errorf("canonicalModel と生 id が同じ — 版を畳めていない可能性: %q", r.Model)
 	}
-	if r.Spend <= 0 || r.Measured != usageMeasuredExact {
+	if r.Spend <= 0 || r.Measured != usagex.MeasuredExact {
 		t.Fatalf("トークンが実測で入っていない: %+v", r)
 	}
 	if r.CostUSD <= 0 {

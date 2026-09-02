@@ -29,9 +29,12 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // reportLink is the v1 arm record (session-report/<name>.json): 1セッション = 1bit。
@@ -179,7 +182,7 @@ func kickSessionReport(name, kind, reason string) {
 	if err != nil {
 		return
 	}
-	_, _ = agentPOST("/chat/report", body)
+	_, _ = mcpx.AgentPOST("/chat/report", body)
 }
 
 // 報告本文の組み立ては chat_report_text.go（docs/log/28 P6 で表示テキストと指示テキストを
@@ -277,7 +280,7 @@ func reportPreambleFor(lang string) string {
 // Content（＝表示用の事実）ではなく、ここで組み直す（docs/log/28 P6）: オペレーターへの指示は
 // 表示言語で、しかも自動走行/自動再開のトグルは**この瞬間**の設定で決まる。
 func reportsPrompt(reports []*chatMessage) string {
-	lang := uiLocale()
+	lang := uiprefs.Locale()
 	var parts []string
 	for _, m := range reports {
 		parts = append(parts, reportPromptFor(*m, lang))
@@ -294,7 +297,7 @@ func injectPendingReports(c *chatConversation, content string) (string, []*chatM
 	if len(pending) == 0 {
 		return content, nil
 	}
-	return reportsPrompt(pending) + "\n\n---\n\n" + userMessageHeader(uiLocale()) + "\n" + content, pending
+	return reportsPrompt(pending) + "\n\n---\n\n" + userMessageHeader(uiprefs.Locale()) + "\n" + content, pending
 }
 
 // userMessageHeader separates the injected reports from what the user actually typed.
@@ -415,7 +418,7 @@ func deliverSessionReport(name, convID, kind, reason string) {
 	if recordSessionReport(name, convID, kind, reason, nil) != reportSinkOK {
 		return
 	}
-	if chatAutoTurnEnabled() {
+	if uiprefs.ChatAutoTurn() {
 		runReportAutoTurn(convID)
 	}
 }
@@ -526,8 +529,8 @@ func runReportAutoTurn(convID string) {
 	defer cancel()
 	// 使用量台帳（ADR 0029 §3）: 完了報告への自動ターンは連鎖しうる無人消費 — 独立した
 	// feature として、利用者が撃ったターンと混ぜずに数える。
-	ctx = withUsageTag(ctx, usageTag{
-		Feature: usageFeatureAssistantAutoTur, Trigger: usageTriggerAuto, Ref: c.ID, Verb: c.SeedVerb,
+	ctx = usagex.WithTag(ctx, usagex.Tag{
+		Feature: usagex.FeatureAssistantAutoTur, Trigger: usagex.TriggerAuto, Ref: c.ID, Verb: c.SeedVerb,
 	})
 	deregister := registerLiveTurn(convID, cancel) // Stop button + in_progress work as usual
 	defer deregister()

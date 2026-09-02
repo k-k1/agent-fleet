@@ -1,6 +1,6 @@
 package main
 
-// alias_mcp.go の配線が**生きているか**を通しで見る 1 本。
+// mcp_wiring.go の配線が**生きているか**を通しで見る 1 本。
 //
 // 🔥 `mcpx.Configure` が捕まえるのは**未配線**（nil / 零値）だけで、**間違った配線**は
 // 捕まえられない。実際に踏める形が 3 つある:
@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 func TestMCPWiringIsLive(t *testing.T) {
@@ -60,7 +61,7 @@ func TestMCPWiringIsLive(t *testing.T) {
 		"ShellCreateTarget":          func(t *testing.T) { sameFunc(t, w.ShellCreateTarget, shellCreateTarget) },
 		"ShellSendTarget":            func(t *testing.T) { sameFunc(t, w.ShellSendTarget, shellSendTarget) },
 		"SessionIsShell":             func(t *testing.T) { sameFunc(t, w.SessionIsShell, sessionIsShell) },
-		"ReadUIPrefs":                func(t *testing.T) { sameFunc(t, w.ReadUIPrefs, readUIPrefs) },
+		"ReadUIPrefs":                func(t *testing.T) { sameFunc(t, w.ReadUIPrefs, uiprefs.Read) },
 		"EnsureClaudeSettingsWiring": func(t *testing.T) { sameFunc(t, w.EnsureClaudeSettingsWiring, ensureClaudeSettingsWiring) },
 		"RepoAnyDirFromPath":         func(t *testing.T) { sameFunc(t, w.RepoAnyDirFromPath, repoAnyDirFromPath) },
 		"ReadBuildPins":              func(t *testing.T) { sameFunc(t, w.ReadBuildPins, readBuildPins) },

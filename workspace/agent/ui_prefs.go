@@ -2,8 +2,8 @@ package main
 
 // ui-prefs のうち、**main の機能側**（chatProviders / defaultAutoTurns / modelHidden /
 // materializeMCPAll / agentOf）に依存するアクセサと HTTP ハンドラだけがここに残る。
-// prefs そのものの読み書きと、何にも依存しないアクセサは internal/uiprefs（別名は
-// alias_uiprefs.go）。
+// prefs そのものの読み書きと、何にも依存しないアクセサは internal/uiprefs を直接呼ぶ
+// （ウェーブ B の別名 alias_uiprefs.go は RECLAIM-B で回収済み）。
 
 import (
 	"encoding/json"
@@ -17,7 +17,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // skipPermissionsPref は per-kind の既定「権限確認をスキップする」（設定 >
@@ -37,7 +39,7 @@ func skipPermissionsPref(kind string) (bool, bool) {
 	if !agentOf(k).Caps().PermissionChoice {
 		return false, false
 	}
-	defs, ok := readUIPrefs()["agentLaunchDefaults"].(map[string]any)
+	defs, ok := uiprefs.Read()["agentLaunchDefaults"].(map[string]any)
 	if !ok {
 		return false, false
 	}
@@ -63,7 +65,7 @@ func init() { agents.SkipPermissionsPref = skipPermissionsPref }
 // chatOutputLanguage) so a change applies from the next builtin-assistant
 // conversation / one-shot call without a restart.
 func assistantAgentOrderPref() []string {
-	prefs := readUIPrefs()
+	prefs := uiprefs.Read()
 	out := make([]string, 0, len(defaultHeadlessOrder))
 	seen := map[string]bool{}
 	add := func(k string) {
@@ -92,7 +94,7 @@ func assistantAgentOrderPref() []string {
 // empty means "let this CLI choose its default", while missing keeps the historical
 // backend-specific defaults.
 func assistantModelPref(key, kind string) (string, bool) {
-	raw, ok := readUIPrefs()[key].(map[string]any)
+	raw, ok := uiprefs.Read()[key].(map[string]any)
 	if !ok {
 		return "", false
 	}
@@ -122,7 +124,7 @@ func assistantUtilityModelPref(kind string) (string, bool) {
 // defaultAutoTurns; always clamped to [1, maxAutoTurnLimit] — there is no
 // unlimited mode, the clamp is the runaway stop.
 func chatAutoTurnLimit() int {
-	v, ok := readUIPrefs()["assistantAutoTurnLimit"].(float64)
+	v, ok := uiprefs.Read()["assistantAutoTurnLimit"].(float64)
 	if !ok {
 		return defaultAutoTurns
 	}
@@ -143,23 +145,23 @@ func chatAutoTurnLimit() int {
 // 適用は claude の会話のみ（codex/opencode は c.Model 直参照で上書き口が無い —
 // runReportAutoTurn 側でゲート）。
 func chatAutoTurnModel() string {
-	v, _ := readUIPrefs()["assistantAutoTurnModel"].(string)
+	v, _ := uiprefs.Read()["assistantAutoTurnModel"].(string)
 	// claude 専用の設定なので claude の除外リストで判定する。除外されていれば空＝
 	// 会話のモデルのまま（model_deny.go）。
 	return visibleModel(session.KindClaude, strings.TrimSpace(v))
 }
 
 func handleGetUIPrefs(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, readUIPrefs())
+	httpx.WriteJSON(w, http.StatusOK, uiprefs.Read())
 }
 
 func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxUIPrefsBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, uiprefs.MaxBytes+1))
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "read failed")
 		return
 	}
-	if len(body) > maxUIPrefsBytes {
+	if len(body) > uiprefs.MaxBytes {
 		httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "too_large", "prefs too large")
 		return
 	}
@@ -169,24 +171,24 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_json", "body must be a JSON object")
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(uiPrefsPath()), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(uiprefs.Path()), 0o700); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
 		return
 	}
 	// 累積データが痩せる書き込みだけ、直前の版を退避してから置き換える。毎回退避しないのは
 	// 「復元したい版」が最後の 1 回で流れてしまうから — 事故の直前を残すことに意味がある。
-	if lost := shrunkPrefKeys(readUIPrefs(), obj); len(lost) > 0 {
-		if old, err := os.ReadFile(uiPrefsPath()); err == nil && len(old) > 0 {
-			if err := os.WriteFile(uiPrefsBackupPath(), old, 0o600); err != nil {
+	if lost := uiprefs.ShrunkKeys(uiprefs.Read(), obj); len(lost) > 0 {
+		if old, err := os.ReadFile(uiprefs.Path()); err == nil && len(old) > 0 {
+			if err := os.WriteFile(uiprefs.BackupPath(), old, 0o600); err != nil {
 				log.Printf("ui-prefs: backup before shrinking write failed: %v", err)
 			}
 		}
 		log.Printf("ui-prefs: incoming prefs drop accumulated keys %v (previous copy kept at %s)",
-			lost, uiPrefsBackupPath())
+			lost, uiprefs.BackupPath())
 	}
-	before := opencodeCatalogPref()
-	peerBefore := peerMessagingPref()
-	if err := os.WriteFile(uiPrefsPath(), body, 0o600); err != nil {
+	before := uiprefs.OpencodeCatalog()
+	peerBefore := uiprefs.PeerMessaging()
+	if err := os.WriteFile(uiprefs.Path(), body, 0o600); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
@@ -195,12 +197,12 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	// ので、ここで書き直さないと「トグルしたのに何も起きない」になる。既に起動している
 	// セッションは自分の設定を読み込み済みなので、効くのは次に起動するセッションから
 	// （UI の説明文もそう書いてある）。
-	if peerMessagingPref() != peerBefore {
-		materializeMCPAll()
+	if uiprefs.PeerMessaging() != peerBefore {
+		mcpx.MaterializeAll()
 	}
 	// 枠の切替は注入する env を変える（無料枠は OPENCODE_API_KEY を落とす）。鍵の
 	// 変更と同じ扱いで、動いている serve を作り直さないと古い環境のまま残る。
-	if after := opencodeCatalogPref(); after != before {
+	if after := uiprefs.OpencodeCatalog(); after != before {
 		opencode.ApplyUsageChange(before + " → " + after)
 	}
 	httpx.WriteJSON(w, http.StatusOK, obj)

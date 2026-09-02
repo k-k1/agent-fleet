@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -133,7 +134,7 @@ func (c config) linkCaller(r *http.Request, claims sessionClaims) (store.Identit
 // (Allowed() still runs at the callback), it is what this person is shown and may
 // probe.
 func (c config) linkableFor(ctx context.Context, ident store.Identity, providerID string) bool {
-	slug, _, ok := parseTenantProviderID(providerID)
+	slug, _, ok := auth.ParseTenantProviderID(providerID)
 	if !ok {
 		return true
 	}
@@ -158,7 +159,7 @@ func (c config) linkableFor(ctx context.Context, ident store.Identity, providerI
 // has been verified and the provider resolved, and it never issues a session: the
 // person is already signed in as somebody, and swapping that under them mid-flow is
 // how "I linked a method and ended up in the other account" happens.
-func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState, p loginProvider) {
+func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState, p auth.LoginProvider) {
 	next := sanitizeNext(st.Next)
 	// Still the same person? The state is signed and short-lived, but the session
 	// cookie can have changed in another tab between the two legs.
@@ -175,38 +176,38 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		c.writeLinkResult(w, r, linkErrFailed, p.Label(preferredUILang(r)), next)
+		c.writeLinkResult(w, r, linkErrFailed, p.Label(auth.PreferredUILang(r)), next)
 		return
 	}
 	pr, err := p.Exchange(r.Context(), code, c.oauthRedirectURI())
 	if err != nil {
 		log.Printf("oauth: link %s exchange: %v", p.ID(), err)
-		if errors.Is(err, errNotAllowed) {
-			c.writeLinkResult(w, r, linkErrGate, p.Label(preferredUILang(r)), next)
+		if errors.Is(err, auth.ErrNotAllowed) {
+			c.writeLinkResult(w, r, linkErrGate, p.Label(auth.PreferredUILang(r)), next)
 		} else {
-			c.writeLinkResult(w, r, linkErrFailed, p.Label(preferredUILang(r)), next)
+			c.writeLinkResult(w, r, linkErrFailed, p.Label(auth.PreferredUILang(r)), next)
 		}
 		return
 	}
 	if pr.Email == "" || !pr.Verified {
-		c.writeLinkResult(w, r, linkErrGate, p.Label(preferredUILang(r)), next)
+		c.writeLinkResult(w, r, linkErrGate, p.Label(auth.PreferredUILang(r)), next)
 		return
 	}
 	// ★ Same stamp as the login callback, from the provider object — never from the
 	// exchange and never from a tenant's row (docs/log/61 §61.15).
-	pr.Realm = providerRealm(p)
+	pr.Realm = auth.ProviderRealm(p)
 	// ★ The method's own gate. Linking must not be a way past the org membership or
 	// the allowed domains: someone who cannot sign in with a method cannot link it.
 	allowed, err := p.Allowed(r.Context(), pr)
 	if err != nil || !allowed {
-		c.writeLinkResult(w, r, linkErrGate, p.Label(preferredUILang(r)), next)
+		c.writeLinkResult(w, r, linkErrGate, p.Label(auth.PreferredUILang(r)), next)
 		return
 	}
 	// ★ 決定 37: the same address only. A different one would join two addresses into
 	// one account, which §61.5 refuses whichever direction it is done from — being
 	// able to sign in to both proves control of both, not that they are one person.
 	if !strings.EqualFold(strings.TrimSpace(pr.Email), strings.TrimSpace(ident.Email)) {
-		c.writeLinkResult(w, r, linkErrEmail, p.Label(preferredUILang(r)), next)
+		c.writeLinkResult(w, r, linkErrEmail, p.Label(auth.PreferredUILang(r)), next)
 		return
 	}
 	err = c.mgr.store.AttachProvider(r.Context(), ident.ID, store.IdentityLink{
@@ -215,11 +216,11 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 	})
 	switch {
 	case errors.Is(err, store.ErrLinkTaken):
-		c.writeLinkResult(w, r, linkErrTaken, p.Label(preferredUILang(r)), next)
+		c.writeLinkResult(w, r, linkErrTaken, p.Label(auth.PreferredUILang(r)), next)
 		return
 	case err != nil:
 		log.Printf("oauth: link attach %s/%s: %v", pr.Provider, pr.Subject, err)
-		c.writeLinkResult(w, r, linkErrFailed, p.Label(preferredUILang(r)), next)
+		c.writeLinkResult(w, r, linkErrFailed, p.Label(auth.PreferredUILang(r)), next)
 		return
 	}
 	log.Printf("oauth: linked %s to identity %s", pr.Provider, ident.ID)
@@ -231,14 +232,14 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 		Action: "identity_provider.attach", Target: pr.Provider,
 		Detail: "subject=" + pr.Subject, HTTPStatus: http.StatusOK, At: store.NowTS(),
 	})
-	c.writeLinkResult(w, r, linkOK, p.Label(preferredUILang(r)), next)
+	c.writeLinkResult(w, r, linkOK, p.Label(auth.PreferredUILang(r)), next)
 }
 
 // writeLinkResult renders the outcome on the same self-contained page the login and
 // new-account notices use, with one button back to where the person was.
 func (c config) writeLinkResult(w http.ResponseWriter, r *http.Request, res linkResult, label, next string) {
-	lang := preferredUILang(r)
-	t := loginTextFor(lang)
+	lang := auth.PreferredUILang(r)
+	t := auth.LoginText[lang]
 	if next == "" {
 		next = "/"
 	}
@@ -268,7 +269,7 @@ func (c config) writeLinkResult(w http.ResponseWriter, r *http.Request, res link
 		"{{NOTE}}", t.LinkNote,
 		"{{ERROR}}", `<div class="`+class+`">`+body+`</div>`,
 		"{{BUTTONS}}", `<a class="gbtn" href="`+html.EscapeString(next)+`">`+t.LinkBack+`</a>`,
-	).Replace(loginPageHTML)
+	).Replace(auth.LoginPageHTML)
 	_, _ = w.Write([]byte(page))
 }
 
@@ -280,8 +281,8 @@ func (c config) writeLinkResult(w http.ResponseWriter, r *http.Request, res link
 // already proved by signing in.
 type accountAPI struct {
 	memberAuth
-	provs   []loginProvider // env-defined, startup-fixed (same snapshot as the admin list)
-	enabled bool            // AUTH=oauth with a working config: linking is possible at all
+	provs   []auth.LoginProvider // env-defined, startup-fixed (same snapshot as the admin list)
+	enabled bool                 // AUTH=oauth with a working config: linking is possible at all
 }
 
 func newAccountAPI(cfg config) accountAPI {
@@ -334,7 +335,7 @@ func (a accountAPI) loginMethods(w http.ResponseWriter, r *http.Request, ident s
 			continue
 		}
 		row := map[string]any{"provider": p.ID(), "label_ja": p.Label("ja"), "label_en": p.Label("en")}
-		if slug, _, ok := parseTenantProviderID(p.ID()); ok {
+		if slug, _, ok := auth.ParseTenantProviderID(p.ID()); ok {
 			row["tenant"] = slug
 		}
 		cand = append(cand, row)
@@ -419,13 +420,13 @@ func (a accountAPI) auditMethod(r *http.Request, ident store.Identity, action, p
 
 // providerByID resolves a provider for display only (env set, then the tenant
 // registry, which holds active rows only).
-func (a accountAPI) providerByID(ctx context.Context, id string) loginProvider {
+func (a accountAPI) providerByID(ctx context.Context, id string) auth.LoginProvider {
 	for _, p := range a.provs {
 		if p.ID() == id {
 			return p
 		}
 	}
-	if isTenantProviderID(id) && a.mgr != nil {
+	if auth.IsTenantProviderID(id) && a.mgr != nil {
 		return a.mgr.tenantIdP.ProviderFor(ctx, id)
 	}
 	return nil
@@ -433,8 +434,8 @@ func (a accountAPI) providerByID(ctx context.Context, id string) loginProvider {
 
 // linkCandidates is every method this person could add: the deployment's own
 // buttons plus the active providers of the tenants they belong to.
-func (a accountAPI) linkCandidates(ctx context.Context, ident store.Identity) []loginProvider {
-	out := append([]loginProvider(nil), a.provs...)
+func (a accountAPI) linkCandidates(ctx context.Context, ident store.Identity) []auth.LoginProvider {
+	out := append([]auth.LoginProvider(nil), a.provs...)
 	if a.mgr == nil {
 		return out
 	}

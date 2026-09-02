@@ -22,7 +22,10 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // chatStep is one "作業過程" item of an assistant turn (docs/log/19): the narration the model
@@ -174,7 +177,7 @@ type chatConversation struct {
 	// provider's own usage events after each successful turn (chat_usage.go) — the
 	// chat analog of get_session_usage's context (same wire shape as the mirror's
 	// ContextBar). Nil until the first turn or when the provider reported no usage.
-	Context *contextUsage `json:"context,omitempty"`
+	Context *usagex.ContextUsage `json:"context,omitempty"`
 	// CtxWarned marks that the context-pressure notice (chatCtxWarnPct) has been
 	// appended for the CURRENT crossing; reset when usage falls back under the
 	// threshold (e.g. the provider compacted) so a later re-crossing warns again.
@@ -222,9 +225,9 @@ func (c *chatConversation) noteTurnModel(model string) { c.turnModel = strings.T
 // AFTools.
 func (c *chatConversation) afToolsEnabled() bool {
 	switch c.Tools {
-	case toolsAFRead, toolsAFWrite:
+	case assistants.ToolsAFRead, assistants.ToolsAFWrite:
 		return true
-	case toolsNone:
+	case assistants.ToolsNone:
 		return false
 	default: // legacy conversations created before assistants had no Tools field
 		return c.AFTools
@@ -233,7 +236,7 @@ func (c *chatConversation) afToolsEnabled() bool {
 
 // afWriteEnabled reports whether the write tools (send_to_session …) are exposed to this
 // chat — only when the assistant granted af_write (docs/log/19 Q2 opt-in).
-func (c *chatConversation) afWriteEnabled() bool { return c.Tools == toolsAFWrite }
+func (c *chatConversation) afWriteEnabled() bool { return c.Tools == assistants.ToolsAFWrite }
 
 // chatOutputRule is appended to every chat's system prompt. The file/shell tools are hard-
 // disallowed (chatToolLimits), so a write attempt just fails — this steers the model away
@@ -288,7 +291,7 @@ func (c *chatConversation) languageRule() string {
 	if c.SeedVerb == "translate" || c.AssistantID == "translate" {
 		return ""
 	}
-	switch chatOutputLanguage() {
+	switch uiprefs.ChatOutputLanguage() {
 	case "ja":
 		return langRuleJA
 	case "en":
@@ -301,7 +304,7 @@ func (c *chatConversation) languageRule() string {
 // (or the generic chat persona), followed by the global output rule and, when the user
 // pinned an output language, a language directive.
 func (c *chatConversation) personaOf() string {
-	lang := uiLocale()
+	lang := uiprefs.Locale()
 	base := chatPersonaFor(lang)
 	if strings.TrimSpace(c.Persona) != "" {
 		base = c.Persona
@@ -342,18 +345,18 @@ func (c *chatConversation) knowledgeDirs() []string {
 
 // chatMeta is the light shape returned by the list endpoint (no message bodies).
 type chatMeta struct {
-	ID           string        `json:"id"`
-	Slug         string        `json:"slug,omitempty"` // short addressable id ("a…", see chatConversation.Slug)
-	Agent        string        `json:"agent"`
-	ActiveAgent  string        `json:"active_agent,omitempty"`
-	AssistantID  string        `json:"assistant_id,omitempty"` // which assistant backs this thread (Q2)
-	Title        string        `json:"title"`
-	Model        string        `json:"model,omitempty"`
-	CreatedAt    int64         `json:"created_at"`
-	UpdatedAt    int64         `json:"updated_at"`
-	MessageCount int           `json:"message_count"`
-	Context      *contextUsage `json:"context,omitempty"` // current context fill (chat_usage.go)
-	Locked       bool          `json:"locked,omitempty"`  // 削除ロック（docs/log/45）: true の間 DELETE は拒否
+	ID           string               `json:"id"`
+	Slug         string               `json:"slug,omitempty"` // short addressable id ("a…", see chatConversation.Slug)
+	Agent        string               `json:"agent"`
+	ActiveAgent  string               `json:"active_agent,omitempty"`
+	AssistantID  string               `json:"assistant_id,omitempty"` // which assistant backs this thread (Q2)
+	Title        string               `json:"title"`
+	Model        string               `json:"model,omitempty"`
+	CreatedAt    int64                `json:"created_at"`
+	UpdatedAt    int64                `json:"updated_at"`
+	MessageCount int                  `json:"message_count"`
+	Context      *usagex.ContextUsage `json:"context,omitempty"` // current context fill (chat_usage.go)
+	Locked       bool                 `json:"locked,omitempty"`  // 削除ロック（docs/log/45）: true の間 DELETE は拒否
 }
 
 // chatPersona keeps the headless agent in plain conversational mode (translate,

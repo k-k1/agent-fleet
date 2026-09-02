@@ -137,9 +137,10 @@ var (
 	// usage_rollup.go の readUsageDayForRollup が「追記と競合しない形で 1 日分を読む」ために
 	// 同じロックを取るため。
 	//
-	// 🔥 main 側で受けるときは **必ずポインタ**（alias_usagex.go の `var usageMu = &usagex.Mu`）。
-	// `var usageMu = usagex.Mu` と書くと **mutex ごと写されて別物になり**、追記側と読み側が
-	// 違う錠を掛けて直列化が無言で消える。
+	// 🔥 **別名変数で受けないこと。** `var usageMu = usagex.Mu` と書くと **mutex ごと
+	// 写されて別物になり**、追記側と読み側が違う錠を掛けて直列化が無言で消える
+	// （直接の値コピーは go vet の copylocks が捕まえるが、錠を含む構造体を関数の戻り値で
+	// 受け渡す形にすると捕まらない）。呼び出し側は `usagex.Mu.Lock()` と直接書く。
 	Mu sync.Mutex
 	// prunedAt は最後に保持期間 prune を走らせた時刻。追記のたびにディレクトリを
 	// 走査しないための節流 — 台帳は追記の方が桁違いに多い。

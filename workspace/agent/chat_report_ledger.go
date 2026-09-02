@@ -190,7 +190,7 @@ func addInstruction(name, convID, source string) string {
 // addInstructionAt is addInstruction with an explicit delivery time (テストが投入と
 // 証拠の前後関係を決定的に組むための seam)。
 func addInstructionAt(name, convID, source string, at time.Time) string {
-	if !session.ValidName(name) || !validConvID(convID) {
+	if !session.ValidName(name) || !paths.ValidIDSegment(convID) {
 		return ""
 	}
 	if _, err := loadConv(convID); err != nil {

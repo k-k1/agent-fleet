@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 func TestUsageNormalizeModel(t *testing.T) {
@@ -78,17 +79,17 @@ func TestUsageEstCostUSDFable51CacheRead(t *testing.T) {
 func TestUsageSeriesEstimatesSessionCost(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(0)
-	sess := usageRecord{
-		TS: day + "T12:00:00Z", Call: "s1", Feature: usageFeatureSession, Kind: session.KindClaude,
-		Model: "claude-opus-5", ModelSrc: usageModelReported, Trigger: usageTriggerUser,
+	sess := usagex.Record{
+		TS: day + "T12:00:00Z", Call: "s1", Feature: usagex.FeatureSession, Kind: session.KindClaude,
+		Model: "claude-opus-5", ModelSrc: usagex.ModelReported, Trigger: usagex.TriggerUser,
 		In: 1_000_000, Out: 100_000, CacheRead: 2_000_000, CacheCreate: 500_000,
-		Spend: usageSpend(1_000_000, 500_000, 100_000), OK: true, Measured: usageMeasuredExact,
+		Spend: usagex.Spend(1_000_000, 500_000, 100_000), OK: true, Measured: usagex.MeasuredExact,
 	}
 	// 単価表に無いモデル（codex）— 推定に混ぜず unpriced_spend へ。
-	other := usageRecord{
-		TS: day + "T12:00:00Z", Call: "s2", Feature: usageFeatureSession, Kind: session.KindCodex,
-		Model: "gpt-5.6-terra", ModelSrc: usageModelReported, Trigger: usageTriggerUser,
-		In: 900_000, Spend: 900_000, OK: true, Measured: usageMeasuredExact,
+	other := usagex.Record{
+		TS: day + "T12:00:00Z", Call: "s2", Feature: usagex.FeatureSession, Kind: session.KindCodex,
+		Model: "gpt-5.6-terra", ModelSrc: usagex.ModelReported, Trigger: usagex.TriggerUser,
+		In: 900_000, Spend: 900_000, OK: true, Measured: usagex.MeasuredExact,
 	}
 	writeUsageDay(t, day, sess, other)
 

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -97,7 +98,7 @@ func TestDeleteTenantRefusesTheSystemAndDefaultTenants(t *testing.T) {
 	if _, err := st.EnsureDefaultTenant(ctx); err != nil {
 		t.Fatalf("default tenant: %v", err)
 	}
-	for _, slug := range []string{goldenTenantSlug, defaultTenantSlug} {
+	for _, slug := range []string{goldenTenantSlug, auth.DefaultTenantSlug} {
 		if w := callDeleteTenant(mgr, slug); w.Code != http.StatusConflict {
 			t.Errorf("delete of %s = %d %s, want 409", slug, w.Code, w.Body.String())
 		}

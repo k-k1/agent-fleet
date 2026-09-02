@@ -11,6 +11,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base32"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"log"
 	"strings"
 )
@@ -74,7 +75,7 @@ func newConvSlug() string { return allocConvSlug(takenConvSlugs()) }
 // conversation's UUID. ok=false when the ref matches nothing.
 func resolveConvRef(ref string) (id string, ok bool) {
 	ref = strings.TrimSpace(ref)
-	if validConvID(ref) {
+	if paths.ValidIDSegment(ref) {
 		if _, err := loadConv(ref); err == nil {
 			return ref, true
 		}

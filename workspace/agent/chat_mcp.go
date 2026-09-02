@@ -78,7 +78,7 @@ func chatMCPConfigPath(convID string) string {
 // removeChatMCPConfig drops a deleted conversation's config file. Best-effort: a
 // missing file is the normal case (only claude chats write one).
 func removeChatMCPConfig(convID string) {
-	if validConvID(convID) {
+	if paths.ValidIDSegment(convID) {
 		_ = os.Remove(chatMCPConfigPath(convID))
 	}
 }
@@ -132,7 +132,7 @@ func (c *chatConversation) mcpConfigArgs() []string {
 func writeChatMCPConfig(convID string, cfg []byte) (string, error) {
 	// The id becomes a filename, so re-check it here rather than trusting that every
 	// caller reached us through a handler that validated it.
-	if !validConvID(convID) {
+	if !paths.ValidIDSegment(convID) {
 		return "", errors.New("invalid conversation id")
 	}
 	if err := os.MkdirAll(chatMCPConfigDir(), 0o700); err != nil {

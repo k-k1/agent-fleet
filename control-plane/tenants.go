@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -198,7 +199,7 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident s
 	// so both halves of "which methods does this tenant know about" stay one rule
 	// (docs/log/61 §61.15.9).
 	for _, p := range append(append([]string(nil), provs...), hidden...) {
-		if slug, name, isTenant := parseTenantProviderID(p); isTenant {
+		if slug, name, isTenant := auth.ParseTenantProviderID(p); isTenant {
 			if ownIdP == nil {
 				rows, err := a.mgr.store.ListTenantIdPs(r.Context(), t.ID)
 				if err != nil {
@@ -510,7 +511,7 @@ func (a adminAPI) createTenant(w http.ResponseWriter, r *http.Request, _ store.I
 		return
 	}
 	slug := sanitizeUser(body.Slug)
-	if slug == "" || slug == defaultTenantSlug {
+	if slug == "" || slug == auth.DefaultTenantSlug {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid slug"})
 		return
 	}
@@ -843,7 +844,7 @@ func (a adminAPI) deleteTenant(w http.ResponseWriter, r *http.Request, ident sto
 			"this tenant belongs to the deployment itself and is recreated automatically"})
 		return
 	}
-	if slug == defaultTenantSlug {
+	if slug == auth.DefaultTenantSlug {
 		writeAPIErr(w, &apiError{http.StatusConflict, "default_tenant",
 			"the default tenant is recreated at every start and cannot be deleted"})
 		return

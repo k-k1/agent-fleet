@@ -82,21 +82,6 @@ func (d Deps) defaultAgent() string {
 	return d.defaultAgentFn()
 }
 
-// validID guards path traversal: ids are randUUID() output (36 桁の hex + '-')。
-// chat_store.go の validConvID と同じ判定を、そちらへ依存せずに持つ（アシスタント id と
-// 会話 id は同じ生成器なので形も同じ）。
-func validID(id string) bool {
-	if len(id) != 36 {
-		return false
-	}
-	for _, r := range id {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || r == '-') {
-			return false
-		}
-	}
-	return true
-}
-
 // Tool grants an assistant can hold. af_read attaches the local read-only stdio MCP
 // (docs/log/19 Q1); af_write additionally exposes the write tools (send_to_session …) by
 // starting that MCP server with --write (docs/log/19 Q2 opt-in).
@@ -317,7 +302,7 @@ func Dir() string {
 func PathFor(id string) string { return filepath.Join(Dir(), id+".json") }
 
 func LoadUser(id string) (*Assistant, error) {
-	if !validID(id) { // user ids are randUUID() like conversation ids — same guard blocks traversal
+	if !paths.ValidIDSegment(id) { // user ids are randUUID() like conversation ids — same guard blocks traversal
 		return nil, errors.New("invalid assistant id")
 	}
 	b, err := os.ReadFile(PathFor(id))

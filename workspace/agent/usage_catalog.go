@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // usageCatalogMaxBytes はカタログとして読む上限。上流が肥大化しても、こちらの
@@ -99,7 +100,7 @@ func usageCatalogFiles() []struct{ path, origin string } {
 	if v := strings.TrimSpace(os.Getenv("AF_USAGE_CATALOG")); v != "" {
 		out = append(out, struct{ path, origin string }{v, "env"})
 	}
-	out = append(out, struct{ path, origin string }{filepath.Join(usageDir(), "catalog.json"), "file"})
+	out = append(out, struct{ path, origin string }{filepath.Join(usagex.Dir(), "catalog.json"), "file"})
 	cache := os.Getenv("XDG_CACHE_HOME")
 	if cache == "" {
 		if home, err := os.UserHomeDir(); err == nil {

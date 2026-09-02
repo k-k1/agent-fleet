@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"strings"
 	"testing"
 )
@@ -43,7 +44,7 @@ func TestRunOperatorTurn(t *testing.T) {
 	stubChatProvider(t, "claude", fakeChatProv{reply: "フリートは2件稼働中です", prompt: &gotPrompt})
 
 	conv := &chatConversation{
-		ID: randUUID(), Agent: "claude", Tools: toolsAFWrite, AssistantID: "operator",
+		ID: randUUID(), Agent: "claude", Tools: assistants.ToolsAFWrite, AssistantID: "operator",
 		AutoTurns: 3, // a prior unattended run — a real user message must reset it
 		Messages:  []chatMessage{},
 	}

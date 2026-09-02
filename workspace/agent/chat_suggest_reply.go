@@ -11,6 +11,9 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // chatReplySuggestPrompt は直近メッセージ（末尾窓）を文脈に、返信候補の生成を指示する。
@@ -34,7 +37,7 @@ func chatReplySuggestPrompt(msgs []chatMessage, lang string) string {
 }
 
 func runChatReplySuggestLLM(ctx context.Context, msgs []chatMessage) ([]string, error) {
-	lang := uiLocale()
+	lang := uiprefs.Locale()
 	reply, err := oneShotHeadless(ctx, replySuggestPersona(lang), chatReplySuggestPrompt(msgs, lang), replySuggestModel())
 	if err != nil {
 		return nil, fmt.Errorf("chat reply suggestion failed: %w", err)
@@ -46,7 +49,7 @@ func runChatReplySuggestLLM(ctx context.Context, msgs []chatMessage) ([]string, 
 // コンポーサー上のチップ列にマージする。
 func handleChatSuggestReplies(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !validConvID(id) {
+	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatConversationNotFnd, "invalid conversation id")
 		return
 	}
@@ -65,7 +68,7 @@ func handleChatSuggestReplies(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), replySuggestTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureSuggestChat, Trigger: usageTriggerManual, Ref: c.ID})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureSuggestChat, Trigger: usagex.TriggerManual, Ref: c.ID})
 	reps, err := runChatReplySuggestLLM(ctx, c.Messages)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "generation_failed", "reply suggestion failed")

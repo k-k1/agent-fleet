@@ -24,6 +24,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 const (
@@ -116,7 +118,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), titleSuggestTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureTitleSession, Trigger: usageTriggerAuto, Ref: name})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerAuto, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)
 	if err != nil || title == "" {
 		return // ok stays false -> backoff before the next attempt
@@ -140,7 +142,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 // an English list). Deliberately NOT retroactive: switching the language later leaves
 // existing titles alone (they are the user's data, and re-suggesting is a user action —
 // the rename dialog's 「AIに提案してもらう」 regenerates in the new language on demand).
-func titleLang() string { return uiLocale() }
+func titleLang() string { return uiprefs.Locale() }
 
 // titleSuggestPersona keeps the headless call laser-focused: no preamble, no quoting, a
 // single short line. Third-person topic label, not a sentence: the model is prone to
@@ -578,7 +580,7 @@ func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn)
 	succeeded := false
 	defer func() { titleGenDone(name, succeeded) }()
 
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureTitleSession, Trigger: usageTriggerManual, Ref: name})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerManual, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)
 	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
@@ -615,7 +617,7 @@ func handleSuggestTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	if !autoTitleSuggestEnabled() {
+	if !uiprefs.AutoTitleSuggest() {
 		httpx.WriteErr(w, http.StatusBadRequest, "feature_disabled", "auto title suggestion is turned off")
 		return
 	}
@@ -730,7 +732,7 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	if !autoTitleSuggestEnabled() {
+	if !uiprefs.AutoTitleSuggest() {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "AI suggestions are disabled (enable title auto-suggestion in agent settings)")
 		return
 	}
@@ -746,7 +748,7 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureBranchSuggest, Trigger: usageTriggerManual, Ref: name})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureBranchSuggest, Trigger: usagex.TriggerManual, Ref: name})
 	branch, err := runBranchSuggestLLM(ctx, turns)
 	if err != nil {
 		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.

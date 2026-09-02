@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"strings"
 	"testing"
 )
@@ -33,7 +34,7 @@ func TestOperatorPersonaShellGuards(t *testing.T) {
 		t.Run(c.prefs, func(t *testing.T) {
 			writeUIPrefs(t, c.prefs)
 			var operator string
-			for _, a := range builtinAssistants() {
+			for _, a := range assistants.Builtins(assistantDeps()) {
 				if a.ID == "operator" {
 					operator = a.Persona
 				}
@@ -91,10 +92,10 @@ func TestOperatorPersonaInjectionGuardParity(t *testing.T) {
 		},
 	}
 	for _, p := range pairs {
-		if !strings.Contains(operatorPersona, p.ja) {
+		if !strings.Contains(assistants.OperatorPersona, p.ja) {
 			t.Errorf("日本語 persona から防御条項が消えている: %s\n  探した文字列: %q", p.what, p.ja)
 		}
-		if !strings.Contains(operatorPersonaEN, p.en) {
+		if !strings.Contains(assistants.OperatorPersonaEN, p.en) {
 			t.Errorf("英語 persona から防御条項が消えている: %s\n  探した文字列: %q", p.what, p.en)
 		}
 	}
@@ -104,13 +105,13 @@ func TestOperatorPersonaInjectionGuardParity(t *testing.T) {
 // 表示解決するので、ここで見るのは Persona だけ）。
 func TestBuiltinPersonasFollowUILocale(t *testing.T) {
 	writeUIPrefs(t, `{"locale":"en"}`)
-	for _, a := range builtinAssistants() {
+	for _, a := range assistants.Builtins(assistantDeps()) {
 		if hasJapanese(a.Persona) {
 			t.Errorf("英語ロケールの %s persona に日本語が混入している:\n%s", a.ID, a.Persona)
 		}
 	}
 	writeUIPrefs(t, `{"locale":"ja"}`)
-	for _, a := range builtinAssistants() {
+	for _, a := range assistants.Builtins(assistantDeps()) {
 		if !hasJapanese(a.Persona) {
 			t.Errorf("日本語ロケールの %s persona が日本語でない:\n%s", a.ID, a.Persona)
 		}

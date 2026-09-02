@@ -12,8 +12,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // --- HTTP handlers ---
@@ -129,7 +134,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	lang := uiLocale()
+	lang := uiprefs.Locale()
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
 		title = chatDefaultTitle(lang)
@@ -143,7 +148,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	case req.AssistantID != "":
 		// Snapshot the assistant's settings onto the conversation (docs/log/19 Q2): later edits
 		// to the assistant leave existing threads untouched.
-		a, err := getAssistant(req.AssistantID)
+		a, err := assistants.Get(req.AssistantID, assistantDeps())
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadRequest, errCodeChatAssistantNotFound, "assistant not found")
 			return
@@ -163,7 +168,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		c.Agent = preferredHeadlessAgent()
 		c.Model = resolveChatModel(c.Agent, "")
 		c.Persona = verbPersona(req.SeedVerb, lang)
-		c.Tools = toolsNone
+		c.Tools = assistants.ToolsNone
 		c.SeedVerb = req.SeedVerb
 	default:
 		// Legacy path: plain agent + optional model, generic persona, read-only fleet tools
@@ -175,9 +180,9 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		c.Agent = req.Agent
 		c.Model = resolveChatModel(req.Agent, req.Model)
 		if req.Agent == session.KindClaude {
-			c.Tools = toolsAFRead
+			c.Tools = assistants.ToolsAFRead
 		} else {
-			c.Tools = toolsNone
+			c.Tools = assistants.ToolsNone
 		}
 	}
 
@@ -227,7 +232,7 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatPromptEmpty, "prompt is empty")
 		return
 	}
-	a, err := resolveAssistant(strings.TrimSpace(req.Assistant))
+	a, err := assistants.Resolve(strings.TrimSpace(req.Assistant), assistantDeps())
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatAssistantNotFound, "assistant not found")
 		return
@@ -236,13 +241,13 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	// but NO tools (advisory only).
 	c := &chatConversation{
 		ID: randUUID(), Agent: a.Agent, Model: resolveChatModel(a.Agent, a.Model),
-		Persona: a.Persona, Tools: toolsNone, Knowledge: a.Knowledge,
+		Persona: a.Persona, Tools: assistants.ToolsNone, Knowledge: a.Knowledge,
 	}
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
 	// 使用量台帳（ADR 0029 §3）。会話は非永続なので ref は空 — 束ねる先が無い。
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureAssistantAsk, Trigger: usageTriggerUser})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureAssistantAsk, Trigger: usagex.TriggerUser})
 	reply, err := prov.send(ctx, c, prompt)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
@@ -268,7 +273,7 @@ func handleChatGet(w http.ResponseWriter, r *http.Request) {
 // turn was found, but always succeeds.
 func handleChatStop(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !validConvID(id) {
+	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatConversationNotFnd, "invalid conversation id")
 		return
 	}
@@ -367,7 +372,7 @@ func switchChatAgent(c *chatConversation, kind string) {
 
 func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !validConvID(id) {
+	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
 		return
 	}
@@ -404,7 +409,7 @@ func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 	// lingering until the next container rebuild.
 	removeChatMCPConfig(id)
 	// get_session_output の会話別カーソル（mcp_stdio.go outputCursors）も一緒に落とす。
-	outputCursors.Remove(id)
+	mcpx.OutputCursors.Remove(id)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -449,7 +454,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, chatTurnUsageTag(c, usageTriggerUser)) // 使用量台帳（ADR 0029 §3）
+	ctx = usagex.WithTag(ctx, chatTurnUsageTag(c, usagex.TriggerUser)) // 使用量台帳（ADR 0029 §3）
 	reply, err := prov.send(ctx, c, prompt)
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
 		// docs/log/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
@@ -544,7 +549,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// cancel func (handleChatStop); the bounded chatTimeout caps a runaway turn.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), chatTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, chatTurnUsageTag(c, usageTriggerUser)) // 使用量台帳（ADR 0029 §3）
+	ctx = usagex.WithTag(ctx, chatTurnUsageTag(c, usagex.TriggerUser)) // 使用量台帳（ADR 0029 §3）
 	deregister := registerLiveTurn(id, cancel)
 	defer deregister()
 

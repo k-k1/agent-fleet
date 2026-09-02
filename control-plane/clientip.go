@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
@@ -130,7 +131,7 @@ func clientIPFrom(ctx context.Context) clientIPInfo {
 func parseCIDRList(s string) ([]netip.Prefix, []string, *apiError) {
 	var prefixes []netip.Prefix
 	var text []string
-	for _, raw := range splitCSV(s) {
+	for _, raw := range envx.SplitCSV(s) {
 		entry := strings.TrimSpace(raw)
 		if entry == "" {
 			continue

@@ -21,6 +21,7 @@ package main
 // なので、束ねの対象にしない（docs/log/30）。
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"os"
 	"strconv"
 	"sync"
@@ -40,7 +41,7 @@ const chatAutoTurnDelayMax = 10 * time.Minute
 
 // chatAutoTurnDelay returns the effective bundling window（設定 → env → 既定）。
 func chatAutoTurnDelay() time.Duration {
-	if v, ok := readUIPrefs()["assistantAutoTurnDelay"].(float64); ok && v >= 0 {
+	if v, ok := uiprefs.Read()["assistantAutoTurnDelay"].(float64); ok && v >= 0 {
 		d := time.Duration(v) * time.Second
 		if d > chatAutoTurnDelayMax {
 			return chatAutoTurnDelayMax

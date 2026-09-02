@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 func handleAssistantTurn(w http.ResponseWriter, r *http.Request) {
@@ -46,8 +47,8 @@ func handleAssistantTurn(w http.ResponseWriter, r *http.Request) {
 	}
 	// 使用量台帳（ADR 0029 §3）: 機構はブリッジと同じでも、消費の意味は「定時実行が
 	// 無人で回したチャット1ターン」— feature=assistant.chat / trigger=schedule で数える。
-	reply, err := runOperatorTurnAs(id, req.Prompt, usageTag{
-		Feature: usageFeatureAssistantChat, Trigger: usageTriggerSchedule, Ref: id,
+	reply, err := runOperatorTurnAs(id, req.Prompt, usagex.Tag{
+		Feature: usagex.FeatureAssistantChat, Trigger: usagex.TriggerSchedule, Ref: id,
 	})
 	if err != nil {
 		// reply carries the localized reason line (runOperatorTurn's contract).

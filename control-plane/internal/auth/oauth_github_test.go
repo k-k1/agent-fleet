@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -89,7 +90,7 @@ func stubGitHubAdapter(gh *stubGitHubAPI) *GitHubProvider {
 		ProviderID: GithubProviderID, LabelJA: "GitHub でサインイン", LabelEN: "Sign in with GitHub",
 		ClientID: "client-id", ClientSecret: "client-secret",
 		AllowedOrgs:  []string{"acme"},
-		AllowDomains: domainSet("acme.co.jp"),
+		AllowDomains: envx.DomainSet("acme.co.jp"),
 		TTL:          GithubDefaultTTL,
 		Grace:        GithubDefaultGrace,
 		WebBase:      gh.URL, APIBase: gh.URL, HTTPClient: gh.Client(),

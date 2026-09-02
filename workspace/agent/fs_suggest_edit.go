@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 const (
@@ -221,7 +222,7 @@ func handleFSSuggestEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), editSuggestTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureSuggestEdit, Trigger: usageTriggerManual, Ref: req.Path})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureSuggestEdit, Trigger: usagex.TriggerManual, Ref: req.Path})
 	reply, err := editSuggestLLM(ctx, &req)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "generation_failed", "edit suggestion failed")

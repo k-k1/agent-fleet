@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -32,18 +34,18 @@ func TestAttachProviderAddsAMethodWithoutTouchingTheIdentity(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const email = "yamada@acme.co.jp"
 
-	me, _, err := st.LinkIdentity(ctx, linkOf(googleProviderID, "g-1", email, true))
+	me, _, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-1", email, true))
 	if err != nil {
 		t.Fatalf("first login: %v", err)
 	}
 	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
-		Provider: "t:sub:github", Subject: "gh-1", Realm: githubWebBase, Email: email,
+		Provider: "t:sub:github", Subject: "gh-1", Realm: auth.GithubWebBase, Email: email,
 	}); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	// 押し間違いで 2 回押しても同じ（冪等）。
 	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
-		Provider: "t:sub:github", Subject: "gh-1", Realm: githubWebBase, Email: email,
+		Provider: "t:sub:github", Subject: "gh-1", Realm: auth.GithubWebBase, Email: email,
 	}); err != nil {
 		t.Fatalf("attach twice: %v", err)
 	}
@@ -70,12 +72,12 @@ func TestAttachProviderAddsAMethodWithoutTouchingTheIdentity(t *testing.T) {
 // アドレスが他人のもの）はどれも不可逆なので、拒否だけが正しい答え。
 func TestAttachProviderRefusesAnAccountThatBelongsToSomebody(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
-	me, _, err := st.LinkIdentity(ctx, linkOf(googleProviderID, "g-1", "yamada@acme.co.jp", true))
+	me, _, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-1", "yamada@acme.co.jp", true))
 	if err != nil {
 		t.Fatalf("me: %v", err)
 	}
 	other, _, err := st.LinkIdentity(ctx, store.IdentityLink{
-		Provider: "github", Subject: "gh-9", Realm: githubWebBase,
+		Provider: "github", Subject: "gh-9", Realm: auth.GithubWebBase,
 		Email: "suzuki@acme.co.jp", FallbackKey: "suzuki-acme-co-jp", EmailJoin: true,
 	})
 	if err != nil {
@@ -84,7 +86,7 @@ func TestAttachProviderRefusesAnAccountThatBelongsToSomebody(t *testing.T) {
 
 	// 1. その対そのものが他人のもの。
 	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
-		Provider: "github", Subject: "gh-9", Realm: githubWebBase, Email: "yamada@acme.co.jp",
+		Provider: "github", Subject: "gh-9", Realm: auth.GithubWebBase, Email: "yamada@acme.co.jp",
 	}); !errors.Is(err, store.ErrLinkTaken) {
 		t.Fatalf("err = %v, want errLinkTaken", err)
 	}
@@ -92,7 +94,7 @@ func TestAttachProviderRefusesAnAccountThatBelongsToSomebody(t *testing.T) {
 	//    そのアカウントでログインすると other に着地するので、ここで紐づけると
 	//    1 つのアカウントを 2 人が名乗ることになる。
 	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
-		Provider: "t:sub:github", Subject: "gh-9", Realm: githubWebBase, Email: "yamada@acme.co.jp",
+		Provider: "t:sub:github", Subject: "gh-9", Realm: auth.GithubWebBase, Email: "yamada@acme.co.jp",
 	}); !errors.Is(err, store.ErrLinkTaken) {
 		t.Fatalf("rule 1.5 err = %v, want errLinkTaken", err)
 	}
@@ -117,12 +119,12 @@ func linkTestConfig(t *testing.T, idp *stubIdP) (config, *store.SQL) {
 	t.Helper()
 	st := p3Store(t)
 	mgr := p4Manager(t, st)
-	cfg := oauthTestConfig(t, stubProvider("entra", idp, trustEmailVerified))
+	cfg := oauthTestConfig(t, stubProvider("entra", idp, auth.TrustEmailVerified))
 	cfg.mgr = mgr
 	// oauthTestConfig wires deployAllowed before mgr exists, so re-point the DB term
 	// the way main.go does — the link flow must run the SAME Allowed() as a login.
 	for _, p := range cfg.providers {
-		if op, ok := p.(*oidcProvider); ok {
+		if op, ok := p.(*auth.OIDCProvider); ok {
 			op.DeployAllowed, op.DBAllowed = cfg.emailAllowed, cfg.tenantEmailAllowed
 		}
 	}
@@ -132,12 +134,12 @@ func linkTestConfig(t *testing.T, idp *stubIdP) (config, *store.SQL) {
 // seedSignedIn creates the person and the session cookie they are holding.
 func seedSignedIn(t *testing.T, cfg config, st *store.SQL, email string) (store.Identity, *http.Cookie) {
 	t.Helper()
-	ident, _, err := st.LinkIdentity(t.Context(), linkOf(googleProviderID, "g-1", email, true))
+	ident, _, err := st.LinkIdentity(t.Context(), linkOf(auth.GoogleProviderID, "g-1", email, true))
 	if err != nil {
 		t.Fatalf("seed identity: %v", err)
 	}
 	b, _ := json.Marshal(sessionClaims{
-		Email: email, Exp: time.Now().Add(time.Hour).Unix(), Prov: googleProviderID, Sub: "g-1",
+		Email: email, Exp: time.Now().Add(time.Hour).Unix(), Prov: auth.GoogleProviderID, Sub: "g-1",
 	})
 	return ident, &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)}
 }
@@ -287,7 +289,7 @@ func TestLinkRunsTheMethodsOwnGate(t *testing.T) {
 	})
 	cfg, st := linkTestConfig(t, idp)
 	// この provider だけの許可リスト（別ドメイン）＝ この人は入れない。
-	cfg.providers[0].(*oidcProvider).AllowDomains = domainSet("sub.co.jp")
+	cfg.providers[0].(*auth.OIDCProvider).AllowDomains = envx.DomainSet("sub.co.jp")
 	me, session := seedSignedIn(t, cfg, st, email)
 
 	w := startLink(t, cfg, session, "?provider=entra")
@@ -317,7 +319,7 @@ func TestLinkRefusesWhenTheSessionChangedMidFlow(t *testing.T) {
 	// 別人のセッションで戻ってくる。
 	b, _ := json.Marshal(sessionClaims{
 		Email: "suzuki@acme.co.jp", Exp: time.Now().Add(time.Hour).Unix(),
-		Prov: googleProviderID, Sub: "g-2",
+		Prov: auth.GoogleProviderID, Sub: "g-2",
 	})
 	other := &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)}
 
@@ -379,7 +381,7 @@ func TestLoginMethodsListsLinkedAndLinkable(t *testing.T) {
 	}
 	api := newAccountAPI(cfg)
 	r := httptest.NewRequest(http.MethodGet, "/api/me/login-methods", nil)
-	r = r.WithContext(withLoginRef(r.Context(), loginRef{googleProviderID, "g-1"}))
+	r = r.WithContext(withLoginRef(r.Context(), loginRef{auth.GoogleProviderID, "g-1"}))
 	w := httptest.NewRecorder()
 	api.loginMethods(w, r, me)
 	if w.Code != http.StatusOK {
@@ -403,7 +405,7 @@ func TestLoginMethodsListsLinkedAndLinkable(t *testing.T) {
 		t.Fatalf("linked = %+v, want google + entra", got.Linked)
 	}
 	for _, l := range got.Linked {
-		if l.Provider == googleProviderID && !l.Current {
+		if l.Provider == auth.GoogleProviderID && !l.Current {
 			t.Error("the method the session was minted with must be marked current")
 		}
 		if l.Provider == "entra" && l.LabelJA == "" {
@@ -441,16 +443,16 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 	cfg, st := linkTestConfig(t, idp)
 	me, _ := seedSignedIn(t, cfg, st, "yamada@acme.co.jp")
 	api := newAccountAPI(cfg)
-	cur := loginRef{googleProviderID, "g-1"}
+	cur := loginRef{auth.GoogleProviderID, "g-1"}
 
 	// 1. まだ 1 つしか無い。★ 現セッションの方式のガードと重なるので、ここでは別の
 	//    方式で入っていることにして「残数」のガード単体を見る — 2 つは独立に効く。
-	if w := detachReq(t, api, me, loginRef{"entra", "e-1"}, googleProviderID, "g-1"); w.Code != http.StatusConflict ||
+	if w := detachReq(t, api, me, loginRef{"entra", "e-1"}, auth.GoogleProviderID, "g-1"); w.Code != http.StatusConflict ||
 		!strings.Contains(w.Body.String(), "last_login_method") {
 		t.Fatalf("最後の 1 つは外せてはいけない: %d %s", w.Code, w.Body.String())
 	}
 	// ★ SQL 層でも数えている（API のチェックと DELETE の間にタブが 1 枚挟まる）。
-	if err := st.DetachProvider(t.Context(), me.ID, googleProviderID, "g-1"); !errors.Is(err, store.ErrLastLoginMethod) {
+	if err := st.DetachProvider(t.Context(), me.ID, auth.GoogleProviderID, "g-1"); !errors.Is(err, store.ErrLastLoginMethod) {
 		t.Fatalf("store 層の残数ガードが効いていない: %v", err)
 	}
 
@@ -460,7 +462,7 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 		t.Fatalf("attach: %v", err)
 	}
 	// 2. 2 つになっても、いま入っている方式は外せない。
-	if w := detachReq(t, api, me, cur, googleProviderID, "g-1"); w.Code != http.StatusConflict ||
+	if w := detachReq(t, api, me, cur, auth.GoogleProviderID, "g-1"); w.Code != http.StatusConflict ||
 		!strings.Contains(w.Body.String(), "current_login_method") {
 		t.Fatalf("現セッションの方式は外せてはいけない: %d %s", w.Code, w.Body.String())
 	}
@@ -485,7 +487,7 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 		t.Fatalf("外せるはずの 1 件が外せない: %d %s", w.Code, w.Body.String())
 	}
 	lp, _ := st.ListLinkedProviders(t.Context(), me.ID)
-	if len(lp) != 1 || lp[0].Provider != googleProviderID {
+	if len(lp) != 1 || lp[0].Provider != auth.GoogleProviderID {
 		t.Fatalf("linked = %+v, want google だけ", lp)
 	}
 	after, _, _ := st.GetIdentityByID(t.Context(), me.ID)
@@ -524,7 +526,7 @@ func TestLoginMethodsSaysWhichRowsCanBeRemoved(t *testing.T) {
 	} {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodGet, "/api/me/login-methods", nil)
-		r = r.WithContext(withLoginRef(r.Context(), loginRef{googleProviderID, "g-1"}))
+		r = r.WithContext(withLoginRef(r.Context(), loginRef{auth.GoogleProviderID, "g-1"}))
 		w := httptest.NewRecorder()
 		api.loginMethods(w, r, me)
 		var got struct {
@@ -557,7 +559,7 @@ func TestLoginMethodsSaysWhichRowsCanBeRemoved(t *testing.T) {
 	}
 	for _, l := range read() {
 		switch l.Provider {
-		case googleProviderID:
+		case auth.GoogleProviderID:
 			if !l.Current || l.Removable {
 				t.Fatalf("現セッションの方式は removable ではない: %+v", l)
 			}

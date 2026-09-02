@@ -24,6 +24,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 	"log"
 	"os"
 	"path/filepath"
@@ -119,7 +120,7 @@ type usageRollupState struct {
 
 var usageRollupMu sync.Mutex
 
-func usageRollupDir() string { return filepath.Join(usageDir(), "rollup") }
+func usageRollupDir() string { return filepath.Join(usagex.Dir(), "rollup") }
 
 func usageRollupPath(month string) string { return filepath.Join(usageRollupDir(), month+".json") }
 
@@ -169,7 +170,7 @@ func writeUsageJSON(path string, v any) error {
 }
 
 // keyOf は台帳1行から次元タプルを取る。
-func keyOf(r usageRecord) usageKey {
+func keyOf(r usagex.Record) usageKey {
 	return usageKey{
 		Feature: r.Feature, Trigger: r.Trigger, Origin: r.Origin, OriginConv: r.OriginConv,
 		Kind: r.Kind, Model: r.Model, ModelSrc: r.ModelSrc, Verb: r.Verb,
@@ -179,7 +180,7 @@ func keyOf(r usageRecord) usageKey {
 
 // usageRowTime は行の消費時刻。ts が壊れている/空の行は追記先のファイル日の 0 時へ寄せる
 // （捨てない — 捨てると合計が合わなくなる）。
-func usageRowTime(r usageRecord, fileDay string) time.Time {
+func usageRowTime(r usagex.Record, fileDay string) time.Time {
 	if t, err := time.Parse(time.RFC3339, r.TS); err == nil {
 		return t.UTC()
 	}
@@ -203,7 +204,7 @@ func usageRowTime(r usageRecord, fileDay string) time.Time {
 // （ADR0029 §1）。どの軸で足しても合計が distinct call 数に一致する性質は代表方式でも
 // 保たれる。代表以外のモデル行は spend>0 / calls=0 になるので、平均を出す表は 0 除算を
 // 「—」で出す（console 側 `perCall`）。
-func aggregateUsageRows(rows []usageRecord, seen map[string]bool) map[usageKey]usageAgg {
+func aggregateUsageRows(rows []usagex.Record, seen map[string]bool) map[usageKey]usageAgg {
 	rep := usageCallRepresentatives(rows)
 	out := map[usageKey]usageAgg{}
 	for i, r := range rows {
@@ -227,7 +228,7 @@ func aggregateUsageRows(rows []usageRecord, seen map[string]bool) map[usageKey]u
 }
 
 // usageCallRepresentatives は call ごとに「回数を数える行」の添字を選ぶ。
-func usageCallRepresentatives(rows []usageRecord) map[string]int {
+func usageCallRepresentatives(rows []usagex.Record) map[string]int {
 	rep := make(map[string]int, len(rows))
 	for i, r := range rows {
 		if r.Call == "" {
@@ -242,7 +243,7 @@ func usageCallRepresentatives(rows []usageRecord) map[string]int {
 
 // usageRowOutranks は「どちらの行がその呼び出しの代表か」。実態（消費の大きい方）を採り、
 // 同点は名前で決める — 同じ入力から常に同じ帰属になることが集計の再現性に要る。
-func usageRowOutranks(a, b usageRecord) bool {
+func usageRowOutranks(a, b usagex.Record) bool {
 	if a.Spend != b.Spend {
 		return a.Spend > b.Spend
 	}
@@ -320,7 +321,7 @@ func ensureUsageRollups() {
 	dd := st.Folded
 	dropped := 0
 
-	for _, fileDay := range usageRawDays() {
+	for _, fileDay := range usagex.RawDays() {
 		if fileDay >= today {
 			continue // 当日（と、時計が巻き戻った場合の未来日）は raw のまま扱う
 		}
@@ -334,7 +335,7 @@ func ensureUsageRollups() {
 		// 消費日ごとに仕分ける。1つの raw ファイルが複数の日（バックフィルなら数か月）へ
 		// 寄与しうるのがこの層の肝。
 		seen := map[string]bool{} // call の重複排除はファイル単位で共有する
-		byDay := map[string][]usageRecord{}
+		byDay := map[string][]usagex.Record{}
 		var days []string
 		for _, r := range rawRows {
 			ts := usageRowTime(r, fileDay)
@@ -409,13 +410,13 @@ func ensureUsageRollups() {
 // もっと新しい日を選ぶ＝このファイルはもう伸びない。両者が別ロックだと、UTC 日跨ぎの直前に
 // 日を決めた追記がロールアップの後にそのファイルへ着地し、「畳み済み」判定で二度と読まれない
 // （＝その行が黙って消える）。窓は極小だが、消え方が静かなので塞ぐ。
-func readUsageDayForRollup(day string) (rows []usageRecord, closed bool) {
-	usageMu.Lock()
-	defer usageMu.Unlock()
+func readUsageDayForRollup(day string) (rows []usagex.Record, closed bool) {
+	usagex.Mu.Lock()
+	defer usagex.Mu.Unlock()
 	if day >= time.Now().UTC().Format("2006-01-02") {
 		return nil, false
 	}
-	return readUsageDay(day), true
+	return usagex.ReadDay(day), true
 }
 
 // rebuildUsageRollupsLocked は版が上がった時に rollup を作り直す。usageRollupMu 保持前提。
@@ -433,7 +434,7 @@ func readUsageDayForRollup(day string) (rows []usageRecord, closed bool) {
 // 本機能は導入直後（rollup が raw の保持期間より古くなる前）なので、実際には前者を通る。
 func rebuildUsageRollupsLocked(st usageRollupState) usageRollupState {
 	onDisk := map[string]bool{}
-	for _, d := range usageRawDays() {
+	for _, d := range usagex.RawDays() {
 		onDisk[d] = true
 	}
 	pruned := 0
@@ -446,11 +447,11 @@ func rebuildUsageRollupsLocked(st usageRollupState) usageRollupState {
 		log.Printf("usage: rollup v%d: 寄与元 raw が %d 日分 prune 済みのため作り直さない"+
 			"（既存集計に重複が残る可能性あり・以後の重複は落とす）", usageRollupVersion, pruned)
 		fresh := usageRollupState{Version: usageRollupVersion, Rolled: st.Rolled, Folded: usageDedupIndex{}}
-		for _, fileDay := range usageRawDays() { // 昇順＝追記順
+		for _, fileDay := range usagex.RawDays() { // 昇順＝追記順
 			if _, done := st.Rolled[fileDay]; !done {
 				continue // 未畳みの分は呼び出し元のループが同じ索引で処理する
 			}
-			for _, r := range readUsageDay(fileDay) {
+			for _, r := range usagex.ReadDay(fileDay) {
 				fresh.Folded.accept(r, usageRowTime(r, fileDay))
 			}
 		}

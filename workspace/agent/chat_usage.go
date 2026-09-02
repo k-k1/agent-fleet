@@ -18,6 +18,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // chatCtxWarnPct — コンテキスト使用率がこの割合(%)以上になったら notice で引き継ぎを
@@ -49,8 +50,8 @@ func (u claudeUsage) contextTokens() int {
 // 縮退用**で、モデル別の内訳は失われるが総量は残る。トップレベルの値を使うのは、台帳が
 // 見たいのが「この呼び出しで実際に課金された量」だから — コンテキスト占有（iterations
 // 末尾のスナップショット）とは別の量。
-func (u claudeUsage) ledgerTokens() usageTokens {
-	return usageTokens{
+func (u claudeUsage) ledgerTokens() usagex.Tokens {
+	return usagex.Tokens{
 		In: u.InputTokens, Out: u.OutputTokens,
 		CacheRead: u.CacheReadInputTokens, CacheCreate: u.CacheCreationInputTokens,
 	}
@@ -75,7 +76,7 @@ type claudeModelUsage struct {
 // usageModelRows は modelUsage を台帳のモデル別行へ変換する。キー（生 id）を model_raw、
 // canonicalModel を系列キーにする。順序はキー昇順に固定 — マップ反復順のままだと同じ
 // 呼び出しでも行順が揺れ、テストと台帳の読み口が不安定になる。
-func usageModelRows(mu map[string]claudeModelUsage) []usageModelRow {
+func usageModelRows(mu map[string]claudeModelUsage) []usagex.ModelRow {
 	if len(mu) == 0 {
 		return nil
 	}
@@ -84,12 +85,12 @@ func usageModelRows(mu map[string]claudeModelUsage) []usageModelRow {
 		raws = append(raws, raw)
 	}
 	sort.Strings(raws)
-	rows := make([]usageModelRow, 0, len(raws))
+	rows := make([]usagex.ModelRow, 0, len(raws))
 	for _, raw := range raws {
 		m := mu[raw]
-		rows = append(rows, usageModelRow{
+		rows = append(rows, usagex.ModelRow{
 			Model: m.CanonicalModel, ModelRaw: raw, CostUSD: m.CostUSD,
-			Tokens: usageTokens{
+			Tokens: usagex.Tokens{
 				In: m.InputTokens, Out: m.OutputTokens,
 				CacheRead: m.CacheReadInputTokens, CacheCreate: m.CacheCreationInputTokens,
 			},
@@ -168,12 +169,12 @@ type codexUsage struct {
 
 // ledgerTokens は codex のターン合算 usage を台帳の内訳へ写す。input_tokens は cached を
 // 含む（rollout の token_count と同じ流儀）ので、fresh = input - cached。
-func (u codexUsage) ledgerTokens() usageTokens {
+func (u codexUsage) ledgerTokens() usagex.Tokens {
 	fresh := u.InputTokens - u.CachedInputTokens
 	if fresh < 0 {
 		fresh = 0
 	}
-	return usageTokens{
+	return usagex.Tokens{
 		In: fresh, Out: u.OutputTokens,
 		CacheRead: u.CachedInputTokens, CacheCreate: u.CacheWriteInputTokens,
 	}
@@ -193,8 +194,8 @@ type opencodeUsage struct {
 }
 
 // ledgerTokens は opencode の内訳を台帳の形へ写す（input はキャッシュ分を含まない）。
-func (u opencodeUsage) ledgerTokens() usageTokens {
-	return usageTokens{In: u.Input, Out: u.Output, CacheRead: u.Cache.Read, CacheCreate: u.Cache.Write}
+func (u opencodeUsage) ledgerTokens() usagex.Tokens {
+	return usagex.Tokens{In: u.Input, Out: u.Output, CacheRead: u.Cache.Read, CacheCreate: u.Cache.Write}
 }
 
 // setChatContext は共通の格納口。スナップショットが空のターン（usage の取れない
@@ -210,9 +211,9 @@ func setChatContext(c *chatConversation, fresh, read, create, window int, model 
 	}
 	source := "recorded"
 	if window <= 0 {
-		window, source = contextWindowGuess(model, tokens), "estimated"
+		window, source = usagex.WindowGuess(model, tokens), "estimated"
 	}
-	u := &contextUsage{
+	u := &usagex.ContextUsage{
 		Tokens: tokens, Read: read, Create: create, Fresh: fresh,
 		Window: window, WindowSource: source, Model: model,
 	}
@@ -266,7 +267,7 @@ func noteContextPressure(c *chatConversation) {
 
 // ctxPressureContent は逼迫 notice の正本言語（ja）フォールバック本文。表示は
 // noticeKeyCtxPressure のカタログ訳が担う（chat_notice.go / ADR 0033）。
-func ctxPressureContent(u *contextUsage) string {
+func ctxPressureContent(u *usagex.ContextUsage) string {
 	return "この会話のコンテキスト使用量が上限の約" + strconv.Itoa(int(u.Pct)) + "%" +
 		"（" + fmtKTokens(u.Tokens) + " / " + fmtKTokens(u.Window) + " トークン）に達しました。" +
 		"このまま続けると、応答の品質低下・ターンの失敗・トークン消費の増大につながります。" +

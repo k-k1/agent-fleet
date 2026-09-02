@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"io"
 	"log"
 	"net/http"
@@ -598,7 +599,7 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 		log.Printf("WARNING: google login disabled — set both GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET")
 	}
 
-	for _, raw := range splitCSV(os.Getenv("AF_OIDC_PROVIDERS")) {
+	for _, raw := range envx.SplitCSV(os.Getenv("AF_OIDC_PROVIDERS")) {
 		id := strings.ToLower(raw)
 		if !ValidProviderID(id) {
 			log.Printf("WARNING: AF_OIDC_PROVIDERS: ignoring invalid provider id %q (allowed: a-z 0-9 - _)", raw)
@@ -611,7 +612,7 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 		seen[id] = true
 
 		issuer := oidcEnv(id, "ISSUER")
-		tids := emailSet(oidcEnv(id, "ALLOWED_TIDS")) // plain lowercased CSV set (tenant GUIDs)
+		tids := envx.EmailSet(oidcEnv(id, "ALLOWED_TIDS")) // plain lowercased CSV set (tenant GUIDs)
 		// ★ Checked before the "disable on missing config" rules below so a
 		// dangerous issuer can never be waved through by an unrelated typo.
 		if issuer != "" && MultiTenantIssuer(issuer) && len(tids) == 0 {
@@ -651,11 +652,11 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 			ClientID:      clientID,
 			ClientSecret:  clientSecret,
 			Trust:         trust,
-			Scope:         envOr("AF_OIDC_"+strings.ToUpper(strings.ReplaceAll(id, "-", "_"))+"_SCOPES", "openid email profile"),
+			Scope:         envx.Or("AF_OIDC_"+strings.ToUpper(strings.ReplaceAll(id, "-", "_"))+"_SCOPES", "openid email profile"),
 			Prompt:        "select_account",
 			AllowedTIDs:   tids,
-			AllowEmails:   emailSet(oidcEnv(id, "ALLOWED_EMAILS")),
-			AllowDomains:  domainSet(oidcEnv(id, "ALLOWED_DOMAINS")),
+			AllowEmails:   envx.EmailSet(oidcEnv(id, "ALLOWED_EMAILS")),
+			AllowDomains:  envx.DomainSet(oidcEnv(id, "ALLOWED_DOMAINS")),
 			DeployAllowed: c.DeployAllowed,
 			DBAllowed:     c.DBAllowed,
 		}

@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // writeUsageDay は指定日の raw ファイルを直接作る（時計を進めずに「昨日以前」を作れる）。
-func writeUsageDay(t *testing.T, day string, rows ...usageRecord) {
+func writeUsageDay(t *testing.T, day string, rows ...usagex.Record) {
 	t.Helper()
-	dir := usageRawDir()
+	dir := usagex.RawDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -33,15 +34,15 @@ func writeUsageDay(t *testing.T, day string, rows ...usageRecord) {
 	}
 }
 
-func row(call, feature, kind, model string, spend int) usageRecord {
-	return usageRecord{
-		Call: call, Feature: feature, Kind: kind, Model: model, ModelSrc: usageModelReported,
-		Trigger: usageTriggerUser, In: spend, Spend: spend, OK: true, Measured: usageMeasuredExact,
+func row(call, feature, kind, model string, spend int) usagex.Record {
+	return usagex.Record{
+		Call: call, Feature: feature, Kind: kind, Model: model, ModelSrc: usagex.ModelReported,
+		Trigger: usagex.TriggerUser, In: spend, Spend: spend, OK: true, Measured: usagex.MeasuredExact,
 	}
 }
 
 // at は行の消費時刻を指定日の 12:00 に置く（バケットは ts で刻まれる）。
-func at(r usageRecord, day string) usageRecord {
+func at(r usagex.Record, day string) usagex.Record {
 	r.TS = day + "T12:00:00Z"
 	return r
 }
@@ -51,10 +52,10 @@ func daysAgo(n int) string { return time.Now().UTC().AddDate(0, 0, -n).Format("2
 // claude は1呼び出しがモデル別行に割れる。行数で数えると呼び出し回数が水増しされるので、
 // distinct call で数える（docs/log/46 §4）。どの軸で足しても合計が壊れないことまで見る。
 func TestAggregateUsageRowsCountsDistinctCalls(t *testing.T) {
-	rows := []usageRecord{
-		row("c1", usageFeatureTitleSession, session.KindClaude, "claude-haiku-4-5", 100),
-		row("c1", usageFeatureTitleSession, session.KindClaude, "claude-sonnet-4-6", 50), // 同じ呼び出しの2モデル目
-		row("c2", usageFeatureTitleSession, session.KindClaude, "claude-haiku-4-5", 20),
+	rows := []usagex.Record{
+		row("c1", usagex.FeatureTitleSession, session.KindClaude, "claude-haiku-4-5", 100),
+		row("c1", usagex.FeatureTitleSession, session.KindClaude, "claude-sonnet-4-6", 50), // 同じ呼び出しの2モデル目
+		row("c2", usagex.FeatureTitleSession, session.KindClaude, "claude-haiku-4-5", 20),
 	}
 	agg := aggregateUsageRows(rows, map[string]bool{})
 	if len(agg) != 2 {
@@ -77,8 +78,8 @@ func TestAggregateUsageRowsCountsDistinctCalls(t *testing.T) {
 func TestEnsureUsageRollupsOnlyFoldsCompletedDays(t *testing.T) {
 	useIsolatedUsageDir(t)
 	yesterday, today := daysAgo(1), daysAgo(0)
-	writeUsageDay(t, yesterday, at(row("a", usageFeatureTitleSession, session.KindClaude, "haiku", 10), yesterday))
-	writeUsageDay(t, today, at(row("b", usageFeatureTitleSession, session.KindClaude, "haiku", 20), today))
+	writeUsageDay(t, yesterday, at(row("a", usagex.FeatureTitleSession, session.KindClaude, "haiku", 10), yesterday))
+	writeUsageDay(t, today, at(row("b", usagex.FeatureTitleSession, session.KindClaude, "haiku", 20), today))
 
 	ensureUsageRollups()
 	m := readUsageRollup(yesterday[:7])
@@ -102,7 +103,7 @@ func TestEnsureUsageRollupsOnlyFoldsCompletedDays(t *testing.T) {
 func TestRollupSurvivesRawPrune(t *testing.T) {
 	dir := useIsolatedUsageDir(t)
 	old := daysAgo(2)
-	writeUsageDay(t, old, at(row("a", usageFeatureSession, session.KindClaude, "haiku", 500), old))
+	writeUsageDay(t, old, at(row("a", usagex.FeatureSession, session.KindClaude, "haiku", 500), old))
 	ensureUsageRollups()
 	if err := os.Remove(filepath.Join(dir, "raw", old+".jsonl")); err != nil {
 		t.Fatal(err)
@@ -126,7 +127,7 @@ func TestRollupSurvivesRawPrune(t *testing.T) {
 func TestCollectUsageSamplesDoesNotDoubleCount(t *testing.T) {
 	useIsolatedUsageDir(t)
 	yesterday := daysAgo(1)
-	writeUsageDay(t, yesterday, at(row("a", usageFeatureTitleSession, session.KindClaude, "haiku", 300), yesterday))
+	writeUsageDay(t, yesterday, at(row("a", usagex.FeatureTitleSession, session.KindClaude, "haiku", 300), yesterday))
 	ensureUsageRollups() // raw はそのまま残っている
 	samples, _ := collectUsageSamples(time.Now().UTC().AddDate(0, 0, -2), time.Now().UTC(), "day")
 	sum, calls := 0, 0
@@ -148,9 +149,9 @@ func TestUsageSeriesBucketsByConsumptionTimeNotFileDay(t *testing.T) {
 	old1, old2 := daysAgo(40), daysAgo(41)
 	// 3行とも「今日」のファイルに追記されるが、消費が起きたのは別の日。
 	writeUsageDay(t, today,
-		at(row("c1", usageFeatureSession, session.KindClaude, "haiku", 100), old1),
-		at(row("c2", usageFeatureSession, session.KindClaude, "haiku", 200), old2),
-		at(row("c3", usageFeatureSession, session.KindClaude, "haiku", 300), today),
+		at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 100), old1),
+		at(row("c2", usagex.FeatureSession, session.KindClaude, "haiku", 200), old2),
+		at(row("c3", usagex.FeatureSession, session.KindClaude, "haiku", 300), today),
 	)
 	got := getSeries(t, "from="+old2+"&to="+today)
 	hit := nonEmptyBuckets(got)
@@ -167,8 +168,8 @@ func TestUsageSeriesBucketsByConsumptionTimeNotFileDay(t *testing.T) {
 		today + "T00:00:00Z": 300,
 	}
 	for _, b := range hit {
-		if b.Series[usageFeatureSession].Spend != want[b.T] {
-			t.Fatalf("bucket %s = %d, want %d", b.T, b.Series[usageFeatureSession].Spend, want[b.T])
+		if b.Series[usagex.FeatureSession].Spend != want[b.T] {
+			t.Fatalf("bucket %s = %d, want %d", b.T, b.Series[usagex.FeatureSession].Spend, want[b.T])
 		}
 	}
 	if got.Totals.Spend != 600 {
@@ -180,7 +181,7 @@ func TestUsageSeriesBucketsByConsumptionTimeNotFileDay(t *testing.T) {
 func TestRollupKeysByConsumptionDay(t *testing.T) {
 	useIsolatedUsageDir(t)
 	fileDay, consumed := daysAgo(1), daysAgo(30)
-	writeUsageDay(t, fileDay, at(row("c1", usageFeatureSession, session.KindClaude, "haiku", 700), consumed))
+	writeUsageDay(t, fileDay, at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 700), consumed))
 	ensureUsageRollups()
 	m := readUsageRollup(consumed[:7])
 	day, ok := m.Days[consumed]
@@ -260,12 +261,12 @@ func TestUsageSeriesAggregation(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(1)
 	writeUsageDay(t, day,
-		at(row("c1", usageFeatureTitleSession, session.KindClaude, "claude-haiku-4-5", 100), day),
-		at(row("c2", usageFeatureAssistantChat, session.KindClaude, "claude-sonnet-4-6", 900), day),
-		at(row("c3", usageFeatureSession, session.KindCodex, "", 5000), day),
+		at(row("c1", usagex.FeatureTitleSession, session.KindClaude, "claude-haiku-4-5", 100), day),
+		at(row("c2", usagex.FeatureAssistantChat, session.KindClaude, "claude-sonnet-4-6", 900), day),
+		at(row("c3", usagex.FeatureSession, session.KindCodex, "", 5000), day),
 		// モデルもトークンも報告しない CLI: 回数だけ数える。
-		usageRecord{TS: day + "T12:00:00Z", Call: "c4", Feature: usageFeatureTitleSession,
-			Kind: session.KindAgy, ModelSrc: usageModelUnknown, OK: true, Measured: usageMeasuredNone},
+		usagex.Record{TS: day + "T12:00:00Z", Call: "c4", Feature: usagex.FeatureTitleSession,
+			Kind: session.KindAgy, ModelSrc: usagex.ModelUnknown, OK: true, Measured: usagex.MeasuredNone},
 	)
 
 	got := getSeries(t, "from="+day+"&to="+day+"&by=feature")
@@ -276,22 +277,22 @@ func TestUsageSeriesAggregation(t *testing.T) {
 		t.Fatalf("totals = %+v", got.Totals)
 	}
 	s := got.Buckets[0].Series
-	if s[usageFeatureSession].Spend != 5000 || s[usageFeatureAssistantChat].Spend != 900 {
+	if s[usagex.FeatureSession].Spend != 5000 || s[usagex.FeatureAssistantChat].Spend != 900 {
 		t.Fatalf("series = %+v", s)
 	}
-	if s[usageFeatureTitleSession].Calls != 2 { // claude 1 + agy 1
-		t.Fatalf("title.session calls = %d", s[usageFeatureTitleSession].Calls)
+	if s[usagex.FeatureTitleSession].Calls != 2 { // claude 1 + agy 1
+		t.Fatalf("title.session calls = %d", s[usagex.FeatureTitleSession].Calls)
 	}
 	// 「0」と「未計測」を混同しない。
 	if got.UnmeasuredCalls != 1 {
 		t.Fatalf("unmeasured_calls = %d, want 1", got.UnmeasuredCalls)
 	}
 	// coverage はデータから自動生成する（手書きの表はドリフトする）。
-	if got.Coverage[session.KindClaude].Tokens != usageMeasuredExact ||
-		got.Coverage[session.KindClaude].Model != usageModelReported {
+	if got.Coverage[session.KindClaude].Tokens != usagex.MeasuredExact ||
+		got.Coverage[session.KindClaude].Model != usagex.ModelReported {
 		t.Fatalf("claude coverage = %+v", got.Coverage[session.KindClaude])
 	}
-	if got.Coverage[session.KindAgy].Tokens != usageMeasuredNone ||
+	if got.Coverage[session.KindAgy].Tokens != usagex.MeasuredNone ||
 		got.Coverage[session.KindAgy].Model != "none" {
 		t.Fatalf("agy coverage = %+v", got.Coverage[session.KindAgy])
 	}
@@ -308,11 +309,11 @@ func TestUsageSeriesAggregation(t *testing.T) {
 
 	// 「機能 × モデル」の表（本命のビュー）。
 	mx := getSeries(t, "from="+day+"&to="+day+"&by=feature&split=model")
-	if mx.Matrix[usageFeatureAssistantChat]["claude-sonnet-4-6"].Spend != 900 {
+	if mx.Matrix[usagex.FeatureAssistantChat]["claude-sonnet-4-6"].Spend != 900 {
 		t.Fatalf("matrix = %+v", mx.Matrix)
 	}
-	if _, ok := mx.Matrix[usageFeatureTitleSession][""]; !ok {
-		t.Fatalf("モデル不明（agy）の枠が表に出ていない: %+v", mx.Matrix[usageFeatureTitleSession])
+	if _, ok := mx.Matrix[usagex.FeatureTitleSession][""]; !ok {
+		t.Fatalf("モデル不明（agy）の枠が表に出ていない: %+v", mx.Matrix[usagex.FeatureTitleSession])
 	}
 
 	// フィルタ（前方一致）。
@@ -325,11 +326,11 @@ func TestUsageSeriesAggregation(t *testing.T) {
 func TestUsageSeriesHourBucket(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(0) // 当日は raw のまま＝時間粒度が取れる
-	r1 := row("c1", usageFeatureAssistantChat, session.KindClaude, "haiku", 10)
+	r1 := row("c1", usagex.FeatureAssistantChat, session.KindClaude, "haiku", 10)
 	r1.TS = day + "T01:30:00Z"
-	r2 := row("c2", usageFeatureAssistantChat, session.KindClaude, "haiku", 20)
+	r2 := row("c2", usagex.FeatureAssistantChat, session.KindClaude, "haiku", 20)
 	r2.TS = day + "T01:45:00Z"
-	r3 := row("c3", usageFeatureAssistantChat, session.KindClaude, "haiku", 40)
+	r3 := row("c3", usagex.FeatureAssistantChat, session.KindClaude, "haiku", 40)
 	r3.TS = day + "T05:00:00Z"
 	writeUsageDay(t, day, r1, r2, r3)
 
@@ -338,7 +339,7 @@ func TestUsageSeriesHourBucket(t *testing.T) {
 	if len(hit) != 2 {
 		t.Fatalf("消費のあるバケット = %+v", got.Buckets)
 	}
-	if hit[0].T != day+"T01:00:00Z" || hit[0].Series[usageFeatureAssistantChat].Spend != 30 {
+	if hit[0].T != day+"T01:00:00Z" || hit[0].Series[usagex.FeatureAssistantChat].Spend != 30 {
 		t.Fatalf("bucket0 = %+v", hit[0])
 	}
 	if hit[1].T != day+"T05:00:00Z" {
@@ -357,7 +358,7 @@ func TestUsageSeriesHourBucket(t *testing.T) {
 func TestUsageSeriesHourReportsTruncationAfterPrune(t *testing.T) {
 	dir := useIsolatedUsageDir(t)
 	old := daysAgo(2)
-	writeUsageDay(t, old, at(row("a", usageFeatureAssistantChat, session.KindClaude, "haiku", 100), old))
+	writeUsageDay(t, old, at(row("a", usagex.FeatureAssistantChat, session.KindClaude, "haiku", 100), old))
 	ensureUsageRollups()
 	if err := os.Remove(filepath.Join(dir, "raw", old+".jsonl")); err != nil {
 		t.Fatal(err)
@@ -391,7 +392,7 @@ func TestUsageSeriesRejectsBadParams(t *testing.T) {
 func TestUsageSeriesDoesNotLeakRefs(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(0)
-	r := at(row("c1", usageFeatureTitleSession, session.KindClaude, "haiku", 10), day)
+	r := at(row("c1", usagex.FeatureTitleSession, session.KindClaude, "haiku", 10), day)
 	r.Ref = "slot-secret"
 	writeUsageDay(t, day, r)
 	req := httptest.NewRequest(http.MethodGet, "/usage/series?from="+day+"&to="+day, nil)
@@ -432,8 +433,8 @@ func TestUsageSeriesReportsFolding(t *testing.T) {
 // --- レビュー P2/P3 の回帰 -----------------------------------------------------
 
 // modelRow は claude の「1呼び出しがモデル別行に割れた」1行。
-func modelRow(call, modelRaw, model string, spend int) usageRecord {
-	r := row(call, usageFeatureAssistantChat, session.KindClaude, model, spend)
+func modelRow(call, modelRaw, model string, spend int) usagex.Record {
+	r := row(call, usagex.FeatureAssistantChat, session.KindClaude, model, spend)
 	r.ModelRaw = modelRaw
 	return r
 }
@@ -442,7 +443,7 @@ func modelRow(call, modelRaw, model string, spend int) usageRecord {
 // 綴り順でしかないので、先頭行で数えると主力モデルが calls=0 と出る。
 func TestCallsGoToTheDominantModelRow(t *testing.T) {
 	day := daysAgo(0)
-	rows := []usageRecord{
+	rows := []usagex.Record{
 		// 綴り順では a-model が先、実際に食ったのは z-model。
 		at(modelRow("c1", "a-model-20260101", "a-model", 100), day),
 		at(modelRow("c1", "z-model-20260101", "z-model", 9000), day),
@@ -461,7 +462,7 @@ func TestCallsGoToTheDominantModelRow(t *testing.T) {
 		t.Fatalf("主力モデルに回数が付いていない: %+v", byModel)
 	}
 	// 同点は決定的に決める（同じ入力から同じ帰属＝集計が再現する）。
-	tie := []usageRecord{
+	tie := []usagex.Record{
 		at(modelRow("c2", "b-raw", "b", 50), day),
 		at(modelRow("c2", "a-raw", "a", 50), day),
 	}
@@ -498,7 +499,7 @@ func TestUsageSeriesCallsFollowDominantModel(t *testing.T) {
 func TestRollupKeepsStateWhenMonthWriteFails(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(1)
-	writeUsageDay(t, day, at(row("c1", usageFeatureSession, session.KindClaude, "haiku", 500), day))
+	writeUsageDay(t, day, at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 500), day))
 	// 月ファイルの置き場所をディレクトリで塞ぐ（rename が必ず失敗する）。
 	blocked := usageRollupPath(day[:7])
 	if err := os.MkdirAll(filepath.Join(blocked, "x"), 0o700); err != nil {
@@ -529,8 +530,8 @@ func TestRollupKeepsStateWhenMonthWriteFails(t *testing.T) {
 func TestRollupRefusesToReadTheOpenDay(t *testing.T) {
 	useIsolatedUsageDir(t)
 	today, yesterday := daysAgo(0), daysAgo(1)
-	writeUsageDay(t, today, at(row("c1", usageFeatureSession, session.KindClaude, "haiku", 10), today))
-	writeUsageDay(t, yesterday, at(row("c2", usageFeatureSession, session.KindClaude, "haiku", 20), yesterday))
+	writeUsageDay(t, today, at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 10), today))
+	writeUsageDay(t, yesterday, at(row("c2", usagex.FeatureSession, session.KindClaude, "haiku", 20), yesterday))
 
 	if rows, closed := readUsageDayForRollup(today); closed || len(rows) != 0 {
 		t.Fatalf("当日のファイルを畳み込み対象として読んでしまった（rows=%d closed=%v）", len(rows), closed)
@@ -547,8 +548,8 @@ func TestUsageSeriesFillsEmptyBuckets(t *testing.T) {
 	useIsolatedUsageDir(t)
 	from, gap, to := daysAgo(4), daysAgo(2), daysAgo(0)
 	writeUsageDay(t, to,
-		at(row("c1", usageFeatureSession, session.KindClaude, "haiku", 100), from),
-		at(row("c2", usageFeatureSession, session.KindClaude, "haiku", 200), to),
+		at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 100), from),
+		at(row("c2", usagex.FeatureSession, session.KindClaude, "haiku", 200), to),
 	)
 	got := getSeries(t, "from="+from+"&to="+to)
 	if len(got.Buckets) != 5 {
@@ -577,7 +578,7 @@ func TestUsageSeriesFillsEmptyBuckets(t *testing.T) {
 func TestUsageSeriesDoesNotFillAbsurdRanges(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(0)
-	writeUsageDay(t, day, at(row("c1", usageFeatureSession, session.KindClaude, "haiku", 10), day))
+	writeUsageDay(t, day, at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 10), day))
 	got := getSeries(t, "from="+daysAgo(89)+"&to="+day+"&bucket=hour")
 	if len(got.Buckets) != 1 {
 		t.Fatalf("bucket 数 = %d, want 1（上限を超える密度は埋めない）", len(got.Buckets))

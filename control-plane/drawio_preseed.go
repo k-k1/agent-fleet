@@ -22,6 +22,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"os"
 	"path/filepath"
 	"sort"
@@ -119,7 +120,7 @@ func runDrawioPreseed(args []string) {
 
 	cacheDir := *dir
 	if cacheDir == "" {
-		cacheDir = filepath.Join(envOr("WS_DATA", "/tmp/af-data"), "drawio-stencils")
+		cacheDir = filepath.Join(envx.Or("WS_DATA", "/tmp/af-data"), "drawio-stencils")
 	}
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "キャッシュ先を作れない %s: %v\n", cacheDir, err)

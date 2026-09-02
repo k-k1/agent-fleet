@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // cumulativeUsage sums consumption across the whole transcript. Events between user
@@ -36,11 +37,11 @@ type cumulativeUsage struct {
 }
 
 type sessionUsage struct {
-	Name       string          `json:"name"`
-	Display    string          `json:"display"`
-	Kind       string          `json:"kind"`
-	Context    *contextUsage   `json:"context,omitempty"`
-	Cumulative cumulativeUsage `json:"cumulative"`
+	Name       string               `json:"name"`
+	Display    string               `json:"display"`
+	Kind       string               `json:"kind"`
+	Context    *usagex.ContextUsage `json:"context,omitempty"`
+	Cumulative cumulativeUsage      `json:"cumulative"`
 }
 
 // handleSessionsUsage (GET /sessions/usage?name=<optional>) returns usage for every
@@ -92,7 +93,7 @@ func overlayKiroLiveUsage(m session.Meta, u *sessionUsage) {
 		return
 	}
 	tokens := int(math.Round(pct / 100 * float64(window)))
-	u.Context = &contextUsage{
+	u.Context = &usagex.ContextUsage{
 		Tokens: tokens,
 		Fresh:  tokens, // single un-broken-down segment (no cache-read/create split available)
 		Window: window,
@@ -155,9 +156,9 @@ func aggregateUsage(turns []transcript.Turn) sessionUsage {
 				// event's snapshot is the SUBAGENT's context, not this session's.
 				window, source := t.CtxWindow, "recorded"
 				if window <= 0 {
-					window, source = contextWindowGuess(t.Model, t.InTok+t.CacheRead+t.CacheCreate), "estimated"
+					window, source = usagex.WindowGuess(t.Model, t.InTok+t.CacheRead+t.CacheCreate), "estimated"
 				}
-				c := &contextUsage{
+				c := &usagex.ContextUsage{
 					Tokens: t.InTok + t.CacheRead + t.CacheCreate,
 					Read:   t.CacheRead, Create: t.CacheCreate, Fresh: t.InTok,
 					Window: window, WindowSource: source, Model: t.Model,

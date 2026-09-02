@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -31,10 +32,10 @@ type loginProviderAPI struct {
 	// copied by value into handlers, so this is a snapshot by construction —
 	// which is correct here: env-defined providers cannot change without a
 	// restart (the runtime half is tenantIdPRegistry, and it is not in this list).
-	provs []loginProvider
+	provs []auth.LoginProvider
 }
 
-func newLoginProviderAPI(m *manager, provs []loginProvider) loginProviderAPI {
+func newLoginProviderAPI(m *manager, provs []auth.LoginProvider) loginProviderAPI {
 	return loginProviderAPI{memberAuth{m}, provs}
 }
 

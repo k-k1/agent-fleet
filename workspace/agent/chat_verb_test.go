@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -57,7 +58,7 @@ func TestChatCreateAdHocVerb(t *testing.T) {
 		if c.SeedVerb != "translate" {
 			t.Errorf("SeedVerb = %q, want translate", c.SeedVerb)
 		}
-		if c.Tools != toolsNone {
+		if c.Tools != assistants.ToolsNone {
 			t.Errorf("Tools = %q, want none", c.Tools)
 		}
 		if !strings.Contains(c.Persona, "翻訳") {

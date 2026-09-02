@@ -17,6 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 type abortFixture struct {
@@ -45,7 +46,7 @@ func newAbortFixture(t *testing.T) *abortFixture {
 
 func setAbortResumePref(t *testing.T, on bool) {
 	t.Helper()
-	p := uiPrefsPath()
+	p := uiprefs.Path()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		t.Fatal(err)
 	}

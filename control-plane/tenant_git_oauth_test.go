@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -348,7 +349,7 @@ func TestDevAuthUserIsSuperAdmin(t *testing.T) {
 		t.Fatalf("dev role hint = %q", got)
 	}
 	// Every other mode is unchanged: only the listed addresses are upgraded.
-	m2 := &manager{authMode: "oauth", superAdmins: emailSet("boss@acme.co.jp")}
+	m2 := &manager{authMode: "oauth", superAdmins: envx.EmailSet("boss@acme.co.jp")}
 	if got := m2.roleHintFor("member@acme.co.jp"); got != "" {
 		t.Fatalf("a plain member must get no role hint, got %q", got)
 	}

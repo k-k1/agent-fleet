@@ -19,6 +19,7 @@ package main
 // ことをコードの形で保証するため（片方だけ直して食い違うのを防ぐ）。
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"strconv"
 	"strings"
 	"time"
@@ -217,7 +218,7 @@ func (v reportView) orders(lang string) string {
 		// 送信文の言語はセッション側に合わせる（表示言語ではない）。日本語で作業している
 		// セッションへ英語を送ると、以降そのセッションの出力言語まで反転してしまい、
 		// セッション単位の言語フィールドは存在しないので取り返しがつかない。
-		if !chatAutoResumeEnabled() {
+		if !uiprefs.ChatAutoResume() {
 			if en {
 				return "[Automatic resume on abort is OFF] Tell the user that the turn was cut off and summarize the last output, " +
 					"confirm that resuming is fine, and then nudge the session on with send_to_session. " +
@@ -249,7 +250,7 @@ func (v reportView) orders(lang string) string {
 		// 自動走行 (opt-in): the interim report itself carries the mode's marching
 		// orders, so the operator needs no separate state — OFF asks the user first,
 		// ON answers with the SESSION'S recommendation under explicit guardrails.
-		if chatAutoPilotEnabled() {
+		if uiprefs.ChatAutoPilot() {
 			if en {
 				return "[Autopilot is ON] Check the question and its options with get_session_status (and the context with get_session_output if you need it). " +
 					"When the session's own recommendation is clear (a 'Recommended' label or a recommendation in the last output), " +
@@ -277,7 +278,7 @@ func (v reportView) orders(lang string) string {
 	case reportKeyPlanApproval:
 		// 自動走行: drive the plan through review → feedback → approval (the user's
 		// standing delegation is the mode toggle itself); OFF relays to the user.
-		if chatAutoPilotEnabled() {
+		if uiprefs.ChatAutoPilot() {
 			if en {
 				return "[Autopilot is ON] Read the plan with get_session_status and have another session review it " +
 					"(you may create one in a suitable working copy of the same repository; instruct the review as read-only work). " +

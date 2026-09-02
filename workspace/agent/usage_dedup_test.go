@@ -15,12 +15,13 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // sessionRow は折り込み1行を作る。**重複行でも call は別 ID になる**（folder が行ごとに
 // UUID を振るため）— だから call の重複排除では捕まらず、(ref, idx) が要る。
-func sessionRow(call, ref string, idx int, day string, spend int) usageRecord {
-	r := at(row(call, usageFeatureSession, session.KindClaude, "claude-haiku-4-5", spend), day)
+func sessionRow(call, ref string, idx int, day string, spend int) usagex.Record {
+	r := at(row(call, usagex.FeatureSession, session.KindClaude, "claude-haiku-4-5", spend), day)
 	r.Ref, r.Idx = ref, idx
 	return r
 }
@@ -42,7 +43,7 @@ func TestUsageSeriesDropsDuplicateSessionRows(t *testing.T) {
 		t.Fatalf("totals = %+v, want spend 600 / calls 3（重複排除前は 1200 / 5）", got.Totals)
 	}
 	// 生の台帳には重複行が残っていること（事後監査のため落とすのは集計側だけ）。
-	if n := len(readUsageRows()); n != 5 {
+	if n := len(usagex.ReadRows()); n != 5 {
 		t.Fatalf("raw = %d 行, want 5（台帳から行を消してはいけない）", n)
 	}
 }
@@ -126,7 +127,7 @@ func TestUsageDedupKeepsLegitimateRows(t *testing.T) {
 		t.Fatal("重複の後に続く新しいターンを落とした")
 	}
 	// 補助呼び出しには idx が無い。同じ形の行が何行来ても落とさない。
-	aux := at(row("c9", usageFeatureTitleSession, session.KindClaude, "haiku", 10), "2026-07-26")
+	aux := at(row("c9", usagex.FeatureTitleSession, session.KindClaude, "haiku", 10), "2026-07-26")
 	aux.Ref = "slot01"
 	if !dd.accept(aux, ts(5)) || !dd.accept(aux, ts(5)) {
 		t.Fatal("補助呼び出しの行を重複扱いした（idx を持たないので判定できない）")
@@ -148,8 +149,8 @@ func TestRollupRebuildPurgesLegacyDuplicates(t *testing.T) {
 		sessionRow("c2", "slot01", 1, day, 100), // v1 の頃に紛れ込んだ重複
 	)
 	// v1 の rollup（重複ごと畳み込まれた集計）と、版を持たない state を手で置く。
-	k := usageKey{Feature: usageFeatureSession, Trigger: usageTriggerUser, Kind: session.KindClaude,
-		Model: "claude-haiku-4-5", ModelSrc: usageModelReported, Measured: usageMeasuredExact, OK: true}
+	k := usageKey{Feature: usagex.FeatureSession, Trigger: usagex.TriggerUser, Kind: session.KindClaude,
+		Model: "claude-haiku-4-5", ModelSrc: usagex.ModelReported, Measured: usagex.MeasuredExact, OK: true}
 	if err := writeUsageJSON(usageRollupPath(day[:7]), usageRollupMonth{Days: map[string]usageRollupDay{
 		day: {Src: []string{day}, Entries: []usageRollupEntry{{Key: k, Agg: usageAgg{Spend: 200, In: 200, Calls: 2}}}},
 	}}); err != nil {
@@ -236,12 +237,12 @@ func TestFoldCrashWindowIsNotDoubleCounted(t *testing.T) {
 	fold(false) // 行は書けたが watermark を書く前に落ちた
 	fold(true)  // 次のパスが同じ2ターンを再追記する
 
-	if n := len(readUsageRows()); n != 4 {
+	if n := len(usagex.ReadRows()); n != 4 {
 		t.Fatalf("台帳 = %d 行, want 4（クラッシュ窓で二重に入る形を再現できていない）", n)
 	}
 	want := 0 // 論理ターン1回分ずつ（重複を数えれば倍になる）
 	for _, r := range foldTurnRows(turns, false) {
-		want += usageSpend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out)
+		want += usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out)
 	}
 	day := "2026-07-26" // asst() の TS（消費日）
 	got := getSeries(t, "from="+day+"&to="+day)

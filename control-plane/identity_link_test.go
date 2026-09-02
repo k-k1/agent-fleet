@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -66,7 +67,7 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	got, isNew, err := st.LinkIdentity(ctx, linkOf(googleProviderID, "g-sub-1", email, true))
+	got, isNew, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-sub-1", email, true))
 	if err != nil {
 		t.Fatalf("first login: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 	}
 
 	// 同じ (provider, subject) の再ログインで identity は増えない。
-	again, isNew, err := st.LinkIdentity(ctx, linkOf(googleProviderID, "g-sub-1", email, true))
+	again, isNew, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-sub-1", email, true))
 	if err != nil || isNew || again.ID != seed.ID {
 		t.Fatalf("re-login: id=%s isNew=%v err=%v", again.ID, isNew, err)
 	}
@@ -92,7 +93,7 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 	// IdP 側で email が変わった（姓変更・ドメイン統合）。同じ人のまま、
 	// user_key は据え置き、表示用の email だけ新しくなる。
 	const renamed = "yamada-hanako@acme.co.jp"
-	moved, isNew, err := st.LinkIdentity(ctx, linkOf(googleProviderID, "g-sub-1", renamed, true))
+	moved, isNew, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-sub-1", renamed, true))
 	if err != nil {
 		t.Fatalf("after rename: %v", err)
 	}
@@ -117,7 +118,7 @@ func TestLinkIdentityJoinsSameEmailFromAnotherProvider(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const email = "yamada@acme.co.jp"
 
-	first, _, err := st.LinkIdentity(ctx, linkOf(googleProviderID, "g-1", email, true))
+	first, _, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-1", email, true))
 	if err != nil {
 		t.Fatalf("google: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestLinkIdentityJoinsSameEmailFromAnotherProvider(t *testing.T) {
 func TestLinkIdentityNewAccountWhenEmailIsUnknown(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const known = "yamada@acme.co.jp"
-	first, _, err := st.LinkIdentity(ctx, linkOf(googleProviderID, "g-1", known, true))
+	first, _, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-1", known, true))
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -172,7 +173,7 @@ func TestLinkIdentityNewAccountWhenEmailIsUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
-	claimed, isNew, err := st.LinkIdentity(ctx, linkOf(googleProviderID, "g-3", invited, true))
+	claimed, isNew, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-3", invited, true))
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -225,7 +226,7 @@ func TestAuthGateCarriesTheIdPSubjectIntoIdentityResolution(t *testing.T) {
 	}
 
 	idp := newStubIdP(t, &stubIdP{})
-	cfg := oauthTestConfig(t, stubProvider(googleProviderID, idp, trustEmailVerified))
+	cfg := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified))
 	cfg.mgr.store = st
 	cfg.mgr.authMode = "oauth"
 	gate := cfg.authGate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -239,7 +240,7 @@ func TestAuthGateCarriesTheIdPSubjectIntoIdentityResolution(t *testing.T) {
 	call := func(sessionEmail string) string {
 		b, _ := json.Marshal(sessionClaims{
 			Email: sessionEmail, Exp: time.Now().Add(time.Hour).Unix(),
-			Prov: googleProviderID, Sub: "g-sub-1",
+			Prov: auth.GoogleProviderID, Sub: "g-sub-1",
 		})
 		r := httptest.NewRequest(http.MethodGet, "/api/tenants", nil)
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)})
@@ -278,8 +279,8 @@ func TestNewAccountNoticeIsShownOnceOnMultiIdPDeployments(t *testing.T) {
 	}
 
 	idp := newcomer(t, "tanaka@acme.co.jp")
-	cfg := oauthTestConfig(t, stubProvider(googleProviderID, idp, trustEmailVerified),
-		stubProvider("okta", idp, trustEmailVerified))
+	cfg := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified),
+		stubProvider("okta", idp, auth.TrustEmailVerified))
 	cfg.mgr.store = st
 
 	st1, au := startLogin(t, cfg, "?provider=okta&next=%2Fsessions")
@@ -303,7 +304,7 @@ func TestNewAccountNoticeIsShownOnceOnMultiIdPDeployments(t *testing.T) {
 	}
 
 	// IdP が 1 つだけのデプロイ（＝既存の Google 専用）は、新しい人でも素通り。
-	single := oauthTestConfig(t, stubProvider(googleProviderID, newcomer(t, "sato@acme.co.jp"), trustEmailVerified))
+	single := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, newcomer(t, "sato@acme.co.jp"), auth.TrustEmailVerified))
 	single.mgr.store = st
 	st3, au := startLogin(t, single, "?next=%2Fsessions")
 	w = callback(t, single, st3, "code", au.Query().Get("state"))

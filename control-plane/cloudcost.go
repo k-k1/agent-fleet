@@ -35,6 +35,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -112,7 +113,7 @@ func startCloudCostPoller(ctx context.Context, mgr *manager) {
 	if !mgr.cloudCostProfile().Available {
 		return
 	}
-	iv := parseDurationOr(os.Getenv("AF_CLOUD_COST_INTERVAL"), 6*time.Hour)
+	iv := envx.DurationOr(os.Getenv("AF_CLOUD_COST_INTERVAL"), 6*time.Hour)
 	if iv <= 0 {
 		log.Printf("cloud cost: disabled (AF_CLOUD_COST_INTERVAL=0)")
 		return
