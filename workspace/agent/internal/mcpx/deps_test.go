@@ -5,9 +5,11 @@ package mcpx
 // 書き写すと、それ自体が二つ目の出所になる。
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -20,8 +22,12 @@ var (
 	testConvID                              string
 )
 
-func init() {
-	Configure(Deps{
+func init() { Configure(testDeps()) }
+
+// testDeps は mcpx 単体テスト用の作り物一式。**網羅性の検査（下）が同じものを使う**ので、
+// 1 箇所に置く。
+func testDeps() Deps {
+	return Deps{
 		WriteEnabled:              func() bool { return testWrite },
 		SetWriteEnabled:           func(v bool) { testWrite = v },
 		SelfReportOnly:            func() bool { return testSelfReport },
@@ -65,7 +71,65 @@ func init() {
 		InstallGrafanaMCP:  func(string) (string, error) { return "", os.ErrNotExist },
 
 		WriteSSMConfig: func(string, session.SSMMeta) error { return nil },
-	})
+	}
+}
+
+// 🔥 Deps の**どのフィールドを 1 つ落としても** Configure が落ちること。
+//
+// 網羅の検査そのものを reflect で回すので、**フィールドが増えたら自動で対象になる**。
+// 手で並べた一覧（実装側もテスト側も）は、増えたときに漏れて、しかも漏れても何も起きない
+// ——落ちるのは「件名の上限が黙って 0 になる」ような、誰も気付かない側である。
+func TestConfigureRejectsEveryUnwiredField(t *testing.T) {
+	good := testDeps()
+	v := reflect.ValueOf(good)
+	typ := v.Type()
+	if typ.NumField() < 20 {
+		t.Fatalf("Deps のフィールドが %d 個しか無い（構造体を取り違えている）", typ.NumField())
+	}
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		t.Run(f.Name, func(t *testing.T) {
+			// 正しい配線へ必ず戻す（deps はパッケージ全体で共有する）。
+			defer Configure(good)
+			broken := reflect.New(typ).Elem()
+			broken.Set(v)
+			broken.Field(i).Set(reflect.Zero(f.Type))
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("%s を未配線にしても Configure が通った（配線漏れが静かに素通りする）", f.Name)
+				}
+				if !strings.Contains(fmt.Sprint(r), f.Name) {
+					t.Fatalf("panic に %s の名前が出ていない: %v", f.Name, r)
+				}
+			}()
+			Configure(broken.Interface().(Deps))
+		})
+	}
+}
+
+// 零値ではないが中身の無い配線も拒むこと（`unwired` の枝を 1 つずつ踏む）。
+// 零値だけを見ていると、**`[]string{}` や負の上限**が「配線済み」として通る。
+func TestConfigureRejectsHollowValues(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		bend func(*Deps)
+	}{
+		{"SessionTitleMaxRunes が負", func(d *Deps) { d.SessionTitleMaxRunes = -1 }},
+		{"PeerIntentNames が空スライス", func(d *Deps) { d.PeerIntentNames = []string{} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer Configure(testDeps())
+			d := testDeps()
+			tc.bend(&d)
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s でも Configure が通った", tc.name)
+				}
+			}()
+			Configure(d)
+		})
+	}
 }
 
 // withTempHome points HOME at a temp dir so the fstore stores write under the test's
