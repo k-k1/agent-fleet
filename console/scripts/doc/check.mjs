@@ -214,6 +214,7 @@ fs.writeFileSync(
    <div id="root"></div><script type="module" src="/app.js"></script>`,
 );
 fs.copyFileSync(path.join(CONSOLE, "src/features/viewer/viewer.css"), path.join(www, "viewer.css"));
+fs.cpSync(path.join(CONSOLE, "src/features/viewer/parts"), path.join(www, "parts"), { recursive: true, filter: (src) => !src.endsWith(".tsx") && !src.endsWith(".ts") }); // viewer.css は @import だけの索引（parts が無いと無スタイルで撮れてしまう）
 
 // ---- 見る --------------------------------------------------------------------
 const { server, port } = await serveDir(www);
