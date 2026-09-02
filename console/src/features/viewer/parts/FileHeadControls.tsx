@@ -87,6 +87,9 @@ export function FileEditControls(props: {
   saving: boolean;
   suggestDisabled: boolean;
   suggesting: boolean;
+  /** 設定 > AI補助「ファイル編集の提案」。オフのときはボタンごと出さない —
+      押せるのに断られる（400 feature_disabled）だけの操作要素は置かない。 */
+  suggestEnabled: boolean;
   onSave(): void;
   onSuggest(): void;
 }) {
@@ -137,16 +140,18 @@ export function FileEditControls(props: {
       >
         <Icon name={props.saving ? "loading" : "save"} spin={props.saving} /> {tr("editor.save")}
       </button>
-      <button
-        type="button"
-        className="file-save-btn file-suggest-btn"
-        disabled={props.suggestDisabled}
-        onClick={props.onSuggest}
-        title={tr("editor.suggestion.button_tip")}
-      >
-        <Icon name={props.suggesting ? "loading" : "sparkle"} spin={props.suggesting} />{" "}
-        {tr("editor.suggestion.button")}
-      </button>
+      {props.suggestEnabled && (
+        <button
+          type="button"
+          className="file-save-btn file-suggest-btn"
+          disabled={props.suggestDisabled}
+          onClick={props.onSuggest}
+          title={tr("editor.suggestion.button_tip")}
+        >
+          <Icon name={props.suggesting ? "loading" : "sparkle"} spin={props.suggesting} />{" "}
+          {tr("editor.suggestion.button")}
+        </button>
+      )}
     </>
   );
 }

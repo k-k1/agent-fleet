@@ -129,16 +129,53 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 func TestAssistantModelPrefs(t *testing.T) {
 	writeUIPrefs(t, `{
 		"assistantModels":{"opencode":"opencode-go/glm-5.2"},
-		"assistantUtilityModels":{"opencode":"","claude":"haiku"}
+		"aiShortModels":{"opencode":"","claude":"haiku"},
+		"aiProseModels":{"claude":"sonnet"}
 	}`)
 	if got, ok := assistantChatModelPref("opencode"); !ok || got != "opencode-go/glm-5.2" {
 		t.Fatalf("chat model = %q, %v", got, ok)
 	}
-	if got, ok := assistantUtilityModelPref("opencode"); !ok || got != "" {
-		t.Fatalf("explicit utility default = %q, %v", got, ok)
+	if got, ok := aiShortModelPref("opencode"); !ok || got != "" {
+		t.Fatalf("explicit short default = %q, %v", got, ok)
 	}
-	if _, ok := assistantUtilityModelPref("codex"); ok {
+	if _, ok := aiShortModelPref("codex"); ok {
 		t.Fatal("missing backend must remain distinguishable from explicit default")
+	}
+	if got, ok := aiProseModelPref("claude"); !ok || got != "sonnet" {
+		t.Fatalf("prose model = %q, %v", got, ok)
+	}
+	// 用途が別なら別の値。片方の設定がもう片方へ漏れないことがこの分割の全て。
+	if got, _ := aiShortModelPref("claude"); got != "haiku" {
+		t.Fatalf("short model = %q", got)
+	}
+}
+
+// 旧 assistantUtilityModels しか持たない prefs は、短文側だけが引き継ぐ。文章側
+// （ファイル編集の提案・計画更新）は引き継がず、用途に合った推奨へ戻す — 「タイトル・
+// サジェストのモデル」という名前の設定が文章生成の既定まで置き換えていたのが元の不具合。
+func TestAiModelPrefsMigrateShortOnly(t *testing.T) {
+	writeUIPrefs(t, `{"assistantUtilityModels":{"claude":"haiku"}}`)
+	if got, ok := aiShortModelPref("claude"); !ok || got != "haiku" {
+		t.Fatalf("short must inherit the legacy key: %q, %v", got, ok)
+	}
+	if got, ok := aiProseModelPref("claude"); ok {
+		t.Fatalf("prose must NOT inherit the legacy key: %q", got)
+	}
+}
+
+// 補助生成の優先順位は、専用キーが無ければチャットの並びを引き継ぐ（分離に気づかない
+// まま挙動が変わらない）。専用キーがあればそちらが勝つ。
+func TestAiAssistOrderPref(t *testing.T) {
+	writeUIPrefs(t, `{"assistantAgentOrder":["codex","claude"]}`)
+	if got := aiAssistOrderPref(); got[0] != "codex" {
+		t.Fatalf("inherit chat order: %v", got)
+	}
+	writeUIPrefs(t, `{"assistantAgentOrder":["codex","claude"],"aiAssistOrder":["opencode"]}`)
+	if got := aiAssistOrderPref(); got[0] != "opencode" {
+		t.Fatalf("own key wins: %v", got)
+	}
+	if got := assistantAgentOrderPref(); got[0] != "codex" {
+		t.Fatalf("chat order must not follow the assist key: %v", got)
 	}
 }
 

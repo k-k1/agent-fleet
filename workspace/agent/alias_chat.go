@@ -114,33 +114,36 @@ var (
 	noteContextPressure           = chatx.NoteContextPressure
 	nowMs                         = chatx.NowMs
 	oneShotHeadless               = chatx.OneShotHeadless
-	opencodeOneShotConfig         = chatx.OpencodeOneShotConfig
-	planContextHeader             = chatx.PlanContextHeader
-	planPreambleFor               = chatx.PlanPreambleFor
-	planRefreshInstructions       = chatx.PlanRefreshInstructions
-	planRefreshPersonaFor         = chatx.PlanRefreshPersonaFor
-	planShapeFor                  = chatx.PlanShapeFor
-	planTruncatedNote             = chatx.PlanTruncatedNote
-	planUpdateInstructionFor      = chatx.PlanUpdateInstructionFor
-	preferredHeadlessAgent        = chatx.PreferredHeadlessAgent
-	randUUID                      = chatx.RandUUID
-	readInstrRows                 = chatx.ReadInstrRows
-	recoverForRetry               = chatx.RecoverForRetry
-	registerLiveTurn              = chatx.RegisterLiveTurn
-	reportArgs                    = chatx.ReportArgs
-	reportPromptFor               = chatx.ReportPromptFor
-	resetAutoResume               = chatx.ResetAutoResume
-	resolveChatModel              = chatx.ResolveChatModel
-	resolveConvRef                = chatx.ResolveConvRef
-	saveConv                      = chatx.SaveConv
-	seedFor                       = chatx.SeedFor
-	sessionReportPending          = chatx.SessionReportPending
-	setAutoResumeAttempts         = chatx.SetAutoResumeAttempts
-	startReportReconciler         = chatx.StartReportReconciler
-	syncProviderPrompt            = chatx.SyncProviderPrompt
-	turnInFlight                  = chatx.TurnInFlight
-	usageModelRows                = chatx.UsageModelRows
-	verbPersona                   = chatx.VerbPersona
+	// 一発生成の用途（docs/log/84）。短いラベルか、人が読んで採用する文章か。
+	oneShotShort             = chatx.OneShotShort
+	oneShotProse             = chatx.OneShotProse
+	opencodeOneShotConfig    = chatx.OpencodeOneShotConfig
+	planContextHeader        = chatx.PlanContextHeader
+	planPreambleFor          = chatx.PlanPreambleFor
+	planRefreshInstructions  = chatx.PlanRefreshInstructions
+	planRefreshPersonaFor    = chatx.PlanRefreshPersonaFor
+	planShapeFor             = chatx.PlanShapeFor
+	planTruncatedNote        = chatx.PlanTruncatedNote
+	planUpdateInstructionFor = chatx.PlanUpdateInstructionFor
+	preferredHeadlessAgent   = chatx.PreferredHeadlessAgent
+	randUUID                 = chatx.RandUUID
+	readInstrRows            = chatx.ReadInstrRows
+	recoverForRetry          = chatx.RecoverForRetry
+	registerLiveTurn         = chatx.RegisterLiveTurn
+	reportArgs               = chatx.ReportArgs
+	reportPromptFor          = chatx.ReportPromptFor
+	resetAutoResume          = chatx.ResetAutoResume
+	resolveChatModel         = chatx.ResolveChatModel
+	resolveConvRef           = chatx.ResolveConvRef
+	saveConv                 = chatx.SaveConv
+	seedFor                  = chatx.SeedFor
+	sessionReportPending     = chatx.SessionReportPending
+	setAutoResumeAttempts    = chatx.SetAutoResumeAttempts
+	startReportReconciler    = chatx.StartReportReconciler
+	syncProviderPrompt       = chatx.SyncProviderPrompt
+	turnInFlight             = chatx.TurnInFlight
+	usageModelRows           = chatx.UsageModelRows
+	verbPersona              = chatx.VerbPersona
 )
 
 // --- chatx → main -----------------------------------------------------------
@@ -161,11 +164,13 @@ func init() {
 		ErrCodeTitleFeatureDisabled:   errCodeTitleFeatureDisabled,
 		ErrCodeTitleNoContent:         errCodeTitleNoContent,
 
-		AssistantAgentOrderPref:   assistantAgentOrderPref,
-		AssistantChatModelPref:    assistantChatModelPref,
-		AssistantUtilityModelPref: assistantUtilityModelPref,
-		ChatAutoTurnLimit:         chatAutoTurnLimit,
-		ChatAutoTurnModel:         chatAutoTurnModel,
+		AssistantAgentOrderPref: assistantAgentOrderPref,
+		AssistantChatModelPref:  assistantChatModelPref,
+		AiAssistOrderPref:       aiAssistOrderPref,
+		AiShortModelPref:        aiShortModelPref,
+		AiProseModelPref:        aiProseModelPref,
+		ChatAutoTurnLimit:       chatAutoTurnLimit,
+		ChatAutoTurnModel:       chatAutoTurnModel,
 
 		FilterVisibleModels: filterVisibleModels,
 		VisibleModel:        visibleModel,

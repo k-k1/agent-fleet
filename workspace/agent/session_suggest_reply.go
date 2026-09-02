@@ -267,7 +267,7 @@ func cleanSuggestedReplies(s string) []string {
 
 func runReplySuggestLLM(ctx context.Context, turns []transcript.Turn) ([]string, error) {
 	lang := uiprefs.Locale() // 指示文の言語だけ（候補そのものは会話の言語 — replySuggestPersona 参照）
-	reply, err := oneShotHeadless(ctx, replySuggestPersona(lang), replySuggestPrompt(turns, lang), replySuggestModel())
+	reply, err := oneShotHeadless(ctx, oneShotShort, replySuggestPersona(lang), replySuggestPrompt(turns, lang), replySuggestModel())
 	if err != nil {
 		return nil, fmt.Errorf("reply suggestion failed: %w", err)
 	}

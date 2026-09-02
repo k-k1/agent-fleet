@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -204,13 +205,19 @@ func cleanEditSuggestion(r editSuggestResult, instruction string) (summary, repl
 
 // editSuggestLLM はテストで差し替える生成シーム。
 var editSuggestLLM = func(ctx context.Context, req *editSuggestRequest) (string, error) {
-	return oneShotHeadless(ctx, editSuggestPersona, editSuggestPrompt(req), editSuggestModel())
+	return oneShotHeadless(ctx, oneShotProse, editSuggestPersona, editSuggestPrompt(req), editSuggestModel())
 }
 
 // handleFSSuggestEdit — POST /fs/suggest-edit（docs/log/44 Phase 4）。
 // 応答は {"summary":…,"replacement":…} のみ。envelope（paneId/requestId/sourceRevision）
 // は Console がリクエスト時に控えて応答へ合成するため、wire には載せない。
 func handleFSSuggestEdit(w http.ResponseWriter, r *http.Request) {
+	// 設定 > AI補助「ファイル編集の提案」。この機能だけを止められるようにした
+	// （docs/log/84）。以前はトグルが無く常時有効だった。
+	if !uiprefs.EditSuggest() {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "edit suggestion is turned off")
+		return
+	}
 	var req editSuggestRequest
 	if serr := httpx.DecodeStrictJSON(r, &req, editSuggestMaxBody); serr != nil {
 		httpx.WriteErr(w, serr.Status, serr.Code, serr.Message)

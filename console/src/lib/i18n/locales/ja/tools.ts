@@ -269,6 +269,9 @@ export const tools = {
   "tts.provider_auto": "自動",
   "tts.provider_voicevox": "ずんだもん",
   "tts.provider_polly": "Polly",
+  "tts.lang_auto": "自動",
+  "tts.lang_ja": "日本語",
+  "tts.lang_en": "English",
   "tts.polly_takumi": "Takumi（男性）",
   "tts.polly_kazuha": "Kazuha（女性）",
   "tts.polly_tomoko": "Tomoko（女性）",
@@ -329,6 +332,9 @@ export const tools = {
     "別タブへの切り替え、ブラウザの最小化、別ウィンドウでの作業中の再生方法を選びます。「音量を下げる」を選ぶと下のスライダーの音量で再生し、Console に戻ると通常音量へ滑らかに戻ります。",
   "tts.note_stereo":
     "読み上げ音声をペインの横位置に合わせてステレオ配置します。左右端でも音は片側へ振り切らず、通知やファイル朗読などペインに属さない音声は中央で再生します。",
+  "tts.lang": "読み上げ言語",
+  "tts.note_lang":
+    "読み上げる文章の言語です。「自動」は Console の表示言語に従います。エンジンが「自動」のとき、English ならエンジンは Polly、声は Joanna が既定になります。アシスタントの「回答言語」とは別の設定です（チャットの回答だけを English にしても、読み上げの声は変わりません）。",
   "tts.note_engine":
     "「自動」は日本語をずんだもん（VOICEVOX）で読み、エンジンが起動していない間や日本語以外は AWS Polly に自動で切り替えます（次の文からずんだもんに復帰）。「Polly」は常に Polly で読みます。",
   "tts.note_no_voicevox":

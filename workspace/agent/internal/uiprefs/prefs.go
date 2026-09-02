@@ -102,13 +102,34 @@ func Read() map[string]any {
 	return obj
 }
 
-// AutoTitleSuggest is the ON/OFF for SESSION title suggestion — the automatic
-// banner plus the manual title/branch suggest endpoints (Console AgentsTab セッション).
-// The assistant-chat side gates separately (AssistantTitleSuggest). Missing/
-// invalid key ⇒ true, matching the frontend's DEFAULTS.autoTitleSuggest (settings.ts)
-// so pre-feature clients get it without an explicit opt-in.
+// AutoTitleSuggest is the ON/OFF for SESSION title suggestion — the automatic banner
+// plus the manual title-suggest endpoint (設定 > AI補助). The chat side gates on
+// AssistantTitleSuggest and branch names on BranchSuggest: one AI 補助 feature, one key.
+// ★ Branch names used to ride on THIS key, which no label or note ever mentioned
+// (docs/log/84). Missing/invalid key ⇒ true, matching the frontend's
+// DEFAULTS.autoTitleSuggest (settings.ts) so pre-feature clients get it without an
+// explicit opt-in.
 func AutoTitleSuggest() bool {
 	v, ok := Read()["autoTitleSuggest"].(bool)
+	return !ok || v
+}
+
+// BranchSuggest is the ON/OFF for the branch-name AI suggestion (設定 > AI補助).
+// Falls back to AutoTitleSuggest when the key is absent — that is where this gate
+// used to live, so a client that explicitly turned title suggestions off keeps
+// branch names off too until it writes the new key.
+func BranchSuggest() bool {
+	if v, ok := Read()["branchSuggestEnabled"].(bool); ok {
+		return v
+	}
+	return AutoTitleSuggest()
+}
+
+// EditSuggest is the ON/OFF for the File pane's AI edit suggestion (設定 > AI補助).
+// Missing/invalid ⇒ true: the feature shipped before it had a setting at all, so the
+// absent key means "the historical behaviour", not "off".
+func EditSuggest() bool {
+	v, ok := Read()["editSuggestEnabled"].(bool)
 	return !ok || v
 }
 

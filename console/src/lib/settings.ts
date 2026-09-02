@@ -316,8 +316,10 @@ export interface Settings {
   // Claude Code OAuth has no account-aware catalog endpoint. Full model ids registered by
   // the user become durable choices in the Console picker and MCP list_models.
   claudeCustomModels: string[];
-  // Global ON/OFF for the auto session-title-suggestion feature (AgentsTab セッション).
-  // Sessions only — the assistant-chat side split off into assistantTitleSuggest.
+  // ON/OFF for the SESSION title suggestion (設定 > AI補助). Covers both the automatic
+  // banner and the rename dialog's 「AIに提案してもらう」 button; the chat side is
+  // assistantTitleSuggest and branch names are branchSuggestEnabled — each AI 補助
+  // feature gates on its own key now (it used to also silently gate branch names).
   // Default true so existing users get it without an explicit opt-in.
   autoTitleSuggest: boolean;
   // Global ON/OFF for session-to-session messaging (AgentsTab セッション, docs/log/58 /
@@ -353,31 +355,56 @@ export interface Settings {
   // 思考の量は kind とモデルで大きく違い、常時展開が読みやすいかは backend ごとに割れるので、
   // hiddenModels と同じく kind をキーにした Record にしてある（未設定 kind は false）。
   expandThinking: Record<string, boolean>;
-  // ON/OFF for the assistant-chat title AI suggestion (AssistantTab; the rename
-  // dialog's 「AIに提案してもらう」 button). Split out of autoTitleSuggest so sessions
-  // and chats gate independently; load()/hydrateUIPrefs migrate an explicit legacy
-  // OFF, and the Agent falls back to autoTitleSuggest when this key is absent.
+  // ON/OFF for the CHAT title suggestion (設定 > AI補助; the rename dialog's
+  // 「AIに提案してもらう」 button — the assistant has no automatic banner). Split out of
+  // autoTitleSuggest so sessions and chats gate independently; load()/hydrateUIPrefs
+  // migrate an explicit legacy OFF, and the Agent falls back to autoTitleSuggest when
+  // this key is absent.
   assistantTitleSuggest: boolean;
+  // ON/OFF for the branch-name AI suggestion (設定 > AI補助; the worktree / branch
+  // rename dialogs). Used to ride on autoTitleSuggest, which no label or note ever
+  // said — one AI 補助 feature, one key. Migrates from autoTitleSuggest so an explicit
+  // legacy OFF keeps branch names off too.
+  branchSuggestEnabled: boolean;
+  // ON/OFF for the File pane's AI edit suggestion (設定 > AI補助). Previously had no
+  // setting at all and was always on; default true keeps that behaviour.
+  editSuggestEnabled: boolean;
   // Forced output language for assistant chat: "auto" = follow the input language
   // (default), "ja" / "en" = always reply in that language (even for foreign-language
   // content). The Agent reads this key from ui-prefs and injects a language rule into the
   // chat system prompt (translate assistant is exempt). See docs/log/19.
+  // ⚠️ CHAT ONLY. Read-aloud used to borrow this key to pick the TTS engine and voice;
+  // that axis is now ttsLang — one key, one meaning.
   outputLanguage: string;
-  // Assistant-chat backend priority (AssistantTab 並べ替え): auto-selection takes the
-  // first CONNECTED kind in this order (the Agent's preferredHeadlessAgent, read
-  // live from ui-prefs). Applies to builtin assistants' NEW conversations and
-  // one-shot calls (title/branch suggestions); user-defined assistants keep their
-  // own per-assistant agent choice. Replaces the legacy single-pin assistantAgent
-  // key — hydrateUIPrefs migrates a stored pin by promoting it to the front, and
-  // the Agent normalizes partial/stale lists against its own default order.
+  // Assistant-CHAT backend priority (AssistantTab 並べ替え): auto-selection takes the
+  // first CONNECTED kind in this order (the Agent's preferredChatAgent, read live from
+  // ui-prefs). Applies to builtin assistants' NEW conversations; user-defined assistants
+  // keep their own per-assistant agent choice. Replaces the legacy single-pin
+  // assistantAgent key — hydrateUIPrefs migrates a stored pin by promoting it to the
+  // front, and the Agent normalizes partial/stale lists against its own default order.
+  // ⚠️ Chat only. The one-shot helpers rank backends with aiAssistOrder.
   assistantAgentOrder: string[];
-  // Per-backend models for builtin assistant conversations and short one-shot
-  // helpers. "recommended" resolves against the live catalog (and is shown with
-  // its current concrete result); empty delegates to the CLI default. Explicit
-  // models are kept for every backend so priority fallback never silently changes
-  // the requested model.
+  // AI 補助生成 backend priority (設定 > AI補助): the same normalization, ranked
+  // separately from the chat because the two want opposite things — the chat wants the
+  // strongest CLI, the one-shots run constantly and want the cheapest one that works.
+  // Migrated from assistantAgentOrder (they were one list), so nothing changes on upgrade.
+  aiAssistOrder: string[];
+  // Per-backend models for builtin assistant conversations. "recommended" resolves
+  // against the live catalog (and is shown with its current concrete result); empty
+  // delegates to the CLI default. Explicit models are kept for every backend so
+  // priority fallback never silently changes the requested model.
   assistantModels: Record<string, string>;
-  assistantUtilityModels: Record<string, string>;
+  // AI 補助生成 models, split by what the call actually needs (設定 > AI補助):
+  //   aiShortModels — a short label: session/chat titles, branch names, reply chips.
+  //     Recommended resolves to a cheap tier (haiku 級).
+  //   aiProseModels — text a human will read and keep: File pane edit suggestions,
+  //     chat plan updates. Recommended resolves to the mid tier (sonnet 級).
+  // They were one key (assistantUtilityModels) whose label only mentioned titles and
+  // suggestions, yet a value set there ALSO replaced the prose defaults — picking haiku
+  // for titles quietly downgraded edit suggestions. aiShortModels inherits the old
+  // value; aiProseModels starts at "recommended" so prose returns to its own default.
+  aiShortModels: Record<string, string>;
+  aiProseModels: Record<string, string>;
   // Auto turn on session reports (docs/log/30): when a session an af_write assistant
   // launched/steered reports back, the assistant runs one turn automatically to
   // process it. Default ON; the backend caps unattended turns at 10 per conversation
@@ -472,6 +499,12 @@ export interface Settings {
   // ずんだもん、engine 不在（起動中/無効）は Polly JP へ自動フォールバック、非日本語は Polly。
   // 最終決定は CP（engine の ready を知る単一の真実源）。明示 polly なら常に Polly。
   ttsProvider: string; // "auto" | "voicevox" | "polly"
+  // 読み上げの言語（"auto" | "ja" | "en"）。auto = UI 表示言語に従う。ttsProvider が auto の
+  // ときのエンジン選択（en → Polly）と Polly の既定 VoiceId（en → Joanna）を決める。
+  // ⚠️ もとはアシスタントの「回答言語」(outputLanguage) を借りていた。チャットの回答言語を
+  // English にしただけでミラーの読み上げまで Polly に化ける、という 1 キー 2 用途の事故を
+  // 断つために独立させた（移行で outputLanguage の値を引き継ぐ＝挙動は変わらない）。
+  ttsLang: string;
   ttsVoiceVoicevox: string; // VOICEVOX の speaker 番号（"3"=ずんだもん・ノーマル）
   ttsVoicePolly: string; // Polly の VoiceId（"Takumi" 等）。auto のフォールバック時も使う
   ttsSpeed: number; // 0.5〜2.0（speedScale）
@@ -617,6 +650,40 @@ export function normalizeAssistantOrder(v: unknown): string[] {
   return out;
 }
 
+// migrateAiAssistPrefs — 「AI 補助生成」を アシスタント から分離したときの引き継ぎ
+// （docs/log/84）。**足りないキーを埋めるだけ**で、既にある値には触らない。
+//
+// load()（localStorage）と hydrateUIPrefs()（サーバ prefs）の両方から同じ関数を呼ぶ。
+// 分けて書くと片方だけ直す事故が起きる — 実際、旧 assistantTitleSuggest の移行は
+// 2 箇所に同じ規則が写経されていた。
+//
+// 原則は「アップグレードで挙動を変えない」。ただし aiProseModels だけは意図的に
+// 引き継がない: 旧 assistantUtilityModels は名前もラベルも「タイトル・サジェスト」と
+// 言いながら、ファイル編集提案・計画更新の既定（sonnet 級）まで置き換えていた。
+// そこへ haiku を入れていた人は、名前どおり短文用途に入れたのであって文章生成を
+// 落としたかったわけではない。文章側は用途に合った推奨へ戻す（＝この整理の目的）。
+export function migrateAiAssistPrefs(o: Record<string, unknown>): void {
+  // タイトル提案は 1 機能 1 キーへ。旧 autoTitleSuggest はセッション・チャット・
+  // ブランチ名の 3 つを兼ねていたので、明示的な OFF は 3 つとも引き継ぐ。
+  if (typeof o.autoTitleSuggest === "boolean") {
+    if (!("assistantTitleSuggest" in o)) o.assistantTitleSuggest = o.autoTitleSuggest;
+    if (!("branchSuggestEnabled" in o)) o.branchSuggestEnabled = o.autoTitleSuggest;
+  }
+  // CLI 優先順位はチャット用と補助生成用へ。分離前は 1 本だったので、補助生成側は
+  // その順序をそのまま受け継ぐ（＝分けたことに気づかないまま挙動が変わらない）。
+  if (!("aiAssistOrder" in o) && Array.isArray(o.assistantAgentOrder)) {
+    o.aiAssistOrder = normalizeAssistantOrder(o.assistantAgentOrder);
+  }
+  // 短文生成は旧ユーティリティモデルの値をそのまま継ぐ。文章生成は上のとおり継がない。
+  if (!("aiShortModels" in o) && o.assistantUtilityModels && typeof o.assistantUtilityModels === "object") {
+    o.aiShortModels = { ...(o.assistantUtilityModels as Record<string, string>) };
+  }
+  // 読み上げ言語は outputLanguage の借用をやめて独立キーへ。借りていた頃の値を継ぐので、
+  // 「回答言語を English にしていたら読み上げも Polly」という現状の挙動は保たれる。
+  // 次からは片方だけ変えられる。
+  if (!("ttsLang" in o) && typeof o.outputLanguage === "string") o.ttsLang = o.outputLanguage;
+}
+
 const DEFAULT_AGENT_LAUNCH: AgentLaunchDefaults = {
   claude: { model: DEFAULT_MODEL, effort: "", startMode: "normal", skipPermissions: true },
   codex: { model: "", effort: "", startMode: "normal", skipPermissions: true },
@@ -668,8 +735,11 @@ const DEFAULTS: Settings = {
   opencodeCatalog: "off",
   expandThinking: {},
   assistantTitleSuggest: true,
+  branchSuggestEnabled: true,
+  editSuggestEnabled: true,
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
+  aiAssistOrder: [...ASSISTANT_AGENT_KINDS],
   assistantModels: {
     claude: ASSISTANT_RECOMMENDED_MODEL,
     codex: ASSISTANT_RECOMMENDED_MODEL,
@@ -677,7 +747,14 @@ const DEFAULTS: Settings = {
     cursor: ASSISTANT_RECOMMENDED_MODEL,
     agy: ASSISTANT_RECOMMENDED_MODEL,
   },
-  assistantUtilityModels: {
+  aiShortModels: {
+    claude: ASSISTANT_RECOMMENDED_MODEL,
+    codex: ASSISTANT_RECOMMENDED_MODEL,
+    opencode: ASSISTANT_RECOMMENDED_MODEL,
+    cursor: ASSISTANT_RECOMMENDED_MODEL,
+    agy: ASSISTANT_RECOMMENDED_MODEL,
+  },
+  aiProseModels: {
     claude: ASSISTANT_RECOMMENDED_MODEL,
     codex: ASSISTANT_RECOMMENDED_MODEL,
     opencode: ASSISTANT_RECOMMENDED_MODEL,
@@ -704,6 +781,7 @@ const DEFAULTS: Settings = {
   // DEFAULTS から TTS 関連キーだけ抜き出して定義しているので、両者は常に一致する。
   ttsEnabled: false,
   ttsProvider: "auto",
+  ttsLang: "auto",
   ttsVoiceVoicevox: "3", // ノーマル
   ttsVoicePolly: "Takumi",
   ttsSpeed: 1.25, // はやめ
@@ -767,6 +845,14 @@ export const TTS_PROVIDERS: [string, MsgKey][] = [
   ["polly", "tts.provider_polly"],
 ];
 
+// 読み上げ言語（設定 > 読み上げ）。"auto" は UI 表示言語に従う — アシスタントの
+// 「回答言語」の auto（入力の言語に合わせる）とは別物なので、ラベルも別キーにしてある。
+export const TTS_LANGS: [string, MsgKey][] = [
+  ["auto", "tts.lang_auto"],
+  ["ja", "tts.lang_ja"],
+  ["en", "tts.lang_en"],
+];
+
 // Polly の日本語ニューラル話者（VoiceId → i18n キー）。
 export const TTS_POLLY_VOICES: [string, MsgKey][] = [
   ["Takumi", "tts.polly_takumi"],
@@ -791,6 +877,7 @@ const TTS_RESET_KEYS = [
   "ttsEnabled",
   "ttsSessionNotify",
   "ttsProvider",
+  "ttsLang",
   "ttsVoiceVoicevox",
   "ttsVoicePolly",
   "ttsVoicePerSession",
@@ -943,11 +1030,9 @@ function load(): Settings {
       saved.ttsBackgroundPlayback = saved.ttsQuietWhenHidden ? "quiet" : "normal";
     }
     delete saved.ttsQuietWhenHidden;
-    // タイトルAI提案のセッション/アシスタント分離（旧: autoTitleSuggest が両方を兼ねた）。
-    // 新キー未設定なら旧設定を引き継ぐ — OFF にしていた人のチャット側も OFF のまま。
-    if (!("assistantTitleSuggest" in saved) && typeof saved.autoTitleSuggest === "boolean") {
-      saved.assistantTitleSuggest = saved.autoTitleSuggest;
-    }
+    // AI 補助生成の分離（タイトル提案の 1 機能 1 キー化・優先順位/モデルの 2 系統化・
+    // 読み上げ言語の独立）。hydrateUIPrefs() と同じ関数を通す。
+    migrateAiAssistPrefs(saved);
     const legacyClaudeModel = typeof saved.defaultModel === "string" ? saved.defaultModel : DEFAULT_MODEL;
     const rows = saved.agentLaunchDefaults && typeof saved.agentLaunchDefaults === "object"
       ? saved.agentLaunchDefaults
@@ -1293,10 +1378,10 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   if (!("assistantAgentOrder" in srv) && typeof srv.assistantAgent === "string" && srv.assistantAgent !== "auto") {
     srv.assistantAgentOrder = normalizeAssistantOrder([srv.assistantAgent]);
   }
-  // 分離前のサーバー prefs（autoTitleSuggest のみ）はチャット側へも引き継ぐ（load() と同じ規則）。
-  if (!("assistantTitleSuggest" in srv) && typeof srv.autoTitleSuggest === "boolean") {
-    srv.assistantTitleSuggest = srv.autoTitleSuggest;
-  }
+  // AI 補助生成の分離（load() と同じ関数＝同じ規則）。★ 単一ピンの昇格より後に呼ぶ:
+  // aiAssistOrder は assistantAgentOrder から継ぐので、先に呼ぶと旧ピンだけを持つ
+  // ユーザーの補助生成側が既定順のままになる。
+  migrateAiAssistPrefs(srv);
   // opencode の設定は「一覧の整形」から「どの課金経路を使うか」へ変わった。旧値のうち
   // 「Zen を隠す」は Go だけを使う意思なので go、「Go 優先」「すべて表示」は両方見たい
   // ので zen（＝従来の見え方）へ寄せる。Agent 側 CatalogPref と同じ規則。

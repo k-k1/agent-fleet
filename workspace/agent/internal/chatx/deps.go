@@ -50,11 +50,14 @@ type Deps struct {
 	ErrCodeTitleNoContent         string
 
 	// --- ui_prefs.go（機能側の定数に依存するアクセサ）---
-	AssistantAgentOrderPref   func() []string
-	AssistantChatModelPref    func(kind string) (string, bool)
-	AssistantUtilityModelPref func(kind string) (string, bool)
-	ChatAutoTurnLimit         func() int
-	ChatAutoTurnModel         func() string
+	AssistantAgentOrderPref func() []string
+	AssistantChatModelPref  func(kind string) (string, bool)
+	// AI 補助生成（一発生成）の優先順位とモデル。チャットと別系統なのは docs/log/84。
+	AiAssistOrderPref func() []string
+	AiShortModelPref  func(kind string) (string, bool)
+	AiProseModelPref  func(kind string) (string, bool)
+	ChatAutoTurnLimit func() int
+	ChatAutoTurnModel func() string
 
 	// --- model_deny.go ---
 	FilterVisibleModels func(kind string, list []agents.ModelChoice) []agents.ModelChoice

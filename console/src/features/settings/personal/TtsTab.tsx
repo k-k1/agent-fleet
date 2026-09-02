@@ -7,6 +7,7 @@ import {
   TTS_SPEEDS,
   TTS_CACHE_SIZES,
   TTS_PROVIDERS,
+  TTS_LANGS,
   TTS_POLLY_VOICES,
   TTS_WORK_READ_MODES,
   TTS_BACKGROUND_PLAYBACK_MODES,
@@ -102,6 +103,17 @@ export function TtsTab() {
             </Row>
             <p className="muted ds-note">{noVv ? tr("tts.note_no_voicevox") : tr("tts.note_engine")}</p>
             {noVv && s.ttsProvider === "voicevox" && <p className="form-err">{tr("tts.warn_voicevox_missing")}</p>}
+            {/* 読み上げ言語（docs/log/84）。エンジンが「自動」のときの振り分け（en → Polly）と
+                Polly の既定の声を決める。以前は アシスタントの「回答言語」を借りていたので、
+                チャットの回答を English にしただけでミラーの読み上げまで声が変わっていた。 */}
+            <Row label={tr("tts.lang")}>
+              <Choice
+                value={s.ttsLang}
+                options={TTS_LANGS.map(([id, k]) => [id, tr(k)])}
+                onChange={(v) => setSetting("ttsLang", v)}
+              />
+            </Row>
+            <p className="muted ds-note">{tr("tts.note_lang")}</p>
             {!noVv && s.ttsProvider !== "polly" && (
               <>
                 <Row label={tr("tts.speaker_voicevox")}>

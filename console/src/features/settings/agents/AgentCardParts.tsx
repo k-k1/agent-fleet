@@ -215,8 +215,11 @@ function HiddenModelsRow({ kind }: { kind: string }) {
     if (isHidden(s.assistantModels?.[kind] || "")) {
       patch.assistantModels = { ...s.assistantModels, [kind]: ASSISTANT_RECOMMENDED_MODEL };
     }
-    if (isHidden(s.assistantUtilityModels?.[kind] || "")) {
-      patch.assistantUtilityModels = { ...s.assistantUtilityModels, [kind]: ASSISTANT_RECOMMENDED_MODEL };
+    if (isHidden(s.aiShortModels?.[kind] || "")) {
+      patch.aiShortModels = { ...s.aiShortModels, [kind]: ASSISTANT_RECOMMENDED_MODEL };
+    }
+    if (isHidden(s.aiProseModels?.[kind] || "")) {
+      patch.aiProseModels = { ...s.aiProseModels, [kind]: ASSISTANT_RECOMMENDED_MODEL };
     }
     if (kind === "claude" && isHidden(s.assistantAutoTurnModel)) patch.assistantAutoTurnModel = "";
     setSettings(patch);

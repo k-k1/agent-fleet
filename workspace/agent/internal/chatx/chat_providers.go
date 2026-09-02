@@ -105,12 +105,10 @@ func headlessAgentAvailable(kind string) bool {
 // assistantAgentOrder — assistantAgentOrderPref normalizes against this list).
 var DefaultHeadlessOrder = []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCursor, session.KindAgy}
 
-// preferredHeadlessAgent picks the backend for new builtin-assistant conversations
-// and one-shot calls: the first AUTHENTICATED backend in the user's priority order
-// (or the built-in default order). When nothing is connected it returns the order's
-// top choice, so the resulting error points at the CLI the user cares about most.
-func PreferredHeadlessAgent() string {
-	order := assistantAgentOrderPref()
+// preferredFrom picks the first AUTHENTICATED backend in a priority order. When
+// nothing is connected it returns the order's top choice, so the resulting error
+// points at the CLI the user cares about most.
+func preferredFrom(order []string) string {
 	for _, k := range order {
 		if headlessAgentAvailable(k) {
 			return k
@@ -118,6 +116,16 @@ func PreferredHeadlessAgent() string {
 	}
 	return order[0]
 }
+
+// PreferredHeadlessAgent picks the backend for new builtin-assistant CONVERSATIONS
+// (設定 > アシスタント「エージェント優先順位」).
+func PreferredHeadlessAgent() string { return preferredFrom(assistantAgentOrderPref()) }
+
+// PreferredAssistAgent picks the backend for the AI 補助生成 one-shots
+// (設定 > AI補助「エージェント優先順位」). Ranked separately from the chat on purpose:
+// the chat wants the strongest CLI, these run constantly and want the cheapest that
+// works (docs/log/84).
+func PreferredAssistAgent() string { return preferredFrom(aiAssistOrderPref()) }
 
 // chatProviderFor resolves the provider driving this conversation: the pinned agent
 // while its CLI is authenticated, else the preferred available backend — so a
@@ -1356,8 +1364,42 @@ func modelChoiceIDs(list []agents.ModelChoice) []string {
 	return out
 }
 
-// recommendedUtilityModel picks the cheap model shown as 「推奨（現在: …）」 in
-// AssistantTab. The OpenCode Go route is pinned only when the live account catalog
+// OneShotTier is what a one-shot call actually NEEDS, which is not the same as where
+// its setting lives (docs/log/84):
+//
+//	OneShotShort … a short label: titles, branch names, reply chips. A cheap fast
+//	               model is enough, and these fire constantly.
+//	OneShotProse … text a human reads and keeps: File pane edit suggestions, chat
+//	               plan updates. Same tier as the assistant's own replies.
+//
+// 分けている理由がこれ: 以前は 1 つの「ユーティリティ」設定が両方を兼ねており、
+// タイトル用に haiku を選ぶとファイル編集の提案まで haiku に落ちていた。
+type OneShotTier int
+
+const (
+	OneShotShort OneShotTier = iota
+	OneShotProse
+)
+
+// recommendedOneShotModel is the 「推奨」 resolution for a tier — the Console shows the
+// same split (設定 > AI補助 の 短文生成 / 文章生成).
+func recommendedOneShotModel(kind string, tier OneShotTier) string {
+	if tier == OneShotProse {
+		return recommendedAssistantModel(kind)
+	}
+	return recommendedUtilityModel(kind)
+}
+
+// oneShotModelPref reads the user's per-backend choice for a tier.
+func oneShotModelPref(kind string, tier OneShotTier) (string, bool) {
+	if tier == OneShotProse {
+		return aiProseModelPref(kind)
+	}
+	return aiShortModelPref(kind)
+}
+
+// recommendedUtilityModel picks the cheap model shown as 「推奨（現在: …）」 for the
+// short tier. The OpenCode Go route is pinned only when the live account catalog
 // proves it is available; otherwise an empty result deliberately delegates to the
 // CLI default rather than risking a metered/unentitled Zen model.
 func recommendedUtilityModel(kind string) string {
@@ -1470,7 +1512,7 @@ func CodexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, 
 // otherwise. claudeModel applies to the claude backend only (codex/opencode run their
 // own configured defaults; override via AF_TITLE_MODEL_CODEX/_OPENCODE — docs/log/46 §2-b
 // flags that an unset override means the CLI's own default, usually the flagship).
-func OneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (string, error) {
+func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, claudeModel string) (string, error) {
 	// 使用量台帳（ADR 0029 §3）。この関数は claude → codex → opencode → cursor → agy の
 	// うち「最初に使えるもの」を選ぶので、kind は分岐の中で実行結果として埋める — 要求値を
 	// 書くと claude-less ワークスペースの消費が全部 claude に化ける（docs/log/46 §2）。
@@ -1478,12 +1520,12 @@ func OneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	// 呼び出し側4箇所を触る理由がないため。
 	call := usagex.Call{}
 	defer usagex.RecordCall(ctx, &call, time.Now())
-	kind := PreferredHeadlessAgent()
-	selected, configured := assistantUtilityModelPref(kind)
+	kind := PreferredAssistAgent()
+	selected, configured := oneShotModelPref(kind, tier)
 	selected = strings.TrimSpace(selected)
 	autoRecommended := selected == AssistantRecommendedModel
 	if selected == AssistantRecommendedModel {
-		selected, configured = recommendedUtilityModel(kind), true
+		selected, configured = recommendedOneShotModel(kind, tier), true
 	}
 	switch kind {
 	case session.KindCodex:
@@ -1491,7 +1533,7 @@ func OneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		defer func() { _, _ = chatCodexHome() }()
 		full := headlessPrompt(persona, nil, prompt)
 		if !configured && os.Getenv("AF_TITLE_MODEL_CODEX") == "" {
-			selected = recommendedUtilityModel(kind)
+			selected = recommendedOneShotModel(kind, tier)
 			autoRecommended = selected != ""
 		}
 		args, autoPicked := codexOneShotArgsFor(selected)
@@ -1520,7 +1562,7 @@ func OneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		if !configured {
 			m = os.Getenv("AF_TITLE_MODEL_OPENCODE")
 			if m == "" {
-				m = recommendedUtilityModel(kind)
+				m = recommendedOneShotModel(kind, tier)
 			}
 		}
 		if m != "" {
@@ -1565,7 +1607,7 @@ func OneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		if !configured {
 			m = os.Getenv("AF_TITLE_MODEL_CURSOR")
 			if m == "" {
-				m = recommendedUtilityModel(kind)
+				m = recommendedOneShotModel(kind, tier)
 			}
 		}
 		if m != "" {

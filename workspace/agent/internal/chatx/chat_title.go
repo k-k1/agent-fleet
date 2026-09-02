@@ -71,7 +71,7 @@ func writeChatTitleWindow(b *strings.Builder, msgs []ChatMessage) {
 
 func runChatTitleSuggestLLM(ctx context.Context, msgs []ChatMessage) (string, error) {
 	lang := titleLang() // セッション件名と同じ規約（表示言語で生成し、後からの切替では作り直さない）
-	reply, err := OneShotHeadless(ctx, titleSuggestPersona(lang), ChatTitleSuggestPrompt(msgs, lang), titleModel())
+	reply, err := OneShotHeadless(ctx, OneShotShort, titleSuggestPersona(lang), ChatTitleSuggestPrompt(msgs, lang), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("chat title generation failed: %w", err)
 	}

@@ -12,6 +12,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { SESSION_TITLE_MAX } from "../../lib/sessionTitle.ts";
 import { apiJSON, errText } from "../../core/api/client.ts";
 import { agentOf } from "../../agents/registry.ts";
+import { useSettings } from "../../lib/settings.ts";
 
 interface SessionTitleModalProps {
   name: string;
@@ -22,7 +23,10 @@ interface SessionTitleModalProps {
 }
 
 export function SessionTitleModal({ name, kind, title, onClose, onSaved }: SessionTitleModalProps) {
-  const canSuggest = agentOf(kind).caps.transcript;
+  // 転写を持たない kind では提案できない（能力）。加えて 設定 > AI補助
+  // 「セッションのタイトル提案」がオフならボタンごと出さない（意思）。
+  const titleSuggest = useSettings().autoTitleSuggest;
+  const canSuggest = agentOf(kind).caps.transcript && titleSuggest;
   const [value, setValue] = useState(title);
   const [saving, setSaving] = useState(false);
   const [suggesting, setSuggesting] = useState(false);

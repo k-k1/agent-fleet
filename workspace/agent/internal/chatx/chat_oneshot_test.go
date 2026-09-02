@@ -96,7 +96,7 @@ func TestTitleSuggestLive(t *testing.T) {
 		t.Run(lang, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			reply, err := OneShotHeadless(ctx, titleSuggestPersona(lang),
+			reply, err := OneShotHeadless(ctx, OneShotShort, titleSuggestPersona(lang),
 				titleSuggestInstructions(lang)+log+"\n"+titleSuggestFooter(lang), titleModel())
 			if err != nil {
 				t.Fatalf("oneShotHeadless: %v", err)

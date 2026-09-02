@@ -20,21 +20,15 @@ export const assistant: Record<keyof typeof jaAssistant, string> = {
     "Your partner for incident response and monitoring ops (read-only). Connect PagerDuty, Grafana, and CloudWatch and I'll help triage the situation, hypothesize root causes, and draft external updates while looking at open incidents, metrics, and logs.",
 
   // --- assistant settings (AssistantTab) ---
-  "assistant.title_suggest": "AI title suggestion",
-  "assistant.note_title_suggest":
-    "Enables the “Ask AI for a suggestion” button in the chat rename dialog. The automatic session-title suggestion is configured on the Agents tab.",
   "assistant.output_language": "Reply language",
   "assistant.note_output_language":
-    "The reply language for the assistant chat. “Match input” replies in the language of the text or question you give it. Choosing Japanese/English replies in that language even for text in another language (translation assistants excluded).",
+    "The reply language for the assistant chat. “Match input” replies in the language of the text or question you give it. Choosing Japanese/English replies in that language even for text in another language (translation assistants excluded). This changes chat replies only — the read-aloud language lives on the Read aloud tab.",
   "assistant.agent_order": "Agent priority",
   "assistant.note_agent_order":
-    "Priority of the CLIs that power assistant chat and utility generation. The first connected CLI is used; disconnected ones are skipped. Choose each CLI's model below. Takes effect for new built-in-assistant conversations; an explicit custom-assistant setting wins.",
+    "Priority of the CLIs that power the assistant chat. The first connected CLI is used; disconnected ones are skipped. Choose each CLI's model below. Takes effect for new built-in-assistant conversations; an explicit custom-assistant setting wins. AI assistance (titles, reply suggestions and the like) is ranked separately on the AI assistance tab.",
   "assistant.models": "Assistant models",
   "assistant.note_models":
     "Model used by built-in assistants for new conversations. If priority falls back to another CLI, that CLI uses its row's model. “Recommended” chooses a safe model from the connected catalog and shows the current resolution.",
-  "assistant.utility_models": "Title and suggestion models",
-  "assistant.note_utility_models":
-    "Models for session/chat titles, branch names, and AI reply suggestions. CLI selection follows the priority above. “Recommended” chooses an available fast, low-cost model and safely falls back to the CLI default.",
   "assistant.recommended_now": "Recommended (currently: {model})",
   "assistant.auto_turn": "Auto-respond to session reports",
   "assistant.note_auto_turn":
