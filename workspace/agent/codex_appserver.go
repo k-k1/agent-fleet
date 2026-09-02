@@ -176,8 +176,17 @@ func startCodexAppServer() {
 // backend is the shared app-server (`codex --remote`). They are dependents of the
 // daemon exactly like managed handles: kill it under them and the TUI's
 // conversation stops dead. tmux は 1 発（list-sessions）で数える。
-func liveCodexTUISessions() int {
-	live := tmuxx.LiveSessionNames()
+func liveCodexTUISessions() int { return countCodexTUISessions(tmuxx.LiveSessionNames()) }
+
+// countCodexTUISessions is the pure half, so the filter can be tested without
+// creating a session in the fleet's own tmux namespace (LiveSessionNames only
+// reports names carrying session.TmuxPrefix, so a test would have to plant a
+// `claude_*` session that the Console would then show as an orphan).
+//
+// live のキーは **接頭辞を剥いだセッション名**（tmuxx.LiveSessionNames）。実 tmux で
+// 確認済み: `claude_skggere` → `skggere`。ここを取り違えると常に 0 になり、
+// 生きている TUI セッションの backend を需要ゼロ判定が引き抜く。
+func countCodexTUISessions(live map[string]bool) int {
 	if len(live) == 0 {
 		return 0
 	}
