@@ -7,13 +7,13 @@ import (
 )
 
 // The provider adapters read their own configuration out of the environment
-// (AF_OIDC_<ID>_*, GITHUB_OAUTH_*), so these four parsers have to be reachable
+// (AF_OIDC_<ID>_*, GITHUB_OAUTH_*), so these five parsers have to be reachable
 // from here.
 //
 // ★ They are copies of the identically-named helpers in control-plane/main.go,
 // not a move: main.go belongs to no track in this refactor wave and the whole
 // Control Plane calls them, so relocating them was not this transport's to make
-// (ADR 0067 §1 ②). They are pure, four lines each, and have no configuration of
+// (ADR 0067 §1 ②). They are pure, a handful of lines each, and have no configuration of
 // their own — but they ARE duplication, and the reclaim session that folds the
 // aliases away should fold these back together too.
 

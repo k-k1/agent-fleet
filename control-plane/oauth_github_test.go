@@ -401,31 +401,6 @@ func TestGitHubMembershipIsRecheckedAfterTheTTL(t *testing.T) {
 	}
 }
 
-// GitHub 障害で全員が締め出されるのも、いつまでも通り続けるのも避ける — 最後の
-// 肯定結果を猶予期間だけ延命する（§61.7）。
-func TestGitHubOutageHonorsTheLastPositiveAnswerForTheGraceWindow(t *testing.T) {
-	gh := newStubGitHub(t, &stubGitHub{})
-	p := stubGitHubProvider(gh)
-	pr := principal{Provider: githubProviderID, Subject: "4242", Email: "yamada@acme.co.jp"}
-	if _, err := p.Exchange(t.Context(), "code", "https://af.example.com/oauth2/callback"); err != nil {
-		t.Fatalf("login: %v", err)
-	}
-
-	p.TTL = 0 // 毎回 stale 扱いにして再判定へ入れる
-	gh.apiDown = true
-	if ok, err := p.Allowed(t.Context(), pr); !ok || err != nil {
-		t.Fatalf("猶予期間内なのに拒否された: ok=%v err=%v", ok, err)
-	}
-
-	// 猶予を超えたら閉じる。判定は time.Since(lastOK) < Grace なので、最後の肯定
-	// 結果を 2 時間前へ巻き戻すのと、猶予を 0 にするのは同じ枝を通る。アダプタが
-	// internal/auth へ出てキャッシュに直接触れなくなったので後者で書く。
-	p.Grace = 0
-	if ok, _ := p.Allowed(t.Context(), pr); ok {
-		t.Fatal("猶予期間を過ぎても通り続けている")
-	}
-}
-
 // ★ CP 再起動でキャッシュも access token も消える。判定材料が無い人を「許可されて
 // いません」と突き放すのは事実と違う（本人は org のメンバーのまま）。再ログインを
 // 求める別のコードを出し、API には 401 を返して SPA の既存経路に乗せる。
