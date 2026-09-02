@@ -40,16 +40,16 @@ func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
 		t.Fatalf("id = %q", gh.ID())
 	}
 	// org は小文字化して突合する（GitHub の org 名は大文字小文字を区別しない）。
-	if strings.Join(gh.allowedOrgs, ",") != "acme-sub,other" {
-		t.Fatalf("orgs = %v", gh.allowedOrgs)
+	if strings.Join(gh.AllowedOrgs, ",") != "acme-sub,other" {
+		t.Fatalf("orgs = %v", gh.AllowedOrgs)
 	}
-	if !gh.allowDomains["sub.co.jp"] {
-		t.Fatalf("domains = %v", gh.allowDomains)
+	if !gh.AllowDomains["sub.co.jp"] {
+		t.Fatalf("domains = %v", gh.AllowDomains)
 	}
 	// ★ 行から github.com を差し替えられないこと。ここが動かせると、テナントが
 	// 自分のサーバを立てて任意の subject を名乗れる＝規則 1.5 の鍵が偽造できる。
-	if gh.web() != "https://github.com" || gh.api() != "https://api.github.com" {
-		t.Fatalf("row must not be able to move the endpoints: %s / %s", gh.web(), gh.api())
+	if gh.Web() != "https://github.com" || gh.API() != "https://api.github.com" {
+		t.Fatalf("row must not be able to move the endpoints: %s / %s", gh.Web(), gh.API())
 	}
 	// realm は「どこで身元が証明されたか」。これが env の GitHub と一致することが
 	// 規則 1.5 の前提（一致しなければ別人になる）。
@@ -57,7 +57,7 @@ func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
 		t.Fatalf("realm = %q", providerRealm(gh))
 	}
 	// ★ デプロイ共通の許可リストにも名簿にもフォールバックしない（決定 32-3）。
-	if gh.deployAllowed != nil || gh.dbAllowed != nil || gh.deployHasList {
+	if gh.DeployAllowed != nil || gh.DBAllowed != nil || gh.DeployHasList {
 		t.Fatal("a tenant row must not inherit the deployment-wide entry gate")
 	}
 
@@ -288,7 +288,7 @@ func TestHiddenProvidersHideTheButtonButNotTheDoor(t *testing.T) {
 		cookieSecret:  []byte("0123456789abcdef0123456789abcdef"),
 		mgr:           mgr,
 	}
-	cfg.setProviders([]loginProvider{&oidcProvider{id: "google", labelJA: "Google でサインイン"}})
+	cfg.setProviders([]loginProvider{&oidcProvider{ProviderID: "google", LabelJA: "Google でサインイン"}})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin)
 	body := func(path string) string {
@@ -353,7 +353,7 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 	}
 	// デプロイ自身の GitHub ボタン（env 由来）。既定の文言を持っている。
 	cfg.setProviders([]loginProvider{&githubProvider{
-		id: githubProviderID, labelJA: "GitHub でサインイン", labelEN: "Sign in with GitHub",
+		ProviderID: githubProviderID, LabelJA: "GitHub でサインイン", LabelEN: "Sign in with GitHub",
 	}})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin)

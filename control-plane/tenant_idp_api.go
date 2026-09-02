@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -110,7 +111,7 @@ func (a tenantIdPAPI) list(w http.ResponseWriter, r *http.Request) {
 	out := make([]tenantIdPBody, 0, len(rows))
 	for _, row := range rows {
 		id := tenantProviderID(t.Slug, row.Name)
-		out = append(out, a.rowToBody(row, t.Slug, a.mgr.tenantIdP.providerFor(r.Context(), id) != nil))
+		out = append(out, a.rowToBody(row, t.Slug, a.mgr.tenantIdP.ProviderFor(r.Context(), id) != nil))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"providers": out, "tenant": t.Slug})
 }
@@ -127,7 +128,7 @@ func (a tenantIdPAPI) queue(w http.ResponseWriter, r *http.Request, _ store.Iden
 	for _, row := range rows {
 		slug := tenants[row.TenantID].Slug
 		id := tenantProviderID(slug, row.Name)
-		out = append(out, a.rowToBody(row, slug, a.mgr.tenantIdP.providerFor(r.Context(), id) != nil))
+		out = append(out, a.rowToBody(row, slug, a.mgr.tenantIdP.ProviderFor(r.Context(), id) != nil))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		return statusRank(out[i].Status) < statusRank(out[j].Status)
@@ -275,7 +276,7 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	a.mgr.tenantIdP.invalidate()
+	a.mgr.tenantIdP.Invalidate()
 	a.audit(r, ident, t.ID, action, tenantProviderID(t.Slug, row.Name),
 		"kind="+row.Kind+" issuer="+row.Issuer+" trust="+row.Trust+" orgs="+row.AllowedOrgs+
 			" domains="+row.AllowedDomains+" link_claim="+row.LinkClaim+" status="+row.Status)
@@ -424,7 +425,7 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	a.mgr.tenantIdP.invalidate()
+	a.mgr.tenantIdP.Invalidate()
 	a.audit(r, ident, t.ID, "tenant_idp."+status, tenantProviderID(t.Slug, row.Name), "issuer="+row.Issuer)
 	writeJSON(w, http.StatusOK, map[string]any{"id": row.ID, "status": status})
 }
@@ -454,7 +455,7 @@ func (a tenantIdPAPI) remove(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	a.mgr.tenantIdP.invalidate()
+	a.mgr.tenantIdP.Invalidate()
 	a.audit(r, ident, t.ID, "tenant_idp.delete", tenantProviderID(t.Slug, row.Name), "issuer="+row.Issuer)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": row.ID})
 }
@@ -553,13 +554,12 @@ func (a tenantIdPAPI) checkPairwiseNeedsLinkClaim(r *http.Request, b tenantIdPBo
 	// waiting on a slow IdP would be worse than not asking.
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	probe := &oidcProvider{id: "probe", issuer: b.Issuer}
-	ep, err := probe.endpoints(ctx)
+	pairwise, err := auth.IssuerUsesPairwiseSubjects(ctx, b.Issuer)
 	if err != nil {
 		log.Printf("tenant idp: %s: subject_types probe failed, saving without the pairwise check: %v", b.Issuer, err)
 		return nil
 	}
-	if !ep.pairwiseSubjects() {
+	if !pairwise {
 		return nil
 	}
 	return &apiError{http.StatusBadRequest, "tenant_idp_link_claim_required",
@@ -623,7 +623,7 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 	// choose; `email` / `upn` / `preferred_username` are ASSERTED, and a tenant that
 	// could name one would have an email join inside a shared realm — the takeover
 	// rule 2' refuses, arriving through another door.
-	if b.LinkClaim != "" && !tenantLinkClaims[b.LinkClaim] {
+	if b.LinkClaim != "" && !tenantLinkClaimAllowed(b.LinkClaim) {
 		return &apiError{http.StatusBadRequest, "tenant_idp_link_claim_invalid",
 			"link_claim must be one of " + strings.Join(tenantLinkClaimList(), ", ") +
 				" — a claim the IdP assigns and nobody can choose. An asserted claim (email, upn, …) would let this sign-in method reach accounts created by a different authority"}

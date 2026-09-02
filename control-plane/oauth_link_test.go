@@ -123,7 +123,7 @@ func linkTestConfig(t *testing.T, idp *stubIdP) (config, *store.SQL) {
 	// the way main.go does — the link flow must run the SAME Allowed() as a login.
 	for _, p := range cfg.providers {
 		if op, ok := p.(*oidcProvider); ok {
-			op.deployAllowed, op.dbAllowed = cfg.emailAllowed, cfg.tenantEmailAllowed
+			op.DeployAllowed, op.DBAllowed = cfg.emailAllowed, cfg.tenantEmailAllowed
 		}
 	}
 	return cfg, st
@@ -287,7 +287,7 @@ func TestLinkRunsTheMethodsOwnGate(t *testing.T) {
 	})
 	cfg, st := linkTestConfig(t, idp)
 	// この provider だけの許可リスト（別ドメイン）＝ この人は入れない。
-	cfg.providers[0].(*oidcProvider).allowDomains = domainSet("sub.co.jp")
+	cfg.providers[0].(*oidcProvider).AllowDomains = domainSet("sub.co.jp")
 	me, session := seedSignedIn(t, cfg, st, email)
 
 	w := startLink(t, cfg, session, "?provider=entra")

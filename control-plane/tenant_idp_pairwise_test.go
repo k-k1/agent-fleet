@@ -93,12 +93,12 @@ func TestTenantIdPPairwiseSecondRegistrationNeedsLinkClaim(t *testing.T) {
 	// ★ The deployment's OWN provider counts as a door. This is the commonest shape:
 	// the tenant registers its own app for the directory the deployment already uses,
 	// and the DB rows alone would not see it.
-	envAPI := newTenantIdPAPI(mgr, []loginProvider{&oidcProvider{id: "entra-env", issuer: public}})
+	envAPI := newTenantIdPAPI(mgr, []loginProvider{&oidcProvider{ProviderID: "entra-env", Issuer: public}})
 	w = post(envAPI, row("okta3", public, ""))
 	if w.Code != http.StatusOK {
 		t.Fatalf("a public issuer stays fine even when env has it: %d %s", w.Code, w.Body.String())
 	}
-	envPairwise := newTenantIdPAPI(mgr, []loginProvider{&oidcProvider{id: "entra-env", issuer: pairwise}})
+	envPairwise := newTenantIdPAPI(mgr, []loginProvider{&oidcProvider{ProviderID: "entra-env", Issuer: pairwise}})
 	st2 := p3Store(t) // a store with no rows, so only the env provider can be the "other door"
 	mgr2 := p4Manager(t, st2)
 	if _, err := st2.UpsertIdentity(ctx, "boss@acme.co.jp", "boss-acme-co-jp", "super_admin"); err != nil {

@@ -49,30 +49,30 @@ import (
 //
 // ★ Tokens live in memory only, and are therefore lost on restart. A request whose
 // subject has no cache entry cannot be judged at all, so it is refused with
-// errNeedsReauth, which sends the browser back to /login with "sign in again"
+// ErrNeedsReauth, which sends the browser back to /login with "sign in again"
 // rather than "you are not allowed" — the person is not forbidden, we simply no
 // longer hold what it takes to prove they are still in the org. GitHub usually
 // completes that round trip without asking them anything.
 const (
-	githubProviderID = "github"
+	GithubProviderID = "github"
 
-	githubWebBase = "https://github.com"
-	githubAPIBase = "https://api.github.com"
+	GithubWebBase = "https://github.com"
+	GithubAPIBase = "https://api.github.com"
 
-	githubDefaultTTL   = 10 * time.Minute
-	githubDefaultGrace = time.Hour
+	GithubDefaultTTL   = 10 * time.Minute
+	GithubDefaultGrace = time.Hour
 
 	// GitHub rejects API calls without a User-Agent, and read:org is what makes
 	// the membership endpoint answer for organizations the person belongs to.
 	githubUserAgent = "agent-fleet-control-plane"
-	githubScopes    = "read:org user:email"
+	GithubScopes    = "read:org user:email"
 )
 
-// errNeedsReauth denies a request without accusing the person: we lack the
+// ErrNeedsReauth denies a request without accusing the person: we lack the
 // material to re-check them (see the file header), so the honest remedy is a fresh
 // sign-in. authGate turns it into /login?error=reauth (or a 401 for the SPA)
 // instead of the "not allowed" 403.
-var errNeedsReauth = errors.New("re-authentication required")
+var ErrNeedsReauth = errors.New("re-authentication required")
 
 // githubMembership is one person's cached authorization state. `token` is their
 // OAuth access token, kept solely to refresh this entry.
@@ -83,103 +83,103 @@ type githubMembership struct {
 	lastOK time.Time // when that answer was last a positive one (grace window)
 }
 
-type githubProvider struct {
-	id           string
-	labelJA      string
-	labelEN      string
-	clientID     string
-	clientSecret string
+type GitHubProvider struct {
+	ProviderID   string
+	LabelJA      string
+	LabelEN      string
+	ClientID     string
+	ClientSecret string
 
-	allowedOrgs []string // required; membership in ANY of them is enough
+	AllowedOrgs []string // required; membership in ANY of them is enough
 
 	// Email gate. A provider-specific list replaces the deployment-wide one
 	// entirely; with neither configured the orgs are the only gate. dbAllowed is
 	// the roster/auto-join term P3 adds (docs/log/61 §61.9.6) — an extra way to satisfy
 	// gate 2, never a way around gate 1.
-	allowEmails   map[string]bool
-	allowDomains  map[string]bool
-	deployAllowed func(email string) bool
-	dbAllowed     func(ctx context.Context, email string) bool
-	deployHasList bool
+	AllowEmails   map[string]bool
+	AllowDomains  map[string]bool
+	DeployAllowed func(email string) bool
+	DBAllowed     func(ctx context.Context, email string) bool
+	DeployHasList bool
 
-	ttl   time.Duration
-	grace time.Duration
+	TTL   time.Duration
+	Grace time.Duration
 
-	webBase string // overridden in tests
-	apiBase string
-	client  *http.Client
+	WebBase    string // overridden in tests
+	APIBase    string
+	HTTPClient *http.Client
 
 	mu    sync.Mutex
 	cache map[string]*githubMembership
 }
 
-func (p *githubProvider) ID() string { return p.id }
+func (p *GitHubProvider) ID() string { return p.ProviderID }
 
-func (p *githubProvider) Label(lang string) string {
+func (p *GitHubProvider) Label(lang string) string {
 	if lang == "en" {
-		return p.labelEN
+		return p.LabelEN
 	}
-	return p.labelJA
+	return p.LabelJA
 }
 
-// issuerURL — GitHub is not an OIDC issuer here (the adapter reads the REST API),
+// IssuerURL — GitHub is not an OIDC issuer here (the adapter reads the REST API),
 // but "where does this identity come from" has the same answer for the admin list,
 // and it is one fixed host for every deployment. The org allowlist that actually
 // gates login is config, so it stays out of the response.
-func (p *githubProvider) issuerURL() string { return githubWebBase }
+func (p *GitHubProvider) IssuerURL() string { return GithubWebBase }
 
-// hasOwnAllowlist is true for every configured GitHub provider: the org list is an
+// HasOwnAllowlist is true for every configured GitHub provider: the org list is an
 // allowlist, so a deployment whose only provider is GitHub must not be warned that
 // every login will be denied.
-func (p *githubProvider) hasOwnAllowlist() bool { return len(p.allowedOrgs) > 0 }
+func (p *GitHubProvider) HasOwnAllowlist() bool { return len(p.AllowedOrgs) > 0 }
 
-func (p *githubProvider) httpClient() *http.Client {
-	if p.client != nil {
-		return p.client
+func (p *GitHubProvider) httpClient() *http.Client {
+	if p.HTTPClient != nil {
+		return p.HTTPClient
 	}
 	return oidcHTTPClient
 }
 
-func (p *githubProvider) web() string {
-	if p.webBase != "" {
-		return strings.TrimRight(p.webBase, "/")
+func (p *GitHubProvider) Web() string {
+	if p.WebBase != "" {
+		return strings.TrimRight(p.WebBase, "/")
 	}
-	return githubWebBase
+	return GithubWebBase
 }
 
-func (p *githubProvider) api() string {
-	if p.apiBase != "" {
-		return strings.TrimRight(p.apiBase, "/")
+func (p *GitHubProvider) API() string {
+	if p.APIBase != "" {
+		return strings.TrimRight(p.APIBase, "/")
 	}
-	return githubAPIBase
+	return GithubAPIBase
 }
 
 // --- authorize --------------------------------------------------------------
 
-func (p *githubProvider) AuthorizeURL(_ context.Context, state, redirectURI string) (string, error) {
+func (p *GitHubProvider) AuthorizeURL(_ context.Context, state, redirectURI string) (string, error) {
 	q := url.Values{
-		"client_id":    {p.clientID},
+		"client_id":    {p.ClientID},
 		"redirect_uri": {redirectURI},
-		"scope":        {githubScopes},
+		"scope":        {GithubScopes},
 		"state":        {state},
 	}
-	return p.web() + "/login/oauth/authorize?" + q.Encode(), nil
+	return p.Web() + "/login/oauth/authorize?" + q.Encode(), nil
 }
 
 // --- token exchange ---------------------------------------------------------
 
-func (p *githubProvider) Exchange(ctx context.Context, code, redirectURI string) (principal, error) {
-	token, err := p.exchangeCode(ctx, code, redirectURI)
+func (p *GitHubProvider) Exchange(ctx context.Context, code, redirectURI string) (Principal, error) {
+	token, err := p.ExchangeCode(ctx, code, redirectURI)
 	if err != nil {
-		return principal{}, err
+		return Principal{}, err
 	}
 	id, err := p.currentUserID(ctx, token)
 	if err != nil {
-		return principal{}, err
+		return Principal{}, err
 	}
 	email, err := p.primaryVerifiedEmail(ctx, token)
 	if err != nil {
-		return principal{}, err
+		return Principal{}, err
 	}
 	// Settle the membership question now, while we are certain to have a working
 	// token, and seed the cache with it. An API failure here fails the login
@@ -187,26 +187,26 @@ func (p *githubProvider) Exchange(ctx context.Context, code, redirectURI string)
 	// fall back on for someone signing in for the first time.
 	member, err := p.memberOfAnyOrg(ctx, token)
 	if err != nil {
-		return principal{}, fmt.Errorf("github org membership: %w", err)
+		return Principal{}, fmt.Errorf("github org membership: %w", err)
 	}
-	p.remember(id, token, member)
+	p.Remember(id, token, member)
 	// trust: "api" (§61.4) — the address came from /user/emails carrying its own
 	// verified flag, which is the only GitHub source that has one.
-	return principal{Provider: p.id, Subject: id, Email: email, Verified: true}, nil
+	return Principal{Provider: p.ProviderID, Subject: id, Email: email, Verified: true}, nil
 }
 
-// exchangeCode swaps the authorization code for an access token.
+// ExchangeCode swaps the authorization code for an access token.
 //
 // ★ Without Accept: application/json GitHub answers this endpoint in
 // application/x-www-form-urlencoded — a JSON decode then succeeds on nothing and
 // yields an empty token rather than an error (§61.7).
-func (p *githubProvider) exchangeCode(ctx context.Context, code, redirectURI string) (string, error) {
+func (p *GitHubProvider) ExchangeCode(ctx context.Context, code, redirectURI string) (string, error) {
 	form := url.Values{
-		"client_id": {p.clientID}, "client_secret": {p.clientSecret},
+		"client_id": {p.ClientID}, "client_secret": {p.ClientSecret},
 		"code": {code}, "redirect_uri": {redirectURI},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.web()+"/login/oauth/access_token", strings.NewReader(form.Encode()))
+		p.Web()+"/login/oauth/access_token", strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
 	}
@@ -238,8 +238,8 @@ func (p *githubProvider) exchangeCode(ctx context.Context, code, redirectURI str
 // apiGet performs an authenticated REST call and decodes it into out. It reports
 // the status code separately so callers can treat 403/404 as an answer rather than
 // as a failure.
-func (p *githubProvider) apiGet(ctx context.Context, token, path string, out any) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.api()+path, nil)
+func (p *GitHubProvider) apiGet(ctx context.Context, token, path string, out any) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.API()+path, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -268,7 +268,7 @@ func (p *githubProvider) apiGet(ctx context.Context, token, path string, out any
 //
 // ★ Not `login`: a GitHub username can be changed and then claimed by somebody
 // else, so keying an identity on it would hand over a workspace (§61.7).
-func (p *githubProvider) currentUserID(ctx context.Context, token string) (string, error) {
+func (p *GitHubProvider) currentUserID(ctx context.Context, token string) (string, error) {
 	var u struct {
 		ID    int64  `json:"id"`
 		Login string `json:"login"`
@@ -292,7 +292,7 @@ func (p *githubProvider) currentUserID(ctx context.Context, token string) (strin
 // address private, and it carries no verified flag — anyone can add someone else's
 // company address to their account, so an unverified one must never reach the
 // allowlist (§61.4).
-func (p *githubProvider) primaryVerifiedEmail(ctx context.Context, token string) (string, error) {
+func (p *GitHubProvider) primaryVerifiedEmail(ctx context.Context, token string) (string, error) {
 	var emails []struct {
 		Email    string `json:"email"`
 		Primary  bool   `json:"primary"`
@@ -310,15 +310,15 @@ func (p *githubProvider) primaryVerifiedEmail(ctx context.Context, token string)
 			return strings.TrimSpace(e.Email), nil
 		}
 	}
-	return "", fmt.Errorf("%w: the GitHub account has no primary verified email address", errNotAllowed)
+	return "", fmt.Errorf("%w: the GitHub account has no primary verified email address", ErrNotAllowed)
 }
 
 // memberOfAnyOrg reports active membership in at least one allowed org. 404 (not a
 // member) and 403 are answers, not failures; only a transport-level problem is an
 // error, and only then so that the grace window in Allowed can apply.
-func (p *githubProvider) memberOfAnyOrg(ctx context.Context, token string) (bool, error) {
+func (p *GitHubProvider) memberOfAnyOrg(ctx context.Context, token string) (bool, error) {
 	var lastErr error
-	for _, org := range p.allowedOrgs {
+	for _, org := range p.AllowedOrgs {
 		var m struct {
 			State string `json:"state"`
 		}
@@ -346,7 +346,7 @@ func (p *githubProvider) memberOfAnyOrg(ctx context.Context, token string) (bool
 
 // --- authorization ----------------------------------------------------------
 
-func (p *githubProvider) remember(subject, token string, ok bool) {
+func (p *GitHubProvider) Remember(subject, token string, ok bool) {
 	now := time.Now()
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -374,35 +374,35 @@ func (p *githubProvider) remember(subject, token string, ok bool) {
 // invited person clears the email gate without also being listed in the env. It is
 // deliberately confined to gate 2: gate 1 (org membership) is a different axis and
 // stays an AND, so a membership can never let somebody outside the org sign in.
-func (p *githubProvider) emailAllowed(ctx context.Context, email string) bool {
+func (p *GitHubProvider) emailAllowed(ctx context.Context, email string) bool {
 	email = strings.ToLower(strings.TrimSpace(email))
 	at := strings.LastIndexByte(email, '@')
 	if email == "" || at < 0 {
 		return false
 	}
 	switch {
-	case len(p.allowEmails) > 0 || len(p.allowDomains) > 0:
-		if p.allowEmails[email] || p.allowDomains[email[at+1:]] {
+	case len(p.AllowEmails) > 0 || len(p.AllowDomains) > 0:
+		if p.AllowEmails[email] || p.AllowDomains[email[at+1:]] {
 			return true
 		}
-	case p.deployHasList && p.deployAllowed != nil:
-		if p.deployAllowed(email) {
+	case p.DeployHasList && p.DeployAllowed != nil:
+		if p.DeployAllowed(email) {
 			return true
 		}
 	default:
 		return true // no email list anywhere: the orgs are the whole allowlist
 	}
-	return p.dbAllowed != nil && p.dbAllowed(ctx, email)
+	return p.DBAllowed != nil && p.DBAllowed(ctx, email)
 }
 
 // Allowed runs both gates. The email one is first because it costs nothing and
 // needs no token — a person outside the allowed domains never causes an API call.
-func (p *githubProvider) Allowed(ctx context.Context, pr principal) (bool, error) {
+func (p *GitHubProvider) Allowed(ctx context.Context, pr Principal) (bool, error) {
 	if !p.emailAllowed(ctx, pr.Email) {
 		return false, nil
 	}
 	if pr.Subject == "" {
-		return false, errNeedsReauth // a pre-P0 session cookie, which has no subject
+		return false, ErrNeedsReauth // a pre-P0 session cookie, which has no subject
 	}
 
 	p.mu.Lock()
@@ -416,11 +416,11 @@ func (p *githubProvider) Allowed(ctx context.Context, pr principal) (bool, error
 	switch {
 	case e == nil:
 		// Nothing to judge them by (CP restarted, or this is another replica).
-		return false, errNeedsReauth
-	case time.Since(snapshot.at) < p.ttl:
+		return false, ErrNeedsReauth
+	case time.Since(snapshot.at) < p.TTL:
 		return snapshot.ok, nil
 	case snapshot.token == "":
-		return false, errNeedsReauth
+		return false, ErrNeedsReauth
 	}
 
 	member, err := p.memberOfAnyOrg(ctx, snapshot.token)
@@ -428,20 +428,20 @@ func (p *githubProvider) Allowed(ctx context.Context, pr principal) (bool, error
 		// GitHub is unreachable. Honor the last positive answer for the grace
 		// window, then deny — an outage must not be an open door forever, nor lock
 		// everyone out the moment it starts.
-		if !snapshot.lastOK.IsZero() && time.Since(snapshot.lastOK) < p.grace {
+		if !snapshot.lastOK.IsZero() && time.Since(snapshot.lastOK) < p.Grace {
 			log.Printf("github: membership re-check failed (%v) — honoring the last positive answer for %s more",
-				err, (p.grace - time.Since(snapshot.lastOK)).Round(time.Second))
+				err, (p.Grace - time.Since(snapshot.lastOK)).Round(time.Second))
 			return true, nil
 		}
 		return false, nil
 	}
-	p.remember(pr.Subject, "", member)
+	p.Remember(pr.Subject, "", member)
 	return member, nil
 }
 
 // --- construction from the environment --------------------------------------
 
-// newGitHubProvider builds the adapter from GITHUB_OAUTH_* / AF_GITHUB_*, or
+// NewGitHubProvider builds the adapter from GITHUB_OAUTH_* / AF_GITHUB_*, or
 // returns nil with a warning when the deployment did not (fully) configure it.
 // Following 決定 11, an incomplete GitHub config disables GitHub only — it never
 // stops CP from starting, because that would let one IdP's typo lock out the
@@ -458,7 +458,7 @@ func (p *githubProvider) Allowed(ctx context.Context, pr principal) (bool, error
 // what actually authorizes the sign-in (§61.3), and a deployment upgrading from before
 // docs/log/71 has GITHUB_OAUTH_CLIENT_ID set for the git flow and must not be nagged at
 // every startup about a feature it never asked for.
-func newGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.Context, string) bool, deployHasList bool) *githubProvider {
+func NewGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.Context, string) bool, deployHasList bool) *GitHubProvider {
 	clientID := firstNonEmpty(os.Getenv("AF_GITHUB_LOGIN_CLIENT_ID"), os.Getenv("GITHUB_OAUTH_CLIENT_ID"))
 	clientSecret := firstNonEmpty(os.Getenv("AF_GITHUB_LOGIN_CLIENT_SECRET"), os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"))
 	orgs := splitCSV(os.Getenv("AF_GITHUB_ALLOWED_ORGS"))
@@ -478,23 +478,23 @@ func newGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.C
 	for i, o := range orgs {
 		orgs[i] = strings.ToLower(o)
 	}
-	p := &githubProvider{
-		id:            githubProviderID,
-		labelJA:       envOr("AF_GITHUB_LABEL_JA", "GitHub でサインイン"),
-		labelEN:       envOr("AF_GITHUB_LABEL_EN", "Sign in with GitHub"),
-		clientID:      clientID,
-		clientSecret:  clientSecret,
-		allowedOrgs:   orgs,
-		allowEmails:   emailSet(os.Getenv("AF_GITHUB_ALLOWED_EMAILS")),
-		allowDomains:  domainSet(os.Getenv("AF_GITHUB_ALLOWED_DOMAINS")),
-		deployAllowed: deployAllowed,
-		dbAllowed:     dbAllowed,
-		deployHasList: deployHasList,
-		ttl:           parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_TTL"), githubDefaultTTL),
-		grace:         parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_GRACE"), githubDefaultGrace),
+	p := &GitHubProvider{
+		ProviderID:    GithubProviderID,
+		LabelJA:       envOr("AF_GITHUB_LABEL_JA", "GitHub でサインイン"),
+		LabelEN:       envOr("AF_GITHUB_LABEL_EN", "Sign in with GitHub"),
+		ClientID:      clientID,
+		ClientSecret:  clientSecret,
+		AllowedOrgs:   orgs,
+		AllowEmails:   emailSet(os.Getenv("AF_GITHUB_ALLOWED_EMAILS")),
+		AllowDomains:  domainSet(os.Getenv("AF_GITHUB_ALLOWED_DOMAINS")),
+		DeployAllowed: deployAllowed,
+		DBAllowed:     dbAllowed,
+		DeployHasList: deployHasList,
+		TTL:           parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_TTL"), GithubDefaultTTL),
+		Grace:         parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_GRACE"), GithubDefaultGrace),
 		cache:         map[string]*githubMembership{},
 	}
-	if len(p.allowEmails) == 0 && len(p.allowDomains) == 0 && !deployHasList {
+	if len(p.AllowEmails) == 0 && len(p.AllowDomains) == 0 && !deployHasList {
 		log.Printf("WARNING: github login has no email allowlist (AF_GITHUB_ALLOWED_DOMAINS) — anyone in %s can sign in, and a member whose primary GitHub address is outside your company domain lands in a NEW workspace rather than their existing one",
 			strings.Join(orgs, ", "))
 	}
@@ -517,14 +517,14 @@ func newGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.C
 //	                  subsidiary — github.com is one issuer for the whole world, so
 //	                  the org IS the tenant boundary here (docs/log/61 §61.15).
 //	allowDomains      required, from the row. No fallback to the deployment-wide
-//	                  list or the roster term, exactly as buildTenantProvider does
+//	                  list or the roster term, exactly as BuildTenantProvider does
 //	                  for OIDC (決定 32-3).
 //
 // ★ webBase / apiBase are deliberately NOT settable from the row: they are the
 // constants github.com / api.github.com. A row that could redirect them would let a
 // tenant point the adapter at a server it controls and mint any subject it liked —
 // and the subject is what rule 1.5 joins on.
-func newTenantGitHubProvider(row store.TenantIdP, tn store.TenantRef, secret string) (*githubProvider, error) {
+func newTenantGitHubProvider(row store.TenantIdP, tn store.TenantRef, secret string) (*GitHubProvider, error) {
 	if row.ClientID == "" || secret == "" {
 		return nil, errors.New("client_id / client_secret are required")
 	}
@@ -546,24 +546,24 @@ func newTenantGitHubProvider(row store.TenantIdP, tn store.TenantRef, secret str
 	// a row that declared its own label wins, as before.
 	labelJA, labelEN := row.LabelJA, row.LabelEN
 	if labelJA == "" {
-		labelJA = tenantLabelSuffix(envOr("AF_GITHUB_LABEL_JA", "GitHub でサインイン"), tn, "ja")
+		labelJA = TenantLabelSuffix(envOr("AF_GITHUB_LABEL_JA", "GitHub でサインイン"), tn, "ja")
 	}
 	if labelEN == "" {
-		labelEN = tenantLabelSuffix(envOr("AF_GITHUB_LABEL_EN", "Sign in with GitHub"), tn, "en")
+		labelEN = TenantLabelSuffix(envOr("AF_GITHUB_LABEL_EN", "Sign in with GitHub"), tn, "en")
 	}
-	return &githubProvider{
-		id:           tenantProviderID(tn.Slug, row.Name),
-		labelJA:      labelJA,
-		labelEN:      labelEN,
-		clientID:     row.ClientID,
-		clientSecret: secret,
-		allowedOrgs:  orgs,
-		allowDomains: domains,
+	return &GitHubProvider{
+		ProviderID:   TenantProviderID(tn.Slug, row.Name),
+		LabelJA:      labelJA,
+		LabelEN:      labelEN,
+		ClientID:     row.ClientID,
+		ClientSecret: secret,
+		AllowedOrgs:  orgs,
+		AllowDomains: domains,
 		// The TTL and grace stay deployment-level: they are about how long CP may
 		// trust a cached answer from GitHub, which is an operational property of this
 		// installation and not something a tenant should be able to stretch.
-		ttl:   parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_TTL"), githubDefaultTTL),
-		grace: parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_GRACE"), githubDefaultGrace),
+		TTL:   parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_TTL"), GithubDefaultTTL),
+		Grace: parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_GRACE"), GithubDefaultGrace),
 		cache: map[string]*githubMembership{},
 	}, nil
 }

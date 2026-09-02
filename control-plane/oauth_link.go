@@ -238,24 +238,24 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 // new-account notices use, with one button back to where the person was.
 func (c config) writeLinkResult(w http.ResponseWriter, r *http.Request, res linkResult, label, next string) {
 	lang := preferredUILang(r)
-	t := loginText[lang]
+	t := loginTextFor(lang)
 	if next == "" {
 		next = "/"
 	}
-	body, class := t.linkFailed, "err"
+	body, class := t.LinkFailed, "err"
 	switch res {
 	case linkOK:
-		body, class = t.linkOK, "msg"
+		body, class = t.LinkOK, "msg"
 	case linkErrTaken:
-		body = t.linkTaken
+		body = t.LinkTaken
 	case linkErrEmail:
-		body = t.linkEmail
+		body = t.LinkEmail
 	case linkErrGate:
-		body = t.linkGate
+		body = t.LinkGate
 	case linkErrSess:
-		body = t.linkSession
+		body = t.LinkSession
 	case linkErrProv:
-		body = t.linkProvider
+		body = t.LinkProvider
 	}
 	if label != "" {
 		body = html.EscapeString(label) + " — " + body
@@ -264,10 +264,10 @@ func (c config) writeLinkResult(w http.ResponseWriter, r *http.Request, res link
 	w.Header().Set("Cache-Control", "no-store")
 	page := strings.NewReplacer(
 		"{{LANG}}", lang,
-		"{{TITLE}}", html.EscapeString(t.linkTitle),
-		"{{NOTE}}", t.linkNote,
+		"{{TITLE}}", html.EscapeString(t.LinkTitle),
+		"{{NOTE}}", t.LinkNote,
 		"{{ERROR}}", `<div class="`+class+`">`+body+`</div>`,
-		"{{BUTTONS}}", `<a class="gbtn" href="`+html.EscapeString(next)+`">`+t.linkBack+`</a>`,
+		"{{BUTTONS}}", `<a class="gbtn" href="`+html.EscapeString(next)+`">`+t.LinkBack+`</a>`,
 	).Replace(loginPageHTML)
 	_, _ = w.Write([]byte(page))
 }
@@ -426,7 +426,7 @@ func (a accountAPI) providerByID(ctx context.Context, id string) loginProvider {
 		}
 	}
 	if isTenantProviderID(id) && a.mgr != nil {
-		return a.mgr.tenantIdP.providerFor(ctx, id)
+		return a.mgr.tenantIdP.ProviderFor(ctx, id)
 	}
 	return nil
 }
@@ -448,7 +448,7 @@ func (a accountAPI) linkCandidates(ctx context.Context, ident store.Identity) []
 			continue
 		}
 		seen[m.TenantSlug] = true
-		out = append(out, a.mgr.tenantIdP.providersForSlug(ctx, m.TenantSlug)...)
+		out = append(out, a.mgr.tenantIdP.ProvidersForSlug(ctx, m.TenantSlug)...)
 	}
 	return out
 }
