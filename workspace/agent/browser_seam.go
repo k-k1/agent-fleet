@@ -6,11 +6,15 @@
 // これはエイリアスではなく起動時の依存注入である（internal/browserx/deps.go 参照）。
 package main
 
-import "github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
+import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+)
 
 func init() {
 	browserx.SetDeps(
-		agentSendToSession,
+		mcpx.AgentSendToSession,
 		chromiumDefaultPin,
 		chromiumPinnedBinary,
 		installChromium,

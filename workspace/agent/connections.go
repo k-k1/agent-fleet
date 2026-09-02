@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -597,7 +598,7 @@ func handlePutCloudWatchConn(w http.ResponseWriter, r *http.Request) {
 	// Materialize the ops config now (mcp-run also regenerates it per spawn) so
 	// the user can `aws sso login` against it before the first chat turn.
 	if ref.StartURL != "" {
-		if err := writeOpsAWSConfig("cloudwatch", ref); err != nil {
+		if err := mcpx.WriteOpsAWSConfig("cloudwatch", ref); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 			return
 		}
@@ -655,7 +656,7 @@ func awsMCPEndpoint(region string) string {
 			return r
 		}
 	}
-	return awsMCPDefaultEndpoint
+	return mcpx.AWSMCPDefaultEndpoint
 }
 
 // handlePutAWSMCPConn stores the AWS profile + endpoint the AWS MCP proxy should use
@@ -683,7 +684,7 @@ func handlePutAWSMCPConn(w http.ResponseWriter, r *http.Request) {
 		Write:         req.Write,
 	}
 	if ref.StartURL != "" {
-		if err := writeOpsAWSConfig("aws", ref); err != nil {
+		if err := mcpx.WriteOpsAWSConfig("aws", ref); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 			return
 		}

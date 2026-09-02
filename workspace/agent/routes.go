@@ -11,6 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 )
 
 // buildMux は Agent の全ルートを登録した mux を返す（docs/log/23 P0-2: main() からの
@@ -206,11 +207,11 @@ func buildMux() *http.ServeMux {
 	// working copy's own .mcp.json / opencode.json / .codex/config.toml / etc.
 	// Separate axis from the MCP registry (docs/log/48) — never auto-triggered, never
 	// touches user/global config.
-	mux.HandleFunc("GET /repos/{name}/mcp", handleRepoMCP)
+	mux.HandleFunc("GET /repos/{name}/mcp", mcpx.HandleRepo)
 	// docs/log/56 P1: reflect a server from one project MCP file to another
 	// (plan → apply, optimistic lock via planHash) and add a git-ignore entry.
-	mux.HandleFunc("POST /repos/{name}/mcp/plan", handleRepoMCPPlan)
-	mux.HandleFunc("POST /repos/{name}/mcp/apply", handleRepoMCPApply)
+	mux.HandleFunc("POST /repos/{name}/mcp/plan", mcpx.HandleRepoPlan)
+	mux.HandleFunc("POST /repos/{name}/mcp/apply", mcpx.HandleRepoApply)
 	// Source-control view + light edits (docs/17 P3-5).
 	mux.HandleFunc("GET /repos/{name}/changes", handleRepoChanges)
 	mux.HandleFunc("GET /repos/{name}/diff", handleRepoDiff)
@@ -302,15 +303,15 @@ func buildMux() *http.ServeMux {
 	// MCP レジストリ（docs/log/48 P0 / ADR0031）— ユーザー登録 MCP サーバーの CRUD と接続テスト。
 	// テナント配布と組み込み連携は同じ一覧に読み取り専用で混ざる。
 	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
-	mux.HandleFunc("GET /mcp-servers", handleMCPServersGet)
-	mux.HandleFunc("POST /mcp-servers", handleMCPServerCreate)
-	mux.HandleFunc("POST /mcp-servers/test", handleMCPServerTest)
-	mux.HandleFunc("PUT /mcp-servers/{id}", handleMCPServerUpdate)
-	mux.HandleFunc("POST /mcp-servers/{id}/enabled", handleMCPServerEnabled)
-	mux.HandleFunc("DELETE /mcp-servers/{id}", handleMCPServerDelete)
+	mux.HandleFunc("GET /mcp-servers", mcpx.HandleServersGet)
+	mux.HandleFunc("POST /mcp-servers", mcpx.HandleServerCreate)
+	mux.HandleFunc("POST /mcp-servers/test", mcpx.HandleServerTest)
+	mux.HandleFunc("PUT /mcp-servers/{id}", mcpx.HandleServerUpdate)
+	mux.HandleFunc("POST /mcp-servers/{id}/enabled", mcpx.HandleServerEnabled)
+	mux.HandleFunc("DELETE /mcp-servers/{id}", mcpx.HandleServerDelete)
 	// テナント配布（docs/log/48 P4）— 明示リフレッシュと、user_secret 定義の値入力。
-	mux.HandleFunc("POST /mcp-servers/tenant-refresh", handleMCPTenantRefresh)
-	mux.HandleFunc("PUT /mcp-servers/{id}/secrets", handleMCPServerSecrets)
+	mux.HandleFunc("POST /mcp-servers/tenant-refresh", mcpx.HandleTenantRefresh)
+	mux.HandleFunc("PUT /mcp-servers/{id}/secrets", mcpx.HandleServerSecrets)
 
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)

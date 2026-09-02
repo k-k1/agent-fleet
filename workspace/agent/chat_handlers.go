@@ -14,6 +14,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -407,7 +408,7 @@ func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 	// lingering until the next container rebuild.
 	removeChatMCPConfig(id)
 	// get_session_output の会話別カーソル（mcp_stdio.go outputCursors）も一緒に落とす。
-	outputCursors.Remove(id)
+	mcpx.OutputCursors.Remove(id)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

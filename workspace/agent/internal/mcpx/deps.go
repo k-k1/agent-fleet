@@ -9,7 +9,7 @@ package mcpx
 //
 //   - mcpx は main を import しない（できない。逆向きの依存が既にある）
 //   - なので「main の関数を呼ぶ」は関数値として受け取る形にする
-//   - **配線は起動時に 1 回**（main の alias_mcp.go の init）。Configure が
+//   - **配線は起動時に 1 回**（main の mcp_wiring.go の init）。Configure が
 //     欠けを検査して落とす —— 配線漏れを既定値で黙って埋めると、承認ゲートが
 //     素通りするような穴になるので、**静かに動くより落ちる方を選ぶ**
 //
@@ -97,7 +97,7 @@ type Deps struct {
 
 var deps Deps
 
-// Configure は起動時に 1 回だけ呼ぶ（main の alias_mcp.go / mcpx のテストの init）。
+// Configure は起動時に 1 回だけ呼ぶ（main の mcp_wiring.go / mcpx のテストの init）。
 // 欠けたまま動かさない —— 承認ゲートやセッション件名の上限が「たまたま零値」で動くと、
 // 壊れていることが誰にも見えない形の穴になる。
 //

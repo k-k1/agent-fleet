@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"net/http"
 	"net/http/httptest"
@@ -75,7 +76,7 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 	if got := chatAutoTurnDelay(); got != chatAutoTurnDelayDefault {
 		t.Fatalf("auto-turn delay default = %v", got)
 	}
-	if got := mcpSessionOutputTail(); got != mcpSessionOutputTailBytes {
+	if got := mcpx.SessionOutputTail(); got != mcpx.SessionOutputTailBytes {
 		t.Fatalf("output tail default = %d", got)
 	}
 
@@ -94,7 +95,7 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 	if got := chatAutoTurnDelay(); got != 120*time.Second {
 		t.Fatalf("auto-turn delay = %v", got)
 	}
-	if got := mcpSessionOutputTail(); got != 64<<10 {
+	if got := mcpx.SessionOutputTail(); got != 64<<10 {
 		t.Fatalf("output tail = %d", got)
 	}
 
@@ -116,11 +117,11 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 	if got := chatAutoTurnDelay(); got != chatAutoTurnDelayMax {
 		t.Fatalf("auto-turn delay cap = %v", got)
 	}
-	if got := mcpSessionOutputTail(); got != 1<<20 {
+	if got := mcpx.SessionOutputTail(); got != 1<<20 {
 		t.Fatalf("output tail cap = %d", got)
 	}
 	writeUIPrefs(t, `{"assistantOutputTailKiB":1}`)
-	if got := mcpSessionOutputTail(); got != 4<<10 {
+	if got := mcpx.SessionOutputTail(); got != 4<<10 {
 		t.Fatalf("output tail floor = %d", got)
 	}
 }

@@ -1,7 +1,7 @@
 package mcpx
 
 // mcpx 単体のテストは package main を持たないので、外向きの依存を**作り物で**配線する。
-// 数字も文言も本物ではない（本物は main の alias_mcp.go が配線する）——ここで本物の値を
+// 数字も文言も本物ではない（本物は main の mcp_wiring.go が配線する）——ここで本物の値を
 // 書き写すと、それ自体が二つ目の出所になる。
 
 import (
@@ -17,7 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// mcpx 単体テストでの保管場所（本番は main の alias_mcp.go が持つ）。
+// mcpx 単体テストでの保管場所（本番は main の mcp_wiring.go が持つ）。
 var (
 	testWrite, testSelfReport, testChromium bool
 	testConvID                              string

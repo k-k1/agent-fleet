@@ -35,6 +35,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -392,7 +393,7 @@ func createRateLimitSchedule(m session.Meta, at time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out, err := cpScheduleDo(http.MethodPost, "/internal/schedules", body)
+	out, err := mcpx.CPScheduleDo(http.MethodPost, "/internal/schedules", body)
 	if err != nil {
 		return "", err
 	}
@@ -424,7 +425,7 @@ func scheduleTZName() string {
 
 // deleteRateLimitSchedule removes a spent once-schedule, best-effort.
 func deleteRateLimitSchedule(id string) {
-	if _, err := cpScheduleDo(http.MethodDelete, "/internal/schedules/"+url.PathEscape(id), nil); err != nil {
+	if _, err := mcpx.CPScheduleDo(http.MethodDelete, "/internal/schedules/"+url.PathEscape(id), nil); err != nil {
 		log.Printf("rate-limit: 使い終わったスケジュール %s を消せなかった: %v", id, err)
 	}
 }

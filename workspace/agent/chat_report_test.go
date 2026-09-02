@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -344,18 +345,18 @@ func TestMCPConvArgParsing(t *testing.T) {
 	old := os.Stdin
 	os.Stdin = r
 	defer func() { os.Stdin = old }()
-	runMCPStdio([]string{"--write", "--conv", "abc-123"})
+	mcpx.RunStdio([]string{"--write", "--conv", "abc-123"})
 	if !mcpWriteEnabled || mcpConvID != "abc-123" {
 		t.Fatalf("write=%v conv=%q", mcpWriteEnabled, mcpConvID)
 	}
 
 	// --chromium-attach is additive only to --self-report. Alone it must not widen
 	// the assistant server; together it selects the session's narrow browser scope.
-	runMCPStdio([]string{"--chromium-attach"})
+	mcpx.RunStdio([]string{"--chromium-attach"})
 	if mcpSelfReportOnly || mcpSessionChromiumEnabled {
 		t.Fatalf("standalone chromium flag widened scope: self=%v chromium=%v", mcpSelfReportOnly, mcpSessionChromiumEnabled)
 	}
-	runMCPStdio([]string{"--chromium-attach", "--self-report"})
+	mcpx.RunStdio([]string{"--chromium-attach", "--self-report"})
 	if !mcpSelfReportOnly || !mcpSessionChromiumEnabled || mcpWriteEnabled {
 		t.Fatalf("session flags: self=%v chromium=%v write=%v", mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpWriteEnabled)
 	}

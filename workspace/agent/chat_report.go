@@ -29,6 +29,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -181,7 +182,7 @@ func kickSessionReport(name, kind, reason string) {
 	if err != nil {
 		return
 	}
-	_, _ = agentPOST("/chat/report", body)
+	_, _ = mcpx.AgentPOST("/chat/report", body)
 }
 
 // 報告本文の組み立ては chat_report_text.go（docs/log/28 P6 で表示テキストと指示テキストを

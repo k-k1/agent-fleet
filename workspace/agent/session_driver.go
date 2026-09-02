@@ -23,6 +23,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -114,7 +115,7 @@ func handleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	}
 	if target == session.DriverManaged {
 		d, _ := driverOf(m)
-		if _, err := startManagedSession(d, m); err != nil {
+		if _, err := mcpx.StartManagedSession(d, m); err != nil {
 			m.Driver = prev
 			session.WriteMeta(m)
 			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())

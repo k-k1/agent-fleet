@@ -23,6 +23,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -752,7 +753,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// を起こす。初回プロンプトは boot 画面スクレイプ不要でそのまま Send できる
 		// （§10.2-9 — ClientMessageID で冪等）。
 		d, _ := driverOf(meta)
-		h, err := startManagedSession(d, meta)
+		h, err := mcpx.StartManagedSession(d, meta)
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
 			return
@@ -934,7 +935,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 				"managed driver はこの kind ではまだ利用できません")
 			return
 		}
-		if _, err := startManagedSession(d, meta); err != nil {
+		if _, err := mcpx.StartManagedSession(d, meta); err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
 			return
 		}
@@ -1205,7 +1206,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 				"managed driver はこの kind ではまだ利用できません")
 			return
 		}
-		if _, err := startManagedSession(d, newMeta); err != nil {
+		if _, err := mcpx.StartManagedSession(d, newMeta); err != nil {
 			m.Archived = false
 			session.WriteMeta(m)
 			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())

@@ -17,6 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -197,7 +198,7 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	// セッションは自分の設定を読み込み済みなので、効くのは次に起動するセッションから
 	// （UI の説明文もそう書いてある）。
 	if uiprefs.PeerMessaging() != peerBefore {
-		materializeMCPAll()
+		mcpx.MaterializeAll()
 	}
 	// 枠の切替は注入する env を変える（無料枠は OPENCODE_API_KEY を落とす）。鍵の
 	// 変更と同じ扱いで、動いている serve を作り直さないと古い環境のまま残る。
