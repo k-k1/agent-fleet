@@ -486,12 +486,12 @@ func (a adminAPI) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
 // what could NOT be deleted. On Fargate the EFS directories survive their access points
 // and keep billing (docs/log/64 §64.18.4); if that only ever appeared in an HTTP response
 // nobody would ever find it again.
-func writeAuditDestroy(r *http.Request, store Store, tenantID, actorID, userKey string, leftovers []string) {
+func writeAuditDestroy(r *http.Request, st Store, tenantID, actorID, userKey string, leftovers []string) {
 	detail := "workspace destroyed (home and runtime resources deleted)"
 	if len(leftovers) > 0 {
 		detail += "; NOT deleted: " + strings.Join(leftovers, ", ")
 	}
-	_ = store.InsertAudit(r.Context(), AuditLog{
+	_ = st.InsertAudit(r.Context(), AuditLog{
 		ID: newID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
 		Action: "workspace.destroy", Target: userKey, Detail: detail, At: nowTS(),
 	})

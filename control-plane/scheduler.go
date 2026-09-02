@@ -154,11 +154,11 @@ type scheduler struct {
 	interval time.Duration
 }
 
-func newScheduler(store scheduleStore, firer scheduleFirer, interval time.Duration) *scheduler {
+func newScheduler(st scheduleStore, firer scheduleFirer, interval time.Duration) *scheduler {
 	if firer == nil {
 		firer = logFirer{}
 	}
-	return &scheduler{store: store, firer: firer, interval: interval}
+	return &scheduler{store: st, firer: firer, interval: interval}
 }
 
 func (sc *scheduler) run(ctx context.Context) {

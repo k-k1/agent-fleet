@@ -110,12 +110,12 @@ func newMemoAPI(m *manager) memoAPI { return memoAPI{memberAuth{m}, m.store} }
 // memoListFor lists a membership's memos (unsent + retention-window sent), sweeping
 // expired sent rows first. The membership-scoped core shared by the three faces: the
 // session HTTP handler, the internal operator-token bridge, and the CP MCP tools.
-func memoListFor(ctx context.Context, store MemoStore, membershipID string) ([]memoDTO, error) {
+func memoListFor(ctx context.Context, st MemoStore, membershipID string) ([]memoDTO, error) {
 	cutoff := memoRetainBefore()
 	// Lazy sweep: drop expired sent memos before listing (best-effort; a failed
 	// sweep still lets the list run, the cutoff filter hides expired rows anyway).
-	_ = store.SweepSentMemos(ctx, cutoff)
-	rows, err := store.ListMemos(ctx, membershipID, cutoff)
+	_ = st.SweepSentMemos(ctx, cutoff)
+	rows, err := st.ListMemos(ctx, membershipID, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func validateMemo(mv MembershipView, in memoDTO) (Memo, *apiError) {
 }
 
 // memoCreateFor validates + inserts one memo for a membership. Shared core.
-func memoCreateFor(ctx context.Context, store MemoStore, mv MembershipView, in memoDTO) (memoDTO, *apiError) {
+func memoCreateFor(ctx context.Context, st MemoStore, mv MembershipView, in memoDTO) (memoDTO, *apiError) {
 	m, aerr := validateMemo(mv, in)
 	if aerr != nil {
 		return memoDTO{}, aerr
@@ -177,7 +177,7 @@ func memoCreateFor(ctx context.Context, store MemoStore, mv MembershipView, in m
 	// New memos always join the end of their own repo/category group.  Clients do
 	// not need to coordinate a position (and an omitted JSON position otherwise
 	// becomes zero, which used to put every new memo at the top of the group).
-	rows, err := store.ListMemos(ctx, m.MembershipID, "")
+	rows, err := st.ListMemos(ctx, m.MembershipID, "")
 	if err != nil {
 		return memoDTO{}, internalErr(err)
 	}
@@ -188,7 +188,7 @@ func memoCreateFor(ctx context.Context, store MemoStore, mv MembershipView, in m
 	}
 	m.ID = newID()
 	m.CreatedAt = nowTS()
-	if err := store.CreateMemo(ctx, m); err != nil {
+	if err := st.CreateMemo(ctx, m); err != nil {
 		return memoDTO{}, internalErr(err)
 	}
 	return memoToDTO(m), nil
@@ -221,8 +221,8 @@ type memoPatch struct {
 
 // memoUpdateFor applies a partial edit to an owned memo (ownership by membership).
 // Nil patch fields are left unchanged. Shared core.
-func memoUpdateFor(ctx context.Context, store MemoStore, membershipID, id string, in memoPatch) (memoDTO, *apiError) {
-	cur, found, err := store.GetMemo(ctx, id)
+func memoUpdateFor(ctx context.Context, st MemoStore, membershipID, id string, in memoPatch) (memoDTO, *apiError) {
+	cur, found, err := st.GetMemo(ctx, id)
 	if err != nil {
 		return memoDTO{}, internalErr(err)
 	}
@@ -257,7 +257,7 @@ func memoUpdateFor(ctx context.Context, store MemoStore, membershipID, id string
 	if cur.Kind == "text" && cur.Body == "" && cur.Attachments == "" {
 		return memoDTO{}, &apiError{http.StatusBadRequest, "bad_body", "body or attachments is required for kind=text"}
 	}
-	if err := store.UpdateMemo(ctx, cur); err != nil {
+	if err := st.UpdateMemo(ctx, cur); err != nil {
 		return memoDTO{}, internalErr(err)
 	}
 	return memoToDTO(cur), nil
@@ -544,7 +544,7 @@ func (a memoAPI) deleteCategory(w http.ResponseWriter, r *http.Request, _ Identi
 // runtime, and stamps sent_at on those memos. Returns the flush summary. Shared core
 // between the session HTTP handler, the internal operator-token bridge, and the CP MCP
 // tool — every face funnels through this so the "send once + mark sent" stays atomic.
-func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID, sessionName string, ids []string, textOverride string) (map[string]any, *apiError) {
+func memoFlushFor(ctx context.Context, st MemoStore, rt Runtime, membershipID, sessionName string, ids []string, textOverride string) (map[string]any, *apiError) {
 	sessionName = strings.TrimSpace(sessionName)
 	if sessionName == "" {
 		return nil, &apiError{http.StatusBadRequest, "bad_session", "sessionName is required"}
@@ -555,7 +555,7 @@ func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID
 	// Resolve the requested ids to owned memos (foreign/unknown ids are dropped).
 	memos := make([]Memo, 0, len(ids))
 	for _, id := range ids {
-		m, found, err := store.GetMemo(ctx, id)
+		m, found, err := st.GetMemo(ctx, id)
 		if err != nil {
 			return nil, internalErr(err)
 		}
@@ -583,7 +583,7 @@ func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID
 		sentIDs[i] = m.ID
 	}
 	sentAt := nowTS()
-	if err := store.MarkMemosSent(ctx, membershipID, sentIDs, sentAt); err != nil {
+	if err := st.MarkMemosSent(ctx, membershipID, sentIDs, sentAt); err != nil {
 		// 送信自体は完了している。ここで 500 を返すとクライアントの再試行が同内容の
 		// 二重送信を誘発するので、ログに残して成功として返す(メモは未送信のまま残る)。
 		log.Printf("memo flush: mark sent failed (message already delivered) session=%s ids=%v: %v",

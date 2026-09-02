@@ -74,7 +74,7 @@ func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
 // 止めると「未回答のまま停止しました」の通知が、次に Workspace を起こすまで誰にも
 // 届かない — 費用のために止めた結果、止めたことを知らせる通知だけが止めたせいで
 // 消える、という一番まずい形になる。
-func drainAgentOutbox(ctx context.Context, store NotificationStore, rt Runtime, membershipID string) string {
+func drainAgentOutbox(ctx context.Context, st NotificationStore, rt Runtime, membershipID string) string {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/notifications", nil)
 	if tok := rt.Token(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
@@ -105,7 +105,7 @@ func drainAgentOutbox(ctx context.Context, store NotificationStore, rt Runtime, 
 		if n.CreatedAt == "" {
 			n.CreatedAt = nowTS()
 		}
-		if err := store.InsertNotification(ctx, n); err != nil {
+		if err := st.InsertNotification(ctx, n); err != nil {
 			return "offline"
 		}
 		acked = append(acked, in.ID)

@@ -43,8 +43,8 @@ type gitGC struct {
 	lfsGrace time.Duration
 }
 
-func newGitGC(store gitGCStore, dataRoot string, interval, lfsGrace time.Duration) *gitGC {
-	return &gitGC{store: store, dataRoot: dataRoot, interval: interval, lfsGrace: lfsGrace}
+func newGitGC(st gitGCStore, dataRoot string, interval, lfsGrace time.Duration) *gitGC {
+	return &gitGC{store: st, dataRoot: dataRoot, interval: interval, lfsGrace: lfsGrace}
 }
 
 func (g *gitGC) run(ctx context.Context) {

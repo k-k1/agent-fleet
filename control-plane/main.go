@@ -130,10 +130,10 @@ func main() {
 	// Postgres (AF_DATABASE_URL) is the RDS backend for a redeployable ECS CP whose
 	// state must outlive task replacement (P3-7 段3a); SQLite is the on-prem default.
 	dbPath := envOr("AF_DB", filepath.Join(mgr.dataRoot, "control-plane.db"))
-	var store *sqlStore
+	var st *sqlStore
 	var err error
 	if dburl := pgURLFromEnv(); dburl != "" {
-		if store, err = openPostgres(dburl); err != nil {
+		if st, err = openPostgres(dburl); err != nil {
 			log.Fatalf("open postgres: %v", err)
 		}
 		log.Printf("metadata store: postgres")
@@ -144,21 +144,21 @@ func main() {
 		if mkerr := os.MkdirAll(filepath.Dir(dbPath), 0o755); mkerr != nil {
 			log.Printf("WARN: create db dir %s: %v", filepath.Dir(dbPath), mkerr)
 		}
-		if store, err = openSQLite(dbPath); err != nil {
+		if st, err = openSQLite(dbPath); err != nil {
 			log.Fatalf("open db %s: %v", dbPath, err)
 		}
 	}
 	ctx := context.Background()
-	if err := store.Migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		log.Fatalf("db migrate: %v", err)
 	}
-	mgr.store = store
-	mgr.tenantLogin = newTenantLoginCache(store)
+	mgr.store = st
+	mgr.tenantLogin = newTenantLoginCache(st)
 	// Tenant-defined login providers (docs/log/61 §61.11). Unlike the env providers built
 	// below, this set is read from the database on demand, so approving a subsidiary's
 	// IdP needs no restart (決定 29).
-	mgr.tenantIdP = newTenantIdPRegistry(store, mgr.openTenantSecret)
-	if dt, err := store.EnsureDefaultTenant(ctx); err != nil {
+	mgr.tenantIdP = newTenantIdPRegistry(st, mgr.openTenantSecret)
+	if dt, err := st.EnsureDefaultTenant(ctx); err != nil {
 		log.Fatalf("ensure default tenant: %v", err)
 	} else {
 		mgr.defaultTenantID = dt.ID // used by rootedDataDir to detect flat paths
@@ -171,7 +171,7 @@ func main() {
 	// login-time sync would never reach the case that matters: the person who left
 	// does not log in again. A startup pass lines up exactly with the documented
 	// handover, which is "edit the env, restart CP".
-	if demoted, err := store.DemoteSuperAdmins(ctx, superAdminEmailList()); err != nil {
+	if demoted, err := st.DemoteSuperAdmins(ctx, superAdminEmailList()); err != nil {
 		log.Printf("WARNING: super_admin sync: %v", err)
 	} else if len(demoted) > 0 {
 		log.Printf("super_admin revoked (not in SUPER_ADMIN_EMAILS): %s", strings.Join(demoted, ", "))

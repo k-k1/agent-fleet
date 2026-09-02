@@ -262,38 +262,38 @@ func TestChooseTTSProvider(t *testing.T) {
 func TestTTSAdminToggleSetting(t *testing.T) {
 	clearTTSEnv(t)
 	srv, _ := fakeVoicevox(t)
-	store, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer store.Close()
-	if err := store.Migrate(t.Context()); err != nil {
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	mgr := &manager{store: store}
+	mgr := &manager{store: st}
 	mux := http.NewServeMux()
 	registerTTSRoutes(mux, config{voicevoxURL: srv.URL, mgr: mgr})
 
 	// setting を直接 off にして（PUT は super_admin 認証が要るため store 経由）、
 	// status の enabled が落ちること＝ルーティングの engineOff 判定が効くことを見る。
-	if err := store.SetSetting(t.Context(), ttsEngineSetting, "off"); err != nil {
+	if err := st.SetSetting(t.Context(), ttsEngineSetting, "off"); err != nil {
 		t.Fatalf("set setting: %v", err)
 	}
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/status", nil))
-	var st struct {
+	var status struct {
 		Providers map[string]struct {
 			Ready   bool `json:"ready"`
 			Enabled bool `json:"enabled"`
 		} `json:"providers"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
 		t.Fatalf("status body: %v", err)
 	}
-	if st.Providers["voicevox"].Enabled {
+	if status.Providers["voicevox"].Enabled {
 		t.Error("voicevox should be disabled after tts_engine=off")
 	}
-	if !st.Providers["voicevox"].Ready {
+	if !status.Providers["voicevox"].Ready {
 		t.Error("readiness probe should still see the engine")
 	}
 
@@ -326,20 +326,20 @@ func TestTTSDict(t *testing.T) {
 	}
 
 	// store あり → setting の中身がそのまま返る。
-	store, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer store.Close()
-	if err := store.Migrate(t.Context()); err != nil {
+	defer st.Close()
+	if err := st.Migrate(t.Context()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	const dict = "GPT-4=ジーピーティーフォー\n# コメント\nk-k1=ケーケーワン"
-	if err := store.SetSetting(t.Context(), ttsDictSetting, dict); err != nil {
+	if err := st.SetSetting(t.Context(), ttsDictSetting, dict); err != nil {
 		t.Fatalf("set setting: %v", err)
 	}
 	mux = http.NewServeMux()
-	registerTTSRoutes(mux, config{voicevoxURL: "http://127.0.0.1:1", mgr: &manager{store: store}})
+	registerTTSRoutes(mux, config{voicevoxURL: "http://127.0.0.1:1", mgr: &manager{store: st}})
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/dict", nil))
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
