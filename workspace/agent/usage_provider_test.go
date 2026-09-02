@@ -116,7 +116,7 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 					uses = true
 				}
 			case *ast.SelectorExpr:
-				if fun.Sel.Name == "fallbackTotals" {
+				if fun.Sel.Name == "FallbackTotals" { // 移送でメソッドが公開名になった
 					falls = true
 				}
 			}
@@ -186,14 +186,15 @@ func TestClaudeLedgerTokensUsesCallTotals(t *testing.T) {
 // 本文らしきものが増えていないかを見る。
 func TestUsageRecordHasNoContentFields(t *testing.T) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "usage_ledger.go", nil, 0)
+	// 台帳は internal/usagex へ移送済み（型名も usageRecord → Record）。
+	f, err := parser.ParseFile(fset, "internal/usagex/ledger.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	banned := []string{"text", "prompt", "reply", "body", "content", "message"}
 	ast.Inspect(f, func(n ast.Node) bool {
 		ts, ok := n.(*ast.TypeSpec)
-		if !ok || ts.Name.Name != "usageRecord" {
+		if !ok || ts.Name.Name != "Record" {
 			return true
 		}
 		st, ok := ts.Type.(*ast.StructType)
