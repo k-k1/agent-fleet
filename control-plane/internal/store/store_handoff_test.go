@@ -26,7 +26,7 @@ func newHandoffFixture(t *testing.T) handoffFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tn, _ := st.EnsureDefaultTenant(ctx)

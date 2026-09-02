@@ -36,7 +36,7 @@ func TestSchemaDialectParity(t *testing.T) {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	defer lite.Close()
-	if err := lite.migrate(ctx); err != nil {
+	if err := lite.Migrate(ctx); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
 	pg, err := OpenPostgres(url)
@@ -47,7 +47,7 @@ func TestSchemaDialectParity(t *testing.T) {
 	if _, err := pg.db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
 		t.Fatalf("reset schema: %v", err)
 	}
-	if err := pg.migrate(ctx); err != nil {
+	if err := pg.Migrate(ctx); err != nil {
 		t.Fatalf("migrate postgres: %v", err)
 	}
 
