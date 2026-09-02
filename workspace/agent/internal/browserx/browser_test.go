@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"context"
@@ -153,7 +153,7 @@ func (f *fakeBrowserCDP) last(method string) (fakeBrowserCall, bool) {
 }
 
 func fakeBrowserManager(cdp *fakeBrowserCDP) *browserManager {
-	return newBrowserManager(browserManagerConfig{
+	return NewBrowserManager(browserManagerConfig{
 		MaxPages: 1, DetachedGrace: time.Hour, ChromiumIdle: time.Hour,
 		CommandTimeout: time.Second, FrameInterval: time.Millisecond,
 		CDPFactory: func(context.Context) (browserCDP, error) { return cdp, nil },
@@ -329,7 +329,7 @@ func TestBrowserScreencastFrameArrivingBeforeStartReturns(t *testing.T) {
 func TestBrowserScreencastAckPacesCaptureBeforeNextFrame(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	interval := 80 * time.Millisecond
-	m := newBrowserManager(browserManagerConfig{
+	m := NewBrowserManager(browserManagerConfig{
 		MaxPages: 1, DetachedGrace: time.Hour, ChromiumIdle: time.Hour,
 		CommandTimeout: time.Second, FrameInterval: interval, JPEGQuality: 70,
 		CDPFactory: func(context.Context) (browserCDP, error) { return cdp, nil },
@@ -383,7 +383,7 @@ func TestBrowserScreencastAckPacesCaptureBeforeNextFrame(t *testing.T) {
 func TestBrowserScreencastAbsorbsInFlightBurst(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	interval := 20 * time.Millisecond
-	m := newBrowserManager(browserManagerConfig{
+	m := NewBrowserManager(browserManagerConfig{
 		MaxPages: 1, DetachedGrace: time.Hour, ChromiumIdle: time.Hour,
 		CommandTimeout: time.Second, FrameInterval: interval, JPEGQuality: 70,
 		CDPFactory: func(context.Context) (browserCDP, error) { return cdp, nil },
@@ -615,7 +615,7 @@ func TestBrowserViewportPinchZoomShrinksLayout(t *testing.T) {
 
 func TestBrowserSingleViewerAndDetachedExpiry(t *testing.T) {
 	cdp := newFakeBrowserCDP()
-	m := newBrowserManager(browserManagerConfig{
+	m := NewBrowserManager(browserManagerConfig{
 		MaxPages: 1, DetachedGrace: 100 * time.Millisecond, ChromiumIdle: time.Hour,
 		CommandTimeout: time.Second, FrameInterval: time.Millisecond,
 		CDPFactory: func(context.Context) (browserCDP, error) { return cdp, nil },
@@ -674,10 +674,10 @@ func TestBrowserNavigationPolicyAtFetchBoundary(t *testing.T) {
 func TestBrowserRESTRoutes(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := fakeBrowserManager(cdp)
-	previous := workspaceBrowserManager
-	workspaceBrowserManager = m
+	previous := WorkspaceBrowserManager
+	WorkspaceBrowserManager = m
 	t.Cleanup(func() {
-		workspaceBrowserManager = previous
+		WorkspaceBrowserManager = previous
 		m.Close()
 	})
 	h := buildMux()
@@ -710,12 +710,12 @@ func TestBrowserRESTRoutes(t *testing.T) {
 func TestBrowserWebSocketProtocol(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := fakeBrowserManager(cdp)
-	previous := workspaceBrowserManager
-	workspaceBrowserManager = m
+	previous := WorkspaceBrowserManager
+	WorkspaceBrowserManager = m
 	server := httptest.NewServer(buildMux())
 	t.Cleanup(func() {
 		server.Close()
-		workspaceBrowserManager = previous
+		WorkspaceBrowserManager = previous
 		m.Close()
 	})
 	created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
@@ -773,7 +773,7 @@ func TestBrowserChromiumIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := newBrowserManager(browserManagerConfig{
+	m := NewBrowserManager(browserManagerConfig{
 		MaxPages: 1, DetachedGrace: time.Minute, ChromiumIdle: time.Minute,
 		CommandTimeout: 10 * time.Second, FrameInterval: time.Second / 12, JPEGQuality: 70,
 		CDPFactory: cdpFactory,

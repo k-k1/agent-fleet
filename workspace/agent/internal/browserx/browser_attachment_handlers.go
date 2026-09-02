@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"encoding/base64"
@@ -14,13 +14,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-func handleBrowserAttachTargets(w http.ResponseWriter, r *http.Request) {
+func HandleBrowserAttachTargets(w http.ResponseWriter, r *http.Request) {
 	port, err := parseCDPPort(r.URL.Query().Get("port"))
 	if err != nil {
 		writeBrowserAttachmentError(w, err)
 		return
 	}
-	resp, err := workspaceBrowserAttachmentManager.Discover(port)
+	resp, err := WorkspaceBrowserAttachmentManager.Discover(port)
 	if err != nil {
 		writeBrowserAttachmentError(w, err)
 		return
@@ -28,7 +28,7 @@ func handleBrowserAttachTargets(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func handleBrowserAttachmentCreate(w http.ResponseWriter, r *http.Request) {
+func HandleBrowserAttachmentCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var req browserAttachmentCreateRequest
 	dec := json.NewDecoder(r.Body)
@@ -39,7 +39,7 @@ func handleBrowserAttachmentCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// label is MCP-only metadata. Keep it out of the fixed public REST body;
 	// base64 also keeps arbitrary UTF-8 out of the internal HTTP header value.
-	if encoded := r.Header.Get(browserAttachmentLabelHeader); encoded != "" {
+	if encoded := r.Header.Get(BrowserAttachmentLabelHeader); encoded != "" {
 		label, err := base64.RawURLEncoding.DecodeString(encoded)
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_browser_attachment", "invalid browser attachment label")
@@ -47,7 +47,7 @@ func handleBrowserAttachmentCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Label = string(label)
 	}
-	resp, err := workspaceBrowserAttachmentManager.Create(req)
+	resp, err := WorkspaceBrowserAttachmentManager.Create(req)
 	if err != nil {
 		writeBrowserAttachmentError(w, err)
 		return
@@ -55,12 +55,12 @@ func handleBrowserAttachmentCreate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, resp)
 }
 
-func handleBrowserAttachmentList(w http.ResponseWriter, _ *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, workspaceBrowserAttachmentManager.List())
+func HandleBrowserAttachmentList(w http.ResponseWriter, _ *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, WorkspaceBrowserAttachmentManager.List())
 }
 
-func handleBrowserAttachmentGet(w http.ResponseWriter, r *http.Request) {
-	resp, err := workspaceBrowserAttachmentManager.Get(r.PathValue("id"))
+func HandleBrowserAttachmentGet(w http.ResponseWriter, r *http.Request) {
+	resp, err := WorkspaceBrowserAttachmentManager.Get(r.PathValue("id"))
 	if err != nil {
 		writeBrowserAttachmentError(w, err)
 		return
@@ -68,12 +68,12 @@ func handleBrowserAttachmentGet(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func handleBrowserAttachmentDelete(w http.ResponseWriter, r *http.Request) {
-	workspaceBrowserAttachmentManager.Delete(r.PathValue("id"))
+func HandleBrowserAttachmentDelete(w http.ResponseWriter, r *http.Request) {
+	WorkspaceBrowserAttachmentManager.Delete(r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func handleBrowserAttachmentHandoff(w http.ResponseWriter, r *http.Request) {
+func HandleBrowserAttachmentHandoff(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var req browserAttachmentHandoffRequest
 	dec := json.NewDecoder(r.Body)
@@ -82,7 +82,7 @@ func handleBrowserAttachmentHandoff(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_browser_handoff", "invalid browser handoff request")
 		return
 	}
-	resp, err := workspaceBrowserAttachmentManager.UpdateHandoff(r.PathValue("id"), req)
+	resp, err := WorkspaceBrowserAttachmentManager.UpdateHandoff(r.PathValue("id"), req)
 	if err != nil {
 		writeBrowserAttachmentError(w, err)
 		return
@@ -90,7 +90,7 @@ func handleBrowserAttachmentHandoff(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func handleBrowserAttachmentControlMode(w http.ResponseWriter, r *http.Request) {
+func HandleBrowserAttachmentControlMode(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	var req browserAttachmentControlModeRequest
 	dec := json.NewDecoder(r.Body)
@@ -99,7 +99,7 @@ func handleBrowserAttachmentControlMode(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_control_mode", "invalid browser control mode request")
 		return
 	}
-	resp, err := workspaceBrowserAttachmentManager.SetControlMode(r.PathValue("id"), req.ControlMode)
+	resp, err := WorkspaceBrowserAttachmentManager.SetControlMode(r.PathValue("id"), req.ControlMode)
 	if err != nil {
 		writeBrowserAttachmentError(w, err)
 		return
@@ -107,8 +107,8 @@ func handleBrowserAttachmentControlMode(w http.ResponseWriter, r *http.Request) 
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func handleBrowserAttachmentSiblingTargets(w http.ResponseWriter, r *http.Request) {
-	resp, err := workspaceBrowserAttachmentManager.ListSiblingTargets(r.PathValue("id"))
+func HandleBrowserAttachmentSiblingTargets(w http.ResponseWriter, r *http.Request) {
+	resp, err := WorkspaceBrowserAttachmentManager.ListSiblingTargets(r.PathValue("id"))
 	if err != nil {
 		writeBrowserAttachmentError(w, err)
 		return
@@ -116,7 +116,7 @@ func handleBrowserAttachmentSiblingTargets(w http.ResponseWriter, r *http.Reques
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func handleBrowserAttachmentRetarget(w http.ResponseWriter, r *http.Request) {
+func HandleBrowserAttachmentRetarget(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	var req browserAttachmentRetargetRequest
 	dec := json.NewDecoder(r.Body)
@@ -125,7 +125,7 @@ func handleBrowserAttachmentRetarget(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_browser_attachment", "invalid browser retarget request")
 		return
 	}
-	resp, err := workspaceBrowserAttachmentManager.Retarget(r.PathValue("id"), req)
+	resp, err := WorkspaceBrowserAttachmentManager.Retarget(r.PathValue("id"), req)
 	if err != nil {
 		writeBrowserAttachmentError(w, err)
 		return
@@ -133,7 +133,7 @@ func handleBrowserAttachmentRetarget(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func handleBrowserAttachmentHandoffResult(w http.ResponseWriter, r *http.Request) {
+func HandleBrowserAttachmentHandoffResult(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	var req browserAttachmentHandoffResultRequest
 	dec := json.NewDecoder(r.Body)
@@ -142,7 +142,7 @@ func handleBrowserAttachmentHandoffResult(w http.ResponseWriter, r *http.Request
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_handoff_result", "invalid handoff result")
 		return
 	}
-	resp, err := workspaceBrowserAttachmentManager.SetHandoffResult(r.PathValue("id"), req.Result)
+	resp, err := WorkspaceBrowserAttachmentManager.SetHandoffResult(r.PathValue("id"), req.Result)
 	if err != nil {
 		writeBrowserAttachmentError(w, err)
 		return
@@ -175,8 +175,8 @@ func parseCDPPort(value string) (int, error) {
 	return port, nil
 }
 
-func handleBrowserAttachmentWebSocket(w http.ResponseWriter, r *http.Request) {
-	m := workspaceBrowserAttachmentManager
+func HandleBrowserAttachmentWebSocket(w http.ResponseWriter, r *http.Request) {
+	m := WorkspaceBrowserAttachmentManager
 	a, err := m.reserveViewer(r.URL.Query().Get("id"))
 	if err != nil {
 		writeBrowserAttachmentError(w, err)

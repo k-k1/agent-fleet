@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"context"
@@ -33,7 +33,7 @@ func fakeAttachmentManager(cdp *fakeBrowserCDP, ttl time.Duration) *browserAttac
 	})
 }
 
-func createFakeAttachment(t *testing.T, m *browserAttachmentManager) browserAttachmentResponse {
+func createFakeAttachment(t *testing.T, m *browserAttachmentManager) BrowserAttachmentResponse {
 	t.Helper()
 	resp, err := m.Create(browserAttachmentCreateRequest{
 		Port: 9222, TargetID: "target-1",
@@ -111,17 +111,17 @@ func TestBrowserAttachmentLifecycleDoesNotCloseExternalTarget(t *testing.T) {
 func TestBrowserAttachmentLabelOverridesPageTitle(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := fakeAttachmentManager(cdp, 0)
-	previous := workspaceBrowserAttachmentManager
-	workspaceBrowserAttachmentManager = m
-	t.Cleanup(func() { workspaceBrowserAttachmentManager = previous })
+	previous := WorkspaceBrowserAttachmentManager
+	WorkspaceBrowserAttachmentManager = m
+	t.Cleanup(func() { WorkspaceBrowserAttachmentManager = previous })
 	req := httptest.NewRequest(http.MethodPost, "/browser/attachments", strings.NewReader(
 		`{"port":9222,"targetId":"target-1","viewport":{"width":1280,"height":900,"deviceScaleFactor":1}}`,
 	))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(browserAttachmentLabelHeader, base64.RawURLEncoding.EncodeToString([]byte("確認画面")))
+	req.Header.Set(BrowserAttachmentLabelHeader, base64.RawURLEncoding.EncodeToString([]byte("確認画面")))
 	w := httptest.NewRecorder()
 	buildMux().ServeHTTP(w, req)
-	var resp browserAttachmentResponse
+	var resp BrowserAttachmentResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || w.Code != http.StatusCreated {
 		t.Fatalf("create labeled attachment: status=%d body=%s err=%v", w.Code, w.Body.String(), err)
 	}
@@ -695,11 +695,11 @@ func TestBrowserAttachmentListSiblingTargetsMarksCurrentAndHidesPort(t *testing.
 func TestBrowserAttachmentControlModeHTTPContract(t *testing.T) {
 	m := fakeAttachmentManager(newFakeBrowserCDP(), 0)
 	created := createFakeAttachment(t, m)
-	previous := workspaceBrowserAttachmentManager
-	workspaceBrowserAttachmentManager = m
+	previous := WorkspaceBrowserAttachmentManager
+	WorkspaceBrowserAttachmentManager = m
 	t.Cleanup(func() {
 		m.Delete(created.ID)
-		workspaceBrowserAttachmentManager = previous
+		WorkspaceBrowserAttachmentManager = previous
 	})
 	path := "/browser/attachments/" + created.ID + "/control-mode"
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"controlMode":"user-control"}`))
@@ -709,7 +709,7 @@ func TestBrowserAttachmentControlModeHTTPContract(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("control mode HTTP status = %d body=%s", w.Code, w.Body.String())
 	}
-	var got browserAttachmentResponse
+	var got BrowserAttachmentResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.ID != created.ID ||
 		got.OpenURL != created.OpenURL || got.ControlMode != attachmentControlUser || got.ExpiresAt == nil {
 		t.Fatalf("control mode HTTP response = %+v err=%v", got, err)

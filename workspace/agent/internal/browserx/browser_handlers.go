@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"encoding/json"
@@ -69,7 +69,7 @@ func ensureChromiumForPane() (bool, error) {
 	return true, nil
 }
 
-func handleBrowserPagesCreate(w http.ResponseWriter, r *http.Request) {
+func HandleBrowserPagesCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var req browserCreateRequest
 	dec := json.NewDecoder(r.Body)
@@ -84,7 +84,7 @@ func handleBrowserPagesCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "browser_start_failed", "Chromium install failed: "+err.Error())
 		return
 	}
-	resp, err := workspaceBrowserManager.Create(req)
+	resp, err := WorkspaceBrowserManager.Create(req)
 	if err == nil {
 		httpx.WriteJSON(w, http.StatusCreated, resp)
 		return
@@ -101,8 +101,8 @@ func handleBrowserPagesCreate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleBrowserPageGet(w http.ResponseWriter, r *http.Request) {
-	resp, ok := workspaceBrowserManager.Get(r.PathValue("id"))
+func HandleBrowserPageGet(w http.ResponseWriter, r *http.Request) {
+	resp, ok := WorkspaceBrowserManager.Get(r.PathValue("id"))
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "browser_not_found", "browser page does not exist")
 		return
@@ -110,8 +110,8 @@ func handleBrowserPageGet(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func handleBrowserPageDelete(w http.ResponseWriter, r *http.Request) {
-	workspaceBrowserManager.Delete(r.PathValue("id"))
+func HandleBrowserPageDelete(w http.ResponseWriter, r *http.Request) {
+	WorkspaceBrowserManager.Delete(r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -130,8 +130,8 @@ type browserViewer struct {
 	closeOnce sync.Once
 }
 
-func handleBrowserWebSocket(w http.ResponseWriter, r *http.Request) {
-	manager := workspaceBrowserManager
+func HandleBrowserWebSocket(w http.ResponseWriter, r *http.Request) {
+	manager := WorkspaceBrowserManager
 	id := r.URL.Query().Get("id")
 	if id == "" || len(id) > 128 {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_browser_id", "browser id is required")

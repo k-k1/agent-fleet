@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"fmt"
@@ -32,7 +32,7 @@ func newKeyboardTestPage(t *testing.T, factory browserCDPFactory, html string, v
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := newBrowserManager(browserManagerConfig{
+	m := NewBrowserManager(browserManagerConfig{
 		MaxPages: 1, DetachedGrace: time.Minute, ChromiumIdle: time.Minute,
 		CommandTimeout: 10 * time.Second, FrameInterval: time.Second / 12, JPEGQuality: 70,
 		CDPFactory: factory,

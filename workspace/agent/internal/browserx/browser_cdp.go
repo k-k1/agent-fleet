@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"bufio"
@@ -95,7 +95,7 @@ func launchPipeCDP(ctx context.Context) (browserCDP, error) {
 	return launchPipeCDPWithSandbox(ctx, os.Getenv("AF_CHROMIUM_NO_SANDBOX") != "1")
 }
 
-func launchPipeCDPWithoutSandboxForTest(ctx context.Context) (browserCDP, error) {
+func LaunchPipeCDPWithoutSandboxForTest(ctx context.Context) (browserCDP, error) {
 	return launchPipeCDPWithSandbox(ctx, false)
 }
 

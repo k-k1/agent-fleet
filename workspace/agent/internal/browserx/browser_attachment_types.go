@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"encoding/json"
@@ -16,12 +16,12 @@ import (
 
 const (
 	browserAttachmentIDPrefix      = "ba_"
-	browserAttachmentLabelHeader   = "X-AF-Browser-Attachment-Label"
+	BrowserAttachmentLabelHeader   = "X-AF-Browser-Attachment-Label"
 	browserAttachmentMaxTargetID   = 1024
 	browserAttachmentMaxTitle      = 1024
 	browserAttachmentMaxURL        = 16 * 1024
 	browserAttachmentMaxHandoff    = 8 * 1024
-	browserAttachmentMaxLabel      = 256
+	BrowserAttachmentMaxLabel      = 256
 	browserAttachmentDiscoveryBody = 2 << 20
 )
 
@@ -46,7 +46,7 @@ type browserAttachTarget struct {
 	URL      string `json:"url"`
 }
 
-type browserAttachTargetsResponse struct {
+type BrowserAttachTargetsResponse struct {
 	Targets []browserAttachTarget `json:"targets"`
 	// BrowserID identifies the Chromium instance answering on this port (the GUID
 	// Chromium writes as line 2 of <user-data-dir>/DevToolsActivePort). A caller
@@ -120,7 +120,7 @@ type browserAttachmentHandoffResponse struct {
 	Result          string `json:"result"`
 }
 
-type browserAttachmentResponse struct {
+type BrowserAttachmentResponse struct {
 	ID          string                            `json:"id"`
 	State       string                            `json:"state"`
 	Title       string                            `json:"title,omitempty"`
@@ -136,7 +136,7 @@ type browserAttachmentResponse struct {
 // still attached to?" entry — the way back in when the action link has scrolled
 // out of the mirror or the pane was closed.
 type browserAttachmentListResponse struct {
-	Attachments []browserAttachmentResponse `json:"attachments"`
+	Attachments []BrowserAttachmentResponse `json:"attachments"`
 }
 
 type browserAttachmentAPIError struct {
@@ -158,7 +158,7 @@ func attachmentError(status int, code, message string, cause error) error {
 }
 
 func validateCDPPort(port int) error {
-	if port < 1 || port > 65535 || reservedBrowserAgentPort(port) || reservedControlPlanePort(port) {
+	if port < 1 || port > 65535 || ReservedBrowserAgentPort(port) || reservedControlPlanePort(port) {
 		return attachmentError(http.StatusBadRequest, "bad_cdp_port",
 			"port must be 1..65535 and must not be the workspace agent port", nil)
 	}
@@ -300,10 +300,10 @@ func cdpBrowserID(debuggerURL string) string {
 	return truncateBrowserText(id, browserAttachmentMaxTargetID)
 }
 
-// normalizeCDPBrowserID accepts what a caller can actually copy: the bare GUID,
+// NormalizeCDPBrowserID accepts what a caller can actually copy: the bare GUID,
 // the "/devtools/browser/<guid>" second line of DevToolsActivePort, or the full
 // webSocketDebuggerUrl.
-func normalizeCDPBrowserID(raw string) string {
+func NormalizeCDPBrowserID(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
@@ -365,7 +365,7 @@ func validateHandoffRequest(req browserAttachmentHandoffRequest) error {
 	if req.CompletionLabel == "" {
 		req.CompletionLabel = "操作完了"
 	}
-	if len(req.CompletionLabel) > browserAttachmentMaxLabel || !utf8.ValidString(req.CompletionLabel) {
+	if len(req.CompletionLabel) > BrowserAttachmentMaxLabel || !utf8.ValidString(req.CompletionLabel) {
 		return attachmentError(http.StatusBadRequest, "bad_browser_handoff", "completionLabel is invalid", nil)
 	}
 	if !validAttachmentControlMode(req.ControlMode) {

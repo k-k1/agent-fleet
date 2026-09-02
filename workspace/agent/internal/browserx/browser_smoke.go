@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"fmt"
@@ -9,11 +9,11 @@ import (
 	"time"
 )
 
-// runBrowserImageSmoke exercises the production pipe-CDP launcher from the
+// RunBrowserImageSmoke exercises the production pipe-CDP launcher from the
 // baked workspace-agent binary. The image smoke invokes it as the non-root dev
 // user through launchPipeCDP, whose production path has no no-sandbox switch, so
 // a missing/unusable Debian setuid sandbox fails exactly as it does in product.
-func runBrowserImageSmoke() error {
+func RunBrowserImageSmoke() error {
 	return runBrowserSmoke(true)
 }
 
@@ -41,14 +41,14 @@ func runBrowserSmoke(requireSandbox bool) error {
 		return fmt.Errorf("fixture port: %w", err)
 	}
 
-	config := defaultBrowserManagerConfig()
+	config := DefaultBrowserManagerConfig()
 	if !requireSandbox {
-		config.CDPFactory = launchPipeCDPWithoutSandboxForTest
+		config.CDPFactory = LaunchPipeCDPWithoutSandboxForTest
 	}
 	if config.MaxPages < 2 {
 		return fmt.Errorf("browser page limit %d is below the product default 2", config.MaxPages)
 	}
-	manager := newBrowserManager(config)
+	manager := NewBrowserManager(config)
 	defer manager.Close()
 
 	pages := make([]*browserPage, 0, 2)

@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"context"
@@ -47,7 +47,7 @@ func browserTestLauncher(t *testing.T) (browserCDPFactory, bool) {
 		for _, c := range []struct {
 			f       browserCDPFactory
 			sandbox bool
-		}{{launchPipeCDP, true}, {launchPipeCDPWithoutSandboxForTest, false}} {
+		}{{launchPipeCDP, true}, {LaunchPipeCDPWithoutSandboxForTest, false}} {
 			if browserCDPFactoryWorks(c.f) {
 				browserTestFactoryVal, browserTestSandboxVal = c.f, c.sandbox
 				return

@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"fmt"
@@ -41,7 +41,7 @@ func TestBrowserScreencastBackpressureIntegration(t *testing.T) {
 	u, _ := url.Parse(app.URL)
 	port, _ := strconv.Atoi(u.Port())
 
-	m := newBrowserManager(browserManagerConfig{
+	m := NewBrowserManager(browserManagerConfig{
 		MaxPages: 1, DetachedGrace: time.Minute, ChromiumIdle: time.Minute,
 		CommandTimeout: 10 * time.Second, FrameInterval: time.Second / 12, JPEGQuality: 70,
 		CDPFactory: cdpFactory,

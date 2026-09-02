@@ -1,4 +1,4 @@
-package main
+package browserx
 
 import (
 	"os"
@@ -157,7 +157,7 @@ func procUserDataDir(pid int) string {
 	}
 	for _, arg := range strings.Split(string(raw), "\x00") {
 		if dir, ok := strings.CutPrefix(arg, "--user-data-dir="); ok {
-			return truncateBrowserText(dir, browserAttachmentMaxLabel)
+			return truncateBrowserText(dir, BrowserAttachmentMaxLabel)
 		}
 	}
 	return ""
