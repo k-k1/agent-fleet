@@ -1,4 +1,4 @@
-package main
+package tenantsrv
 
 import (
 	"encoding/json"

@@ -10,7 +10,7 @@
 // So: the operator declares the classes, a super_admin says which of them a tenant may
 // use, a tenant_admin picks the tenant's default, and a tenant_admin overrides it per
 // member (setUserLimit). Four layers, and only the middle one crosses a tenant border.
-package main
+package tenantsrv
 
 import (
 	"encoding/json"

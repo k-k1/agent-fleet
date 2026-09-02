@@ -6,7 +6,7 @@
 // entry gate; allowed_providers decides which IdP is trusted to say who someone is).
 // This one reaches nothing outside the tenant, so by the same line it belongs to the
 // tenant_admin (ADR 0043 決定 24/25 → ADR 0047 決定 6).
-package main
+package tenantsrv
 
 import (
 	"encoding/json"
