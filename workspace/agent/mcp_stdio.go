@@ -33,6 +33,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -1962,7 +1963,7 @@ func mcpListChromiumTargets(id json.RawMessage, port int) []byte {
 	if err != nil {
 		return mcpChromiumToolErr(id, "Chromium target一覧の取得", err)
 	}
-	var response browserAttachTargetsResponse
+	var response browserx.BrowserAttachTargetsResponse
 	if err := json.Unmarshal([]byte(body), &response); err != nil {
 		return mcpToolErr(id, "Agentが不正なChromium target一覧を返しました")
 	}
@@ -2008,12 +2009,12 @@ func mcpAttachChromium(id json.RawMessage, port int, targetID, expectedBrowserID
 	if targetID == "" {
 		return mcpToolErr(id, "target_idが必要です。先にlist_chromium_targetsで確認してください")
 	}
-	if len(label) > browserAttachmentMaxLabel || !utf8.ValidString(label) {
+	if len(label) > browserx.BrowserAttachmentMaxLabel || !utf8.ValidString(label) {
 		return mcpToolErr(id, "labelは256 byte以内のUTF-8文字列にしてください")
 	}
 	req := map[string]any{"port": port, "targetId": targetID}
 	if expectedBrowserID != "" {
-		browserID := normalizeCDPBrowserID(expectedBrowserID)
+		browserID := browserx.NormalizeCDPBrowserID(expectedBrowserID)
 		if browserID == "" {
 			return mcpToolErr(id, "expected_browser_idはDevToolsActivePortの2行目（/devtools/browser/<GUID>）かそのGUIDを渡してください")
 		}
@@ -2024,13 +2025,13 @@ func mcpAttachChromium(id json.RawMessage, port int, targetID, expectedBrowserID
 	// MCP-only display label over the authenticated loopback hop separately.
 	headers := map[string]string{}
 	if label != "" {
-		headers[browserAttachmentLabelHeader] = base64.RawURLEncoding.EncodeToString([]byte(label))
+		headers[browserx.BrowserAttachmentLabelHeader] = base64.RawURLEncoding.EncodeToString([]byte(label))
 	}
 	body, err := agentPOSTHeaders("/browser/attachments", reqBody, headers)
 	if err != nil {
 		return mcpChromiumToolErr(id, "Chromium attachmentの作成", err)
 	}
-	var response browserAttachmentResponse
+	var response browserx.BrowserAttachmentResponse
 	if err := json.Unmarshal([]byte(body), &response); err != nil {
 		return mcpToolErr(id, "Agentが不正なChromium attachment結果を返しました")
 	}
@@ -2089,7 +2090,7 @@ func mcpRequestBrowserAction(id json.RawMessage, attachmentID, message, completi
 	if err != nil {
 		return mcpChromiumToolErr(id, "ブラウザ操作依頼の作成", err)
 	}
-	var response browserAttachmentResponse
+	var response browserx.BrowserAttachmentResponse
 	if json.Unmarshal([]byte(body), &response) != nil || response.ID != attachmentID ||
 		response.Handoff == nil || response.Handoff.Result != "pending" {
 		return mcpToolErr(id, "Agentが不正なブラウザ操作依頼結果を返しました")
@@ -2109,7 +2110,7 @@ func mcpGetBrowserActionResult(id json.RawMessage, attachmentID string) []byte {
 	if err != nil {
 		return mcpChromiumToolErr(id, "ブラウザ操作結果の取得", err)
 	}
-	var response browserAttachmentResponse
+	var response browserx.BrowserAttachmentResponse
 	if json.Unmarshal([]byte(body), &response) != nil || response.ID != attachmentID {
 		return mcpToolErr(id, "Agentが不正なブラウザ操作結果を返しました")
 	}
@@ -2140,7 +2141,7 @@ func mcpSetChromiumControlMode(id json.RawMessage, attachmentID, controlMode str
 	if err != nil {
 		return mcpChromiumToolErr(id, "Chromium control modeの変更", err)
 	}
-	var response browserAttachmentResponse
+	var response browserx.BrowserAttachmentResponse
 	if json.Unmarshal([]byte(body), &response) != nil || response.ID != attachmentID || response.ControlMode != controlMode {
 		return mcpToolErr(id, "Agentが不正なChromium control mode結果を返しました")
 	}
@@ -2167,7 +2168,7 @@ func validChromiumOpenURL(openURL, attachmentID string) bool {
 }
 
 func chromiumAttachmentStatus(body, fallbackID string) (map[string]any, error) {
-	var response browserAttachmentResponse
+	var response browserx.BrowserAttachmentResponse
 	if err := json.Unmarshal([]byte(body), &response); err != nil {
 		return nil, err
 	}

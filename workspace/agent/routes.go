@@ -10,6 +10,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 )
 
 // buildMux は Agent の全ルートを登録した mux を返す（docs/log/23 P0-2: main() からの
@@ -129,23 +130,23 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 	// Browser pane — ephemeral BrowserContext + Page ownership and a restricted
 	// screencast/input WebSocket. The CP proxies these internal routes verbatim.
-	mux.HandleFunc("POST /browser/pages", handleBrowserPagesCreate)
-	mux.HandleFunc("GET /browser/pages/{id}", handleBrowserPageGet)
-	mux.HandleFunc("DELETE /browser/pages/{id}", handleBrowserPageDelete)
-	mux.HandleFunc("GET /ws/browser", handleBrowserWebSocket)
+	mux.HandleFunc("POST /browser/pages", browserx.HandleBrowserPagesCreate)
+	mux.HandleFunc("GET /browser/pages/{id}", browserx.HandleBrowserPageGet)
+	mux.HandleFunc("DELETE /browser/pages/{id}", browserx.HandleBrowserPageDelete)
+	mux.HandleFunc("GET /ws/browser", browserx.HandleBrowserWebSocket)
 	// External-owner Chromium attachments use a separate namespace and manager:
 	// detach releases only AF's CDP session and never closes the target/process.
-	mux.HandleFunc("GET /browser/attach-targets", handleBrowserAttachTargets)
-	mux.HandleFunc("POST /browser/attachments", handleBrowserAttachmentCreate)
-	mux.HandleFunc("GET /browser/attachments", handleBrowserAttachmentList)
-	mux.HandleFunc("GET /browser/attachments/{id}", handleBrowserAttachmentGet)
-	mux.HandleFunc("DELETE /browser/attachments/{id}", handleBrowserAttachmentDelete)
-	mux.HandleFunc("POST /browser/attachments/{id}/control-mode", handleBrowserAttachmentControlMode)
-	mux.HandleFunc("GET /browser/attachments/{id}/targets", handleBrowserAttachmentSiblingTargets)
-	mux.HandleFunc("POST /browser/attachments/{id}/retarget", handleBrowserAttachmentRetarget)
-	mux.HandleFunc("POST /browser/attachments/{id}/handoff", handleBrowserAttachmentHandoff)
-	mux.HandleFunc("POST /browser/attachments/{id}/handoff-result", handleBrowserAttachmentHandoffResult)
-	mux.HandleFunc("GET /ws/browser-attachments", handleBrowserAttachmentWebSocket)
+	mux.HandleFunc("GET /browser/attach-targets", browserx.HandleBrowserAttachTargets)
+	mux.HandleFunc("POST /browser/attachments", browserx.HandleBrowserAttachmentCreate)
+	mux.HandleFunc("GET /browser/attachments", browserx.HandleBrowserAttachmentList)
+	mux.HandleFunc("GET /browser/attachments/{id}", browserx.HandleBrowserAttachmentGet)
+	mux.HandleFunc("DELETE /browser/attachments/{id}", browserx.HandleBrowserAttachmentDelete)
+	mux.HandleFunc("POST /browser/attachments/{id}/control-mode", browserx.HandleBrowserAttachmentControlMode)
+	mux.HandleFunc("GET /browser/attachments/{id}/targets", browserx.HandleBrowserAttachmentSiblingTargets)
+	mux.HandleFunc("POST /browser/attachments/{id}/retarget", browserx.HandleBrowserAttachmentRetarget)
+	mux.HandleFunc("POST /browser/attachments/{id}/handoff", browserx.HandleBrowserAttachmentHandoff)
+	mux.HandleFunc("POST /browser/attachments/{id}/handoff-result", browserx.HandleBrowserAttachmentHandoffResult)
+	mux.HandleFunc("GET /ws/browser-attachments", browserx.HandleBrowserAttachmentWebSocket)
 
 	// Assistant chat — headless-CLI LLM chat/translation, separate from tmux
 	// sessions (docs/log/19). Non-streaming; the CP proxies these verbatim.

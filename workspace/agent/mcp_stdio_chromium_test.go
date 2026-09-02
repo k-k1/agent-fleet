@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 )
 
 var chromiumReadToolNames = []string{
@@ -129,7 +131,7 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 		if r.Body != nil {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 		}
-		label, _ := base64.RawURLEncoding.DecodeString(r.Header.Get(browserAttachmentLabelHeader))
+		label, _ := base64.RawURLEncoding.DecodeString(r.Header.Get(browserx.BrowserAttachmentLabelHeader))
 		hits = append(hits, hit{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, body: body, label: string(label)})
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/browser/attach-targets":
