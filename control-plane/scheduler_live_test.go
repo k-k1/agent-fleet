@@ -20,17 +20,29 @@ import (
 // This is the closest deterministic proof-of-fire available without a running deployment.
 
 // recordingFirer captures fires from the live ticker goroutine; guarded because run() and
-// the test read it from different goroutines.
+// the test read it from different goroutines. `fires` は発火のたびに 1 つ入る通知
+// （バッファ付き・**送信はノンブロッキング**なので、誰も待っていなくても発火を妨げない）。
 type recordingFirer struct {
 	mu     sync.Mutex
 	fired  []store.Schedule
 	status string
+	fires  chan struct{}
+}
+
+func newRecordingFirer() *recordingFirer {
+	return &recordingFirer{fires: make(chan struct{}, 16)}
 }
 
 func (f *recordingFirer) fire(_ context.Context, sch store.Schedule, _ time.Time) (string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fired = append(f.fired, sch)
+	if f.fires != nil {
+		select {
+		case f.fires <- struct{}{}:
+		default: // 誰も待っていない / バッファ満杯 —— 記録は fired に残るので落として構わない
+		}
+	}
 	if f.status != "" {
 		return f.status, "", nil
 	}
@@ -52,17 +64,25 @@ func (f *recordingFirer) first() (store.Schedule, bool) {
 	return f.fired[0], true
 }
 
-// waitFor polls cond up to d, so the live-goroutine tests are not flaky under load.
-func waitFor(d time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
+// waitFire は発火を **イベントで** 待つ。以前はここが「2 秒まで 10 ms 間隔でポーリング」
+// だったが、それは**負荷で落ちる形**である —— 30 ms の ticker が 2 秒の間に何回回るかは
+// 機械の忙しさ次第で、遅れたことと発火しないことを区別できない。
+//
+// ⚠️ **これは「待ち時間を伸ばして緩めた」のではない。** 緑になる速さは変わらない（発火した
+// 瞬間に返る）。締切は「起きなかった」と**断定する**ためだけにあるので、長くしても検査は
+// 弱くならず、短いと嘘をつく。
+func (f *recordingFirer) waitFire(t *testing.T, d time.Duration) {
+	t.Helper()
+	select {
+	case <-f.fires:
+	case <-time.After(d):
+		t.Fatalf("%v 待っても発火しなかった (count=%d)", d, f.count())
 	}
-	return cond()
 }
+
+// liveFireDeadline は「発火しなかった」と断定するまでの上限。共有ホストで他のセッションが
+// ビルドを回していても、発火そのものが起きないことは無い。
+const liveFireDeadline = 30 * time.Second
 
 // TestLiveOperatorCreateThenTickerFires: an operator registers a due `once` schedule
 // through the real create handler, and the real ticker goroutine fires it, advances the
@@ -98,14 +118,13 @@ func TestLiveOperatorCreateThenTickerFires(t *testing.T) {
 	}
 
 	// Start the REAL ticker goroutine at a fast interval.
-	ff := &recordingFirer{}
+	ff := newRecordingFirer()
+	sc := newScheduler(st, ff, 30*time.Millisecond)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go newScheduler(st, ff, 30*time.Millisecond).run(runCtx)
+	go sc.run(runCtx)
 
-	if !waitFor(2*time.Second, func() bool { return ff.count() >= 1 }) {
-		t.Fatalf("ticker never fired the schedule (count=%d)", ff.count())
-	}
+	ff.waitFire(t, liveFireDeadline)
 	fired, _ := ff.first()
 	if fired.ID != dto.ID {
 		t.Fatalf("fired id=%q want %q", fired.ID, dto.ID)
@@ -128,8 +147,14 @@ func TestLiveOperatorCreateThenTickerFires(t *testing.T) {
 	}
 
 	// The ticker must not re-fire the now-disabled row.
+	//
+	// ⚠️ ここは 150 ms 眠って数を見ていた。**眠っている間に tick が 1 度も回らなくても
+	// 通る**ので、検査が空振りしていても分からない（負荷が上がるほど空振りしやすい＝
+	// 一番効いてほしいときに効かない）。ループを止め、tick を**同期で 2 回**踏む。
+	cancel()
 	firstCount := ff.count()
-	time.Sleep(150 * time.Millisecond)
+	sc.tickAt(ctx, time.Now().UTC())
+	sc.tickAt(ctx, time.Now().UTC())
 	if ff.count() != firstCount {
 		t.Fatalf("disabled schedule re-fired: %d -> %d", firstCount, ff.count())
 	}
@@ -156,25 +181,29 @@ func TestLiveRunNowFiresThroughTicker(t *testing.T) {
 	var dto scheduleDTO
 	_ = json.Unmarshal(rec.Body.Bytes(), &dto)
 
-	ff := &recordingFirer{}
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go newScheduler(st, ff, 30*time.Millisecond).run(runCtx)
+	ff := newRecordingFirer()
+	sc := newScheduler(st, ff, 30*time.Millisecond)
 
 	// It must NOT fire on its own (next_run is an hour away).
-	time.Sleep(200 * time.Millisecond)
+	// ⚠️ 眠って「たぶん ticker が回ったはず」で確かめない —— **tick を同期で 1 回踏む**。
+	// 眠るだけだと、その 200 ms に ticker が 1 度も回らなくても緑になる（＝この行が何も
+	// 検査していない状態を、誰も見分けられない）。
+	sc.tickAt(ctx, time.Now().UTC())
 	if ff.count() != 0 {
 		t.Fatalf("interval fired before run_now: %d", ff.count())
 	}
+
+	// ここからが主題: run_now を **ticker 経由で**拾わせる。
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go sc.run(runCtx)
 
 	// Operator hits run_now -> due immediately.
 	rn := doJSON(api.runNow, mv, "POST", "", dto.ID)
 	if rn.Code != http.StatusOK {
 		t.Fatalf("run_now code=%d body=%s", rn.Code, rn.Body.String())
 	}
-	if !waitFor(2*time.Second, func() bool { return ff.count() >= 1 }) {
-		t.Fatalf("run_now did not fire through the ticker (count=%d)", ff.count())
-	}
+	ff.waitFire(t, liveFireDeadline)
 
 	// interval stays enabled with a fresh future next_run after the fire.
 	got, _, _ := st.GetSchedule(ctx, dto.ID)
