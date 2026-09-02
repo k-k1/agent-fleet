@@ -1,4 +1,4 @@
-package main
+package mcpsrv
 
 // Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031).
 //
@@ -21,7 +21,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-func newMCPServerAPITest(t *testing.T, withKey bool) (mcpServerAPI, context.Context) {
+func newMCPServerAPITest(t *testing.T, withKey bool) (ServerAPI, context.Context) {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
@@ -32,12 +32,12 @@ func newMCPServerAPITest(t *testing.T, withKey bool) (mcpServerAPI, context.Cont
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	m := &manager{store: st}
+	cp := testCP{store: st}
 	if withKey {
-		m.master32 = []byte("0123456789abcdef0123456789abcdef")
-		m.custodian = newLocalCustodian(m.master32)
+		cp.master32 = []byte("0123456789abcdef0123456789abcdef")
+		cp.custodian = newTestCustodian(cp.master32)
 	}
-	return newMCPServerAPI(m), ctx
+	return NewServerAPI(cp), ctx
 }
 
 // --- validation --------------------------------------------------------------------
@@ -46,7 +46,7 @@ func TestValidateMCPBodyRefusesStdio(t *testing.T) {
 	// ADR0031 決定 2. The table has no command columns either, so this is the second of
 	// three refusals (the third is the agent re-validating what it receives).
 	aerr := validateMCPBody(mcpServerBody{Name: "x", Transport: "stdio", URL: "https://x.example/mcp"})
-	if aerr == nil || aerr.code != codeMCPTenantStdio {
+	if aerr == nil || aerr.Code != codeMCPTenantStdio {
 		t.Fatalf("stdio must be refused with %s, got %+v", codeMCPTenantStdio, aerr)
 	}
 }
@@ -77,7 +77,7 @@ func TestValidateMCPBodyRules(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			aerr := validateMCPBody(c.body)
-			if aerr == nil || aerr.code != c.code {
+			if aerr == nil || aerr.Code != c.code {
 				t.Fatalf("want %s, got %+v", c.code, aerr)
 			}
 		})
@@ -88,7 +88,7 @@ func TestValidateMCPBodyRules(t *testing.T) {
 
 func TestMergeHeadersRoundTrip(t *testing.T) {
 	stored := map[string]string{"Authorization": "Bearer real", "X-Team": "sre"}
-	got := mergeHeaders(map[string]string{"Authorization": maskedValue, "X-Team": "platform"}, stored)
+	got := mergeHeaders(map[string]string{"Authorization": MaskedValue, "X-Team": "platform"}, stored)
 	if got["Authorization"] != "Bearer real" {
 		t.Fatalf("masked value must keep the stored credential, got %q", got["Authorization"])
 	}
@@ -101,7 +101,7 @@ func TestMergeHeadersRoundTrip(t *testing.T) {
 	}
 	// Masked with nothing behind it must be DROPPED, never stored: the literal "***"
 	// would otherwise be sent to the MCP server as if it were a credential.
-	if _, ok := mergeHeaders(map[string]string{"New": maskedValue}, stored)["New"]; ok {
+	if _, ok := mergeHeaders(map[string]string{"New": MaskedValue}, stored)["New"]; ok {
 		t.Fatal("a masked value with no stored counterpart must be dropped")
 	}
 }
@@ -111,7 +111,7 @@ func TestStripValuesAndMask(t *testing.T) {
 	if v := stripValues(in)["Authorization"]; v != "" {
 		t.Fatalf("user_secret must keep the NAME and drop the value, got %q", v)
 	}
-	if v := maskHeaders(in)["Authorization"]; v != maskedValue {
+	if v := maskHeaders(in)["Authorization"]; v != MaskedValue {
 		t.Fatalf("a stored value must be masked, got %q", v)
 	}
 	// An empty value stays empty: it is not a secret being withheld, it is one nobody has
@@ -297,7 +297,7 @@ func TestDistributeScopesAndStrips(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	a.distribute(rec, httptest.NewRequest(http.MethodGet, "/internal/mcp-servers", nil),
+	a.Distribute(rec, httptest.NewRequest(http.MethodGet, "/internal/mcp-servers", nil),
 		store.MembershipView{MembershipID: "m1", TenantID: "tenant-a"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
@@ -335,35 +335,5 @@ func TestDistributeScopesAndStrips(t *testing.T) {
 	// the CP only distributes enabled rows and the local opt-out is applied in the agent.
 	if !byName["wiki"].Enabled {
 		t.Fatal("distributed rows must arrive enabled")
-	}
-}
-
-// --- token ------------------------------------------------------------------------
-
-func TestMCPTokenRoundTrip(t *testing.T) {
-	key := mcpSignKey([]byte("0123456789abcdef0123456789abcdef"))
-	tok := mintMCPToken(key, "membership-1")
-	// Deterministic, so re-injection on every container start is idempotent.
-	if tok != mintMCPToken(key, "membership-1") {
-		t.Fatal("the token must be deterministic per membership")
-	}
-	mid, ok := verifyMCPToken(key, tok)
-	if !ok || mid != "membership-1" {
-		t.Fatalf("verify: %q %v", mid, ok)
-	}
-	bad := []string{
-		"", "nope", "afm_", "afm_bad.tag",
-		mintMCPToken(key, "membership-1") + "x",                                                        // tampered tag
-		mintScheduleToken(scheduleSignKey([]byte("0123456789abcdef0123456789abcdef")), "membership-1"), // wrong credential
-	}
-	for _, b := range bad {
-		if _, ok := verifyMCPToken(key, b); ok {
-			t.Fatalf("must reject %q", b)
-		}
-	}
-	// A different master key must not validate: the MCP token is its own credential, so a
-	// memo/schedule token leak grants nothing here (and vice versa).
-	if _, ok := verifyMCPToken(mcpSignKey([]byte("ffffffffffffffffffffffffffffffff")), tok); ok {
-		t.Fatal("a token from another deployment key must be rejected")
 	}
 }

@@ -1,4 +1,4 @@
-package main
+package mcpsrv
 
 // /mcp の版契約（docs/log/49 + ADR0032）。両 era を同時に serve するので、固定したいのは
 // 「新版の検証が効くこと」と「旧クライアントが従来どおり通ること」の 2 点。
@@ -47,7 +47,7 @@ func statelessHdr(method string) map[string]string {
 func dispatch(t *testing.T, body string, hdr map[string]string) (*rpcResponse, int) {
 	t.Helper()
 	r, req := eraReq(t, body, hdr)
-	return mcpAPI{}.dispatchMCPHTTP(r, &mcpPrincipal{patID: "p"}, req)
+	return API{}.dispatchMCPHTTP(r, &mcpPrincipal{patID: "p"}, req)
 }
 
 // validate runs only the era/header checks. Used where dispatching would reach a tool
@@ -200,7 +200,7 @@ func TestMCPEndpointRejectsRemovedTransportVerbs(t *testing.T) {
 	// 2026-07-28 は GET ストリームと DELETE によるセッション破棄を廃止した。
 	for _, m := range []string{http.MethodGet, http.MethodDelete} {
 		w := httptest.NewRecorder()
-		mcpAPI{}.handleMCP(w, httptest.NewRequest(m, "/mcp", nil))
+		API{}.HandleMCP(w, httptest.NewRequest(m, "/mcp", nil))
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s /mcp = %d, want 405", m, w.Code)
 		}

@@ -1,4 +1,4 @@
-package main
+package mcpsrv
 
 import (
 	"context"
@@ -21,7 +21,7 @@ func TestMCPEgressProposeAndGate(t *testing.T) {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	api := newMCPAPI(&manager{store: st})
+	api := New(testCP{store: st})
 	super := &adminCtx{prin: &mcpPrincipal{patID: "pat1"}, tenant: store.Tenant{ID: "t1"}, isSuper: true, isAdmin: true}
 	tenantAdmin := &adminCtx{prin: &mcpPrincipal{patID: "pat2"}, tenant: store.Tenant{ID: "t1"}, isSuper: false, isAdmin: true}
 

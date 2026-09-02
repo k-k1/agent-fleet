@@ -1,4 +1,4 @@
-package main
+package mcpsrv
 
 // MCP 2026-07-28（ステートレス版）の受理層（docs/log/49 + ADR0032）。
 //
