@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 type shareStopRuntime struct{ stopped chan struct{} }
@@ -35,8 +37,8 @@ func (r *shareLifecycleRuntime) Token() string                { return "" }
 func (r *shareLifecycleRuntime) Name() string                 { return "share-lifecycle" }
 
 func TestEffectiveSharePermission(t *testing.T) {
-	c := SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s1", WorkingCopyID: "wc1"}
-	shares := []SessionShare{
+	c := store.SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s1", WorkingCopyID: "wc1"}
+	shares := []store.SessionShare{
 		{OwnerMembershipID: "owner", ScopeType: "session", ScopeKey: "s1", Permission: "ro"},
 		{OwnerMembershipID: "owner", ScopeType: "worktree", ScopeKey: "wc1", Permission: "rw"},
 		{OwnerMembershipID: "other", ScopeType: "session", ScopeKey: "s1", Permission: "rw"},
@@ -56,27 +58,27 @@ func TestEffectiveSharePermission(t *testing.T) {
 // 効く(docs/log/59 §1)。所有者の作業は worktree 側で進むので、ここが効かないと「リポジトリを
 // 共有した」のに共有先には何も見えない。逆に worktree 共有はその1つに閉じたままにする。
 func TestRepoShareCoversWorktreeSessionsButWorktreeShareStaysNarrow(t *testing.T) {
-	base := SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-base", WorkingCopyID: "wc-base"}
-	wt := SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-wt", WorkingCopyID: "wc-wt",
+	base := store.SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-base", WorkingCopyID: "wc-base"}
+	wt := store.SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-wt", WorkingCopyID: "wc-wt",
 		Worktree: true, Parent: "proj", ParentWorkingCopyID: "wc-base"}
-	repoShare := []SessionShare{{OwnerMembershipID: "owner", ScopeType: "repo", ScopeKey: "wc-base", Permission: "ro"}}
+	repoShare := []store.SessionShare{{OwnerMembershipID: "owner", ScopeType: "repo", ScopeKey: "wc-base", Permission: "ro"}}
 	if got := effectivePermission(repoShare, base); got != "ro" {
 		t.Fatalf("base under repo share=%q", got)
 	}
 	if got := effectivePermission(repoShare, wt); got != "ro" {
 		t.Fatalf("worktree under repo share=%q", got)
 	}
-	wtShare := []SessionShare{{OwnerMembershipID: "owner", ScopeType: "worktree", ScopeKey: "wc-wt", Permission: "rw"}}
+	wtShare := []store.SessionShare{{OwnerMembershipID: "owner", ScopeType: "worktree", ScopeKey: "wc-wt", Permission: "rw"}}
 	if got := effectivePermission(wtShare, base); got != "" {
 		t.Fatalf("worktree share must not reach the base copy: %q", got)
 	}
 	// 親不明(旧行 / marker 無し)は ParentWorkingCopyID が空。scope_key は空を拒否して
 	// いるので、空同士でどの規則にも吸い寄せられないことを固定する。
-	orphan := SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-orphan", WorkingCopyID: "wc-x"}
+	orphan := store.SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-orphan", WorkingCopyID: "wc-x"}
 	if got := effectivePermission(repoShare, orphan); got != "" {
 		t.Fatalf("unrelated copy matched a repo share: %q", got)
 	}
-	if got := effectivePermission([]SessionShare{{OwnerMembershipID: "owner", ScopeType: "repo", ScopeKey: "", Permission: "rw"}}, orphan); got != "" {
+	if got := effectivePermission([]store.SessionShare{{OwnerMembershipID: "owner", ScopeType: "repo", ScopeKey: "", Permission: "rw"}}, orphan); got != "" {
 		t.Fatalf("empty scope key matched an empty parent: %q", got)
 	}
 }
@@ -172,7 +174,7 @@ func TestSharedTranscriptDTOKeepsDeclinedFlag(t *testing.T) {
 
 func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,9 +191,9 @@ func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 	_, _ = st.EnsureMembership(ctx, strangerIdentity.ID, tenant.ID, "member")
 	recipientViews, _ := st.ListMemberships(ctx, recipientIdentity.ID)
 	strangerViews, _ := st.ListMemberships(ctx, strangerIdentity.ID)
-	workspace := Workspace{ID: "ws-owner", TenantID: tenant.ID, MembershipID: owner.ID,
+	workspace := store.Workspace{ID: "ws-owner", TenantID: tenant.ID, MembershipID: owner.ID,
 		ContainerName: "owner", Network: "test", DataDir: "/data/owner", AgentPort: "1", AgentToken: "tok",
-		State: "running", CreatedAt: nowTS()}
+		State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
@@ -231,14 +233,14 @@ func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 		rt: stubRuntime{endpoint: agent.URL, token: "tok"}, ws: workspace,
 	}}}
 	api := newSessionShareAPI(mgr)
-	catalog := SharedSessionCatalog{ID: "catalog-1", WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID,
-		Name: "session-1", Kind: "codex", WorkingCopyID: "wc-1", LastSeen: nowTS()}
-	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []SharedSessionCatalog{catalog}); err != nil {
+	catalog := store.SharedSessionCatalog{ID: "catalog-1", WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID,
+		Name: "session-1", Kind: "codex", WorkingCopyID: "wc-1", LastSeen: store.NowTS()}
+	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []store.SharedSessionCatalog{catalog}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutSessionShare(ctx, SessionShare{ID: "share-1", TenantID: tenant.ID, OwnerMembershipID: owner.ID,
+	if err := st.PutSessionShare(ctx, store.SessionShare{ID: "share-1", TenantID: tenant.ID, OwnerMembershipID: owner.ID,
 		RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: "session-1", Permission: "ro",
-		CreatedAt: nowTS(), UpdatedAt: nowTS()}); err != nil {
+		CreatedAt: store.NowTS(), UpdatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -335,7 +337,7 @@ func TestFreshCatalogThrottlesInventoryButNotAuthorization(t *testing.T) {
 
 func TestSyncCatalogCapturesWorktreeAndParent(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,8 +349,8 @@ func TestSyncCatalogCapturesWorktreeAndParent(t *testing.T) {
 	ownerIdentity, _ := st.UpsertIdentity(ctx, "owner-wt@example.com", "owner-wt", "")
 	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
 	ownerViews, _ := st.ListMemberships(ctx, ownerIdentity.ID)
-	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n",
-		DataDir: "d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: nowTS()}
+	workspace := store.Workspace{ID: store.NewID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n",
+		DataDir: "d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +390,7 @@ func TestSyncCatalogCapturesWorktreeAndParent(t *testing.T) {
 	if len(catalog) != 2 {
 		t.Fatalf("catalog rows=%d", len(catalog))
 	}
-	byName := map[string]SharedSessionCatalog{}
+	byName := map[string]store.SharedSessionCatalog{}
 	for _, c := range catalog {
 		byName[c.Name] = c
 	}
@@ -408,7 +410,7 @@ func TestSyncCatalogCapturesWorktreeAndParent(t *testing.T) {
 // 「削除したはずのセッションが消えない」という報告の実体だった。
 func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,8 +424,8 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
 	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
 	recipientViews, _ := st.ListMemberships(ctx, recipientIdentity.ID)
-	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n",
-		DataDir: "d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: nowTS()}
+	workspace := store.Workspace{ID: store.NewID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n",
+		DataDir: "d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
@@ -455,9 +457,9 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 		rt: stubRuntime{endpoint: agent.URL, token: "tok"}, ws: workspace,
 	}}}
 	api := newSessionShareAPI(mgr)
-	if err := st.PutSessionShare(ctx, SessionShare{ID: newID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID,
+	if err := st.PutSessionShare(ctx, store.SessionShare{ID: store.NewID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID,
 		RecipientMembershipID: recipient.ID, ScopeType: "repo", ScopeKey: "wc-base", Permission: "ro",
-		CreatedAt: nowTS(), UpdatedAt: nowTS()}); err != nil {
+		CreatedAt: store.NowTS(), UpdatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -530,7 +532,7 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 
 func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,7 +603,7 @@ func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
 
 func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -612,7 +614,7 @@ func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 	tenant, _ := st.EnsureDefaultTenant(ctx)
 	identity, _ := st.UpsertIdentity(ctx, "owner-stop@example.com", "owner-stop", "")
 	membership, _ := st.EnsureMembership(ctx, identity.ID, tenant.ID, "member")
-	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	workspace := store.Workspace{ID: store.NewID(), TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +626,7 @@ func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 	go func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/workspace/stop", nil)
-		newWorkspaceAPI(mgr, false).stop(rec, req, &resolved{rt: runtime, ws: workspace, mv: MembershipView{MembershipID: membership.ID}})
+		newWorkspaceAPI(mgr, false).stop(rec, req, &resolved{rt: runtime, ws: workspace, mv: store.MembershipView{MembershipID: membership.ID}})
 		close(done)
 	}()
 	select {
@@ -643,7 +645,7 @@ func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 
 func TestShareDowngradeWaitsForAuthorizedAgentOperation(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,9 +659,9 @@ func TestShareDowngradeWaitsForAuthorizedAgentOperation(t *testing.T) {
 	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
 	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
 	ownerViews, _ := st.ListMemberships(ctx, ownerIdentity.ID)
-	share := SessionShare{ID: newID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID,
+	share := store.SessionShare{ID: store.NewID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID,
 		RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: "s1", Permission: "rw",
-		CreatedAt: nowTS(), UpdatedAt: nowTS()}
+		CreatedAt: store.NowTS(), UpdatedAt: store.NowTS()}
 	if err := st.PutSessionShare(ctx, share); err != nil {
 		t.Fatal(err)
 	}
@@ -692,7 +694,7 @@ func TestShareDowngradeWaitsForAuthorizedAgentOperation(t *testing.T) {
 
 func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -706,23 +708,23 @@ func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
 	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
 	ownerViews, _ := st.ListMemberships(ctx, ownerIdentity.ID)
-	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	workspace := store.Workspace{ID: store.NewID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
-	catalog := SharedSessionCatalog{ID: newID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "ha-session", Kind: "codex", WorkingCopyID: "wc-ha", LastSeen: nowTS()}
-	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []SharedSessionCatalog{catalog}); err != nil {
+	catalog := store.SharedSessionCatalog{ID: store.NewID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "ha-session", Kind: "codex", WorkingCopyID: "wc-ha", LastSeen: store.NowTS()}
+	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []store.SharedSessionCatalog{catalog}); err != nil {
 		t.Fatal(err)
 	}
-	share := SessionShare{ID: newID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID,
+	share := store.SessionShare{ID: store.NewID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID,
 		RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: catalog.Name, Permission: "rw",
-		CreatedAt: nowTS(), UpdatedAt: nowTS()}
+		CreatedAt: store.NowTS(), UpdatedAt: store.NowTS()}
 	if err := st.PutSessionShare(ctx, share); err != nil {
 		t.Fatal(err)
 	}
-	proposal := SessionShareProposal{ID: newID(), TenantID: tenant.ID, CatalogID: catalog.ID,
+	proposal := store.SessionShareProposal{ID: store.NewID(), TenantID: tenant.ID, CatalogID: catalog.ID,
 		OwnerMembershipID: owner.ID, ProposerMembershipID: recipient.ID, Action: "turn", Ciphertext: "opaque",
-		Status: "pending", CreatedAt: nowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
+		Status: "pending", CreatedAt: store.NowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
 	if err := st.CreateSessionShareProposal(ctx, proposal); err != nil {
 		t.Fatal(err)
 	}
@@ -769,7 +771,7 @@ func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 		t.Fatalf("blocked lifecycle reached runtime: starts=%d stops=%d", runtime.starts.Load(), runtime.stops.Load())
 	}
 	localA.Unlock()
-	changed, err := st.FinalizeSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS())
+	changed, err := st.FinalizeSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, store.NowTS())
 	if err != nil || !changed {
 		t.Fatalf("finalize changed=%v err=%v", changed, err)
 	}
@@ -779,13 +781,13 @@ func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 	}
 
 	second := proposal
-	second.ID = newID()
+	second.ID = store.NewID()
 	second.Status = "pending"
 	second.Ciphertext = "opaque-2"
 	if err := st.CreateSessionShareProposal(ctx, second); err != nil {
 		t.Fatal(err)
 	}
-	lifecycleToken := newID()
+	lifecycleToken := store.NewID()
 	lifecycleNow := time.Now().UTC()
 	acquired, err := managerB.store.AcquireSessionShareOwnerLease(ctx, owner.ID, lifecycleToken,
 		lifecycleNow.Format(time.RFC3339), lifecycleNow.Add(workspaceLifecycleLease).Format(time.RFC3339))
@@ -804,7 +806,7 @@ func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 
 func TestLifecycleLeaseHeartbeatAndFencingCheckpoint(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -824,7 +826,7 @@ func TestLifecycleLeaseHeartbeatAndFencingCheckpoint(t *testing.T) {
 	}
 	time.Sleep(650 * time.Millisecond)
 	now := time.Now().UTC()
-	acquired, err := st.AcquireSessionShareOwnerLease(ctx, member.ID, newID(), leaseTS(now), leaseTS(now.Add(time.Second)))
+	acquired, err := st.AcquireSessionShareOwnerLease(ctx, member.ID, store.NewID(), leaseTS(now), leaseTS(now.Add(time.Second)))
 	if err != nil {
 		live.Close()
 		t.Fatal(err)
@@ -843,7 +845,7 @@ func TestLifecycleLeaseHeartbeatAndFencingCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(250 * time.Millisecond)
-	newToken := newID()
+	newToken := store.NewID()
 	now = time.Now().UTC()
 	acquired, err = st.AcquireSessionShareOwnerLease(ctx, member.ID, newToken, leaseTS(now), leaseTS(now.Add(time.Second)))
 	if err != nil || !acquired {
@@ -908,7 +910,7 @@ func TestSharedHandoffProposalsShowContentAndDropUnknownFields(t *testing.T) {
 
 func TestSharedHandoffProposalsAuthorize(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -925,9 +927,9 @@ func TestSharedHandoffProposalsAuthorize(t *testing.T) {
 	_, _ = st.EnsureMembership(ctx, strangerIdentity.ID, tenant.ID, "member")
 	recipientViews, _ := st.ListMemberships(ctx, recipientIdentity.ID)
 	strangerViews, _ := st.ListMemberships(ctx, strangerIdentity.ID)
-	workspace := Workspace{ID: "ws-owner", TenantID: tenant.ID, MembershipID: owner.ID,
+	workspace := store.Workspace{ID: "ws-owner", TenantID: tenant.ID, MembershipID: owner.ID,
 		ContainerName: "owner", Network: "test", DataDir: "/data/owner", AgentPort: "1", AgentToken: "tok",
-		State: "running", CreatedAt: nowTS()}
+		State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
@@ -954,14 +956,14 @@ func TestSharedHandoffProposalsAuthorize(t *testing.T) {
 		rt: stubRuntime{endpoint: agent.URL, token: "tok"}, ws: workspace,
 	}}}
 	api := newSessionShareAPI(mgr)
-	catalog := SharedSessionCatalog{ID: "catalog-1", WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID,
-		Name: "session-1", Kind: "claude", WorkingCopyID: "wc-1", LastSeen: nowTS()}
-	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []SharedSessionCatalog{catalog}); err != nil {
+	catalog := store.SharedSessionCatalog{ID: "catalog-1", WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID,
+		Name: "session-1", Kind: "claude", WorkingCopyID: "wc-1", LastSeen: store.NowTS()}
+	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []store.SharedSessionCatalog{catalog}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutSessionShare(ctx, SessionShare{ID: "share-1", TenantID: tenant.ID, OwnerMembershipID: owner.ID,
+	if err := st.PutSessionShare(ctx, store.SessionShare{ID: "share-1", TenantID: tenant.ID, OwnerMembershipID: owner.ID,
 		RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: "session-1", Permission: "ro",
-		CreatedAt: nowTS(), UpdatedAt: nowTS()}); err != nil {
+		CreatedAt: store.NowTS(), UpdatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 

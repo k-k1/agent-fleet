@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Tenant-defined login providers (docs/log/61 §61.11 + ADR0043 決定 29-33).
@@ -87,7 +89,7 @@ func validTenantIdPName(name string) bool { return validProviderID(name) }
 
 // tenantIdPStoreView is the narrow store view the registry needs.
 type tenantIdPStoreView interface {
-	ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error)
+	ListActiveTenantIdPs(ctx context.Context) ([]store.TenantIdP, map[string]store.TenantRef, error)
 }
 
 // tenantProviderSnapshot is one consistent read of every ACTIVE tenant provider.
@@ -266,7 +268,7 @@ func (r *tenantIdPRegistry) providersForSlug(ctx context.Context, slug string) [
 // half of the same rules validateTenantIdPBody applies on save, and the two must
 // stay in step: an approved row that only the API accepts would save cleanly and
 // then disappear from the login page with a log line nobody is watching.
-func buildTenantProvider(row TenantIdP, tn TenantRef, secret string) (loginProvider, error) {
+func buildTenantProvider(row store.TenantIdP, tn store.TenantRef, secret string) (loginProvider, error) {
 	if !validTenantIdPName(row.Name) {
 		return nil, fmt.Errorf("invalid provider name %q", row.Name)
 	}
@@ -368,7 +370,7 @@ func tenantLinkClaimList() []string {
 //
 // The display name is preferred over the slug because it is what a human calls that
 // company; the slug is the fallback for a tenant that never set one.
-func tenantLabelSuffix(base string, tn TenantRef, lang string) string {
+func tenantLabelSuffix(base string, tn store.TenantRef, lang string) string {
 	who := strings.TrimSpace(tn.Name)
 	if who == "" {
 		who = strings.TrimSpace(tn.Slug)

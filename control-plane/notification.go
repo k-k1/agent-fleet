@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 const notificationRetentionDays = 7
@@ -31,7 +33,7 @@ type notificationDTO struct {
 
 type notificationAPI struct {
 	memberAuth
-	store NotificationStore
+	store store.NotificationStore
 }
 
 func newNotificationAPI(m *manager) notificationAPI {
@@ -42,7 +44,7 @@ func notificationCutoff() string {
 	return time.Now().UTC().Add(-notificationRetentionDays * 24 * time.Hour).Format(time.RFC3339)
 }
 
-func notificationToDTO(n Notification) notificationDTO {
+func notificationToDTO(n store.Notification) notificationDTO {
 	p := map[string]any{}
 	_ = json.Unmarshal([]byte(n.Payload), &p)
 	return notificationDTO{Seq: n.Seq, ID: n.EventID, Kind: n.Kind,
@@ -74,7 +76,7 @@ func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
 // 止めると「未回答のまま停止しました」の通知が、次に Workspace を起こすまで誰にも
 // 届かない — 費用のために止めた結果、止めたことを知らせる通知だけが止めたせいで
 // 消える、という一番まずい形になる。
-func drainAgentOutbox(ctx context.Context, st NotificationStore, rt Runtime, membershipID string) string {
+func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt Runtime, membershipID string) string {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/notifications", nil)
 	if tok := rt.Token(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
@@ -99,11 +101,11 @@ func drainAgentOutbox(ctx context.Context, st NotificationStore, rt Runtime, mem
 	acked := make([]string, 0, len(body.Notifications))
 	for _, in := range body.Notifications {
 		payload, _ := json.Marshal(in.Payload)
-		n := Notification{EventID: in.ID, MembershipID: membershipID, Kind: in.Kind,
+		n := store.Notification{EventID: in.ID, MembershipID: membershipID, Kind: in.Kind,
 			TargetType: "session", TargetID: in.SessionName, TargetKind: in.SessionKind,
 			DisplayName: in.DisplayName, Payload: string(payload), CreatedAt: in.CreatedAt}
 		if n.CreatedAt == "" {
-			n.CreatedAt = nowTS()
+			n.CreatedAt = store.NowTS()
 		}
 		if err := st.InsertNotification(ctx, n); err != nil {
 			return "offline"
@@ -159,7 +161,7 @@ func (a notificationAPI) list(w http.ResponseWriter, r *http.Request, res *resol
 	writeJSON(w, http.StatusOK, p)
 }
 
-func (a notificationAPI) seen(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a notificationAPI) seen(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	var in struct {
 		ThroughSeq int64    `json:"throughSeq"`
 		EventIDs   []string `json:"eventIds"`
@@ -168,7 +170,7 @@ func (a notificationAPI) seen(w http.ResponseWriter, r *http.Request, _ Identity
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	now := nowTS()
+	now := store.NowTS()
 	if in.ThroughSeq > 0 {
 		if err := a.store.MarkNotificationsSeenThrough(r.Context(), mv.MembershipID, in.ThroughSeq, now); err != nil {
 			writeAPIErr(w, internalErr(err))
@@ -188,7 +190,7 @@ type usageObservation struct {
 	ResetsAt  string  `json:"resetsAt"`
 }
 
-func (a notificationAPI) observeUsage(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a notificationAPI) observeUsage(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	var in struct {
 		Source  string             `json:"source"`
 		Windows []usageObservation `json:"windows"`
@@ -225,15 +227,15 @@ func (a notificationAPI) observeUsage(w http.ResponseWriter, r *http.Request, _ 
 		} else if reset {
 			armed = 0
 		}
-		st = UsageNotificationState{MembershipID: mv.MembershipID, Source: in.Source, WindowKey: obs.WindowKey, ResetsAt: obs.ResetsAt, Armed: armed}
+		st = store.UsageNotificationState{MembershipID: mv.MembershipID, Source: in.Source, WindowKey: obs.WindowKey, ResetsAt: obs.ResetsAt, Armed: armed}
 		if err := a.store.PutUsageNotificationState(r.Context(), st); err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
 		}
 		if reset {
 			payload, _ := json.Marshal(map[string]any{"source": in.Source, "windowKey": obs.WindowKey})
-			n := Notification{EventID: fmt.Sprintf("usage:%s:%s:%s:%s", mv.MembershipID, in.Source, obs.WindowKey, obs.ResetsAt), MembershipID: mv.MembershipID,
-				Kind: "usage-reset", TargetType: "usage", TargetID: in.Source, DisplayName: strings.ToUpper(in.Source), Payload: string(payload), CreatedAt: nowTS()}
+			n := store.Notification{EventID: fmt.Sprintf("usage:%s:%s:%s:%s", mv.MembershipID, in.Source, obs.WindowKey, obs.ResetsAt), MembershipID: mv.MembershipID,
+				Kind: "usage-reset", TargetType: "usage", TargetID: in.Source, DisplayName: strings.ToUpper(in.Source), Payload: string(payload), CreatedAt: store.NowTS()}
 			if err := a.store.InsertNotification(r.Context(), n); err != nil {
 				writeAPIErr(w, internalErr(err))
 				return

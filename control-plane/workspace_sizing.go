@@ -18,6 +18,7 @@ import (
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // The sizing vocabulary and its three types are declared by the adapters' package:
@@ -63,6 +64,6 @@ func (m *manager) workspaceSizing() workspaceSizing {
 // that consumes it is tenant_admin-only, but the instance type a person's own
 // workspace runs on is visible from inside that workspace anyway (nproc, cgroup), so
 // gating it would protect nothing while forcing the Console to guess.
-func (a adminAPI) workspaceSizingProfile(w http.ResponseWriter, _ *http.Request, _ Identity) {
+func (a adminAPI) workspaceSizingProfile(w http.ResponseWriter, _ *http.Request, _ store.Identity) {
 	writeJSON(w, http.StatusOK, a.mgr.workspaceSizing())
 }

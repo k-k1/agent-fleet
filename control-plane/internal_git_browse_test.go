@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // initRepoWithTree creates a real bare + ledger row for the default tenant and
@@ -24,7 +26,7 @@ func (e *p2Env) initRepoWithTree(t *testing.T, name string, files map[string][]b
 		t.Fatal(err)
 	}
 	gitRun(t, filepath.Dir(bare), nil, "init", "--bare", "--initial-branch=main", bare)
-	if err := e.st.CreateGitRepo(ctx, GitRepo{ID: newID(), TenantID: e.tenantID, Name: name, DefaultBranch: "main", CreatedAt: nowTS()}); err != nil {
+	if err := e.st.CreateGitRepo(ctx, store.GitRepo{ID: store.NewID(), TenantID: e.tenantID, Name: name, DefaultBranch: "main", CreatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 	env := []string{"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@x", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@x"}
@@ -179,7 +181,7 @@ func TestInternalGitBrowseEmptyRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	gitRun(t, filepath.Dir(bare), nil, "init", "--bare", "--initial-branch=main", bare)
-	if err := e.st.CreateGitRepo(context.Background(), GitRepo{ID: newID(), TenantID: e.tenantID, Name: "fresh", DefaultBranch: "main", CreatedAt: nowTS()}); err != nil {
+	if err := e.st.CreateGitRepo(context.Background(), store.GitRepo{ID: store.NewID(), TenantID: e.tenantID, Name: "fresh", DefaultBranch: "main", CreatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 	w, body := e.browse(t, "fresh", "tree", "ref=main&path=")

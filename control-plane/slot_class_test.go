@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // --- resolution ------------------------------------------------------------------
@@ -75,7 +76,7 @@ func TestResolveSlotClass(t *testing.T) {
 
 	t.Run("nothing set anywhere is the deployment default", func(t *testing.T) {
 		m, tid, mid := newMgr(t)
-		got, note := m.resolveSlotClass(ctx, Workspace{TenantID: tid, MembershipID: mid})
+		got, note := m.resolveSlotClass(ctx, store.Workspace{TenantID: tid, MembershipID: mid})
 		if got != "standard" || note != "" {
 			t.Fatalf("got %q note=%q", got, note)
 		}
@@ -84,7 +85,7 @@ func TestResolveSlotClass(t *testing.T) {
 	t.Run("the tenant default applies to a member with no value", func(t *testing.T) {
 		m, tid, mid := newMgr(t)
 		setLimits(t, m, tid, tenantLimits{SlotClass: "arm"})
-		if got, _ := m.resolveSlotClass(ctx, Workspace{TenantID: tid, MembershipID: mid}); got != "arm" {
+		if got, _ := m.resolveSlotClass(ctx, store.Workspace{TenantID: tid, MembershipID: mid}); got != "arm" {
 			t.Fatalf("got %q", got)
 		}
 	})
@@ -92,10 +93,10 @@ func TestResolveSlotClass(t *testing.T) {
 	t.Run("the per-user value wins", func(t *testing.T) {
 		m, tid, mid := newMgr(t)
 		setLimits(t, m, tid, tenantLimits{SlotClass: "arm"})
-		if err := m.store.PutUserLimit(ctx, mid, UserQuota{SlotClass: "econ"}); err != nil {
+		if err := m.store.PutUserLimit(ctx, mid, store.UserQuota{SlotClass: "econ"}); err != nil {
 			t.Fatal(err)
 		}
-		if got, _ := m.resolveSlotClass(ctx, Workspace{TenantID: tid, MembershipID: mid}); got != "econ" {
+		if got, _ := m.resolveSlotClass(ctx, store.Workspace{TenantID: tid, MembershipID: mid}); got != "econ" {
 			t.Fatalf("got %q", got)
 		}
 	})
@@ -105,10 +106,10 @@ func TestResolveSlotClass(t *testing.T) {
 	t.Run("a class the tenant may not use falls back and says so", func(t *testing.T) {
 		m, tid, mid := newMgr(t)
 		setLimits(t, m, tid, tenantLimits{SlotClass: "arm", AllowedSlotClasses: []string{"standard", "arm"}})
-		if err := m.store.PutUserLimit(ctx, mid, UserQuota{SlotClass: "econ"}); err != nil {
+		if err := m.store.PutUserLimit(ctx, mid, store.UserQuota{SlotClass: "econ"}); err != nil {
 			t.Fatal(err)
 		}
-		got, note := m.resolveSlotClass(ctx, Workspace{TenantID: tid, MembershipID: mid})
+		got, note := m.resolveSlotClass(ctx, store.Workspace{TenantID: tid, MembershipID: mid})
 		if got != "arm" {
 			t.Fatalf("got %q, want the tenant default", got)
 		}
@@ -121,10 +122,10 @@ func TestResolveSlotClass(t *testing.T) {
 	// nothing, and that must not fail their Start.
 	t.Run("an id the deployment no longer declares falls back", func(t *testing.T) {
 		m, tid, mid := newMgr(t)
-		if err := m.store.PutUserLimit(ctx, mid, UserQuota{SlotClass: "retired"}); err != nil {
+		if err := m.store.PutUserLimit(ctx, mid, store.UserQuota{SlotClass: "retired"}); err != nil {
 			t.Fatal(err)
 		}
-		got, note := m.resolveSlotClass(ctx, Workspace{TenantID: tid, MembershipID: mid})
+		got, note := m.resolveSlotClass(ctx, store.Workspace{TenantID: tid, MembershipID: mid})
 		if got != "standard" || note == "" {
 			t.Fatalf("got %q note=%q", got, note)
 		}
@@ -135,7 +136,7 @@ func TestResolveSlotClass(t *testing.T) {
 	t.Run("an allowed set without the deployment default picks an allowed one", func(t *testing.T) {
 		m, tid, mid := newMgr(t)
 		setLimits(t, m, tid, tenantLimits{AllowedSlotClasses: []string{"econ"}})
-		if got, _ := m.resolveSlotClass(ctx, Workspace{TenantID: tid, MembershipID: mid}); got != "econ" {
+		if got, _ := m.resolveSlotClass(ctx, store.Workspace{TenantID: tid, MembershipID: mid}); got != "econ" {
 			t.Fatalf("got %q", got)
 		}
 	})
@@ -147,10 +148,10 @@ func TestResolveSlotClass(t *testing.T) {
 		// A single unnamed ladder reports no SlotClasses at all — that is what the
 		// adapter does with a bare spec, and it is asserted there.
 		m.rtFactory = sizingOnlyFactory{sizing: workspaceSizing{Runtime: "ecs-ec2"}}
-		if err := m.store.PutUserLimit(ctx, mid, UserQuota{SlotClass: "arm"}); err != nil {
+		if err := m.store.PutUserLimit(ctx, mid, store.UserQuota{SlotClass: "arm"}); err != nil {
 			t.Fatal(err)
 		}
-		if got, _ := m.resolveSlotClass(ctx, Workspace{TenantID: tid, MembershipID: mid}); got != "" {
+		if got, _ := m.resolveSlotClass(ctx, store.Workspace{TenantID: tid, MembershipID: mid}); got != "" {
 			t.Fatalf("got %q, want \"\"", got)
 		}
 	})
@@ -172,7 +173,7 @@ func TestUserLimitRoundTripsSlotClass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.store.PutUserLimit(ctx, mem.ID, UserQuota{MaxSessions: 3, SlotClass: "arm"}); err != nil {
+	if err := m.store.PutUserLimit(ctx, mem.ID, store.UserQuota{MaxSessions: 3, SlotClass: "arm"}); err != nil {
 		t.Fatal(err)
 	}
 	ul, ok, err := m.store.GetUserLimit(ctx, mem.ID)
@@ -183,7 +184,7 @@ func TestUserLimitRoundTripsSlotClass(t *testing.T) {
 		t.Fatalf("got %+v", ul)
 	}
 	// And clearing it goes back to "the tenant default", not to the previous value.
-	if err := m.store.PutUserLimit(ctx, mem.ID, UserQuota{MaxSessions: 3}); err != nil {
+	if err := m.store.PutUserLimit(ctx, mem.ID, store.UserQuota{MaxSessions: 3}); err != nil {
 		t.Fatal(err)
 	}
 	if ul, _, _ := m.store.GetUserLimit(ctx, mem.ID); ul.SlotClass != "" {

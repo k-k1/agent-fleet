@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // docs/log/71 §71.8 + ADR0052 決定 7. The bridge exists so the tenant's client secret stops
@@ -19,7 +21,7 @@ import (
 
 // bridgeEnv builds a manager with one tenant, one member, and that tenant's Bitbucket
 // app registered.
-func bridgeEnv(t *testing.T) (*sqlStore, *manager, MembershipView) {
+func bridgeEnv(t *testing.T) (*store.SQL, *manager, store.MembershipView) {
 	t.Helper()
 	ctx := context.Background()
 	st, mgr, api := gitOAuthEnv(t)
@@ -183,7 +185,7 @@ func TestWorkspaceEnvCarriesTheGitOAuthBridgeToken(t *testing.T) {
 	mgr.dataRoot = t.TempDir()
 	mgr.publicBaseURL = "https://af.example"
 
-	ws := Workspace{ID: "ws1", TenantID: mv.TenantID, MembershipID: mv.MembershipID}
+	ws := store.Workspace{ID: "ws1", TenantID: mv.TenantID, MembershipID: mv.MembershipID}
 	env := mgr.workspaceExtraEnv(ctx, ws)
 
 	var token string

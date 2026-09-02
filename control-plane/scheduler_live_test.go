@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // scheduler_live_test.go — end-to-end verification of the scheduled-execution pipeline
@@ -21,11 +23,11 @@ import (
 // the test read it from different goroutines.
 type recordingFirer struct {
 	mu     sync.Mutex
-	fired  []Schedule
+	fired  []store.Schedule
 	status string
 }
 
-func (f *recordingFirer) fire(_ context.Context, sch Schedule, _ time.Time) (string, string, error) {
+func (f *recordingFirer) fire(_ context.Context, sch store.Schedule, _ time.Time) (string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fired = append(f.fired, sch)
@@ -41,11 +43,11 @@ func (f *recordingFirer) count() int {
 	return len(f.fired)
 }
 
-func (f *recordingFirer) first() (Schedule, bool) {
+func (f *recordingFirer) first() (store.Schedule, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.fired) == 0 {
-		return Schedule{}, false
+		return store.Schedule{}, false
 	}
 	return f.fired[0], true
 }
@@ -68,7 +70,7 @@ func waitFor(d time.Duration, cond func() bool) bool {
 func TestLiveOperatorCreateThenTickerFires(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
 	api := newScheduleAPI(&manager{store: st})
-	mv := MembershipView{MembershipID: "m1", TenantID: "default"}
+	mv := store.MembershipView{MembershipID: "m1", TenantID: "default"}
 
 	// Mark the scheduler enabled so create's response mirrors a real firing deployment
 	// (no "scheduler disabled" warning). Restore after — it is a package global.
@@ -140,7 +142,7 @@ func TestLiveOperatorCreateThenTickerFires(t *testing.T) {
 func TestLiveRunNowFiresThroughTicker(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
 	api := newScheduleAPI(&manager{store: st})
-	mv := MembershipView{MembershipID: "m1", TenantID: "default"}
+	mv := store.MembershipView{MembershipID: "m1", TenantID: "default"}
 	prev := schedulerRunning
 	schedulerRunning = true
 	t.Cleanup(func() { schedulerRunning = prev })
@@ -179,7 +181,7 @@ func TestLiveRunNowFiresThroughTicker(t *testing.T) {
 	if !got.Enabled {
 		t.Fatal("interval schedule should stay enabled after run_now")
 	}
-	if got.NextRun == "" || got.NextRun <= nowTS() {
+	if got.NextRun == "" || got.NextRun <= store.NowTS() {
 		t.Fatalf("next_run not advanced to the future: %q", got.NextRun)
 	}
 }

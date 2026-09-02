@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // fakeVoicevox stands up a minimal VOICEVOX engine: /audio_query returns a params
@@ -262,7 +264,7 @@ func TestChooseTTSProvider(t *testing.T) {
 func TestTTSAdminToggleSetting(t *testing.T) {
 	clearTTSEnv(t)
 	srv, _ := fakeVoicevox(t)
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -326,7 +328,7 @@ func TestTTSDict(t *testing.T) {
 	}
 
 	// store あり → setting の中身がそのまま返る。
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

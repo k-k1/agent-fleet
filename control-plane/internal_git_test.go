@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // TestInternalGitListTenantScoped verifies the repo-management list is confined to
@@ -14,7 +16,7 @@ import (
 // tenant selected via X-AF-Tenant, never the other's.
 func TestInternalGitListTenantScoped(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -38,13 +40,13 @@ func TestInternalGitListTenantScoped(t *testing.T) {
 	if _, err := st.EnsureMembership(ctx, ident.ID, sec.ID, "member"); err != nil {
 		t.Fatalf("mem security: %v", err)
 	}
-	must := func(g GitRepo) {
+	must := func(g store.GitRepo) {
 		if err := st.CreateGitRepo(ctx, g); err != nil {
 			t.Fatalf("repo: %v", err)
 		}
 	}
-	must(GitRepo{ID: newID(), TenantID: dflt.ID, Name: "alpha", DefaultBranch: "main", CreatedAt: nowTS()})
-	must(GitRepo{ID: newID(), TenantID: sec.ID, Name: "bravo", DefaultBranch: "main", CreatedAt: nowTS()})
+	must(store.GitRepo{ID: store.NewID(), TenantID: dflt.ID, Name: "alpha", DefaultBranch: "main", CreatedAt: store.NowTS()})
+	must(store.GitRepo{ID: store.NewID(), TenantID: sec.ID, Name: "bravo", DefaultBranch: "main", CreatedAt: store.NowTS()})
 
 	g := newGitServerAPI(&manager{store: st, authMode: "proxy", emailHeader: "X-Forwarded-Email"},
 		"https://fleet.example.com")

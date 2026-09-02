@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // docs/log/61 §61.11 / ADR0043 決定 29-33 (P4). What these pin down is the part of
@@ -22,7 +24,7 @@ import (
 //   - an address that already belongs to somebody is refused, never joined
 //   - such a session opens its own tenant and no other
 
-func p4Manager(t *testing.T, st *sqlStore) *manager {
+func p4Manager(t *testing.T, st *store.SQL) *manager {
 	t.Helper()
 	m := p3Manager(t, st)
 	m.tenantIdP = newTenantIdPRegistry(st, m.openTenantSecret)
@@ -30,13 +32,13 @@ func p4Manager(t *testing.T, st *sqlStore) *manager {
 }
 
 // seedTenantIdP writes a row directly, for tests that are not about the API.
-func seedTenantIdP(t *testing.T, st *sqlStore, tenantID, name, domains, status string) TenantIdP {
+func seedTenantIdP(t *testing.T, st *store.SQL, tenantID, name, domains, status string) store.TenantIdP {
 	t.Helper()
-	row := TenantIdP{
-		ID: newID(), TenantID: tenantID, Name: name,
+	row := store.TenantIdP{
+		ID: store.NewID(), TenantID: tenantID, Name: name,
 		Issuer:   "https://login.microsoftonline.com/guid-" + name + "/v2.0",
 		ClientID: "client-" + name, SecretEnc: "secret-" + name, Trust: trustIssuer,
-		AllowedDomains: domains, Status: status, CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		AllowedDomains: domains, Status: status, CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateTenantIdP(context.Background(), row); err != nil {
 		t.Fatalf("seed tenant_idp: %v", err)
@@ -98,7 +100,7 @@ func TestTenantProviderGateDoesNotFallBackToTheDeployment(t *testing.T) {
 	}
 
 	row := seedTenantIdP(t, st, tn.ID, "entra", "sub.co.jp", "active")
-	p, err := buildTenantProvider(row, TenantRef{Slug: "sub"}, "s3cret")
+	p, err := buildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s3cret")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -117,34 +119,34 @@ func TestTenantProviderGateDoesNotFallBackToTheDeployment(t *testing.T) {
 // the API refuses it earlier still (see TestTenantIdPSaveTimeValidation). This is
 // docs/log/61 §61.14's first P4 question answered: allowed_domains is required.
 func TestBuildTenantProviderRefusesDangerousRows(t *testing.T) {
-	base := TenantIdP{
+	base := store.TenantIdP{
 		Name: "entra", Issuer: "https://login.microsoftonline.com/guid/v2.0",
 		ClientID: "c", Trust: trustIssuer, AllowedDomains: "sub.co.jp",
 	}
-	if _, err := buildTenantProvider(base, TenantRef{Slug: "sub"}, "s"); err != nil {
+	if _, err := buildTenantProvider(base, store.TenantRef{Slug: "sub"}, "s"); err != nil {
 		t.Fatalf("the valid row must build: %v", err)
 	}
-	bad := map[string]func(*TenantIdP){
-		"no domains":    func(r *TenantIdP) { r.AllowedDomains = "" },
-		"no trust rule": func(r *TenantIdP) { r.Trust = "" },
-		"api trust":     func(r *TenantIdP) { r.Trust = trustAPI },
-		"http issuer":   func(r *TenantIdP) { r.Issuer = "http://idp.example/" },
-		"multi-tenant issuer": func(r *TenantIdP) {
+	bad := map[string]func(*store.TenantIdP){
+		"no domains":    func(r *store.TenantIdP) { r.AllowedDomains = "" },
+		"no trust rule": func(r *store.TenantIdP) { r.Trust = "" },
+		"api trust":     func(r *store.TenantIdP) { r.Trust = trustAPI },
+		"http issuer":   func(r *store.TenantIdP) { r.Issuer = "http://idp.example/" },
+		"multi-tenant issuer": func(r *store.TenantIdP) {
 			r.Issuer = "https://login.microsoftonline.com/common/v2.0"
 		},
-		"bad name": func(r *TenantIdP) { r.Name = "Entra ID" },
+		"bad name": func(r *store.TenantIdP) { r.Name = "Entra ID" },
 	}
 	for label, mutate := range bad {
 		row := base
 		mutate(&row)
-		if _, err := buildTenantProvider(row, TenantRef{Slug: "sub"}, "s"); err == nil {
+		if _, err := buildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s"); err == nil {
 			t.Fatalf("%s: must be refused", label)
 		}
 	}
 	// A multi-tenant issuer is allowed once the tenant ids are pinned (決定 7).
 	row := base
 	row.Issuer, row.AllowedTIDs = "https://login.microsoftonline.com/common/v2.0", "guid-a"
-	if _, err := buildTenantProvider(row, TenantRef{Slug: "sub"}, "s"); err != nil {
+	if _, err := buildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s"); err != nil {
 		t.Fatalf("pinned tids must make the multi-tenant issuer acceptable: %v", err)
 	}
 }
@@ -165,14 +167,14 @@ func TestOnlyApprovedTenantProvidersResolve(t *testing.T) {
 	if mgr.tenantIdP.providerFor(ctx, id) != nil {
 		t.Fatal("a pending sign-in method must not resolve to a provider")
 	}
-	if err := st.SetTenantIdPStatus(ctx, tn.ID, row.ID, "active", "boss", nowTS(), nowTS()); err != nil {
+	if err := st.SetTenantIdPStatus(ctx, tn.ID, row.ID, "active", "boss", store.NowTS(), store.NowTS()); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	mgr.tenantIdP.invalidate()
 	if mgr.tenantIdP.providerFor(ctx, id) == nil {
 		t.Fatal("an approved sign-in method must resolve without a restart")
 	}
-	if err := st.SetTenantIdPStatus(ctx, tn.ID, row.ID, "suspended", "", "", nowTS()); err != nil {
+	if err := st.SetTenantIdPStatus(ctx, tn.ID, row.ID, "suspended", "", "", store.NowTS()); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
 	mgr.tenantIdP.invalidate()
@@ -260,7 +262,7 @@ func TestTenantAdminCannotApproveItsOwnIdP(t *testing.T) {
 	// ★ Editing the issuer withdraws the approval: it was given to an issuer, not to
 	// a row. The same holds for a WIDENED domain list, which lets the issuer assert
 	// addresses the approver never saw.
-	if err := st.SetTenantIdPStatus(ctx, tn.ID, created.ID, "active", "boss", nowTS(), nowTS()); err != nil {
+	if err := st.SetTenantIdPStatus(ctx, tn.ID, created.ID, "active", "boss", store.NowTS(), store.NowTS()); err != nil {
 		t.Fatalf("re-approve: %v", err)
 	}
 	edit := `{"name":"entra","issuer":"https://login.microsoftonline.com/guid-other/v2.0",
@@ -272,7 +274,7 @@ func TestTenantAdminCannotApproveItsOwnIdP(t *testing.T) {
 		t.Fatalf("changing the issuer must send the row back to pending, got %q", row.Status)
 	}
 
-	if err := st.SetTenantIdPStatus(ctx, tn.ID, created.ID, "active", "boss", nowTS(), nowTS()); err != nil {
+	if err := st.SetTenantIdPStatus(ctx, tn.ID, created.ID, "active", "boss", store.NowTS(), store.NowTS()); err != nil {
 		t.Fatalf("re-approve: %v", err)
 	}
 	widen := `{"name":"entra","issuer":"https://login.microsoftonline.com/guid-other/v2.0",
@@ -378,7 +380,7 @@ func TestTenantProviderRefusesAnAddressThatBelongsToSomebody(t *testing.T) {
 	}
 	// The subsidiary's issuer asserts that address.
 	_, _, err = st.LinkIdentity(ctx, linkOf("t:sub:entra", "attacker-1", victim, false))
-	if !errors.Is(err, errIdentityClaimed) {
+	if !errors.Is(err, store.ErrIdentityClaimed) {
 		t.Fatalf("err = %v, want errIdentityClaimed", err)
 	}
 	if n := countRows(t, st, "identity"); n != 1 {
@@ -424,10 +426,10 @@ func TestTenantProviderSessionIsPinnedToItsOwnTenant(t *testing.T) {
 	foreign, _ := st.CreateTenant(ctx, "sales", "営業部")
 
 	sess := withLoginRef(ctx, loginRef{provider: "t:sub:entra", subject: "x"})
-	if aerr := mgr.checkTenantProvider(sess, MembershipView{TenantID: own.ID, TenantSlug: "sub"}); aerr != nil {
+	if aerr := mgr.checkTenantProvider(sess, store.MembershipView{TenantID: own.ID, TenantSlug: "sub"}); aerr != nil {
 		t.Fatalf("its own tenant must be reachable: %v", aerr)
 	}
-	aerr := mgr.checkTenantProvider(sess, MembershipView{TenantID: foreign.ID, TenantSlug: "sales"})
+	aerr := mgr.checkTenantProvider(sess, store.MembershipView{TenantID: foreign.ID, TenantSlug: "sales"})
 	if aerr == nil || aerr.code != "provider_required" {
 		t.Fatalf("another tenant must be refused with provider_required, got %+v", aerr)
 	}

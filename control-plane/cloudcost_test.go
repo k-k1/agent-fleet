@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // --- Cost Explorer parsing -----------------------------------------------------
@@ -154,7 +155,7 @@ func (f *fakeCE) GetCostAndUsage(_ context.Context, in *costexplorer.GetCostAndU
 	return &out, nil
 }
 
-func costPollerFixture(t *testing.T, ce costExplorerAPI) (*sqlStore, *manager, *cloudCostPoller) {
+func costPollerFixture(t *testing.T, ce costExplorerAPI) (*store.SQL, *manager, *cloudCostPoller) {
 	t.Helper()
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
@@ -247,11 +248,11 @@ func TestCloudCostPollerSurfacesTheError(t *testing.T) {
 func TestPutCloudCostReplacesRatherThanAccumulates(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
-	row := CloudCostRow{Day: "2026-08-17", MembershipID: "M-1", TenantID: "T-1",
+	row := store.CloudCostRow{Day: "2026-08-17", MembershipID: "M-1", TenantID: "T-1",
 		Service: "Amazon EC2", Unblended: 1_000_000, Amortized: 1_000_000, Currency: "USD"}
 
 	for i := 0; i < 3; i++ {
-		if err := st.PutCloudCost(ctx, []string{"2026-08-17"}, []CloudCostRow{row}); err != nil {
+		if err := st.PutCloudCost(ctx, []string{"2026-08-17"}, []store.CloudCostRow{row}); err != nil {
 			t.Fatalf("put %d: %v", i, err)
 		}
 	}
@@ -283,7 +284,7 @@ func TestCloudCostStoreScopesAndTotals(t *testing.T) {
 	ident, _ := st.UpsertIdentity(ctx, "a@x.com", "a-x-com", "")
 	mem, _ := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
 
-	rows := []CloudCostRow{
+	rows := []store.CloudCostRow{
 		{Day: "2026-08-17", MembershipID: mem.ID, TenantID: tn.ID, Service: "Amazon EC2", Unblended: 2_000_000, Currency: "USD"},
 		{Day: "2026-08-17", MembershipID: "M-other", TenantID: other.ID, Service: "Amazon EC2", Unblended: 5_000_000, Currency: "USD"},
 		{Day: "2026-08-17", MembershipID: "", TenantID: "", Service: "Amazon Route 53", Unblended: 9_000_000, Currency: "USD"},
@@ -318,7 +319,7 @@ func TestCloudCostStoreScopesAndTotals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("totals: %v", err)
 	}
-	byMember := map[string]CloudCostTotal{}
+	byMember := map[string]store.CloudCostTotal{}
 	for _, tt := range totals {
 		byMember[tt.MembershipID] = tt
 	}
@@ -337,7 +338,7 @@ func TestCloudCostStoreScopesAndTotals(t *testing.T) {
 
 // --- the API boundary ----------------------------------------------------------
 
-func cloudCostFixture(t *testing.T) (*sqlStore, *manager, Tenant, Membership) {
+func cloudCostFixture(t *testing.T) (*store.SQL, *manager, store.Tenant, store.Membership) {
 	t.Helper()
 	ctx := context.Background()
 	st := p3Store(t)
@@ -352,7 +353,7 @@ func cloudCostFixture(t *testing.T) (*sqlStore, *manager, Tenant, Membership) {
 	if err != nil {
 		t.Fatalf("membership: %v", err)
 	}
-	if err := st.PutCloudCost(ctx, []string{"2026-08-17"}, []CloudCostRow{
+	if err := st.PutCloudCost(ctx, []string{"2026-08-17"}, []store.CloudCostRow{
 		{Day: "2026-08-17", MembershipID: mem.ID, TenantID: tn.ID, Service: "Amazon EC2", Unblended: 2_000_000, Currency: "USD"},
 		{Day: "2026-08-17", MembershipID: "", TenantID: "", Service: "Amazon Route 53", Unblended: 9_000_000, Currency: "USD"},
 	}); err != nil {
@@ -405,7 +406,7 @@ func TestMyCloudCostIsScopedToTheCaller(t *testing.T) {
 	_, mgr, tn, mem := cloudCostFixture(t)
 	r := httptest.NewRequest(http.MethodGet, "/api/cost/me?from=2026-08-01&to=2026-08-31", nil)
 	w := httptest.NewRecorder()
-	newAdminAPI(mgr).myCloudCost(w, r, Identity{}, MembershipView{MembershipID: mem.ID, TenantID: tn.ID, TenantSlug: tn.Slug})
+	newAdminAPI(mgr).myCloudCost(w, r, store.Identity{}, store.MembershipView{MembershipID: mem.ID, TenantID: tn.ID, TenantSlug: tn.Slug})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
@@ -488,7 +489,7 @@ func TestMemberCloudCostGivesTheAdminTheShapeTheListCannot(t *testing.T) {
 // who plainly did spend. The membership already proved it belongs to this tenant.
 func TestMemberCloudCostStillFindsSpendWhoseTenantWasLost(t *testing.T) {
 	st, mgr, _, mem := cloudCostFixture(t)
-	if err := st.PutCloudCost(context.Background(), []string{"2026-08-18"}, []CloudCostRow{
+	if err := st.PutCloudCost(context.Background(), []string{"2026-08-18"}, []store.CloudCostRow{
 		{Day: "2026-08-18", MembershipID: mem.ID, TenantID: "", Service: "Amazon Elastic Block Store",
 			Unblended: 500_000, Currency: "USD"},
 	}); err != nil {

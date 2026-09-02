@@ -13,12 +13,14 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // slowActivityStore は DB が遅い日を再現する。ほかの Store メソッドは使わないので
 // 埋め込みの nil のまま（呼ばれたら panic して気付ける）。
 type slowActivityStore struct {
-	Store
+	store.Store
 	delay time.Duration
 	calls atomic.Int32
 }

@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // gitGC periodically maintains the internal bare repositories (docs/reference/
@@ -29,8 +31,8 @@ import (
 // lookup + the LFS object ledger it reconciles. Standalone components should
 // depend on the sub-interfaces they use, not the full Store.
 type gitGCStore interface {
-	TenantStore
-	LFSObjectStore
+	store.TenantStore
+	store.LFSObjectStore
 }
 
 type gitGC struct {

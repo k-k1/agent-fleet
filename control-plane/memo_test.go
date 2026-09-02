@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // buildFlushMessage groups by category with a heading each, numbers restart per
 // category, file memos surface the ref path (plus comment), text memos the body.
 func TestBuildFlushMessage(t *testing.T) {
-	memos := []Memo{
+	memos := []store.Memo{
 		{Category: "frontend", Kind: "file", RefPath: "~/repos/a/Button.tsx", Body: "余白を詰めて"},
 		{Category: "frontend", Kind: "text", Body: "色も直して"},
 		{Category: "api", Kind: "text", Body: "エラーハンドリング追加"},
@@ -51,7 +53,7 @@ func TestBuildFlushMessageAttachments(t *testing.T) {
 		b, _ := json.Marshal(a)
 		return string(b)
 	}
-	memos := []Memo{
+	memos := []store.Memo{
 		{Category: "ui", Kind: "text", Body: "この画面", Attachments: atts(memoAttachment{Path: "/home/dev/.cache/agent-fleet/memo-images/paste-1.png", Name: "paste-1.png"})},
 		{Category: "ui", Kind: "text", Body: "", Attachments: atts(memoAttachment{Path: "/home/dev/.cache/agent-fleet/memo-images/paste-2.jpg", Name: "paste-2.jpg"})},
 	}
@@ -73,7 +75,7 @@ func TestBuildFlushMessageAttachments(t *testing.T) {
 // missing attachment name from its path; a text memo with neither body nor attachments
 // is rejected.
 func TestValidateMemoAttachments(t *testing.T) {
-	mv := MembershipView{MembershipID: "mem-1"}
+	mv := store.MembershipView{MembershipID: "mem-1"}
 
 	m, aerr := validateMemo(mv, memoDTO{Kind: "text", Attachments: []memoAttachment{{Path: "/x/paste-9.png"}}})
 	if aerr != nil {

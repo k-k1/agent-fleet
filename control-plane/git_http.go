@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Internal git provider — smart-HTTP face (docs/reference/internal-git-provider,
@@ -41,12 +43,12 @@ type gitServerAPI struct {
 // LFS object + lock ledgers, tenant limits (quotas), membership resolution
 // (git token → live tenant/role), and the audit ledger.
 type gitServerStore interface {
-	TenantStore
-	MembershipStore
-	GitRepoStore
-	LFSObjectStore
-	LFSLockStore
-	AuditStore
+	store.TenantStore
+	store.MembershipStore
+	store.GitRepoStore
+	store.LFSObjectStore
+	store.LFSLockStore
+	store.AuditStore
 }
 
 func newGitServerAPI(m *manager, publicBaseURL string) gitServerAPI {
@@ -193,7 +195,7 @@ func (e *gitAuthErr) writeGit(w http.ResponseWriter) {
 // repo name valid + present in the ledger. It does NOT apply the push gate — the
 // caller decides read vs write per operation. Returns the resolved repo name, the
 // membership view, and the token's membership id.
-func (a gitServerAPI) authorizeGitRepo(r *http.Request, slug, repoSeg string) (name string, mv MembershipView, membershipID string, aerr *gitAuthErr) {
+func (a gitServerAPI) authorizeGitRepo(r *http.Request, slug, repoSeg string) (name string, mv store.MembershipView, membershipID string, aerr *gitAuthErr) {
 	_, pass, ok := r.BasicAuth()
 	if !ok || pass == "" {
 		return "", mv, "", &gitAuthErr{http.StatusUnauthorized, "authentication required", true}

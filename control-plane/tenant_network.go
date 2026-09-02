@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // tenantNetwork (GET /api/admin/tenants/{slug}/network) returns the stored rule plus
@@ -126,10 +128,10 @@ func (a adminAPI) setTenantNetwork(w http.ResponseWriter, r *http.Request) {
 	// This rule IS consulted on every request through the cache; a stale copy would
 	// keep letting the old networks in (and, worse, keep locking the new ones out).
 	a.mgr.tenantLogin.invalidate()
-	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
-		ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
+	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
 		Action: "tenant.network_rules", Target: t.Slug,
-		Detail: "allowed_cidrs=" + stored, At: nowTS(),
+		Detail: "allowed_cidrs=" + stored, At: store.NowTS(),
 	})
 	// The normalized text goes back so the screen shows what was actually stored:
 	// 192.0.2.7/24 is saved as 192.0.2.0/24, and an editor who is not told would keep

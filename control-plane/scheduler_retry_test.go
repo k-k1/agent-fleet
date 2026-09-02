@@ -3,6 +3,8 @@ package main
 import (
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // The retry seam (docs/log/38 ★7). A fire that never reached the Agent is a fire
@@ -18,10 +20,10 @@ func TestSchedulerRetriesUndeliveredFire(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
 	mid := realMembership(t, st, ctx)
 	slot := time.Date(2026, 8, 31, 0, 1, 0, 0, time.UTC)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_retry", MembershipID: mid, TenantID: "default",
 		SpecKind: "cron", Spec: "0 9 * * *", TZ: "Asia/Tokyo", Enabled: true, SpecLabel: "毎朝",
-		NextRun: slot.Format(time.RFC3339), CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: slot.Format(time.RFC3339), CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)
@@ -74,10 +76,10 @@ func TestSchedulerRetryWindowIsBounded(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
 	mid := realMembership(t, st, ctx)
 	slot := time.Date(2026, 8, 31, 0, 1, 0, 0, time.UTC)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_giveup", MembershipID: mid, TenantID: "default",
 		SpecKind: "cron", Spec: "0 9 * * *", TZ: "UTC", Enabled: true, SpecLabel: "毎朝",
-		NextRun: slot.Format(time.RFC3339), CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: slot.Format(time.RFC3339), CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)
@@ -104,10 +106,10 @@ func TestSchedulerNonRetryableErrorIsFinal(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
 	mid := realMembership(t, st, ctx)
 	slot := time.Date(2026, 8, 31, 0, 1, 0, 0, time.UTC)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_final", MembershipID: mid, TenantID: "default",
 		SpecKind: "cron", Spec: "0 9 * * *", TZ: "UTC", Enabled: true,
-		NextRun: slot.Format(time.RFC3339), CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: slot.Format(time.RFC3339), CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)

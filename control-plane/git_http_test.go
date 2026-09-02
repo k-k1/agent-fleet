@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // --- token unit tests -------------------------------------------------------
@@ -82,7 +84,7 @@ func TestIsReceivePackAndCanPush(t *testing.T) {
 // plus helpers for minting tokens and issuing requests, with the CGI backend stubbed.
 type gitTestEnv struct {
 	g        gitServerAPI
-	st       *sqlStore
+	st       *store.SQL
 	signKey  []byte
 	served   bool
 	servedTo string // tenantRoot the authorized request resolved to
@@ -91,7 +93,7 @@ type gitTestEnv struct {
 func newGitTestEnv(t *testing.T) *gitTestEnv {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -138,10 +140,10 @@ func (e *gitTestEnv) addMembership(t *testing.T, tenantSlug, role string) string
 	if err != nil {
 		t.Fatalf("identity: %v", err)
 	}
-	mid := newID()
+	mid := store.NewID()
 	if _, err := e.st.DB().ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at) VALUES(?,?,?,?, 'active', ?)`,
-		mid, ident.ID, tn.ID, role, nowTS()); err != nil {
+		mid, ident.ID, tn.ID, role, store.NowTS()); err != nil {
 		t.Fatalf("membership: %v", err)
 	}
 	return mid
@@ -154,8 +156,8 @@ func (e *gitTestEnv) addRepo(t *testing.T, tenantSlug, name string) {
 	if err != nil || !ok {
 		t.Fatalf("tenant lookup %s: %v ok=%v", tenantSlug, err, ok)
 	}
-	if err := e.st.CreateGitRepo(ctx, GitRepo{
-		ID: newID(), TenantID: tn.ID, Name: name, DefaultBranch: "main", CreatedAt: nowTS(),
+	if err := e.st.CreateGitRepo(ctx, store.GitRepo{
+		ID: store.NewID(), TenantID: tn.ID, Name: name, DefaultBranch: "main", CreatedAt: store.NowTS(),
 	}); err != nil {
 		t.Fatalf("create repo: %v", err)
 	}

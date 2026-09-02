@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // P3-9 idle-stop (scale-to-zero). A single background goroutine drives a
@@ -512,7 +514,7 @@ func (c tierClocks) anyOn() bool {
 	return c.sessionOn || c.interactionOn || c.wsOn || c.hibernateOn || c.backupOn
 }
 
-func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClocks, live map[string]bool) {
+func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tierClocks, live map[string]bool) {
 	rt := rp.mgr.runtimeFor(ws, "") // secretKey unused for read/halt calls
 	// Tier 4 first, and outside every state test below: a backup is not about whether
 	// anybody is using this workspace. It takes no locks and changes nothing — a snapshot
@@ -629,7 +631,7 @@ func (rp *reaper) idleBase(seen bool, lastSeen time.Time, dbLastActive string) t
 }
 
 // haltSession halts one idle claude session (Agent POST /sessions/{name}/halt).
-func (rp *reaper) haltSession(ctx context.Context, rt Runtime, ws Workspace, name string) {
+func (rp *reaper) haltSession(ctx context.Context, rt Runtime, ws store.Workspace, name string) {
 	req, _ := http.NewRequestWithContext(ctx, "POST", rt.Endpoint()+"/sessions/"+url.PathEscape(name)+"/halt", nil)
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
@@ -647,7 +649,7 @@ func (rp *reaper) haltSession(ctx context.Context, rt Runtime, ws Workspace, nam
 // fence as explicit/admin stops. The idle reaper runs independently in every CP
 // replica, so a direct Runtime.Stop could otherwise cross an approved shared
 // operation or another holder's recreate/clean/start.
-func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, wsTO time.Duration) {
+func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws store.Workspace, wsTO time.Duration) {
 	lock := rp.mgr.startLockFor(ws.ID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -765,7 +767,7 @@ type hibernatingRuntime interface {
 // hibernateHome is tier 3. It runs under the same three fences as tier 2, because
 // hibernation releases the slot and starts a snapshot — a Start that wins the race while
 // this is deciding must not find its home being taken apart underneath it.
-func (rp *reaper) hibernateHome(ctx context.Context, rt Runtime, ws Workspace, hibTO time.Duration) {
+func (rp *reaper) hibernateHome(ctx context.Context, rt Runtime, ws store.Workspace, hibTO time.Duration) {
 	h, ok := rt.(hibernatingRuntime)
 	if !ok {
 		return // this runtime has nowhere cheaper to put a home
@@ -820,7 +822,7 @@ type backingUpRuntime interface {
 // and whether one is due is decided from AWS rather than from anything the reaper
 // remembers. Two CP replicas can therefore both fire in the same window; the cost is one
 // extra incremental copy, which the retention then drops.
-func (rp *reaper) backupHome(ctx context.Context, rt Runtime, ws Workspace, every time.Duration) {
+func (rp *reaper) backupHome(ctx context.Context, rt Runtime, ws store.Workspace, every time.Duration) {
 	b, ok := rt.(backingUpRuntime)
 	if !ok {
 		return // this runtime's home is not pinned to one AZ

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // previewHostFactory hands every workspace the same stub runtime pointed at the fake
@@ -25,14 +26,14 @@ type previewHostEnv struct {
 	cfg    config
 	mux    *http.ServeMux // Console オリジン（authGate 相当は dev 認証で素通り）
 	host   http.Handler   // プレビュー用ホストの入口（dispatch）
-	ws     Workspace
+	ws     store.Workspace
 	domain string
 }
 
 func newPreviewHostEnv(t *testing.T, agentURL string) *previewHostEnv {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -52,8 +53,8 @@ func newPreviewHostEnv(t *testing.T, agentURL string) *previewHostEnv {
 	if err != nil {
 		t.Fatalf("membership: %v", err)
 	}
-	ws := Workspace{ID: "ws-1", TenantID: dflt.ID, MembershipID: mem.ID, ContainerName: "c",
-		Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	ws := store.Workspace{ID: "ws-1", TenantID: dflt.ID, MembershipID: mem.ID, ContainerName: "c",
+		Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)
 	}

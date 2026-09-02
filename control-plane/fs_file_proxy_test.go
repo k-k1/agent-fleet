@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 type fsStateRuntime struct {
@@ -19,10 +21,10 @@ type fsStateRuntime struct {
 
 func (r fsStateRuntime) State(context.Context) string { return r.state }
 
-func newFSProxyTest(t *testing.T, agent http.Handler) (agentProxyAPI, *resolved, *sqlStore, func()) {
+func newFSProxyTest(t *testing.T, agent http.Handler) (agentProxyAPI, *resolved, *store.SQL, func()) {
 	t.Helper()
 	server := httptest.NewServer(agent)
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		server.Close()
 		t.Fatal(err)
@@ -36,7 +38,7 @@ func newFSProxyTest(t *testing.T, agent http.Handler) (agentProxyAPI, *resolved,
 	tenant, _ := st.EnsureDefaultTenant(ctx)
 	identity, _ := st.UpsertIdentity(ctx, "fs@example.com", "fs", "")
 	membership, _ := st.EnsureMembership(ctx, identity.ID, tenant.ID, "member")
-	workspace := Workspace{ID: "ws1", TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "fs", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	workspace := store.Workspace{ID: "ws1", TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "fs", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +47,8 @@ func newFSProxyTest(t *testing.T, agent http.Handler) (agentProxyAPI, *resolved,
 	res := &resolved{
 		rt:    stubRuntime{endpoint: server.URL, token: "agent-token"},
 		ws:    workspace,
-		ident: Identity{ID: "user1"},
-		mv:    MembershipView{MembershipID: membership.ID},
+		ident: store.Identity{ID: "user1"},
+		mv:    store.MembershipView{MembershipID: membership.ID},
 	}
 	return proxy, res, st, func() {
 		server.Close()

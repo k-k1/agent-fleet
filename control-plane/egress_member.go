@@ -27,6 +27,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Wire codes for the member face. 追加・改名時は console/src/lib/i18n/locales/{ja,en}/errors.ts
@@ -110,7 +112,7 @@ type egressHostVerdict struct {
 // `configured` is the honest gate: with no forward proxy wired (the default — docs/log/20 M2
 // ships the container wiring OFF), nothing is constrained and the Console must stay quiet
 // rather than warn about a restriction that does not exist in this deployment.
-func (a egressAPI) checkHosts(w http.ResponseWriter, r *http.Request, _ Identity, _ MembershipView) {
+func (a egressAPI) checkHosts(w http.ResponseWriter, r *http.Request, _ store.Identity, _ store.MembershipView) {
 	entries, enforce := a.effectivePolicy(r.Context())
 	pol := newEgressPolicy(entries)
 	// Pending requests are matched with the same policy machinery, so a proposed
@@ -155,7 +157,7 @@ func (a egressAPI) checkHosts(w http.ResponseWriter, r *http.Request, _ Identity
 // EffectiveAllowlist ignores scope, so recording the requester's tenant on the row would
 // promise a per-tenant rule the proxy does not implement. The tenant is carried on the
 // audit entry instead, where it is context rather than a claim about effect.
-func (a egressAPI) propose(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a egressAPI) propose(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	var b struct{ Entry, Reason string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
@@ -201,9 +203,9 @@ func (a egressAPI) propose(w http.ResponseWriter, r *http.Request, ident Identit
 	if len(reason) > maxEgressReasonLen {
 		reason = reason[:maxEgressReasonLen]
 	}
-	e := AllowlistEntry{
-		ID: newID(), TenantID: "", Entry: entry, State: "proposed",
-		Reason: reason, AddedBy: ident.Email, AddedAt: nowTS(),
+	e := store.AllowlistEntry{
+		ID: store.NewID(), TenantID: "", Entry: entry, State: "proposed",
+		Reason: reason, AddedBy: ident.Email, AddedAt: store.NowTS(),
 	}
 	if err := a.store.AddAllowlist(r.Context(), e); err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -211,9 +213,9 @@ func (a egressAPI) propose(w http.ResponseWriter, r *http.Request, ident Identit
 	}
 	// actor_kind=user (not admin): this is a member asking, and the audit view should not
 	// read as if an administrator had changed egress policy.
-	_ = a.store.InsertAudit(r.Context(), AuditLog{
-		ID: newID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID,
-		Action: "egress.propose", Target: entry, Detail: "reason=" + reason, At: nowTS(),
+	_ = a.store.InsertAudit(r.Context(), store.AuditLog{
+		ID: store.NewID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID,
+		Action: "egress.propose", Target: entry, Detail: "reason=" + reason, At: store.NowTS(),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": e.ID, "entry": entry, "state": "proposed"})
 }

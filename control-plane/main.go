@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // buildVersion is stamped by the release pipeline via
@@ -130,10 +132,10 @@ func main() {
 	// Postgres (AF_DATABASE_URL) is the RDS backend for a redeployable ECS CP whose
 	// state must outlive task replacement (P3-7 段3a); SQLite is the on-prem default.
 	dbPath := envOr("AF_DB", filepath.Join(mgr.dataRoot, "control-plane.db"))
-	var st *sqlStore
+	var st *store.SQL
 	var err error
-	if dburl := pgURLFromEnv(); dburl != "" {
-		if st, err = openPostgres(dburl); err != nil {
+	if dburl := store.PGURLFromEnv(); dburl != "" {
+		if st, err = store.OpenPostgres(dburl); err != nil {
 			log.Fatalf("open postgres: %v", err)
 		}
 		log.Printf("metadata store: postgres")
@@ -144,7 +146,7 @@ func main() {
 		if mkerr := os.MkdirAll(filepath.Dir(dbPath), 0o755); mkerr != nil {
 			log.Printf("WARN: create db dir %s: %v", filepath.Dir(dbPath), mkerr)
 		}
-		if st, err = openSQLite(dbPath); err != nil {
+		if st, err = store.OpenSQLite(dbPath); err != nil {
 			log.Fatalf("open db %s: %v", dbPath, err)
 		}
 	}

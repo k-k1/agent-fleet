@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"testing"
+)
 
 // rootedDataDir must re-base a workspace's on-disk root onto the CURRENT dataRoot
 // so a restore/move to a different DATA_DIR (or a changed WS_DATA) keeps mounting
@@ -11,32 +14,32 @@ func TestRootedDataDir(t *testing.T) {
 
 	cases := []struct {
 		name string
-		ws   Workspace
+		ws   store.Workspace
 		want string
 	}{
 		{
 			name: "default tenant flat path re-rooted",
-			ws:   Workspace{TenantID: "T-default", DataDir: "/old/root/dev-example-com"},
+			ws:   store.Workspace{TenantID: "T-default", DataDir: "/old/root/dev-example-com"},
 			want: "/srv/agent-fleet/data/dev-example-com",
 		},
 		{
 			name: "non-default tenant nested path re-rooted (slug/key kept)",
-			ws:   Workspace{TenantID: "T-acme", DataDir: "/old/root/acme-team/dev-example-com"},
+			ws:   store.Workspace{TenantID: "T-acme", DataDir: "/old/root/acme-team/dev-example-com"},
 			want: "/srv/agent-fleet/data/acme-team/dev-example-com",
 		},
 		{
 			name: "idempotent when already current (default)",
-			ws:   Workspace{TenantID: "T-default", DataDir: "/srv/agent-fleet/data/alice"},
+			ws:   store.Workspace{TenantID: "T-default", DataDir: "/srv/agent-fleet/data/alice"},
 			want: "/srv/agent-fleet/data/alice",
 		},
 		{
 			name: "key containing dashes is not mis-split (default = last segment only)",
-			ws:   Workspace{TenantID: "T-default", DataDir: "/old/root/a-b-c-d"},
+			ws:   store.Workspace{TenantID: "T-default", DataDir: "/old/root/a-b-c-d"},
 			want: "/srv/agent-fleet/data/a-b-c-d",
 		},
 		{
 			name: "empty data dir passes through",
-			ws:   Workspace{TenantID: "T-default", DataDir: ""},
+			ws:   store.Workspace{TenantID: "T-default", DataDir: ""},
 			want: "",
 		},
 	}

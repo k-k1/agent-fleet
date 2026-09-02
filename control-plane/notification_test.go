@@ -6,10 +6,12 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func TestNotificationStoreMembershipSeenAndDedup(t *testing.T) {
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +22,7 @@ func TestNotificationStoreMembershipSeenAndDedup(t *testing.T) {
 	tenant, _ := st.EnsureDefaultTenant(context.Background())
 	id, _ := st.UpsertIdentity(context.Background(), "notice@example.com", "notice", "")
 	m, _ := st.EnsureMembership(context.Background(), id.ID, tenant.ID, "member")
-	n := Notification{EventID: "evt-1", MembershipID: m.ID, Kind: "answer-ready", TargetType: "session", TargetID: "s1", Payload: "{}", CreatedAt: nowTS()}
+	n := store.Notification{EventID: "evt-1", MembershipID: m.ID, Kind: "answer-ready", TargetType: "session", TargetID: "s1", Payload: "{}", CreatedAt: store.NowTS()}
 	if err := st.InsertNotification(context.Background(), n); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +36,7 @@ func TestNotificationStoreMembershipSeenAndDedup(t *testing.T) {
 	if count, _ := st.CountUnseenNotifications(context.Background(), m.ID, ""); count != 1 {
 		t.Fatalf("unseen=%d", count)
 	}
-	if err := st.MarkNotificationsSeen(context.Background(), m.ID, []string{"evt-1"}, nowTS()); err != nil {
+	if err := st.MarkNotificationsSeen(context.Background(), m.ID, []string{"evt-1"}, store.NowTS()); err != nil {
 		t.Fatal(err)
 	}
 	if count, _ := st.CountUnseenNotifications(context.Background(), m.ID, ""); count != 0 {
@@ -43,7 +45,7 @@ func TestNotificationStoreMembershipSeenAndDedup(t *testing.T) {
 }
 
 func TestUsageNotificationStateRoundTrip(t *testing.T) {
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +56,7 @@ func TestUsageNotificationStateRoundTrip(t *testing.T) {
 	tenant, _ := st.EnsureDefaultTenant(context.Background())
 	id, _ := st.UpsertIdentity(context.Background(), "usage@example.com", "usage", "")
 	m, _ := st.EnsureMembership(context.Background(), id.ID, tenant.ID, "member")
-	want := UsageNotificationState{MembershipID: m.ID, Source: "claude", WindowKey: "5h", ResetsAt: "2026-07-13T12:00:00Z", Armed: 1}
+	want := store.UsageNotificationState{MembershipID: m.ID, Source: "claude", WindowKey: "5h", ResetsAt: "2026-07-13T12:00:00Z", Armed: 1}
 	if err := st.PutUsageNotificationState(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +67,7 @@ func TestUsageNotificationStateRoundTrip(t *testing.T) {
 }
 
 func TestUsageObservationCreatesOneResetNotification(t *testing.T) {
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +82,7 @@ func TestUsageObservationCreatesOneResetNotification(t *testing.T) {
 	post := func(body string) {
 		r := httptest.NewRequest("POST", "/api/notifications/usage-observations", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
-		a.observeUsage(w, r, Identity{}, MembershipView{MembershipID: m.ID})
+		a.observeUsage(w, r, store.Identity{}, store.MembershipView{MembershipID: m.ID})
 		if w.Code != 204 {
 			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 		}

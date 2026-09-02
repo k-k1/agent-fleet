@@ -5,13 +5,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // The M4 egress MCP tools are super_admin-only, and propose_allowlist_change creates a
 // PROPOSED (not effective) entry plus an audit row — enforcing the human-approval loop.
 func TestMCPEgressProposeAndGate(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -20,8 +22,8 @@ func TestMCPEgressProposeAndGate(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	api := newMCPAPI(&manager{store: st})
-	super := &adminCtx{prin: &mcpPrincipal{patID: "pat1"}, tenant: Tenant{ID: "t1"}, isSuper: true, isAdmin: true}
-	tenantAdmin := &adminCtx{prin: &mcpPrincipal{patID: "pat2"}, tenant: Tenant{ID: "t1"}, isSuper: false, isAdmin: true}
+	super := &adminCtx{prin: &mcpPrincipal{patID: "pat1"}, tenant: store.Tenant{ID: "t1"}, isSuper: true, isAdmin: true}
+	tenantAdmin := &adminCtx{prin: &mcpPrincipal{patID: "pat2"}, tenant: store.Tenant{ID: "t1"}, isSuper: false, isAdmin: true}
 
 	// A tenant_admin (not super) is rejected from every egress tool.
 	if _, err := api.mcpProposeAllowlist(ctx, tenantAdmin, "x.com", "r"); err == nil {

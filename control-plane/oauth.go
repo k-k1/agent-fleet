@@ -16,6 +16,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // CP-native OIDC login (Authorization Code Grant). Replaces the external
@@ -523,7 +525,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isNew, err := c.linkAfterLogin(r.Context(), pr)
-	if errors.Is(err, errIdentityClaimed) {
+	if errors.Is(err, store.ErrIdentityClaimed) {
 		// A tenant-defined provider asserted an address that already belongs to an
 		// account somebody has signed in as (docs/log/61 §61.11 rule 2'). No session is
 		// issued: the remedy is to sign in the way that account already signs in.
@@ -593,13 +595,13 @@ func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
 	if tenantDefined {
 		roleHint = ""
 	}
-	_, isNew, err := c.mgr.store.LinkIdentity(ctx, IdentityLink{
+	_, isNew, err := c.mgr.store.LinkIdentity(ctx, store.IdentityLink{
 		Provider: p.Provider, Subject: p.Subject, Realm: p.Realm,
 		RealmClaim: p.RealmClaim, RealmSubject: p.RealmSubject, Email: p.Email,
 		FallbackKey: sanitizeUser(p.Email), RoleHint: roleHint, EmailJoin: !tenantDefined,
 	})
 	switch {
-	case errors.Is(err, errIdentityClaimed):
+	case errors.Is(err, store.ErrIdentityClaimed):
 		return false, err
 	case err != nil:
 		// Not fatal to the login: the next request resolves the identity the usual
@@ -761,7 +763,7 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// empty too, so nothing here reaches the state cookie: the buttons carry no
 		// tenant, and the default tenant's own t:default:* rows are not appended
 		// (決定 32-4 keeps that list off the generic page).
-		slug, rules = "", TenantLoginRules{}
+		slug, rules = "", store.TenantLoginRules{}
 		if d, ok := c.mgr.tenantLogin.rulesForSlug(r.Context(), defaultTenantSlug); ok {
 			rules.HiddenProviders = d.HiddenProviders
 		}

@@ -11,13 +11,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // lfsEnv wires a store + gitServerAPI with a default-tenant member and a repo
 // "shared", plus a valid git token, for exercising the LFS handlers directly.
 type lfsEnv struct {
 	g     gitServerAPI
-	st    *sqlStore
+	st    *store.SQL
 	token string
 	memID string
 }
@@ -25,7 +27,7 @@ type lfsEnv struct {
 func newLFSEnv(t *testing.T) *lfsEnv {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -36,7 +38,7 @@ func newLFSEnv(t *testing.T) *lfsEnv {
 	dflt, _ := st.EnsureDefaultTenant(ctx)
 	ident, _ := st.UpsertIdentity(ctx, "u@x", "u-x", "")
 	mem, _ := st.EnsureMembership(ctx, ident.ID, dflt.ID, "member")
-	if err := st.CreateGitRepo(ctx, GitRepo{ID: newID(), TenantID: dflt.ID, Name: "shared", DefaultBranch: "main", CreatedAt: nowTS()}); err != nil {
+	if err := st.CreateGitRepo(ctx, store.GitRepo{ID: store.NewID(), TenantID: dflt.ID, Name: "shared", DefaultBranch: "main", CreatedAt: store.NowTS()}); err != nil {
 		t.Fatalf("repo: %v", err)
 	}
 	master := []byte("master-key-lfs-tests-00000000000000")

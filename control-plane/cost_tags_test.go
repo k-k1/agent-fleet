@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Automatic activation of the cost allocation tags (docs/log/67 §67.5, ADR 0048 決定 11).
@@ -215,13 +216,13 @@ func TestCostTagsInferActivationFromTheBillWhenUnreadable(t *testing.T) {
 	}
 
 	// 値の入らない行しか来ない間は、まだ何も言えない（有効化直後の最大 24 時間がこれ）。
-	p.noteAttribution([]CloudCostRow{{Day: "2026-08-25", MembershipID: "", Service: "AmazonEC2"}})
+	p.noteAttribution([]store.CloudCostRow{{Day: "2026-08-25", MembershipID: "", Service: "AmazonEC2"}})
 	if len(p.costTags().Attributed) != 0 {
 		t.Error("an untagged bill is not evidence that the axis is on")
 	}
 
 	// 値が来た＝按分は効いている。
-	p.noteAttribution([]CloudCostRow{{Day: "2026-08-25", MembershipID: "m-1", Service: "AmazonEC2"}})
+	p.noteAttribution([]store.CloudCostRow{{Day: "2026-08-25", MembershipID: "m-1", Service: "AmazonEC2"}})
 	st = p.costTags()
 	if !has(st.Attributed, ec2TagMembership) {
 		t.Fatalf("the bill proved %s is on; state = %+v", ec2TagMembership, st)

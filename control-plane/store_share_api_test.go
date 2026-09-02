@@ -17,11 +17,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func TestSessionShareProposalListIsNoStoreThroughETagMiddleware(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,18 +35,18 @@ func TestSessionShareProposalListIsNoStoreThroughETagMiddleware(t *testing.T) {
 	identity, _ := st.UpsertIdentity(ctx, "nostore@example.com", "nostore-owner", "")
 	membership, _ := st.EnsureMembership(ctx, identity.ID, tenant.ID, "member")
 	views, _ := st.ListMemberships(ctx, identity.ID)
-	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: nowTS()}
+	workspace := store.Workspace{ID: store.NewID(), TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
-	catalog := SharedSessionCatalog{ID: newID(), WorkspaceID: workspace.ID, OwnerMembershipID: membership.ID, Name: "s1", Kind: "codex", LastSeen: nowTS()}
-	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, membership.ID, []SharedSessionCatalog{catalog}); err != nil {
+	catalog := store.SharedSessionCatalog{ID: store.NewID(), WorkspaceID: workspace.ID, OwnerMembershipID: membership.ID, Name: "s1", Kind: "codex", LastSeen: store.NowTS()}
+	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, membership.ID, []store.SharedSessionCatalog{catalog}); err != nil {
 		t.Fatal(err)
 	}
 	secretPayload := `{"op":"start","prompt":"decrypted proposal text"}`
-	proposal := SessionShareProposal{ID: newID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: membership.ID,
+	proposal := store.SessionShareProposal{ID: store.NewID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: membership.ID,
 		ProposerMembershipID: membership.ID, Action: "turn", Ciphertext: base64.StdEncoding.EncodeToString([]byte(secretPayload)),
-		Status: "pending", CreatedAt: nowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
+		Status: "pending", CreatedAt: store.NowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
 	if err := st.CreateSessionShareProposal(ctx, proposal); err != nil {
 		t.Fatal(err)
 	}

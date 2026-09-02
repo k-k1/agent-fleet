@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func mustLoc(t *testing.T, name string) *time.Location {
@@ -161,10 +163,10 @@ func TestIntervalAndOnce(t *testing.T) {
 	from := time.Date(2026, 7, 22, 9, 0, 0, 0, time.UTC)
 
 	// interval: floor enforced, otherwise from+seconds.
-	if _, _, err := advanceNextRun(Schedule{SpecKind: "interval", Spec: "30"}, from); err == nil {
+	if _, _, err := advanceNextRun(store.Schedule{SpecKind: "interval", Spec: "30"}, from); err == nil {
 		t.Error("interval 30s should be rejected (below floor)")
 	}
-	got, keep, err := advanceNextRun(Schedule{SpecKind: "interval", Spec: "3600"}, from)
+	got, keep, err := advanceNextRun(store.Schedule{SpecKind: "interval", Spec: "3600"}, from)
 	if err != nil || !keep {
 		t.Fatalf("interval advance: err=%v keep=%v", err, keep)
 	}
@@ -174,11 +176,11 @@ func TestIntervalAndOnce(t *testing.T) {
 
 	// once: initial is the absolute instant, advance is spent (disable).
 	iso := "2026-07-22T09:30:00Z"
-	init, err := initialNextRun(Schedule{SpecKind: "once", Spec: iso}, from)
+	init, err := initialNextRun(store.Schedule{SpecKind: "once", Spec: iso}, from)
 	if err != nil || init != iso {
 		t.Fatalf("once initial got %q err %v", init, err)
 	}
-	next, keep, err := advanceNextRun(Schedule{SpecKind: "once", Spec: iso}, from)
+	next, keep, err := advanceNextRun(store.Schedule{SpecKind: "once", Spec: iso}, from)
 	if err != nil {
 		t.Fatalf("once advance: %v", err)
 	}
@@ -187,7 +189,7 @@ func TestIntervalAndOnce(t *testing.T) {
 	}
 
 	// once with a bad spec surfaces an error at initial computation.
-	if _, err := initialNextRun(Schedule{SpecKind: "once", Spec: "not-a-time"}, from); err == nil {
+	if _, err := initialNextRun(store.Schedule{SpecKind: "once", Spec: "not-a-time"}, from); err == nil {
 		t.Error("once with bad spec should error")
 	}
 }
@@ -196,7 +198,7 @@ func TestInitialNextRunCron(t *testing.T) {
 	// At creation the first fire must include a match at exactly `from` when it lines
 	// up (initialNextRun searches from just before `from`).
 	from := time.Date(2026, 7, 22, 9, 0, 0, 0, time.UTC)
-	got, err := initialNextRun(Schedule{SpecKind: "cron", Spec: "0 9 * * *", TZ: "UTC"}, from)
+	got, err := initialNextRun(store.Schedule{SpecKind: "cron", Spec: "0 9 * * *", TZ: "UTC"}, from)
 	if err != nil {
 		t.Fatalf("initialNextRun: %v", err)
 	}
@@ -213,7 +215,7 @@ type fakeFirer struct {
 	err    error
 }
 
-func (f *fakeFirer) fire(_ context.Context, sch Schedule, _ time.Time) (string, string, error) {
+func (f *fakeFirer) fire(_ context.Context, sch store.Schedule, _ time.Time) (string, string, error) {
 	f.mu.Lock()
 	f.fired = append(f.fired, sch.ID)
 	f.mu.Unlock()
@@ -223,10 +225,10 @@ func (f *fakeFirer) fire(_ context.Context, sch Schedule, _ time.Time) (string, 
 	return f.status, "", f.err
 }
 
-func newSchedTestStore(t *testing.T) (*sqlStore, context.Context) {
+func newSchedTestStore(t *testing.T) (*store.SQL, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -239,13 +241,13 @@ func newSchedTestStore(t *testing.T) (*sqlStore, context.Context) {
 
 func TestScheduleStoreCRUD(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_1", MembershipID: "m1", TenantID: "default", OwnerConv: "conv1",
 		SpecKind: "cron", Spec: "0 9 * * *", SpecLabel: "毎朝9時", TZ: "Asia/Tokyo",
 		WakePolicy: "wake", SessionMode: "new", AgentKind: "claude",
 		Repo: "agent-fleet", NewBranch: true, Prompt: "review PRs",
 		OverlapPolicy: "skip", Enabled: true,
-		NextRun: "2026-07-23T00:00:00Z", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: "2026-07-23T00:00:00Z", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)
@@ -268,7 +270,7 @@ func TestScheduleStoreCRUD(t *testing.T) {
 	}
 
 	// Enabled toggle clears/sets next_run.
-	if err := st.SetScheduleEnabled(ctx, "sch_1", "m1", false, "", nowTS()); err != nil {
+	if err := st.SetScheduleEnabled(ctx, "sch_1", "m1", false, "", store.NowTS()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	got, _, _ = st.GetSchedule(ctx, "sch_1")
@@ -296,9 +298,9 @@ func TestScheduleStoreCRUD(t *testing.T) {
 // so a subsequent automatic fire is not mis-tagged as manual (docs/log/38).
 func TestMarkManualFirePending(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_1", MembershipID: "m1", TenantID: "default", SpecKind: "interval", Spec: "3600",
-		TZ: "UTC", Enabled: true, NextRun: "2999-01-01T00:00:00Z", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		TZ: "UTC", Enabled: true, NextRun: "2999-01-01T00:00:00Z", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)
@@ -306,7 +308,7 @@ func TestMarkManualFirePending(t *testing.T) {
 	if got, _, _ := st.GetSchedule(ctx, "sch_1"); got.ManualFirePending {
 		t.Fatal("manual_fire_pending should default off")
 	}
-	if err := st.MarkManualFirePending(ctx, "sch_1", "m1", "2026-07-23T00:00:00Z", nowTS()); err != nil {
+	if err := st.MarkManualFirePending(ctx, "sch_1", "m1", "2026-07-23T00:00:00Z", store.NowTS()); err != nil {
 		t.Fatalf("mark: %v", err)
 	}
 	got, _, _ := st.GetSchedule(ctx, "sch_1")
@@ -314,14 +316,14 @@ func TestMarkManualFirePending(t *testing.T) {
 		t.Fatalf("mark not applied: pending=%v next=%q", got.ManualFirePending, got.NextRun)
 	}
 	// A foreign member cannot flag someone else's schedule.
-	if err := st.MarkManualFirePending(ctx, "sch_1", "m2", "2020-01-01T00:00:00Z", nowTS()); err != nil {
+	if err := st.MarkManualFirePending(ctx, "sch_1", "m2", "2020-01-01T00:00:00Z", store.NowTS()); err != nil {
 		t.Fatalf("cross-member mark errored: %v", err)
 	}
 	if got, _, _ := st.GetSchedule(ctx, "sch_1"); got.NextRun != "2026-07-23T00:00:00Z" {
 		t.Fatal("cross-member mark mutated the row")
 	}
 	// A fire clears the flag.
-	if err := st.RecordScheduleFire(ctx, "sch_1", nowTS(), "fired", "2999-01-01T00:00:00Z", true, nowTS()); err != nil {
+	if err := st.RecordScheduleFire(ctx, "sch_1", store.NowTS(), "fired", "2999-01-01T00:00:00Z", true, store.NowTS()); err != nil {
 		t.Fatalf("record fire: %v", err)
 	}
 	if got, _, _ := st.GetSchedule(ctx, "sch_1"); got.ManualFirePending {
@@ -333,9 +335,9 @@ func TestMarkManualFirePending(t *testing.T) {
 // the session a fire drove and whether it was a manual or scheduled fire.
 func TestScheduleRunSessionTrigger(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
-	runs := []ScheduleRun{
-		{ID: newID(), ScheduleID: "s", MembershipID: "m1", FiredAt: "2026-07-23T09:00:00Z", Status: "fired", Session: "sess-a", Trigger: "scheduled"},
-		{ID: newID(), ScheduleID: "s", MembershipID: "m1", FiredAt: "2026-07-23T09:05:00Z", Status: "fired", Session: "sess-b", Trigger: "manual"},
+	runs := []store.ScheduleRun{
+		{ID: store.NewID(), ScheduleID: "s", MembershipID: "m1", FiredAt: "2026-07-23T09:00:00Z", Status: "fired", Session: "sess-a", Trigger: "scheduled"},
+		{ID: store.NewID(), ScheduleID: "s", MembershipID: "m1", FiredAt: "2026-07-23T09:05:00Z", Status: "fired", Session: "sess-b", Trigger: "manual"},
 	}
 	for _, r := range runs {
 		if err := st.AppendScheduleRun(ctx, r, 50); err != nil {
@@ -357,7 +359,7 @@ func TestScheduleRunSessionTrigger(t *testing.T) {
 
 func TestListDueSchedules(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
-	base := Schedule{MembershipID: "m1", TenantID: "default", SpecKind: "cron", Spec: "0 9 * * *", TZ: "UTC", Enabled: true, CreatedAt: nowTS(), UpdatedAt: nowTS()}
+	base := store.Schedule{MembershipID: "m1", TenantID: "default", SpecKind: "cron", Spec: "0 9 * * *", TZ: "UTC", Enabled: true, CreatedAt: store.NowTS(), UpdatedAt: store.NowTS()}
 	// due (past next_run)
 	due := base
 	due.ID, due.NextRun = "sch_due", "2026-07-22T09:00:00Z"
@@ -370,7 +372,7 @@ func TestListDueSchedules(t *testing.T) {
 	// enabled but empty next_run (paused) must never be due
 	paused := base
 	paused.ID, paused.NextRun = "sch_paused", ""
-	for _, s := range []Schedule{due, future, disabled, paused} {
+	for _, s := range []store.Schedule{due, future, disabled, paused} {
 		if err := st.CreateSchedule(ctx, s); err != nil {
 			t.Fatalf("create %s: %v", s.ID, err)
 		}
@@ -393,10 +395,10 @@ func TestListDueSchedules(t *testing.T) {
 func TestSchedulerTickAdvances(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
 	// next_run in the past so it is due now.
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_tick", MembershipID: "m1", TenantID: "default",
 		SpecKind: "cron", Spec: "*/5 * * * *", TZ: "UTC", Enabled: true,
-		NextRun: "2000-01-01T00:00:00Z", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: "2000-01-01T00:00:00Z", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)
@@ -412,7 +414,7 @@ func TestSchedulerTickAdvances(t *testing.T) {
 	if got.LastStatus != "fired" {
 		t.Fatalf("last_status = %q, want fired", got.LastStatus)
 	}
-	if got.NextRun == "" || got.NextRun <= nowTS() {
+	if got.NextRun == "" || got.NextRun <= store.NowTS() {
 		t.Fatalf("next_run not advanced to the future: %q", got.NextRun)
 	}
 	if !got.Enabled {
@@ -432,10 +434,10 @@ func TestSchedulerTickAdvances(t *testing.T) {
 // the ledger keeps the reason for whoever restores access.
 func TestSchedulerTickMembershipInactiveDisables(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_orphan", MembershipID: "m_gone", TenantID: "default",
 		SpecKind: "cron", Spec: "*/5 * * * *", TZ: "UTC", Enabled: true,
-		NextRun: "2000-01-01T00:00:00Z", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: "2000-01-01T00:00:00Z", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)
@@ -467,10 +469,10 @@ func TestSchedulerTickMembershipInactiveDisables(t *testing.T) {
 // TestSchedulerTickOnceDisables: a once schedule fires and then disables itself.
 func TestSchedulerTickOnceDisables(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_once", MembershipID: "m1", TenantID: "default",
 		SpecKind: "once", Spec: "2000-01-01T00:00:00Z", TZ: "UTC", Enabled: true,
-		NextRun: "2000-01-01T00:00:00Z", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: "2000-01-01T00:00:00Z", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)

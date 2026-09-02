@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // TestGitHTTPEndToEnd drives the real handler against a real git-http-backend:
@@ -27,7 +29,7 @@ func TestGitHTTPEndToEnd(t *testing.T) {
 	tmp := t.TempDir()
 	dataRoot := filepath.Join(tmp, "data")
 
-	st, err := openSQLite(filepath.Join(tmp, "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(tmp, "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -49,7 +51,7 @@ func TestGitHTTPEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	gitRun(t, tmp, nil, "init", "--bare", "--initial-branch=main", dir)
-	if err := st.CreateGitRepo(ctx, GitRepo{ID: newID(), TenantID: dflt.ID, Name: "shared", DefaultBranch: "main", CreatedAt: nowTS()}); err != nil {
+	if err := st.CreateGitRepo(ctx, store.GitRepo{ID: store.NewID(), TenantID: dflt.ID, Name: "shared", DefaultBranch: "main", CreatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 

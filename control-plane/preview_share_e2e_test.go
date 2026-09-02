@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // previewViewer は同じテナントのもう 1 人（所有者ではない）。
@@ -40,9 +42,9 @@ func (e *previewHostEnv) addViewer(t *testing.T, userKey string) previewViewer {
 	if err != nil {
 		t.Fatalf("viewer membership: %v", err)
 	}
-	ws := Workspace{ID: "ws-" + userKey, TenantID: e.ws.TenantID, MembershipID: mem.ID,
+	ws := store.Workspace{ID: "ws-" + userKey, TenantID: e.ws.TenantID, MembershipID: mem.ID,
 		ContainerName: "c-" + userKey, Network: "n-" + userKey, DataDir: "d-" + userKey,
-		AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+		AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: store.NowTS()}
 	if err := e.mgr.store.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatalf("viewer workspace: %v", err)
 	}

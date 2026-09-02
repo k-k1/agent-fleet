@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // --- ensureWorkspaceReady (was runtime_health_test.go) -------------------------------
@@ -48,7 +49,7 @@ func TestEnsureWorkspaceReadyAnswersStartingInsteadOfFailing(t *testing.T) {
 	_, ws, mgr := reaperLifecycleFixture(t)
 	api := newWorkspaceAPI(mgr, true)
 	ctx := context.Background()
-	mv := MembershipView{MembershipID: ws.MembershipID, TenantID: ws.TenantID}
+	mv := store.MembershipView{MembershipID: ws.MembershipID, TenantID: ws.TenantID}
 
 	booting := glueUnreadyAgent(t)
 	res := &resolved{rt: stubRuntime{endpoint: booting.URL, state: "starting"}, ws: ws, mv: mv}

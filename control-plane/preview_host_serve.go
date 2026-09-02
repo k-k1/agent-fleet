@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // previewAuthCookie is minted per PREVIEW HOST (host-only, Path=/). Never the
@@ -184,7 +186,7 @@ func mustSettings(ctx context.Context, m *manager, wsID string) string {
 // ★ cookie が言えるのは「誰か」までで、「見てよいか」は毎リクエスト引き直す
 // （previewViewerAllowed / ADR 0062 決定 15）。cookie の寿命は 12 時間あるので、
 // ここに権限を焼くと、共有を切ってもテナントから外しても cookie だけが生き残る。
-func (a previewHostAPI) authorized(ctx context.Context, r *http.Request, ph previewHost, ws Workspace, st wsSettings) bool {
+func (a previewHostAPI) authorized(ctx context.Context, r *http.Request, ph previewHost, ws store.Workspace, st wsSettings) bool {
 	c, err := r.Cookie(previewAuthCookie)
 	if err != nil || c.Value == "" {
 		return false

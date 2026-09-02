@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // --- the port and its data ----------------------------------------------------------
@@ -136,7 +137,7 @@ func newRuntimeFactory(profile string, m *manager) (RuntimeFactory, error) {
 		SessionCmd:  m.sessionCmd,
 		ExtraEnv:    m.extraEnv,
 		AuthMode:    m.authMode,
-		RootDataDir: func(ws runtime.Workspace) string { return m.rootedDataDir(Workspace(ws)) },
+		RootDataDir: func(ws runtime.Workspace) string { return m.rootedDataDir(store.Workspace(ws)) },
 	})
 }
 
@@ -183,4 +184,4 @@ var _ hibernatingRuntime = runtime.Hibernating
 // conversion — the one the manager does on every runtime build — stops compiling. That
 // is the point: the two declarations exist only until the store's own move lands, and a
 // silent divergence would hand a workspace the wrong home directory.
-var _ = func(ws Workspace) runtime.Workspace { return runtime.Workspace(ws) }
+var _ = func(ws store.Workspace) runtime.Workspace { return runtime.Workspace(ws) }

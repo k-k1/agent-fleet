@@ -35,6 +35,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // costTagKeys is the allow-list: the tags the CP writes that are BILLING AXES.
@@ -192,7 +193,7 @@ func (p *cloudCostPoller) costTags() costTagState {
 //
 // 呼ぶのは活性化状態が**読めなかったとき**だけ。読めているならそちらが正であり、
 // 「値がまだ来ていない＝有効化直後の最大 24 時間」を不活性と誤読してはいけない。
-func (p *cloudCostPoller) noteAttribution(rows []CloudCostRow) {
+func (p *cloudCostPoller) noteAttribution(rows []store.CloudCostRow) {
 	s, _ := p.tagState.Load().(costTagState)
 	if s.Error == "" || len(s.Attributed) > 0 {
 		return // 読めている／既に証拠で決着している

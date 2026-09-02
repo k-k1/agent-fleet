@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 const (
@@ -184,8 +186,8 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (
 			}
 		}
 	}
-	now := nowTS()
-	rows := make([]SharedSessionCatalog, 0, len(wire.Sessions))
+	now := store.NowTS()
+	rows := make([]store.SharedSessionCatalog, 0, len(wire.Sessions))
 	for _, s := range wire.Sessions {
 		// state は生存(running/stopped)、activity は Agent の live state(working /
 		// question / …)。停止中に前回の activity を残すと「進行中のまま止まった」ように
@@ -195,13 +197,13 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (
 			state, activity = "running", s.State
 		}
 		info := byWorkingCopy[s.WorkingCopyID]
-		rows = append(rows, SharedSessionCatalog{ID: newID(), WorkspaceID: res.ws.ID,
+		rows = append(rows, store.SharedSessionCatalog{ID: store.NewID(), WorkspaceID: res.ws.ID,
 			OwnerMembershipID: res.mv.MembershipID, Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 			WorkingCopyID: s.WorkingCopyID, Title: s.Title, Label: s.Label, CreatedAt: s.CreatedAt,
 			State: state, Archived: s.Archived, LastSeen: now, Worktree: info.worktree, Parent: info.parent,
 			ParentWorkingCopyID: info.parentWC, Branch: info.branch, Activity: activity})
 	}
-	if err := a.mgr.store.ReplaceSharedSessionCatalog(ctx, res.ws.ID, res.mv.MembershipID, rows); errors.Is(err, errSessionShareOwnerBusy) {
+	if err := a.mgr.store.ReplaceSharedSessionCatalog(ctx, res.ws.ID, res.mv.MembershipID, rows); errors.Is(err, store.ErrSessionShareOwnerBusy) {
 		return byWorkingCopy, nil // another CP replica is applying an already-authorized operation
 	} else if err != nil {
 		return byWorkingCopy, err
@@ -220,24 +222,24 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (
 	return byWorkingCopy, nil
 }
 
-func memberByUserKey(ctx context.Context, st Store, tenantID, key string) (MemberInfo, bool, error) {
+func memberByUserKey(ctx context.Context, st store.Store, tenantID, key string) (store.MemberInfo, bool, error) {
 	rows, err := st.ListMembersByTenant(ctx, tenantID)
 	if err != nil {
-		return MemberInfo{}, false, err
+		return store.MemberInfo{}, false, err
 	}
 	for _, m := range rows {
 		if m.UserKey == key {
 			return m, true, nil
 		}
 	}
-	return MemberInfo{}, false, nil
+	return store.MemberInfo{}, false, nil
 }
 
 // searchRecipients — 同一テナントの共有先候補を email/user_key の部分一致で検索する。
 // 一般メンバーが呼べる(withMembership、管理者権限は問わない) — Console の共有作成
 // combobox はここで解決した user_key だけを送るので、利用者は正規化ルール
 // (sanitizeUser)を意識しない。
-func (a sessionShareAPI) searchRecipients(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a sessionShareAPI) searchRecipients(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	rows, err := a.mgr.store.ListMembersByTenant(r.Context(), mv.TenantID)
 	if err != nil {
@@ -270,12 +272,12 @@ func (a sessionShareAPI) recipientKey(ctx context.Context, tenantID, membershipI
 	return ""
 }
 
-func shareDTO(s SessionShare, recipient string) map[string]any {
+func shareDTO(s store.SessionShare, recipient string) map[string]any {
 	return map[string]any{"id": s.ID, "recipientUserKey": recipient, "scope": map[string]string{
 		"type": s.ScopeType, "key": s.ScopeKey}, "permission": s.Permission, "createdAt": s.CreatedAt, "updatedAt": s.UpdatedAt}
 }
 
-func (a sessionShareAPI) listOwned(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a sessionShareAPI) listOwned(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	rows, err := a.mgr.store.ListSessionSharesByOwner(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -353,8 +355,8 @@ func (a sessionShareAPI) put(w http.ResponseWriter, r *http.Request, res *resolv
 		writeAPIErr(w, &apiError{http.StatusNotFound, "share_target_not_found", "share target not found"})
 		return
 	}
-	now := nowTS()
-	row := SessionShare{ID: newID(), TenantID: res.mv.TenantID, OwnerMembershipID: res.mv.MembershipID,
+	now := store.NowTS()
+	row := store.SessionShare{ID: store.NewID(), TenantID: res.mv.TenantID, OwnerMembershipID: res.mv.MembershipID,
 		RecipientMembershipID: recipient.MembershipID, ScopeType: in.Scope.Type, ScopeKey: in.Scope.Key,
 		Permission: in.Permission, CreatedAt: now, UpdatedAt: now}
 	status := http.StatusCreated
@@ -372,19 +374,19 @@ func (a sessionShareAPI) put(w http.ResponseWriter, r *http.Request, res *resolv
 		}
 	}
 	if err := a.mgr.store.PutSessionShare(r.Context(), row); err != nil {
-		if errors.Is(err, errSessionShareOwnerBusy) {
+		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
 			writeAPIErr(w, &apiError{409, "share_operation_in_progress", "an approved Agent operation is in progress; retry the share change"})
 			return
 		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: res.mv.TenantID, ActorKind: "user", ActorID: res.ident.ID,
+	_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: res.mv.TenantID, ActorKind: "user", ActorID: res.ident.ID,
 		Action: "session.share", Target: in.Scope.Type + ":" + in.Scope.Key, Detail: "permission=" + in.Permission, HTTPStatus: http.StatusCreated, At: now})
 	writeJSON(w, status, shareDTO(row, recipient.UserKey))
 }
 
-func (a sessionShareAPI) patch(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a sessionShareAPI) patch(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	var in struct {
 		Permission string `json:"permission"`
 	}
@@ -405,10 +407,10 @@ func (a sessionShareAPI) patch(w http.ResponseWriter, r *http.Request, ident Ide
 		return
 	}
 	s.Permission = in.Permission
-	s.UpdatedAt = nowTS()
+	s.UpdatedAt = store.NowTS()
 	changed, err := a.mgr.store.UpdateSessionSharePermission(r.Context(), s.ID, mv.MembershipID, s.Permission, s.UpdatedAt)
 	if err != nil {
-		if errors.Is(err, errSessionShareOwnerBusy) {
+		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
 			writeAPIErr(w, &apiError{409, "share_operation_in_progress", "an approved Agent operation is in progress; retry the share change"})
 			return
 		}
@@ -419,10 +421,10 @@ func (a sessionShareAPI) patch(w http.ResponseWriter, r *http.Request, ident Ide
 		writeAPIErr(w, &apiError{404, "not_found", "share not found"})
 		return
 	}
-	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID, Action: "session.share.permission", Target: s.ID, Detail: "permission=" + in.Permission, HTTPStatus: 200, At: nowTS()})
+	_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID, Action: "session.share.permission", Target: s.ID, Detail: "permission=" + in.Permission, HTTPStatus: 200, At: store.NowTS()})
 	writeJSON(w, 200, shareDTO(s, a.recipientKey(r.Context(), mv.TenantID, s.RecipientMembershipID)))
 }
-func (a sessionShareAPI) delete(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a sessionShareAPI) delete(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	shareLock := a.mgr.shareLockFor(mv.MembershipID)
 	shareLock.Lock()
 	defer shareLock.Unlock()
@@ -436,14 +438,14 @@ func (a sessionShareAPI) delete(w http.ResponseWriter, r *http.Request, ident Id
 		return
 	}
 	if err := a.mgr.store.DeleteSessionShare(r.Context(), s.ID, mv.MembershipID); err != nil {
-		if errors.Is(err, errSessionShareOwnerBusy) {
+		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
 			writeAPIErr(w, &apiError{409, "share_operation_in_progress", "an approved Agent operation is in progress; retry the share change"})
 			return
 		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID, Action: "session.unshare", Target: s.ID, HTTPStatus: 200, At: nowTS()})
+	_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID, Action: "session.unshare", Target: s.ID, HTTPStatus: 200, At: store.NowTS()})
 	writeJSON(w, 200, map[string]any{"deleted": s.ID})
 }
 
@@ -456,7 +458,7 @@ func (a sessionShareAPI) delete(w http.ResponseWriter, r *http.Request, ident Id
 // worktree 1つだけの範囲。空の scope_key はここでも弾く: workingCopyId を持てない
 // 作業コピー(marker を作れない)や親不明の行は "" を持つので、万一空の規則が入ると
 // 無関係なセッションまで丸ごと巻き込んでしまう(put も空キーは拒否している)。
-func effectivePermission(shares []SessionShare, c SharedSessionCatalog) string {
+func effectivePermission(shares []store.SessionShare, c store.SharedSessionCatalog) string {
 	p := ""
 	for _, s := range shares {
 		if s.OwnerMembershipID != c.OwnerMembershipID || s.ScopeKey == "" {
@@ -486,7 +488,7 @@ func (a sessionShareAPI) ownerResolved(ctx context.Context, owner string) (*reso
 	return a.mgr.resolveByMembership(ctx, iid, owner)
 }
 
-func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	shares, err := a.mgr.store.ListSessionSharesByRecipient(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -556,7 +558,7 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 	writeJSON(w, 200, map[string]any{"sessions": out})
 }
 
-func (a sessionShareAPI) authorizeCatalog(ctx context.Context, mv MembershipView, id string, wantRW bool) (SharedSessionCatalog, *resolved, *apiError) {
+func (a sessionShareAPI) authorizeCatalog(ctx context.Context, mv store.MembershipView, id string, wantRW bool) (store.SharedSessionCatalog, *resolved, *apiError) {
 	c, ok, err := a.mgr.store.GetSharedSessionCatalog(ctx, id)
 	if err != nil {
 		return c, nil, internalErr(err)
@@ -601,7 +603,7 @@ func (a sessionShareAPI) authorizeCatalog(ctx context.Context, mv MembershipView
 	return c, res, nil
 }
 
-func (a sessionShareAPI) messages(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a sessionShareAPI) messages(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	c, res, e := a.authorizeCatalog(r.Context(), mv, r.PathValue("id"), false)
 	if e != nil {
 		writeAPIErr(w, e)
@@ -636,7 +638,7 @@ func (a sessionShareAPI) messages(w http.ResponseWriter, r *http.Request, _ Iden
 // Workspace 側の別ストア(session-handoffs)にある。ミラーはそれを会話へ差し込む
 // カードとして描いているので、同じ描画層を通す共有ビュー(docs/log/59 §3)にも同じ素が要る。
 // 転写と同じく本文だけを allowlist で通し、置き場所などの座標は返さない。
-func (a sessionShareAPI) handoffProposals(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a sessionShareAPI) handoffProposals(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	c, res, e := a.authorizeCatalog(r.Context(), mv, r.PathValue("id"), false)
 	if e != nil {
 		writeAPIErr(w, e)
@@ -850,7 +852,7 @@ func (a sessionShareAPI) sealProposal(ctx context.Context, tenant string, body [
 	ct, err := a.mgr.custodian.Wrap(ctx, tenant, body)
 	return ct, tenant, err
 }
-func (a sessionShareAPI) openProposal(ctx context.Context, p SessionShareProposal) ([]byte, error) {
+func (a sessionShareAPI) openProposal(ctx context.Context, p store.SessionShareProposal) ([]byte, error) {
 	if p.KeyRef == "" {
 		return base64.StdEncoding.DecodeString(p.Ciphertext)
 	}
@@ -859,7 +861,7 @@ func (a sessionShareAPI) openProposal(ctx context.Context, p SessionShareProposa
 
 var proposalActions = map[string]string{"turn": "turn", "respond": "respond", "answer-question": "answer-question", "plan-respond": "plan-respond"}
 
-func (a sessionShareAPI) propose(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a sessionShareAPI) propose(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	c, res, e := a.authorizeCatalog(r.Context(), mv, r.PathValue("id"), true)
 	if e != nil {
 		writeAPIErr(w, e)
@@ -882,7 +884,7 @@ func (a sessionShareAPI) propose(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, &apiError{400, "bad_proposal", "invalid proposal"})
 		return
 	}
-	if err := a.mgr.store.ExpireSessionShareProposals(r.Context(), c.OwnerMembershipID, nowTS()); err != nil {
+	if err := a.mgr.store.ExpireSessionShareProposals(r.Context(), c.OwnerMembershipID, store.NowTS()); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -892,7 +894,7 @@ func (a sessionShareAPI) propose(w http.ResponseWriter, r *http.Request, ident I
 		return
 	}
 	now := time.Now().UTC()
-	p := SessionShareProposal{ID: newID(), TenantID: mv.TenantID, CatalogID: c.ID, OwnerMembershipID: c.OwnerMembershipID, ProposerMembershipID: mv.MembershipID, Action: in.Action, Ciphertext: ct, KeyRef: kr, Status: "pending", CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339)}
+	p := store.SessionShareProposal{ID: store.NewID(), TenantID: mv.TenantID, CatalogID: c.ID, OwnerMembershipID: c.OwnerMembershipID, ProposerMembershipID: mv.MembershipID, Action: in.Action, Ciphertext: ct, KeyRef: kr, Status: "pending", CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339)}
 	created, err := a.mgr.store.CreateSessionShareProposalLimited(r.Context(), p, shareProposalMaxOpen)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -902,14 +904,14 @@ func (a sessionShareAPI) propose(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, &apiError{429, "too_many_proposals", "too many pending proposals"})
 		return
 	}
-	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID,
-		Action: "session.share.proposal.create", Target: c.Name, Detail: "action=" + p.Action, HTTPStatus: http.StatusCreated, At: nowTS()})
+	_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID,
+		Action: "session.share.proposal.create", Target: c.Name, Detail: "action=" + p.Action, HTTPStatus: http.StatusCreated, At: store.NowTS()})
 	writeJSON(w, 201, map[string]any{"id": p.ID, "status": p.Status, "expiresAt": p.ExpiresAt})
 }
 
-func (a sessionShareAPI) listProposals(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a sessionShareAPI) listProposals(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	if err := a.mgr.store.ExpireSessionShareProposals(r.Context(), mv.MembershipID, nowTS()); err != nil {
+	if err := a.mgr.store.ExpireSessionShareProposals(r.Context(), mv.MembershipID, store.NowTS()); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -929,7 +931,7 @@ func (a sessionShareAPI) listProposals(w http.ResponseWriter, r *http.Request, _
 	writeJSON(w, 200, map[string]any{"proposals": out})
 }
 
-func (a sessionShareAPI) reject(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a sessionShareAPI) reject(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	p, ok, err := a.mgr.store.GetSessionShareProposal(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -939,19 +941,19 @@ func (a sessionShareAPI) reject(w http.ResponseWriter, r *http.Request, ident Id
 		writeAPIErr(w, &apiError{404, "not_found", "proposal not found"})
 		return
 	}
-	if changed, err := a.mgr.store.TransitionSessionShareProposal(r.Context(), p.ID, "pending", "rejected", ident.ID, nowTS(), true); err != nil {
+	if changed, err := a.mgr.store.TransitionSessionShareProposal(r.Context(), p.ID, "pending", "rejected", ident.ID, store.NowTS(), true); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	} else if !changed {
 		writeAPIErr(w, &apiError{http.StatusConflict, "proposal_already_decided", "proposal was already decided"})
 		return
 	}
-	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID,
-		Action: "session.share.proposal.reject", Target: p.CatalogID, Detail: "proposer=" + p.ProposerMembershipID + " action=" + p.Action, HTTPStatus: http.StatusOK, At: nowTS()})
+	_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID,
+		Action: "session.share.proposal.reject", Target: p.CatalogID, Detail: "proposer=" + p.ProposerMembershipID + " action=" + p.Action, HTTPStatus: http.StatusOK, At: store.NowTS()})
 	writeJSON(w, 200, map[string]any{"status": "rejected"})
 }
 
-func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	p, ok, err := a.mgr.store.GetSessionShareProposal(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -996,7 +998,7 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 		defer releaseFence()
 		state, status := lookupAgentShareOperation(res.rt, p.ID)
 		if state == "applied" && status < http.StatusBadRequest {
-			changed, err := a.mgr.store.FinalizeSessionShareProposal(r.Context(), p.ID, p.OwnerMembershipID, ident.ID, nowTS())
+			changed, err := a.mgr.store.FinalizeSessionShareProposal(r.Context(), p.ID, p.OwnerMembershipID, ident.ID, store.NowTS())
 			if err != nil {
 				writeAPIErr(w, internalErr(err))
 				return
@@ -1063,7 +1065,7 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 	}
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer finalizeCancel()
-	changed, err := a.mgr.store.FinalizeSessionShareProposal(finalizeCtx, claimed.ID, claimed.OwnerMembershipID, ident.ID, nowTS())
+	changed, err := a.mgr.store.FinalizeSessionShareProposal(finalizeCtx, claimed.ID, claimed.OwnerMembershipID, ident.ID, store.NowTS())
 	if err != nil {
 		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the Agent applied the operation but Control Plane could not record the result: " + err.Error()})
 		return
@@ -1072,7 +1074,7 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the Agent applied the operation but the proposal result could not be finalized"})
 		return
 	}
-	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID, Action: "session.share.proposal.approve", Target: p.CatalogID, Detail: "proposer=" + p.ProposerMembershipID + " action=" + p.Action, HTTPStatus: 200, At: nowTS()})
+	_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID, Action: "session.share.proposal.approve", Target: p.CatalogID, Detail: "proposer=" + p.ProposerMembershipID + " action=" + p.Action, HTTPStatus: 200, At: store.NowTS()})
 	writeJSON(w, 200, map[string]any{"status": "approved"})
 }
 

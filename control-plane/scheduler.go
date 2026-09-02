@@ -17,6 +17,8 @@ import (
 	// embedded copy is only consulted when the OS database is absent, so it is a
 	// safe ~450KB fallback that never overrides a present system zoneinfo.
 	_ "time/tzdata"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Scheduled execution (docs/log/38 + ADR0021). A single CP-resident goroutine — the
@@ -43,7 +45,7 @@ import (
 // session is the session the fire drove (created for session_mode=new, the reuse target
 // for session_mode=reuse) so the run history can link to it; empty when nothing ran.
 type scheduleFirer interface {
-	fire(ctx context.Context, sch Schedule, slot time.Time) (status, session string, err error)
+	fire(ctx context.Context, sch store.Schedule, slot time.Time) (status, session string, err error)
 }
 
 // logFirer is the P1 default: it records that a schedule came due without waking any
@@ -51,7 +53,7 @@ type scheduleFirer interface {
 // the P2 wake path exists.
 type logFirer struct{}
 
-func (logFirer) fire(_ context.Context, sch Schedule, slot time.Time) (string, string, error) {
+func (logFirer) fire(_ context.Context, sch store.Schedule, slot time.Time) (string, string, error) {
 	log.Printf("scheduler: schedule %s due at %s (P1 no-op firer — wake/inject is P2; kind=%s repo=%s)",
 		sch.ID, slot.UTC().Format(time.RFC3339), sch.AgentKind, sch.Repo)
 	return "fired_noop", "", nil
@@ -59,12 +61,12 @@ func (logFirer) fire(_ context.Context, sch Schedule, slot time.Time) (string, s
 
 // scheduleStore is the narrow store view the scheduler needs (docs/log/23 narrow view).
 type scheduleStore interface {
-	ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error)
+	ListDueSchedules(ctx context.Context, nowRFC string) ([]store.Schedule, error)
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
-	AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error
+	AppendScheduleRun(ctx context.Context, run store.ScheduleRun, keepN int) error
 	// InsertNotification surfaces an unattended failure/skip in the notification center
 	// (★3, P4) — WS-independent because the CP notification store is the durable sink.
-	InsertNotification(ctx context.Context, n Notification) error
+	InsertNotification(ctx context.Context, n store.Notification) error
 }
 
 // scheduleRunKeep bounds the per-schedule run history (docs/log/38 P3 get_schedule_runs).
@@ -141,7 +143,7 @@ func scheduleJitter(scheduleID string) time.Duration {
 
 // jitterForSchedule is the fire deferral applied to a due schedule: the deterministic
 // per-id jitter for cron, zero for interval/once (which must fire on their exact slot).
-func jitterForSchedule(sch Schedule) time.Duration {
+func jitterForSchedule(sch store.Schedule) time.Duration {
 	if sch.SpecKind != "cron" {
 		return 0
 	}
@@ -211,7 +213,7 @@ func (sc *scheduler) tickAt(ctx context.Context, now time.Time) {
 		}
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(sch Schedule) {
+		go func(sch store.Schedule) {
 			defer func() { <-sem; wg.Done() }()
 			sc.fireOne(ctx, sch, now)
 		}(sch)
@@ -224,7 +226,7 @@ func (sc *scheduler) tickAt(ctx context.Context, now time.Time) {
 // disabled (a spent "once"). A firer error is recorded as an "error:" status but
 // does not stop the ledger from advancing — otherwise a permanently failing schedule
 // would re-fire every tick.
-func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
+func (sc *scheduler) fireOne(ctx context.Context, sch store.Schedule, now time.Time) {
 	slot, err := time.Parse(time.RFC3339, sch.NextRun)
 	if err != nil {
 		slot = now // defensive: a corrupt next_run should not wedge the loop
@@ -288,7 +290,7 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 	if sch.ManualFirePending {
 		trigger = "manual"
 	}
-	run := ScheduleRun{ID: newID(), ScheduleID: sch.ID, MembershipID: sch.MembershipID, FiredAt: nowRFC, Status: status, Session: session, Trigger: trigger}
+	run := store.ScheduleRun{ID: store.NewID(), ScheduleID: sch.ID, MembershipID: sch.MembershipID, FiredAt: nowRFC, Status: status, Session: session, Trigger: trigger}
 	if err := sc.store.AppendScheduleRun(ctx, run, scheduleRunKeep); err != nil {
 		log.Printf("scheduler: append run %s: %v", sch.ID, err)
 	}
@@ -324,7 +326,7 @@ func scheduleNotifyStatus(status string) bool {
 // notifyOutcome inserts a membership-scoped notification for a failed/skipped fire. The
 // EventID is deterministic per (schedule, slot) so a CP-restart re-fire of the same slot
 // does not double-notify (InsertNotification is ON CONFLICT DO NOTHING).
-func (sc *scheduler) notifyOutcome(ctx context.Context, sch Schedule, slot time.Time, status, nowRFC string) {
+func (sc *scheduler) notifyOutcome(ctx context.Context, sch store.Schedule, slot time.Time, status, nowRFC string) {
 	label := sch.SpecLabel
 	if label == "" {
 		label = sch.ID
@@ -336,7 +338,7 @@ func (sc *scheduler) notifyOutcome(ctx context.Context, sch Schedule, slot time.
 	if strings.HasPrefix(status, "skipped") {
 		kind = "schedule-skipped"
 	}
-	n := Notification{
+	n := store.Notification{
 		EventID:      "sched-" + status + "-" + sch.ID + "-" + slot.UTC().Format(time.RFC3339),
 		MembershipID: sch.MembershipID, Kind: kind,
 		TargetType: "schedule", TargetID: sch.ID, TargetKind: sch.AgentKind,
@@ -374,7 +376,7 @@ func scheduleLocation(tz string) *time.Location {
 //     decides catch-up vs skip; P1 fires once immediately then disables).
 //   - cron:     the next wall-clock match at/after `from`.
 //   - interval: from + interval.
-func initialNextRun(sch Schedule, from time.Time) (string, error) {
+func initialNextRun(sch store.Schedule, from time.Time) (string, error) {
 	switch sch.SpecKind {
 	case "once":
 		t, err := parseOnce(sch.Spec)
@@ -404,7 +406,7 @@ func initialNextRun(sch Schedule, from time.Time) (string, error) {
 // advanceNextRun computes the next fire after a schedule has just fired. `after` is
 // the fire instant. keepEnabled is false only for a spent "once" (nothing more to
 // run). Returns ("", false, nil) in that case.
-func advanceNextRun(sch Schedule, after time.Time) (nextRun string, keepEnabled bool, err error) {
+func advanceNextRun(sch store.Schedule, after time.Time) (nextRun string, keepEnabled bool, err error) {
 	switch sch.SpecKind {
 	case "once":
 		return "", false, nil

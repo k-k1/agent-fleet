@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Read-only tree/blob/commit browsing for internal repos (docs/reference/
@@ -52,7 +54,7 @@ func validTreePath(p string) bool {
 // browseCtx resolves the repo and the effective ref for a browse request within
 // the caller's already-resolved membership (withMembership). It writes the error
 // response and returns ok=false on any failure.
-func (a gitServerAPI) browseCtx(w http.ResponseWriter, r *http.Request, mv MembershipView) (bareDir, ref, path string, ok bool) {
+func (a gitServerAPI) browseCtx(w http.ResponseWriter, r *http.Request, mv store.MembershipView) (bareDir, ref, path string, ok bool) {
 	name := r.PathValue("name")
 	if !validRepoName(name) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "invalid repo name"})
@@ -86,7 +88,7 @@ func (a gitServerAPI) browseCtx(w http.ResponseWriter, r *http.Request, mv Membe
 
 // tree (GET .../repos/{name}/tree?ref=&path=) lists the entries of a directory
 // at a ref. An empty/absent ref (unborn repo) yields an empty listing.
-func (a gitServerAPI) tree(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a gitServerAPI) tree(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	bareDir, ref, path, ok := a.browseCtx(w, r, mv)
 	if !ok {
 		return
@@ -144,7 +146,7 @@ func sortTreeEntries(entries []map[string]any) {
 // blob (GET .../repos/{name}/blob?ref=&path=) returns a file's content. Text
 // under the size cap is returned inline; larger, binary, or LFS pointer blobs
 // return metadata with a flag instead of the bytes.
-func (a gitServerAPI) blob(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a gitServerAPI) blob(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	bareDir, ref, path, ok := a.browseCtx(w, r, mv)
 	if !ok {
 		return
@@ -198,7 +200,7 @@ func (a gitServerAPI) blob(w http.ResponseWriter, r *http.Request, _ Identity, m
 
 // commits (GET .../repos/{name}/commits?ref=&path=&limit=) returns recent
 // commits touching a path (or the whole repo).
-func (a gitServerAPI) commits(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a gitServerAPI) commits(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	bareDir, ref, path, ok := a.browseCtx(w, r, mv)
 	if !ok {
 		return

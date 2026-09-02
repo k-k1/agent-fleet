@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Resource metrics surfaced as small chips in the Console WsBar.
@@ -62,7 +64,7 @@ func readHostStats() (load1 float64, ncpu int, memUsed, memTotal uint64) {
 
 // hostStats serves host load / memory（docs/log/23 残③: adminAPI のメソッドとして
 // 登録側で withSuperAdmin に包む）.
-func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ Identity) {
+func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ store.Identity) {
 	load1, ncpu, memUsed, memTotal := readHostStats()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"load1": load1, "ncpu": ncpu, "mem_used": memUsed, "mem_total": memTotal,
