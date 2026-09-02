@@ -84,6 +84,10 @@ const (
 )
 
 // --- functions ----------------------------------------------------------------------
+//
+// These ten are plain funcs on the far side, so binding them once to a var here is a
+// stable copy of a function value and holds no surprise. awsConfigFor below is NOT one
+// of them — see why.
 
 var (
 	agentReadyWait      = runtime.AgentReadyWait
@@ -95,10 +99,24 @@ var (
 	dockerPublishedPort = runtime.DockerPublishedPort
 	dockerEnvValue      = runtime.DockerEnvValue
 	envInt              = runtime.EnvInt
-
-	// awsConfigFor is a var on the far side too — the live AWS tests swap it.
-	awsConfigFor = runtime.AWSConfigFor
 )
+
+// awsConfigFor is where the CP's own AWS clients get their credentials (cloudcost.go's
+// Cost Explorer, and the store's Secrets Manager reader via alias_store.go).
+//
+// ⚠️ It is a FUNCTION, deliberately, and must not become `var awsConfigFor =
+// runtime.AWSConfigFor`. runtime.AWSConfigFor is itself a variable — the one seam the
+// live AWS harness swaps to point a whole run at a test account (docs/log/64 §64.23) —
+// and a var here would capture its value at package init. The swap would then reach the
+// four adapters — they read runtime.AWSConfigFor from inside that package on every call
+// (runtime_ecs.go / runtime_ecs_ec2.go) — and NOT the two readers on this side, which
+// would go on holding real AWS: a split-brain nobody would see, because every call still
+// succeeds. Dispatching per call keeps one door.
+//
+// It is the only name in this file whose far side is a var. The rest are funcs.
+func awsConfigFor(ctx context.Context, region string) (aws.Config, error) {
+	return runtime.AWSConfigFor(ctx, region)
+}
 
 // --- construction --------------------------------------------------------------------
 

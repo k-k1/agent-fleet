@@ -9,9 +9,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
@@ -82,9 +85,18 @@ func (noPoolFactory) New(runtime.Workspace, string, []string) Runtime { return n
 // under test here is the two things it CANNOT know — whether the baker is switched on,
 // and how the tenants' quotas add up against the pool cap — which the CP fills in
 // afterwards (manager.poolStatus).
-type fakePoolFactory struct{ st ec2PoolStatus }
+//
+// It reports MaxSlots for the second of those: without it the CP's quota comparison
+// returns ok=false and the Budget branch never runs, which would leave the sentence
+// above describing something the test does not do.
+type fakePoolFactory struct {
+	st       ec2PoolStatus
+	maxSlots int
+}
 
 func (fakePoolFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
+
+func (f fakePoolFactory) MaxSlots() int { return f.maxSlots }
 
 // The reply is rebuilt per call, like the adapter's: manager.poolStatus rewrites
 // Goldens[i].Phase in place, so a fake handing out the same backing array twice would
@@ -93,6 +105,33 @@ func (f fakePoolFactory) PoolStatus(context.Context) (ec2PoolStatus, error) {
 	st := f.st
 	st.Goldens = append([]runtime.EC2GoldenView(nil), f.st.Goldens...)
 	return st, nil
+}
+
+// poolStatusFixture wires the fake to a REAL store: manager.poolStatus reads the tenant
+// table for the budget, and a nil store is a state production never has — the call would
+// panic if the comparison ever started running, which is exactly the branch under test.
+func poolStatusFixture(t *testing.T, maxSlots int, quotas map[string]int) *manager {
+	t.Helper()
+	ctx := context.Background()
+	st := p3Store(t)
+	m := p3Manager(t, st)
+	m.rtFactory = fakePoolFactory{
+		st: ec2PoolStatus{
+			Runtime: "ecs-ec2",
+			Goldens: []runtime.EC2GoldenView{{Arch: ec2ArchX86, Phase: ec2BakePhaseIdle}},
+		},
+		maxSlots: maxSlots,
+	}
+	for slug, n := range quotas {
+		tn, err := st.CreateTenant(ctx, slug, slug)
+		if err != nil {
+			t.Fatalf("tenant %s: %v", slug, err)
+		}
+		if err := st.SetTenantLimits(ctx, tn.ID, fmt.Sprintf(`{"max_workspaces":%d}`, n)); err != nil {
+			t.Fatalf("limits %s: %v", slug, err)
+		}
+	}
+	return m
 }
 
 // Nothing else in the product has a pool, and an empty table on a Fargate deployment
@@ -108,11 +147,8 @@ func TestPoolStatusIsAbsentOnOtherRuntimes(t *testing.T) {
 // AWS. Left unsaid, "no golden, nothing under way" reads as "wait a few minutes".
 func TestPoolStatusSaysWhenAutoBakeIsOff(t *testing.T) {
 	ctx := context.Background()
-	f := fakePoolFactory{st: ec2PoolStatus{
-		Runtime: "ecs-ec2",
-		Goldens: []runtime.EC2GoldenView{{Arch: ec2ArchX86, Phase: ec2BakePhaseIdle}},
-	}}
-	m := &manager{rtFactory: f, autoBakeGolden: false}
+	m := poolStatusFixture(t, 10, map[string]int{"acme": 2})
+	m.autoBakeGolden = false
 
 	st, ok, err := m.poolStatus(ctx)
 	if !ok || err != nil {
@@ -129,5 +165,68 @@ func TestPoolStatusSaysWhenAutoBakeIsOff(t *testing.T) {
 	}
 	if !st.AutoBake || st.Goldens[0].Phase != ec2BakePhaseIdle {
 		t.Errorf("auto_bake=%v phase=%q, want a bake to be expected", st.AutoBake, st.Goldens[0].Phase)
+	}
+}
+
+// The budget is attached ONLY when it says something (limits.go): a deployment whose
+// tenant quotas fit its pool is not news, and the screen already shows both numbers it
+// is made of. Both directions are checked, because "always absent" would pass a test
+// that only looked at the happy one — and an over-subscribed pool that says nothing is
+// the failure this comparison exists to prevent (ADR 0045 決定 25).
+func TestPoolStatusCarriesTheTenantBudgetOnlyWhenItDoesNotFit(t *testing.T) {
+	ctx := context.Background()
+
+	// 10 slots less the 2 a bake reserves = 8 to share out; 20 asked for.
+	over := poolStatusFixture(t, 10, map[string]int{"acme": 20})
+	st, _, err := over.poolStatus(ctx)
+	if err != nil {
+		t.Fatalf("poolStatus: %v", err)
+	}
+	if st.Budget == nil {
+		t.Fatal("an over-subscribed pool reported no budget — the warning has nowhere to appear")
+	}
+	if !st.Budget.Over || st.Budget.Capacity != 8 || st.Budget.Allocated != 20 {
+		t.Errorf("budget = %+v, want 20 allocated against a capacity of 8, over", *st.Budget)
+	}
+
+	fits := poolStatusFixture(t, 10, map[string]int{"acme": 4, "beta": 4})
+	st, _, err = fits.poolStatus(ctx)
+	if err != nil {
+		t.Fatalf("poolStatus: %v", err)
+	}
+	if st.Budget != nil {
+		t.Errorf("budget = %+v on a pool that fits, want it left off", *st.Budget)
+	}
+}
+
+// --- the AWS credential seam --------------------------------------------------------
+
+// awsConfigFor has to reach runtime.AWSConfigFor at CALL time, not bind to it once.
+//
+// It is the only name alias_runtime.go borrows whose far side is a variable, and it is a
+// variable precisely so the live AWS harness can point a whole run at a test account
+// (docs/log/64 §64.23). Bound once with `var awsConfigFor = runtime.AWSConfigFor`, the
+// swap would reach the four adapters — they read the variable from inside its own package
+// on every call — and NOT the CP's own two readers, Cost Explorer and the store's Secrets
+// Manager, which would keep the credentials this file captured at init. Nothing fails in
+// that state; half the process just talks to the wrong account. The failure below names
+// the same direction.
+func TestAWSConfigForDispatchesPerCall(t *testing.T) {
+	prev := runtime.AWSConfigFor
+	t.Cleanup(func() { runtime.AWSConfigFor = prev })
+
+	var gotRegion string
+	runtime.AWSConfigFor = func(_ context.Context, region string) (aws.Config, error) {
+		gotRegion = region
+		return aws.Config{Region: "swapped"}, nil
+	}
+
+	ac, err := awsConfigFor(context.Background(), "ap-northeast-1")
+	if err != nil {
+		t.Fatalf("awsConfigFor: %v", err)
+	}
+	if gotRegion != "ap-northeast-1" || ac.Region != "swapped" {
+		t.Fatalf("region in=%q out=%q — the swap did not reach the CP side; awsConfigFor has "+
+			"gone back to being a copy taken at init", gotRegion, ac.Region)
 	}
 }
