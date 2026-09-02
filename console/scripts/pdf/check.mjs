@@ -139,6 +139,13 @@ try {
   const meta = await b.evaluate("window.__meta && window.__meta.pages");
   check(meta === 6, "onMeta がページ数を返す", `meta=${meta}`);
 
+  // 1.5 CSS が本当に当たっている。viewer.css は @import だけの索引なので、parts の
+  // コピーを落とすと **無スタイルのまま全項目 OK で撮れてしまう**（実測: ink が
+  // 1.78% → 100.00% と 56 倍動いても 10 件すべて OK のまま）。撮る前に、
+  // 既定値と違う計算後スタイルを 1 つ見て、目視に頼らず落とす。
+  const styled = await b.evaluate("getComputedStyle(document.querySelector('.pdfview')).display");
+  check(styled === "flex", "viewer.css の parts が当たっている", `.pdfview display=${styled}`);
+
   // 2. 1 枚目に本当に絵が出ている（白でない画素の割合）。
   const inked = await until(
     b.evaluate,

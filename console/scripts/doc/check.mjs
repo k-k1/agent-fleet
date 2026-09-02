@@ -242,13 +242,28 @@ try {
   const note = await b.evaluate("document.querySelector('.docpreview-note')?.textContent || ''");
   check(note.includes("簡易プレビュー"), "簡易プレビューだと明示している", JSON.stringify(note.trim().slice(0, 30)));
 
+  // CSS が本当に当たっている。viewer.css は @import だけの索引なので、parts の
+  // コピーを落とすと **無スタイルのまま全項目 OK で撮れてしまう**（判定は 1 文字も
+  // 変わらず、画像だけが別物になる）。撮る前に、既定値（16px）と違う計算後スタイルを
+  // 1 つ見て、目視に頼らず落とす。
+  const styled = await b.evaluate("getComputedStyle(document.querySelector('.docpreview-note')).fontSize");
+  check(styled === "11px", "viewer.css の parts が当たっている", `.docpreview-note font-size=${styled}`);
+
   if (SHOT) await b.screenshot(SHOT);
 
   // 壊れたファイルは、白い面ではなく理由とダウンロード導線を出す。
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/broken.docx&fmt=docx`);
-  const why = await until(b.evaluate, "document.querySelector('.docpreview-status')?.textContent || ''", (s) => !!s, 150);
+  // 待つ条件は **assert する条件に揃える**。「非空で待つ」と読み込み中の
+  // 「文書を変換しています…」で抜けてしまい、そのあと現れる導線を先に assert する
+  // レースになる（変換が少しでも遅いと必ず負ける）。終端の状態まで待ってから読む。
+  const hint = await until(
+    b.evaluate,
+    "[...document.querySelectorAll('.docpreview-status')].map((e) => e.textContent).join(' ')",
+    (s) => s.includes("ダウンロード"),
+    150,
+  );
+  const why = await b.evaluate("document.querySelector('.docpreview-status')?.textContent || ''");
   check(!!why, "壊れたファイルで理由が出る", JSON.stringify(why));
-  const hint = await b.evaluate("[...document.querySelectorAll('.docpreview-status')].map((e) => e.textContent).join(' ')");
   check(hint.includes("ダウンロード"), "原本を開く導線を出す");
   check(await md() === "", "壊れたファイルで本文の面は出さない");
 } finally {
