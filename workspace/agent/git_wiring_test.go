@@ -59,7 +59,29 @@ func TestGitWiringIsLive(t *testing.T) {
 		"EnsureCredHelper": func(t *testing.T) { sameGitFunc(t, w.EnsureCredHelper, ensureCredHelper) },
 		"InternalGitHost":  func(t *testing.T) { sameGitFunc(t, w.InternalGitHost, internalGitHost) },
 
-		"FirstNonEmpty":   func(t *testing.T) { sameGitFunc(t, w.FirstNonEmpty, firstNonEmpty) },
+		"FirstNonEmpty": func(t *testing.T) {
+			sameGitFunc(t, w.FirstNonEmpty, firstNonEmpty)
+			// 🔥 **本物の優先順位をここで直接止める。**
+			// gitx のテストはこの関数の**写し**を使う（パッケージを跨いで本物を
+			// 呼べない）ので、写しと本物がずれると **gitx 側は緑のまま本番だけ壊れる**。
+			// 実測: `connections.go:808` に「先頭の優先順位を無視する」変異を当てると
+			// develop は 2 失敗（TestApplyGitIdentity + TestParseBitbucketPullRequests）
+			// だが、移送後は 1 失敗に減った —— 減ったのは、git の identity が
+			// 「上書き＞プロバイダ＞アカウント」の順で効くことを**ついでに**押さえていた
+			// TestApplyGitIdentity である。その 1 本ぶんをここで取り戻す。
+			for _, c := range []struct {
+				in   []string
+				want string
+			}{
+				{[]string{"a", "b"}, "a"},     // 先頭が勝つ（identity の上書きが効く根拠）
+				{[]string{"", "b", "c"}, "b"}, // 空は飛ばす
+				{[]string{"", ""}, ""},        // 全部空なら空
+			} {
+				if got := firstNonEmpty(c.in...); got != c.want {
+					t.Fatalf("firstNonEmpty(%q) = %q, want %q（gitx の写しとずれている）", c.in, got, c.want)
+				}
+			}
+		},
 		"GitConfigGlobal": func(t *testing.T) { sameGitFunc(t, w.GitConfigGlobal, gitConfigGlobal) },
 		"GitHosts": func(t *testing.T) {
 			if !reflect.DeepEqual(w.GitHosts, gitHosts) {
