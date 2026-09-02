@@ -592,18 +592,43 @@ def table_check_marks(path: str, row_label: str) -> set[str] | None:
     return None
 
 
+# ランタイム形態の switch が在るファイルと関数名。**置き場は移送で動く** ——
+# ADR 0067 のエイリアス移送で control-plane/runtime.go の newRuntimeFactory は
+# control-plane/internal/runtime/runtime.go の NewFactory へ移り、main 側に残ったのは
+# runtime.NewFactory を呼ぶだけの薄い包みになった。新しい方から順に当たる。
+RUNTIME_FACTORY_SOURCES = (
+    (("control-plane", "internal", "runtime", "runtime.go"), "func NewFactory("),
+    (("control-plane", "runtime.go"), "func newRuntimeFactory("),
+)
+
+
 def source_runtime_groups() -> list[set[str]]:
     """デプロイ形態を「別名の組」として返す。
 
-    newRuntimeFactory の switch は 1 つのアダプタに複数の綴りを許している
+    ランタイム工場の switch は 1 つのアダプタに複数の綴りを許している
     （local=docker / ecs=aws / native=wsl）。表がどの綴りを採っていても
     通したいので、組のどれか 1 つが在れば満たしたとみなす。組の一覧は
     その switch から、必須の集合は同じ関数の「want ...」エラー文から取る。
+
+    見つからないときは**落とす**。ここで [] を返すと deploy-targets.md の検査だけが
+    黙って消え、表が腐っても緑のままになる（移送でファイルが動いた時こそ壊れる検査
+    なので、静かに無効化されるのが最も高くつく）。
     """
-    body = read(os.path.join(ROOT, "control-plane", "runtime.go"))
-    start = body.find("func newRuntimeFactory(")
-    if start < 0:
-        return []
+    for parts, fn in RUNTIME_FACTORY_SOURCES:
+        path = os.path.join(ROOT, *parts)
+        if not os.path.exists(path):
+            continue
+        body = read(path)
+        start = body.find(fn)
+        if start >= 0:
+            break
+    else:
+        raise SystemExit(
+            "docs-check: ランタイム形態の switch が見つからない。移送で置き場が"
+            "変わったなら scripts/docs-check.py の RUNTIME_FACTORY_SOURCES に足すこと（探した先: "
+            + ", ".join("/".join(p) + " の " + f for p, f in RUNTIME_FACTORY_SOURCES)
+            + "）"
+        )
     end = body.find("\nfunc ", start + 1)
     scope = body[start : end if end > 0 else len(body)]
     groups = [
