@@ -1,4 +1,4 @@
-package main
+package uiprefs
 
 import (
 	"encoding/json"
