@@ -1,0 +1,188 @@
+/* コンポーサーの器と、その上に載る 2 段: 添付チップの帯と返信サジェストのチップ行。
+末尾は ＋ 添付ボタン
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+.mirror-compose {
+  position: relative; /* スキルピッカー (.mirror-skills) の絶対配置アンカー */
+  display: flex;
+  flex-wrap: wrap; /* pasted-image strip (full width) wraps above the input row */
+  gap: 8px;
+  align-items: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bar);
+}
+/* Pasted-image attachment strip above the composer input. */
+.mirror-attach {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* 返信サジェストのチップ行（コンポーサー入力の上・全幅）。折り返さず必ず1行に収め、あふれた分は
+   左右スクロール（タッチ=スワイプはネイティブ、マウス=ドラッグは useDragScroll）。スクロールバーは
+   隠す（行が細く、出ると窮屈なため）。 */
+.mirror-suggest {
+  flex: 0 0 100%;
+  min-width: 0; /* flex-basis 100% でも収縮できるように（これが無いと overflow が効かない） */
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain; /* 端まで来ても親ペイン/ページを動かさない */
+  /* ドラッグでテキスト選択にならないように。長タップがメニュー（SuggestChipMenu）に届くよう、
+     iOS の callout もここで抑える（app-rail の行と同じ作法）。 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+}
+.mirror-suggest::-webkit-scrollbar {
+  display: none;
+}
+/* 候補チップ。削除とピン留めは右クリック / 長タップ / Menu キーのメニュー（SuggestChipMenu）へ
+   集約したので、以前あったチップ内の×とその入れ物・常時確保していた右余白は無い。 */
+.mirror-suggest-chip {
+  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mirror-suggest-chip:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+/* v2: LLM 生成候補は accent 寄りの見た目で学習候補と区別。 */
+.mirror-suggest-chip.llm {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+/* ピン留め（常に表示）した候補。ランキングに関係なく先頭に固定で並ぶ列なので、📌 と
+   実線寄りの枠で「自分で固定した側」だと分かるようにする。 */
+.mirror-suggest-chip.pinned {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+/* Tab 補完でいま入力欄に入っている候補。フォーカスは入力欄に残したまま「どれを見ているか」を
+   示す必要があるので、フォーカスリング（:focus-visible）とは別に塗りで強調する。 */
+.mirror-suggest-chip.cycling {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+}
+.mirror-suggest-pin {
+  font-size: 11px;
+  color: var(--accent);
+}
+/* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
+.mirror-suggest-ai {
+  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.mirror-suggest-ai:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+.mirror-suggest-ai:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ma-chip {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.ma-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ma-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+}
+.ma-del .codicon {
+  font-size: 12px;
+}
+.ma-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+/* Non-image attachment chip (drag&drop / ＋): icon + name instead of a thumbnail. */
+.ma-chip.ma-file {
+  width: auto;
+  max-width: 240px;
+  height: auto;
+  padding: 6px 26px 6px 8px; /* right pad clears the ✕ */
+}
+.ma-fname {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  min-width: 0;
+}
+.ma-fname-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ＋ attach button, left of the composer (all pointer types — phones foremost). */
+.mirror-attach-btn {
+  flex: none;
+  align-self: stretch;
+  width: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.mirror-attach-btn:disabled {
+  opacity: 0.4;
+}

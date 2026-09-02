@@ -1,0 +1,108 @@
+/* `!` のシェル実行（.mt-bash-*）と `/` のスラッシュコマンド / スキル起動（.mt-cmd*）
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* A `!`-run shell command (BashBlock): a terminal-flavored block — the command line is
+   always shown; its output collapses behind a toggle, styled like the tool-output row. */
+.mt-bash {
+  margin: 0.3em 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--chat-accent) 55%, var(--border));
+  border-radius: 6px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  overflow: hidden;
+}
+.mt-bash-cmd {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 12px;
+  line-height: 1.4;
+}
+.mt-bash-prompt {
+  flex: none;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--chat-accent) 75%, var(--fg));
+  user-select: none;
+}
+.mt-bash-code {
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+}
+button.mt-bash-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  margin: 0;
+  padding: 3px 10px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  text-align: left;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity 0.12s, background 0.12s;
+}
+button.mt-bash-toggle:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--chat-accent) 10%, transparent);
+}
+.mt-bash-output {
+  margin: 0;
+  padding: 6px 10px;
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 1px solid var(--border);
+}
+.mt-bash-err {
+  color: var(--del);
+}
+
+/* A `/`-run slash command / skill invocation (CmdChip): a compact inline chip — the
+   command name (monospace, accent) with any arguments — marking a user action. */
+.mt-cmd {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0.2em 0;
+  padding: 2px 9px;
+  border: 1px solid color-mix(in srgb, var(--chat-accent) 35%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chat-accent) 8%, var(--bg));
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 100%;
+}
+.mt-cmd .codicon {
+  font-size: 11px;
+  align-self: center;
+  color: color-mix(in srgb, var(--chat-accent) 75%, var(--fg));
+}
+.mt-cmd-name {
+  font-family: var(--viewer-font, var(--mono));
+  font-weight: 600;
+  color: color-mix(in srgb, var(--chat-accent) 80%, var(--fg));
+  white-space: nowrap;
+}
+.mt-cmd-args {
+  font-family: var(--viewer-font, var(--mono));
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}

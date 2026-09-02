@@ -1,0 +1,118 @@
+/* 失敗したターン（.mirror-error* / .mef-*）と、押せるツール痕跡（差分を開く / 連続実行の折り畳み）
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* A turn that failed instead of answering (part kind "error"): the agent recorded a
+   provider-side error — expired auth, exhausted balance, rate limit — and produced no
+   output. Unlike the thinking block this is never collapsed and never faint: the whole
+   point is that a failed turn used to be indistinguishable from a finished one. */
+.mirror-error {
+  margin: 4px 0;
+  border: 1px solid color-mix(in srgb, var(--del) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--del) 8%, transparent);
+}
+.mirror-error-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  color: var(--del);
+}
+.mte-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.mte-code {
+  font-size: 11px;
+  opacity: 0.85;
+  font-family: var(--mono, monospace);
+}
+.mirror-error-body {
+  padding: 0 8px 6px 26px;
+  font-size: 0.95em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Recovery row for a failure the agent said is fixable (cause="auth"): what happened,
+   in the user's language, plus the one action that clears it. It sits ABOVE the raw
+   provider text — the English "Please run /login" is evidence, not an instruction the
+   Console user can follow. */
+.mirror-error-fix {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 8px 6px 26px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--del) 10%, transparent);
+}
+.mef-msg {
+  flex: 1 1 220px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mef-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--del) 55%, transparent);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--del);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mef-action:hover {
+  background: color-mix(in srgb, var(--del) 14%, var(--bg));
+}
+/* Edit-family traces are clickable — they open a diff pane. Reset the button and
+   lift the opacity so they read as interactive, not just a faint trace. */
+button.mt-tool-diff {
+  width: 100%;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.12s, background 0.12s;
+}
+button.mt-tool-diff:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--chat-accent) 12%, transparent);
+}
+button.mt-tool-diff .codicon {
+  color: var(--chat-accent);
+}
+
+/* Collapsed run of consecutive tool traces: a single foldable summary row. The head
+   reuses .mt-tool for the faint look; the chevron + hover lift mark it interactive. */
+.mt-toolrun {
+  margin: 0.3em 0;
+}
+button.mt-toolrun-head {
+  width: 100%;
+  margin: 0;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s;
+}
+button.mt-toolrun-head:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--chat-accent) 12%, transparent);
+}

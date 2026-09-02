@@ -1,0 +1,154 @@
+/* ヘッダ下の 2 本の帯: /context 相当のコンテキスト量ゲージ（.mirror-ctxbar / .cb-*）と、
+ブランチ・作業ディレクトリが変わったときだけターンの上に出る文脈ストリップ（.mirror-context / .mc-*）
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* /context-like fill gauge under the header: a segmented bar (cache read / cache
+   creation / fresh input) sized against the context window. */
+.mirror-ctxbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bar);
+  font-size: 11.5px;
+}
+/* Context half (left): "コンテキスト" label · bar · figure — a 50% flex column that
+   splits the row evenly with the token-spend trend on the right. */
+.cb-ctx {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cb-ctx-label {
+  flex: none;
+  color: var(--muted);
+}
+/* Context-bar labels shorten (コンテキスト→ctx, トークン消費推移→token) when the pane
+   is narrow, via the paneview inline-size container (.mirrorview / .termview). */
+.cb-lbl-short {
+  display: none;
+}
+@container paneview (max-width: 560px) {
+  .cb-lbl-full {
+    display: none;
+  }
+  .cb-lbl-short {
+    display: inline;
+  }
+}
+.cb-track {
+  flex: 1;
+  min-width: 40px;
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.cb-seg {
+  height: 100%;
+}
+.cb-read {
+  background: color-mix(in srgb, var(--chat-accent) 32%, transparent);
+}
+.cb-create {
+  background: color-mix(in srgb, var(--chat-accent) 58%, transparent);
+}
+.cb-fresh {
+  background: var(--chat-accent);
+}
+.cb-label {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.cb-label .codicon {
+  font-size: 12px;
+}
+/* Approaching the auto-compaction zone: warn, then danger near the very top. The
+   growing uncached (fresh) segment and the label carry the color; a faint ring on
+   the track makes the fill itself read as "getting full". */
+.cb-near .cb-fresh {
+  background: var(--warn);
+}
+.cb-near .cb-label {
+  color: var(--warn);
+}
+.cb-full .cb-fresh {
+  background: var(--del);
+}
+.cb-full .cb-label {
+  color: var(--del);
+}
+.cb-full .cb-track {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--del) 55%, transparent);
+}
+/* Token-spend trend, merged onto the context row (chat only): a divider, then a
+   Sparkline of each turn's newly-consumed tokens so heavy turns stand out. */
+.cb-div {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 1px 0;
+  background: var(--border);
+}
+.cb-trend {
+  flex: 1 1 0; /* even 50/50 with .cb-ctx */
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--chat-accent);
+}
+.cb-trend-label {
+  flex: none;
+  color: var(--muted);
+}
+.cb-trend .spark {
+  flex: 1;
+  width: 100%;
+  height: 14px;
+}
+.cb-trend-peak {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Context strip: shown above a turn only when the git branch / working dir changes,
+   marking the switch once instead of repeating it on every turn. */
+.mirror-context {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 16px;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+.mc-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  flex: none;
+}
+.mc-branch .codicon {
+  font-size: 12px;
+}
+.mc-cwd {
+  font-family: var(--viewer-font, var(--mono));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}

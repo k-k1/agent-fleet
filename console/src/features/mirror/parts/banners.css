@@ -1,0 +1,167 @@
+/* 転写の上下に積む「状況の帯」: plan モード・端末の注意喚起・タイトル提案、および
+転写に残る圧縮サマリの畳み込み（.mirror-compact*）
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* Plan-mode banner + ExitPlanMode plan block. */
+.mirror-planmode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--chat-accent) 10%, var(--bar));
+  color: var(--fg);
+}
+/* Attention banner: a terminal-only state (resume menu) needs the user in the
+   terminal. Warning-tinted, with the guidance text growing and a right-aligned CTA. */
+.mirror-attention {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--warn, #e0a45e) 16%, var(--bar));
+  color: var(--fg);
+}
+.mirror-attention .ma-text {
+  flex: 1;
+  min-width: 0;
+}
+.mirror-attention .ma-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Auto title-suggestion banner (headless-LLM proposed title, dismissible). Tinted
+   off --chat-accent like .mirror-planmode rather than --warn — it's an offer, not
+   a warning, so it should read distinctly calmer than .mirror-attention. */
+.mirror-title-suggest {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--chat-accent) 12%, var(--bar));
+  color: var(--fg);
+}
+.mirror-title-suggest .mts-text {
+  flex: 1;
+  min-width: 0;
+  /* Wrap the candidate rather than ellipsis-truncating it — the user must be able to
+     read the whole proposed title before pressing 承認. */
+  overflow-wrap: anywhere;
+}
+.mirror-title-suggest .mts-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mirror-title-suggest .mts-dismiss {
+  flex: none;
+  opacity: 0.7;
+}
+.mirror-title-suggest .mts-dismiss:hover {
+  opacity: 1;
+}
+/* Compaction summary in the transcript: a collapsed disclosure (closed by default). */
+.mirror-compact {
+  margin: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bar);
+}
+.mirror-compact-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  list-style: none;
+}
+.mirror-compact-head::-webkit-details-marker {
+  display: none;
+}
+.mirror-compact-head .mc-title {
+  color: var(--fg);
+}
+.mirror-compact-head .mc-time {
+  margin-left: auto;
+}
+.mirror-compact[open] .mirror-compact-head {
+  border-bottom: 1px solid var(--border);
+}
+.mirror-compact-body {
+  padding: 8px 12px;
+}
+/* Reduction summary on the head: "820k → 240k −71%". Pinned right, before the time. */
+.mirror-compact-head .mc-effect {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+.mirror-compact-head .mc-effect .mc-effect-pct {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 11px;
+  background: color-mix(in srgb, #2fb872 22%, transparent);
+  color: color-mix(in srgb, #2fb872 62%, var(--fg));
+}
+/* When the effect chip is present it owns the right edge, so the time follows it. */
+.mirror-compact-head .mc-effect ~ .mc-time {
+  margin-left: 8px;
+}
+/* Before/after bars in the expanded body: two full-width tracks, the 圧縮後 fill scaled
+   to after/before so the shrink is visible at a glance. */
+.mirror-compact .mc-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.mirror-compact .mc-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mirror-compact .mc-bar-lbl {
+  flex: 0 0 3.2em;
+}
+.mirror-compact .mc-bar-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  overflow: hidden;
+}
+.mirror-compact .mc-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+.mirror-compact .mc-bar-fill.before {
+  background: color-mix(in srgb, var(--fg) 35%, transparent);
+}
+.mirror-compact .mc-bar-fill.after {
+  background: #2fb872;
+}
+.mirror-compact .mc-bar-val {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}

@@ -1,0 +1,63 @@
+/* ターン本文の Markdown（.mirror-turn .markdown）— チャット用の書体と縦のリズム、折り返し
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+.mirror-turn .markdown {
+  /* MarkdownView is shared with the file viewer, which centers a max-width column
+     (margin:0 auto). In the transcript that reads as "everything is indented", so
+     reset it to fill the width, left-aligned. Tighter leading than the file viewer.
+     Scoped to the whole turn so user prompts (also Markdown now) get the same reset. */
+  padding: 0;
+  max-width: none;
+  margin: 0;
+  font-size: var(--chat-size, 13.5px);
+  line-height: 1.5;
+}
+/* Chat prose follows the configurable chat font (proportional by default), scoped so
+   the file viewer's own markdown is untouched. */
+.mirror-turn .markdown {
+  font-family: var(--chat-font, system-ui, sans-serif);
+}
+/* Vertical rhythm inside a chat turn: a touch tighter than the file viewer, but with
+   enough gap between blocks that paragraphs/lists read as distinct. */
+.mirror-turn .markdown p,
+.mirror-turn .markdown ul,
+.mirror-turn .markdown ol,
+.mirror-turn .markdown blockquote,
+.mirror-turn .markdown table {
+  margin: 0.7em 0;
+}
+.mirror-turn .markdown li {
+  margin: 0.25em 0;
+}
+.mirror-turn .markdown h1,
+.mirror-turn .markdown h2,
+.mirror-turn .markdown h3,
+.mirror-turn .markdown h4 {
+  margin: 0.7em 0 0.35em;
+}
+/* 本文は必ず折り返す。エージェントの転写には折り返し位置を持たない長い文字列
+   （sha256:… / クエリ付き URL / 長い識別子）がふつうに現れ、それが 1 つあるだけで
+   スマホでは転写のスクロール容器（.mirror-body）ごと横へはみ出していた（幅 390px の
+   実測で sw=633/cw=390 等）。読むのに横スクロールが要るのがまず不便で、さらに
+   横スワイプのガード（app/swipeGuard.ts）にも波及していた。
+   対象はテキストブロックだけ — table と pre は自前の overflow を持ち、ここで
+   折り返すと列幅やコードの見え方が変わってしまうので触らない（overflow-wrap は
+   継承するので、段落中の inline code にはこれで効く）。 */
+.mirror-turn .markdown p,
+.mirror-turn .markdown li,
+.mirror-turn .markdown blockquote,
+.mirror-turn .markdown h1,
+.mirror-turn .markdown h2,
+.mirror-turn .markdown h3,
+.mirror-turn .markdown h4 {
+  overflow-wrap: anywhere;
+}
+.mirror-turn .markdown > :first-child {
+  margin-top: 0;
+}
+.mirror-turn .markdown > :last-child {
+  margin-bottom: 0;
+}

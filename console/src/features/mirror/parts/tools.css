@@ -1,0 +1,185 @@
+/* ツール実行の痕跡（.mt-tool*）と、思考・作業過程の畳み込み（.mirror-thinking / .mirror-disclosure*）
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* A faint trace of claude's tool activity, interleaved between text parts. Kept
+   low-contrast and single-line so it reads as "background work", not content. */
+/* Tool traces are deliberately recessive, but the fade is a COLOUR, not `opacity`:
+   opacity multiplies down the tree, and a trace inside .mt-work-body used to land at
+   0.42 × 0.82 = 0.34 — 2.1:1, illegible in both themes. --muted keeps the same "quiet
+   line" reading (7.5:1 on the light transcript, 4.7:1 on the dark one) and no longer
+   compounds with whatever wrapper the trace happens to sit in. */
+.mt-tool {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0.3em 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.mt-tool .codicon {
+  font-size: 12px;
+  position: relative;
+  top: 1px;
+}
+.mt-tool-name {
+  font-weight: 600;
+  flex: none;
+}
+.mt-tool-info {
+  font-family: var(--viewer-font, var(--mono));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* A tool trace that carries its output (codex/opencode): the head is a click-to-expand
+   button; the body is a scrollable monospace block. */
+button.mt-tool-outhead {
+  width: 100%;
+  padding: 2px 6px;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.mt-tool-output {
+  margin: 2px 0 4px 18px;
+  padding: 6px 8px;
+  max-height: 260px;
+  overflow: auto;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+  opacity: 0.85;
+}
+/* An edit expanded in place, for views with no diff pane to open (the shared-session
+   view — the DTO keeps the diff body but drops the path, docs/log/59 §3). Sits in the same
+   slot as .mt-tool-output and borrows the diff pane's dv-* row styling (viewer.css). */
+.mt-tool-diffstat {
+  margin-left: auto;
+  padding-left: 8px;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 11px;
+}
+.mt-tool-diff-inline {
+  margin: 2px 0 4px 18px;
+  padding: 4px 0;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+}
+.mt-tool-diff-inline .dv-table {
+  font-size: 11px;
+}
+
+/* The full plan Markdown, expanded under the card when there is no pane to open it in. */
+.mt-plan-body {
+  margin-top: 6px;
+  padding: 8px 10px;
+  max-height: 420px;
+  overflow: auto;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+}
+
+/* Chain-of-thought disclosure (codex/opencode reasoning), styled like the compaction
+   summary: a faint collapsed row that expands to the reasoning Markdown. */
+.mirror-thinking {
+  margin: 2px 0;
+  font-size: 0.95em;
+}
+.mirror-thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  opacity: 0.6;
+}
+.mirror-thinking.open .mirror-thinking-head {
+  opacity: 0.8;
+}
+.mth-title {
+  font-size: 12px;
+}
+.mirror-thinking-body {
+  padding: 2px 8px 4px 20px;
+  opacity: 0.8;
+}
+
+/* Native <details> removes closed content immediately, which precludes a closing
+   transition. The three interactive disclosures keep their body mounted and animate
+   the grid track instead. Opacity makes the first/last few pixels feel less abrupt. */
+.mirror-disclosure-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 140ms ease-out, opacity 100ms ease-out;
+}
+.mirror-disclosure.open > .mirror-disclosure-panel {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.mirror-disclosure-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+/* The closing edge of an expanded 作業過程 / 思考 (DisclosureFoot): the head's toggle repeated
+   at the BOTTOM, so a long block can be folded away from where it was read instead of scrolling
+   back up to the only control. Faint until hovered — it sits inside the body and must not
+   compete with the content above it. */
+.mirror-disclosure-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 3px 6px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 7%, transparent);
+  border-radius: 0 0 4px 4px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  /* --muted そのまま。opacity で更に落とすと、思考の本文（.mirror-thinking-body が既に
+     0.8）の中で二重に掛かって操作要素が読めなくなる — ライトでもダークでも 4.5:1 を切る。 */
+  color: var(--muted);
+}
+.mirror-disclosure-foot:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.mirror-disclosure-foot .codicon {
+  font-size: 11px;
+}
+/* 作業過程は枠のあるカードなので、閉じる帯は本文の左右 padding だけ打ち消して枠いっぱいに
+   敷く（罫線が中途半端な位置で切れないように）。下は詰めない — カードの枠線に貼り付くと
+   二重線に見える。思考には枠が無いので本文幅のまま。 */
+.mt-work-body > .mirror-disclosure-foot {
+  margin-left: -20px;
+  margin-right: -9px;
+  width: calc(100% + 29px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mirror-disclosure-panel {
+    transition: none;
+  }
+}
