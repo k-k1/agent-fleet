@@ -10,7 +10,7 @@
 // So: the operator declares the classes, a super_admin says which of them a tenant may
 // use, a tenant_admin picks the tenant's default, and a tenant_admin overrides it per
 // member (setUserLimit). Four layers, and only the middle one crosses a tenant border.
-package main
+package tenantsrv
 
 import (
 	"encoding/json"
@@ -21,20 +21,20 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
-// tenantSlotClass (GET /api/admin/tenants/{slug}/slot-class) reports the tenant's
+// TenantSlotClass (GET /api/admin/tenants/{slug}/slot-class) reports the tenant's
 // default, the classes it may choose from, and the deployment's own default.
 //
 // The allowed list is INTERSECTED with what the deployment declares before it is
 // shown. A stale allowed_slot_classes naming a class the operator has since removed
 // would otherwise put a dead option in the picker, and picking it would resolve back
 // to the default with a note — a control that appears to work and does not.
-func (a adminAPI) tenantSlotClass(w http.ResponseWriter, r *http.Request) {
-	_, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+func (a Admin) TenantSlotClass(w http.ResponseWriter, r *http.Request) {
+	_, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
 		return
 	}
 	lim := a.tenantLimitsFor(r, t.ID)
-	sizing := a.mgr.workspaceSizing()
+	sizing := a.cp.WorkspaceSizing()
 	choices := make([]runtime.WorkspaceSlotClass, 0, len(sizing.SlotClasses))
 	for _, c := range sizing.SlotClasses {
 		if len(lim.AllowedSlotClasses) == 0 || slices.Contains(lim.AllowedSlotClasses, c.ID) {
@@ -53,10 +53,10 @@ func (a adminAPI) tenantSlotClass(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// setTenantSlotClass (PUT /api/admin/tenants/{slug}/slot-class {slot_class}).
+// SetTenantSlotClass (PUT /api/admin/tenants/{slug}/slot-class {slot_class}).
 // "" clears it, i.e. back to the deployment default.
-func (a adminAPI) setTenantSlotClass(w http.ResponseWriter, r *http.Request) {
-	_, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+func (a Admin) SetTenantSlotClass(w http.ResponseWriter, r *http.Request) {
+	_, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -64,13 +64,13 @@ func (a adminAPI) setTenantSlotClass(w http.ResponseWriter, r *http.Request) {
 		SlotClass string `json:"slot_class"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
 	want := strings.TrimSpace(body.SlotClass)
 	lim := a.tenantLimitsFor(r, t.ID)
 	if want != "" {
-		sizing := a.mgr.workspaceSizing()
+		sizing := a.cp.WorkspaceSizing()
 		declared := slices.ContainsFunc(sizing.SlotClasses, func(c runtime.WorkspaceSlotClass) bool { return c.ID == want })
 		allowed := len(lim.AllowedSlotClasses) == 0 || slices.Contains(lim.AllowedSlotClasses, want)
 		// Refused rather than stored-and-substituted. resolveSlotClass has to tolerate a
@@ -79,25 +79,24 @@ func (a adminAPI) setTenantSlotClass(w http.ResponseWriter, r *http.Request) {
 		// and accepting it would show the admin their choice saved while every member
 		// silently ran somewhere else.
 		if !declared || !allowed {
-			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_slot_class",
+			writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_slot_class",
 				"unknown or not-allowed machine class: " + want})
 			return
 		}
 	}
 	lim.SlotClass = want
-	lj, err := json.Marshal(lim)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	if err := a.mgr.store.SetTenantLimits(r.Context(), t.ID, string(lj)); err != nil {
+	// Read-modify-write of the WHOLE blob: the tenant's quotas live in the same JSON
+	// and must survive a tenant_admin changing only the class. The encode happens on
+	// the CP side (limits.go), so a field this package has never heard of is carried
+	// through — see Limits in deps.go.
+	if err := a.cp.StoreTenantLimits(r.Context(), t.ID, lim); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	// The class is read when the runtime is built, so every memoized runtime in this
 	// tenant has to go — otherwise the change reaches only members whose cache happened
 	// to be cold.
-	a.mgr.evictTenantCache(t.ID)
+	a.cp.EvictTenantCache(t.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"tenant": t.Slug, "slot_class": want})
 }
 
@@ -106,10 +105,6 @@ func (a adminAPI) setTenantSlotClass(w http.ResponseWriter, r *http.Request) {
 // callers that WRITE must treat a failure here as "no change is safe" — which the zero
 // value is not. Every caller below reads it immediately before writing it back, and a
 // store that cannot be read cannot be written either, so the write fails too.
-func (a adminAPI) tenantLimitsFor(r *http.Request, tenantID string) tenantLimits {
-	t, err := a.mgr.store.GetTenant(r.Context(), tenantID)
-	if err != nil {
-		return tenantLimits{}
-	}
-	return parseLimits(t.Limits)
+func (a Admin) tenantLimitsFor(r *http.Request, tenantID string) Limits {
+	return a.cp.LimitsFor(r.Context(), tenantID)
 }

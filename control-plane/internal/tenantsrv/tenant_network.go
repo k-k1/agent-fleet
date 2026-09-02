@@ -6,7 +6,7 @@
 // entry gate; allowed_providers decides which IdP is trusted to say who someone is).
 // This one reaches nothing outside the tenant, so by the same line it belongs to the
 // tenant_admin (ADR 0043 決定 24/25 → ADR 0047 決定 6).
-package main
+package tenantsrv
 
 import (
 	"encoding/json"
@@ -16,25 +16,26 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// tenantNetwork (GET /api/admin/tenants/{slug}/network) returns the stored rule plus
+// TenantNetwork (GET /api/admin/tenants/{slug}/network) returns the stored rule plus
 // what the CP can see about the CALLER. The two are inseparable in practice: a list of
 // CIDRs means nothing to an administrator who cannot check it against the address this
 // deployment actually attributes to them.
-func (a adminAPI) tenantNetwork(w http.ResponseWriter, r *http.Request) {
-	_, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+func (a Admin) TenantNetwork(w http.ResponseWriter, r *http.Request) {
+	_, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	cidrs, err := a.mgr.store.GetTenantAllowedCIDRs(r.Context(), t.ID)
+	cidrs, err := a.cp.Store().GetTenantAllowedCIDRs(r.Context(), t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	info := clientIPFrom(r.Context())
+	info := a.cp.ClientIPFrom(r.Context())
+	hops := a.cp.TrustedProxyHops()
 	out := map[string]any{
 		"tenant":        t.Slug,
 		"allowed_cidrs": cidrs,
-		"proxy_hops":    trustedProxyHops,
+		"proxy_hops":    hops,
 		// your_ip is what a rule would be matched against, NOT what the browser thinks
 		// its address is. Showing anything else would be a comfortable lie.
 		"your_ip": "",
@@ -42,8 +43,8 @@ func (a adminAPI) tenantNetwork(w http.ResponseWriter, r *http.Request) {
 		// then explains it instead of offering a control that would either do nothing
 		// or lock everybody out; the save endpoint refuses for the same reason, so a
 		// stale page cannot get past it.
-		"editable": info.OK && !(trustedProxyHops <= 0 && info.Forwarded),
-		"reason":   proxyMisconfigReason(info),
+		"editable": info.OK && !(hops <= 0 && info.Forwarded),
+		"reason":   proxyMisconfigReason(hops, info),
 	}
 	if info.OK {
 		out["your_ip"] = info.IP.String()
@@ -61,9 +62,12 @@ func (a adminAPI) tenantNetwork(w http.ResponseWriter, r *http.Request) {
 //     while believing they had restricted the tenant.
 //   - client_ip_unknown: the deployment declares N proxies and the chain is shorter
 //     than that, so there is nothing to read at position N.
-func proxyMisconfigReason(info clientIPInfo) string {
+//
+// hops is AF_TRUSTED_PROXY_HOPS, passed in rather than read from a package global:
+// the value lives in the CP (clientip.go), which is where the tests set it.
+func proxyMisconfigReason(hops int, info ClientIP) string {
 	switch {
-	case trustedProxyHops <= 0 && info.Forwarded:
+	case hops <= 0 && info.Forwarded:
 		return "proxy_not_configured"
 	case !info.OK:
 		return "client_ip_unknown"
@@ -71,7 +75,7 @@ func proxyMisconfigReason(info clientIPInfo) string {
 	return ""
 }
 
-// setTenantNetwork (PUT /api/admin/tenants/{slug}/network) stores the rule.
+// SetTenantNetwork (PUT /api/admin/tenants/{slug}/network) stores the rule.
 //
 // Three refusals, in this order, and each of them is a lockout the product would
 // otherwise have created (ADR 0047 決定 4):
@@ -83,8 +87,8 @@ func proxyMisconfigReason(info clientIPInfo) string {
 // Clearing the rule (empty list) is always allowed, from anywhere. That is the way
 // back for a tenant_admin who is still inside the allowed network and wants out of the
 // restriction, and it must not itself be gated on the checks above.
-func (a adminAPI) setTenantNetwork(w http.ResponseWriter, r *http.Request) {
-	ident, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+func (a Admin) SetTenantNetwork(w http.ResponseWriter, r *http.Request) {
+	ident, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -92,43 +96,43 @@ func (a adminAPI) setTenantNetwork(w http.ResponseWriter, r *http.Request) {
 		AllowedCIDRs string `json:"allowed_cidrs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	prefixes, normalized, aerr := parseCIDRList(body.AllowedCIDRs)
+	prefixes, normalized, aerr := a.cp.ParseCIDRList(body.AllowedCIDRs)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
 	if len(prefixes) > 0 {
-		info := clientIPFrom(r.Context())
-		switch proxyMisconfigReason(info) {
+		info := a.cp.ClientIPFrom(r.Context())
+		switch proxyMisconfigReason(a.cp.TrustedProxyHops(), info) {
 		case "proxy_not_configured":
-			writeAPIErr(w, &apiError{http.StatusBadRequest, "proxy_not_configured",
+			writeAPIErr(w, &APIError{http.StatusBadRequest, "proxy_not_configured",
 				"a proxy sits in front of the control plane but AF_TRUSTED_PROXY_HOPS is not set, " +
 					"so every request looks like it comes from that proxy; ask the operator to set it before restricting networks"})
 			return
 		case "client_ip_unknown":
-			writeAPIErr(w, &apiError{http.StatusBadRequest, "client_ip_unknown",
+			writeAPIErr(w, &APIError{http.StatusBadRequest, "client_ip_unknown",
 				"the control plane cannot determine the source address of this request, so a network rule could not be enforced"})
 			return
 		}
-		if !ipInAny(info.IP, prefixes) {
-			writeAPIErr(w, &apiError{http.StatusBadRequest, "would_lock_out",
+		if !a.cp.IPInAny(info.IP, prefixes) {
+			writeAPIErr(w, &APIError{http.StatusBadRequest, "would_lock_out",
 				"your own address (" + info.IP.String() + ") is not in this list; add it before saving, " +
 					"otherwise this tenant becomes unreachable for you"})
 			return
 		}
 	}
 	stored := strings.Join(normalized, ",")
-	if err := a.mgr.store.SetTenantAllowedCIDRs(r.Context(), t.ID, stored); err != nil {
+	if err := a.cp.Store().SetTenantAllowedCIDRs(r.Context(), t.ID, stored); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	// This rule IS consulted on every request through the cache; a stale copy would
 	// keep letting the old networks in (and, worse, keep locking the new ones out).
-	a.mgr.tenantLogin.invalidate()
-	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+	a.cp.InvalidateTenantLogin()
+	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
 		Action: "tenant.network_rules", Target: t.Slug,
 		Detail: "allowed_cidrs=" + stored, At: store.NowTS(),
