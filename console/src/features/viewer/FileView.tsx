@@ -8,8 +8,8 @@ import { createPortal } from "react-dom";
 import type { CSSProperties, FocusEvent, KeyboardEvent, ReactNode } from "react";
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
-import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
-import { baseName, langFor, humanSize, countLines, isMarpDoc, imageFormat, isDrawioFile, isPdfFile, documentFormat } from "../../lib/filemeta.ts";
+import { api, isTransientErr } from "../../core/api/client.ts";
+import { langFor, countLines, isMarpDoc, imageFormat, isDrawioFile, isPdfFile, documentFormat } from "../../lib/filemeta.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
@@ -18,12 +18,6 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { speakText } from "../chat/tts.ts";
-import { MarkdownView } from "./MarkdownView.tsx";
-import { MarpView } from "./MarpView.tsx";
-import { CodeView } from "./CodeView.tsx";
-import { ImageView } from "./ImageView.tsx";
-import { PdfView } from "./PdfView.tsx";
-import { DocPreview } from "./DocPreview.tsx";
 import { DrawioView, type DrawioState } from "./DrawioView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
 import {
@@ -36,6 +30,7 @@ import {
   FileReaderButton,
 } from "./parts/FileHeadControls.tsx";
 import { EditorResolutionPanel } from "./parts/EditorResolutionPanel.tsx";
+import { FileViewerShell } from "./parts/FileViewerShell.tsx";
 import { EditorSuggestPanel } from "./parts/EditorSuggestPanel.tsx";
 import type { LineMarks } from "./CodeView.tsx";
 import { CodeEditor, type CodeEditorHandle } from "../editor/CodeEditor.tsx";
@@ -978,49 +973,35 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
           </div>
         )}
 
-        <div className="file-viewer-shell" hidden={!surfaces.source && !surfaces.preview}>
-          {err ? (
-            <pre className="filebody muted">({err})</pre>
-          ) : data == null ? (
-            <pre className="filebody muted">…</pre>
-          ) : isImage && (!isText || imgMode === "preview") ? (
-            <ImageView src={downloadURL(filePath)} alt={baseName(filePath)} onLoad={setImgDims} />
-          ) : isPdf ? (
-            // PDF は「バイナリ」の一歩手前で拾う（docs/log/82）。api/fs/file は中身を返さず
-            // binary:true だけを返すので、ここから先は download の生バイトが情報源。
-            <PdfView src={downloadURL(filePath)} onMeta={(m) => setPdfPages(m.pages)} />
-          ) : isDoc ? (
-            <DocPreview
-              src={downloadURL(filePath)}
-              format={docFmt}
-              size={data.size}
-              basePath={filePath}
-              onOpenFile={showFile}
-              onOpenDir={(path) => revealInFiles(path, { focus: true })}
-            />
-          ) : data.binary ? (
-            <pre className="filebody muted">({tr("view.binary")}, {humanSize(data.size)})</pre>
-          ) : huge ? (
-            <pre className="filebody fb-plain">{viewContent}</pre>
-          ) : surfaces.preview === "slides" ? (
-            <MarpView source={previewSource} />
-          ) : surfaces.preview === "normal" ? (
-            <div className="md-scroll">
-              <MarkdownView source={previewSource} basePath={filePath} onOpenFile={showFile} onOpenDir={(path) => revealInFiles(path, { focus: true })} />
-            </div>
-          ) : (
-            <CodeView
-              html={html}
-              lines={countLines(viewContent)}
-              lineNumbers={settings.lineNumbers}
-              wrap={wrapOn}
-              minimap={settings.minimap}
-              marks={marks}
-              targetLine={targetLine}
-              targetColumn={targetColumn}
-            />
-          )}
-        </div>
+        <FileViewerShell
+          hidden={!surfaces.source && !surfaces.preview}
+          filePath={filePath}
+          err={err}
+          loaded={data != null}
+          size={data?.size}
+          binary={data?.binary}
+          isImage={isImage}
+          isText={isText}
+          imgMode={imgMode}
+          onImgDims={setImgDims}
+          isPdf={isPdf}
+          onPdfMeta={(m) => setPdfPages(m.pages)}
+          isDoc={isDoc}
+          docFmt={docFmt}
+          onOpenFile={showFile}
+          onOpenDir={(path) => revealInFiles(path, { focus: true })}
+          huge={huge}
+          viewContent={viewContent}
+          preview={surfaces.preview}
+          previewSource={previewSource}
+          html={html}
+          lineNumbers={settings.lineNumbers}
+          wrap={wrapOn}
+          minimap={settings.minimap}
+          marks={marks}
+          targetLine={targetLine}
+          targetColumn={targetColumn}
+        />
       </div>
 
       {editor.model && editorAlert && (
