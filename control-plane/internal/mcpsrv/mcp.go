@@ -41,12 +41,26 @@ type API struct{ cp CP }
 
 // New builds the /mcp handler set over the CP seam. The CP's own wiring is
 // control-plane/alias_mcp.go.
-func New(cp CP) API { return API{cp} }
+//
+// 🔥 It refuses to build on a stale scope copy. scopeRead / scopeWrite below are the
+// VALUES of pat.go's ladder written out a second time, and nothing but this check ties
+// the two together: rename a tier over there and ScopeRank returns 0 for the copy, which
+// makes toolsFor's `rank(prin.scope) >= rank(t.minScope)` true for every read tool
+// regardless of the caller's scope. That is not a display bug — mcpToolCall picks the
+// tool out of the SAME toolsFor result, so a read-scoped token would reach them. A
+// deployment that cannot express its own scope ladder must not serve /mcp at all.
+func New(cp CP) API {
+	if cp.ScopeRank(scopeRead) == 0 || cp.ScopeRank(scopeWrite) <= cp.ScopeRank(scopeRead) {
+		panic("mcpsrv: the CP's scope ladder does not rank " + scopeRead + " below " + scopeWrite +
+			" — pat.go's scope names changed and this package's copy did not follow")
+	}
+	return API{cp}
+}
 
 // The two scope tiers the tool table declares as a minimum. They are the PAT wire
 // values (pat.go), kept as literals here because the tool table has to name them;
 // the ORDER between them — the thing a new tier could change — is not duplicated,
-// it comes from the CP through ScopeRank.
+// it comes from the CP through ScopeRank. New (above) is what keeps the values honest.
 const (
 	scopeRead  = "read"
 	scopeWrite = "write"
@@ -501,7 +515,7 @@ func memberTools() []mcpTool {
 					"worktree":       map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
 					"branch":         map[string]any{"type": "string", "description": "base branch for the new worktree (optional; default current HEAD)"},
 					"new_branch":     map[string]any{"type": "string", "description": "branch to create in the new worktree (optional; omitted = temporary branch)"},
-					"subdir":         map[string]any{"type": "string", "description": "relative path INSIDE the working copy to start the agent in, e.g. \"console\" or \"apps/web\" (optional; default = the working copy root). With worktree=true it is Resolved inside the newly created worktree. A path that does not exist is rejected."},
+					"subdir":         map[string]any{"type": "string", "description": "relative path INSIDE the working copy to start the agent in, e.g. \"console\" or \"apps/web\" (optional; default = the working copy root). With worktree=true it is resolved inside the newly created worktree. A path that does not exist is rejected."},
 				},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {

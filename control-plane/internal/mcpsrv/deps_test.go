@@ -35,9 +35,24 @@ func (c testCP) Master32() []byte               { return c.master32 }
 func (c testCP) TokenSignMaster() []byte        { return c.master32 }
 func (c testCP) EvictMembershipCache(string)    { unwired("EvictMembershipCache") }
 func (c testCP) TenantSel(*http.Request) string { unwired("TenantSel"); return "" }
-func (c testCP) ScopeRank(string) int           { unwired("ScopeRank"); return 0 }
-func (c testCP) HashPAT(string) string          { unwired("HashPAT"); return "" }
-func (c testCP) EgressDefaults() []string       { unwired("EgressDefaults"); return nil }
+
+// ScopeRank は作り物でも本物どおり配線する。New がこれで写しの陳腐化を落とすので、
+// panic させると mcpsrv 単体テストがその検査ごと踏めなくなる。値は pat.go の写しでは
+// なく「梯子があること」だけを表す作り物（本物は alias_mcp.go が cpDeps 経由で渡す）。
+func (c testCP) ScopeRank(scope string) int {
+	switch scope {
+	case "read":
+		return 1
+	case "write":
+		return 2
+	case "admin:dangerous":
+		return 3
+	}
+	return 0
+}
+
+func (c testCP) HashPAT(string) string    { unwired("HashPAT"); return "" }
+func (c testCP) EgressDefaults() []string { unwired("EgressDefaults"); return nil }
 
 func (c testCP) RuntimeFor(store.Workspace, string, ...string) runtime.Runtime {
 	unwired("RuntimeFor")
