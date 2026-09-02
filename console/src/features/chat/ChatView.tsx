@@ -34,7 +34,7 @@ import {
   cycledSuggestion,
   type SuggestCycle,
 } from "../../lib/suggestCycle.ts";
-import { useChipMenu, SuggestChipMenu } from "../mirror/SuggestChipMenu.tsx";
+import { useChipMenu } from "../mirror/SuggestChipMenu.tsx";
 import {
   startTts,
   stopTtsForReplacement,
@@ -58,6 +58,9 @@ import { ChatMarkdown, StreamingMarkdown } from "./parts/ChatMarkdown.tsx";
 import { ChatSteps } from "./parts/ChatSteps.tsx";
 import { ChatMessageRow } from "./parts/ChatMessageRow.tsx";
 import { ChatHead } from "./parts/ChatHead.tsx";
+import { ChatAttachStrip } from "./parts/ChatAttachStrip.tsx";
+import { ChatSuggestRow } from "./parts/ChatSuggestRow.tsx";
+import { ChatComposerRow } from "./parts/ChatComposerRow.tsx";
 import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
 import type { SessionKind } from "../../types/session.ts";
@@ -1335,21 +1338,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       )}
       <div className="chat-composer">
         {(attachments.length > 0 || pasting) && (
-          <div className="chat-attach">
-            {attachments.map((a, i) => (
-              <div className="ca-chip" key={a.path}>
-                <img className="ca-thumb" src={a.url} alt="" />
-                <button type="button" className="ca-del" title={tr("chat.remove")} onClick={() => removeAttachment(i)}>
-                  <Icon name="close" />
-                </button>
-              </div>
-            ))}
-            {pasting && (
-              <span className="ca-loading">
-                <Icon name="loading" spin /> {tr("chat.uploading")}
-              </span>
-            )}
-          </div>
+          <ChatAttachStrip attachments={attachments} pasting={pasting} onRemove={removeAttachment} />
         )}
         {!wsRunning ? (
           // Workspace stopped: nothing here can succeed (no per-chat "alive" to resume —
@@ -1363,122 +1352,44 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           </div>
         ) : (
         <>
-        {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨の LLM 候補（v2）。
-            クリックで差し込み・⌥で即送信。 */}
-        {(conv || isDraft) && !showStreaming && (suggestChips.length > 0 || (settings.replySuggestEnabled && conversationId)) && (
-          <div className="chat-suggest" ref={attachSuggestRow}>
-            {settings.replySuggestEnabled && conversationId && (
-              <button
-                type="button"
-                className="chat-suggest-ai"
-                title={tr("chat.suggest_ai")}
-                disabled={suggesting}
-                onClick={fetchLlmSuggestions}
-                onKeyDown={onSuggestNav} // Enter は既定の click（＝候補取得）に任せる
-              >
-                <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
-              </button>
-            )}
-            {suggestChips.map((sg) => (
-              // ピン留めは先頭固定＋📌。削除/ピンは右クリック・長タップ・Menu キーのメニューから。
-              <button
-                key={(sg.llm ? "l:" : "a:") + sg.text}
-                type="button"
-                className={
-                  "chat-suggest-chip" +
-                  (sg.llm ? " llm" : "") +
-                  (isQuickReplyPinned(settings.quickRepliesPinned, sg.text) ? " pinned" : "") +
-                  (sg.text === cycledText ? " cycling" : "") // Tab でいま入力欄に入れている候補
-                }
-                aria-current={sg.text === cycledText ? "true" : undefined}
-                title={tr("mirror.suggest_hint")}
-                onClick={(e) => {
-                  if (chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
-                  applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey);
-                }}
-                onKeyDown={(e) => onSuggestKeyDown(e, sg.text, sg.llm)}
-                {...chipMenu.chipProps(sg.text, sg.llm)}
-              >
-                {isQuickReplyPinned(settings.quickRepliesPinned, sg.text) && (
-                  <Icon name="pinned" className="chat-suggest-pin" />
-                )}
-                {sg.text}
-              </button>
-            ))}
-          </div>
-        )}
-        {chipMenu.menu && (
-          <SuggestChipMenu
-            menu={chipMenu.menu}
-            pinned={isQuickReplyPinned(settings.quickRepliesPinned, chipMenu.menu.text)}
-            onClose={chipMenu.close}
-            onTogglePin={togglePin}
-            onForget={forgetSuggestion}
-          />
-        )}
-        <div className="chat-composer-row">
-          {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
-          <div className="chat-hist">
-            <button
-              type="button"
-              className="btn chat-hist-btn"
-              title={tr("chat.prev_input")}
-              disabled={!history.length || (!conv && !isDraft) || showStreaming}
-              onClick={recallPrev}
-            >
-              <Icon name="chevron-up" />
-            </button>
-            <button
-              type="button"
-              className="btn chat-hist-btn"
-              title={tr("chat.next_input")}
-              disabled={histIdx === null || (!conv && !isDraft) || showStreaming}
-              onClick={recallNext}
-            >
-              <Icon name="chevron-down" />
-            </button>
-          </div>
-          <textarea
-            ref={inputRef}
-            className="chat-input"
-            value={input}
-            placeholder={
-              conv || isDraft
-                ? canAttach
-                  ? modSend
-                    ? tr("chat.ph_mod_img")
-                    : tr("chat.ph_enter_img")
-                  : modSend
-                    ? tr("chat.ph_mod")
-                    : tr("chat.ph_enter")
-                : tr("chat.ph_loading")
-            }
-            disabled={(!conv && !isDraft) || showStreaming}
-            onChange={(e) => {
-              setInput(e.target.value);
-              setHistIdx(null); // typing leaves history-recall mode
-            }}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            rows={2}
-          />
-          {sending || reattaching ? (
-            // reattaching: reloaded into a detached turn — stop still works via chatStop.
-            <button type="button" className="btn chat-send chat-stop" onClick={stop} title={tr("chat.stop")}>
-              <Icon name="debug-stop" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn primary chat-send"
-              disabled={(!conv && !isDraft) || showStreaming || (!input.trim() && !attachments.length)}
-              onClick={() => void send()}
-              title={tr("chat.send")}
-            >
-              <Icon name="send" />
-            </button>
-          )}
-        </div>
+        <ChatSuggestRow
+          show={(!!conv || isDraft) && !showStreaming && (suggestChips.length > 0 || (!!settings.replySuggestEnabled && !!conversationId))}
+          showAiButton={!!settings.replySuggestEnabled && !!conversationId}
+          attachSuggestRow={attachSuggestRow}
+          suggesting={suggesting}
+          onFetchLlmSuggestions={fetchLlmSuggestions}
+          onSuggestNav={onSuggestNav}
+          suggestChips={suggestChips}
+          pinnedList={settings.quickRepliesPinned}
+          cycledText={cycledText}
+          chipMenu={chipMenu}
+          onApply={applySuggestion}
+          onSuggestKeyDown={onSuggestKeyDown}
+          onTogglePin={togglePin}
+          onForget={forgetSuggestion}
+        />
+        <ChatComposerRow
+          input={input}
+          inputRef={inputRef}
+          disabled={(!conv && !isDraft) || showStreaming}
+          canSend={!!input.trim() || attachments.length > 0}
+          canAttach={canAttach}
+          modSend={modSend}
+          hasTarget={!!conv || isDraft}
+          history={history}
+          histIdx={histIdx}
+          onRecallPrev={recallPrev}
+          onRecallNext={recallNext}
+          onInput={(v) => {
+            setInput(v);
+            setHistIdx(null); // typing leaves history-recall mode
+          }}
+          onKeyDown={onKeyDown}
+          onPaste={onPaste}
+          streaming={sending || reattaching}
+          onStop={stop}
+          onSend={() => void send()}
+        />
         </>
         )}
       </div>
