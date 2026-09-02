@@ -335,6 +335,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "tts.lang": "Read-aloud language",
   "tts.note_lang":
     "The language of the text being read. \u201cAuto\u201d follows the Console display language. With the engine on \u201cAuto\u201d, English routes to Polly and defaults to the Joanna voice. This is separate from the assistant's Reply language \u2014 setting the chat to English no longer changes the read-aloud voice.",
+  "tts.note_lang_no_polly":
+    "The language of the text being read. \u201cAuto\u201d follows the Console display language. This deployment has no Polly, so choosing English still reads with Zundamon (VOICEVOX) \u2014 English spellings are only pronounced when \u201cread English as kana\u201d is on. This is separate from the assistant's Reply language.",
   "tts.note_engine":
     "“Auto” reads Japanese with Zundamon (VOICEVOX) and switches to AWS Polly while the engine is down or for non-Japanese (returning to Zundamon from the next sentence). “Polly” always reads with Polly.",
   "tts.note_no_voicevox":

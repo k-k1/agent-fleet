@@ -401,8 +401,9 @@ export interface Settings {
   //     chat plan updates. Recommended resolves to the mid tier (sonnet 級).
   // They were one key (assistantUtilityModels) whose label only mentioned titles and
   // suggestions, yet a value set there ALSO replaced the prose defaults — picking haiku
-  // for titles quietly downgraded edit suggestions. aiShortModels inherits the old
-  // value; aiProseModels starts at "recommended" so prose returns to its own default.
+  // for titles quietly downgraded edit suggestions. BOTH inherit that old value, so the
+  // split changes nothing on release; what it buys is being able to move them apart
+  // afterwards.
   aiShortModels: Record<string, string>;
   aiProseModels: Record<string, string>;
   // Auto turn on session reports (docs/log/30): when a session an af_write assistant
@@ -674,9 +675,14 @@ export function migrateAiAssistPrefs(o: Record<string, unknown>): void {
   if (!("aiAssistOrder" in o) && Array.isArray(o.assistantAgentOrder)) {
     o.aiAssistOrder = normalizeAssistantOrder(o.assistantAgentOrder);
   }
-  // 短文生成は旧ユーティリティモデルの値をそのまま継ぐ。文章生成は上のとおり継がない。
-  if (!("aiShortModels" in o) && o.assistantUtilityModels && typeof o.assistantUtilityModels === "object") {
-    o.aiShortModels = { ...(o.assistantUtilityModels as Record<string, string>) };
+  // 旧ユーティリティモデルは短文・文章の**両方**が継ぐ。旧キーは（名前に反して）実際に
+  // 両方へ効いていたので、これがリリース時点の挙動をそのまま持ち越す初期値になる。
+  // 分けた意味は「この先それぞれ独立に変えられる」ことで、リリースの瞬間に片方を
+  // 勝手に別のモデルへ動かすことではない。
+  if (o.assistantUtilityModels && typeof o.assistantUtilityModels === "object") {
+    const legacy = o.assistantUtilityModels as Record<string, string>;
+    if (!("aiShortModels" in o)) o.aiShortModels = { ...legacy };
+    if (!("aiProseModels" in o)) o.aiProseModels = { ...legacy };
   }
   // 読み上げ言語は outputLanguage の借用をやめて独立キーへ。借りていた頃の値を継ぐので、
   // 「回答言語を English にしていたら読み上げも Polly」という現状の挙動は保たれる。

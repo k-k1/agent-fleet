@@ -115,12 +115,22 @@ describe("migrateAiAssistPrefs", () => {
     expect((o.assistantAgentOrder as string[])[0]).toBe("codex");
   });
 
-  it("inherits the legacy utility models for SHORT only, not prose", () => {
+  it("inherits the legacy utility models into BOTH tiers", () => {
+    // 旧キーは（名前に反して）短文・文章の両方へ効いていた。分割の瞬間に片方だけ
+    // 別のモデルへ動かすと、利用者が触っていないのに挙動が変わる。
     const o: Record<string, unknown> = { assistantUtilityModels: { claude: "haiku" } };
     migrateAiAssistPrefs(o);
     expect(o.aiShortModels).toEqual({ claude: "haiku" });
-    // 文章生成（ファイル編集の提案・計画更新）は用途に合った推奨へ戻す。
-    expect("aiProseModels" in o).toBe(false);
+    expect(o.aiProseModels).toEqual({ claude: "haiku" });
+  });
+
+  it("does not touch a tier the user has already split", () => {
+    const o: Record<string, unknown> = {
+      assistantUtilityModels: { claude: "haiku" },
+      aiProseModels: { claude: "sonnet" },
+    };
+    migrateAiAssistPrefs(o);
+    expect(o.aiProseModels).toEqual({ claude: "sonnet" });
   });
 
   it("gives read-aloud its own language key, seeded from the borrowed one", () => {

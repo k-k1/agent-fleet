@@ -150,16 +150,26 @@ func TestAssistantModelPrefs(t *testing.T) {
 	}
 }
 
-// 旧 assistantUtilityModels しか持たない prefs は、短文側だけが引き継ぐ。文章側
-// （ファイル編集の提案・計画更新）は引き継がず、用途に合った推奨へ戻す — 「タイトル・
-// サジェストのモデル」という名前の設定が文章生成の既定まで置き換えていたのが元の不具合。
-func TestAiModelPrefsMigrateShortOnly(t *testing.T) {
+// 旧 assistantUtilityModels しか持たない prefs は、短文・文章の**両方**が引き継ぐ。
+// 旧キーは（名前に反して）実際に両方へ効いていたので、これが分割時点の挙動をそのまま
+// 持ち越す初期値になる。分けた意味は、この先それぞれ独立に変えられること。
+func TestAiModelPrefsInheritLegacyForBothTiers(t *testing.T) {
 	writeUIPrefs(t, `{"assistantUtilityModels":{"claude":"haiku"}}`)
-	if got, ok := aiShortModelPref("claude"); !ok || got != "haiku" {
-		t.Fatalf("short must inherit the legacy key: %q, %v", got, ok)
+	for _, tc := range []struct {
+		name string
+		get  func(string) (string, bool)
+	}{{"short", aiShortModelPref}, {"prose", aiProseModelPref}} {
+		if got, ok := tc.get("claude"); !ok || got != "haiku" {
+			t.Fatalf("%s must inherit the legacy key: %q, %v", tc.name, got, ok)
+		}
 	}
-	if got, ok := aiProseModelPref("claude"); ok {
-		t.Fatalf("prose must NOT inherit the legacy key: %q", got)
+	// 新キーを書いた側は、もう旧キーに引きずられない。
+	writeUIPrefs(t, `{"assistantUtilityModels":{"claude":"haiku"},"aiProseModels":{"claude":"sonnet"}}`)
+	if got, _ := aiProseModelPref("claude"); got != "sonnet" {
+		t.Fatalf("explicit prose model must win: %q", got)
+	}
+	if got, _ := aiShortModelPref("claude"); got != "haiku" {
+		t.Fatalf("short must stay on the legacy value: %q", got)
 	}
 }
 

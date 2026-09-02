@@ -143,17 +143,22 @@ func assistantChatModelPref(kind string) (string, bool) {
 // prose は人が読んで採用する文章（ファイル編集の提案・計画の更新）。
 //
 // 分ける前は assistantUtilityModels 1 つが両方を兼ねており、「タイトル・サジェストの
-// モデル」という名前のまま prose 側の既定（sonnet 級）まで置き換えていた。short は
-// その旧キーを引き継ぐ（名前どおりの用途）。prose は引き継がず、用途に合った推奨へ戻す。
+// モデル」という名前のまま prose 側の既定（sonnet 級）まで置き換えていた。**両方**が
+// その旧キーを引き継ぐ — 旧キーは実際に両方へ効いていたので、これが分割時点の挙動を
+// そのまま持ち越す初期値になる。分けた意味は、この先それぞれ独立に変えられること。
 func aiShortModelPref(kind string) (string, bool) {
-	if v, ok := assistantModelPref("aiShortModels", kind); ok {
-		return v, true
-	}
-	return assistantModelPref("assistantUtilityModels", kind)
+	return aiModelPref("aiShortModels", kind)
 }
 
 func aiProseModelPref(kind string) (string, bool) {
-	return assistantModelPref("aiProseModels", kind)
+	return aiModelPref("aiProseModels", kind)
+}
+
+func aiModelPref(key, kind string) (string, bool) {
+	if v, ok := assistantModelPref(key, kind); ok {
+		return v, true
+	}
+	return assistantModelPref("assistantUtilityModels", kind)
 }
 
 // chatAutoTurnLimit is the per-conversation ceiling on unattended auto turns

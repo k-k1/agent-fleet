@@ -335,6 +335,8 @@ export const tools = {
   "tts.lang": "読み上げ言語",
   "tts.note_lang":
     "読み上げる文章の言語です。「自動」は Console の表示言語に従います。エンジンが「自動」のとき、English ならエンジンは Polly、声は Joanna が既定になります。アシスタントの「回答言語」とは別の設定です（チャットの回答だけを English にしても、読み上げの声は変わりません）。",
+  "tts.note_lang_no_polly":
+    "読み上げる文章の言語です。「自動」は Console の表示言語に従います。この配備には Polly がないため、English を選んでも読み上げはずんだもん（VOICEVOX）のままです（英語の綴りは「英語をカタカナで読む」がオンのときだけ読めます）。アシスタントの「回答言語」とは別の設定です。",
   "tts.note_engine":
     "「自動」は日本語をずんだもん（VOICEVOX）で読み、エンジンが起動していない間や日本語以外は AWS Polly に自動で切り替えます（次の文からずんだもんに復帰）。「Polly」は常に Polly で読みます。",
   "tts.note_no_voicevox":

@@ -111,17 +111,16 @@
 |---|---|---|
 | `assistantTitleSuggest` / `branchSuggestEnabled` | `autoTitleSuggest` | 旧キーが 3 つを兼ねていた。明示的な OFF は 3 つとも継ぐ |
 | `aiAssistOrder` | `assistantAgentOrder` | 分離前は 1 本。分けたことに気づかないまま挙動が変わらない |
-| `aiShortModels` | `assistantUtilityModels` | 名前どおりの用途 |
-| `aiProseModels` | **継がない** | ★ 下記 |
+| `aiShortModels` / `aiProseModels` | `assistantUtilityModels` | **両方**が継ぐ（★ 下記） |
 | `ttsLang` | `outputLanguage` | 借りていた頃の値を継ぐ＝読み上げの挙動は据え置き |
 | `editSuggestEnabled` | （既定 true） | 設定が無く常時 ON だった＝欠落は「従来の挙動」 |
 
-★ `aiProseModels` だけ意図的に継がない。旧キーは「タイトル・サジェストのモデル」という
-名前のまま文章生成の既定まで置き換えていた。そこに haiku を入れた人は**名前どおり短文用途に
-入れた**のであって、ファイル編集の提案を落としたかったわけではない。文章側は用途に合った
-推奨へ戻す — この整理の目的そのものなので、ここだけは「挙動を変えない」より優先する。
-既定は両系統とも `recommended` なので、実際に影響を受けるのは旧キーに**具体モデルを明示して
-いた人だけ**である。
+★ 旧キーは short / prose の**両方**へ継ぐ。一度は「prose は継がず用途に合った推奨へ戻す」
+（＝旧キーが名前に反して文章生成の既定まで置き換えていたのを是正する）としたが、それでは
+**利用者が何も触っていないのにリリースの瞬間にモデルが変わる**。旧キーは実際に両方へ効いて
+いたのだから、両方が継ぐのがその時点の挙動そのものである。分割で得たいのは「この先それぞれ
+独立に変えられること」であって、勝手に片方を動かすことではない。是正は、利用者が文章側の行を
+見て自分で選び直したときに起きる（推奨の解決先が用途ごとに違うことは注記に書いてある）。
 
 Agent 側も同じ鎖でフォールバックする（`aiShortModelPref` → `assistantUtilityModels`、
 `aiAssistOrderPref` → `assistantAgentOrder`、`BranchSuggest()` → `AutoTitleSuggest()`）。
@@ -165,3 +164,29 @@ VOICEVOX に流れていた。`ttsOptsFromSettings()` は既に `enkana` / 助�
   作っていない（デプロイ側から編集提案のモデルを固定したい要求がまだ無い）。
 - 実機での目視は開発 Workspace の headless Chromium では**行っていない**。設定タブの
   描画差分（`scripts/shots`）は未取得。
+
+## 84.7 Polly が無い配備での読み上げ言語
+
+`ttsLang="en"`（および英語 UI の "auto"）で Polly が使えない場合は、CP の
+`chooseTTSProvider` が受け止めて **voicevox へ落とす**（`tts.go`）。
+
+```go
+if lang == "en" {
+    if plReady { return "polly" }
+    return "voicevox"      // ← Polly 不在
+}
+```
+
+`plReady` は `pollyProvider.Ready()` ＝ リージョン設定の有無。合成は成功し、
+`X-TTS-Provider: voicevox` が返る。エンジンを明示 `polly` にしていた場合だけは従来どおり
+Polly の 502 がそのまま出る（`auto` の話ではないので、これは意図した挙動）。
+
+借用時代（`outputLanguage`）も英語 UI では `lang=""` → voicevox だったので、**Polly が無い
+配備では今回の変更で挙動は変わらない**。
+
+ただし UI 側が嘘をついていた。Console は `GET /api/tts/status` で `polly.ready` を受け取って
+いるのに **一度も使っていなかった** — voicevox には `voicevoxAvailable()` があってエンジンの
+選択肢から落とすのに、Polly 側は無く、使えない「Polly」が選択肢に並んだままだった。
+`pollyAvailable()` を対称に足し、選択肢から落とすのと、読み上げ言語の注記を
+`tts.note_lang_no_polly`（「English を選んでもずんだもんのままです」）へ切り替えるのに使う。
+これは今回の 3 番目の原則（表示と実効を一致させる）そのもので、既存の穴である。
