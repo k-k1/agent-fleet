@@ -186,7 +186,7 @@ func TestSetTenantLimitsWarnsButSavesAnOverAllocation(t *testing.T) {
 		t.Fatalf("max_workspaces = %d, want the requested 50 saved", got)
 	}
 	var got struct {
-		Budget *poolBudget `json:"pool_budget"`
+		Budget *runtime.PoolBudget `json:"pool_budget"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)

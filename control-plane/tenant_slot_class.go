@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // tenantSlotClass (GET /api/admin/tenants/{slug}/slot-class) reports the tenant's
@@ -33,7 +35,7 @@ func (a adminAPI) tenantSlotClass(w http.ResponseWriter, r *http.Request) {
 	}
 	lim := a.tenantLimitsFor(r, t.ID)
 	sizing := a.mgr.workspaceSizing()
-	choices := make([]workspaceSlotClass, 0, len(sizing.SlotClasses))
+	choices := make([]runtime.WorkspaceSlotClass, 0, len(sizing.SlotClasses))
 	for _, c := range sizing.SlotClasses {
 		if len(lim.AllowedSlotClasses) == 0 || slices.Contains(lim.AllowedSlotClasses, c.ID) {
 			choices = append(choices, c)
@@ -69,7 +71,7 @@ func (a adminAPI) setTenantSlotClass(w http.ResponseWriter, r *http.Request) {
 	lim := a.tenantLimitsFor(r, t.ID)
 	if want != "" {
 		sizing := a.mgr.workspaceSizing()
-		declared := slices.ContainsFunc(sizing.SlotClasses, func(c workspaceSlotClass) bool { return c.ID == want })
+		declared := slices.ContainsFunc(sizing.SlotClasses, func(c runtime.WorkspaceSlotClass) bool { return c.ID == want })
 		allowed := len(lim.AllowedSlotClasses) == 0 || slices.Contains(lim.AllowedSlotClasses, want)
 		// Refused rather than stored-and-substituted. resolveSlotClass has to tolerate a
 		// stored id that stopped being valid (the operator can drop a class at any

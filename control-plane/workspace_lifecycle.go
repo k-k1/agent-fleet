@@ -222,10 +222,9 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 // ~/.local shadow to fall back to the baked pin — on a baked image an unattended start
 // would then uninstall ~1.3GB of CLIs that the next interactive start reinstalls. This
 // is a per-boot skip, not a policy change.
-// The literal lives with the docker adapter (internal/runtime/deps.go), which reads it
-// back off a container's env to decide the health grace: the string is a contract with
-// the workspace image's entrypoint, so two spellings of it would rot in silence.
-const unattendedStartEnv = runtime.UnattendedStartEnv
+// リテラルは docker アダプタ（internal/runtime/deps.go）が持つ。コンテナの env から
+// 読み戻して health の猶予を決めるので、この文字列は workspace イメージの entrypoint との
+// 契約であり、2 通りの綴りを持つと黙って腐る。
 
 // runtimeForUnattended rebuilds a workspace's Runtime so its NEXT container start
 // carries unattendedStartEnv. Mirrors the construction in resolveByMembership (the
@@ -240,7 +239,7 @@ func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (runt
 	}
 	ws := res.ws
 	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
-	env := append(m.workspaceExtraEnv(ctx, ws), unattendedStartEnv)
+	env := append(m.workspaceExtraEnv(ctx, ws), runtime.UnattendedStartEnv)
 	return m.runtimeFor(ws, dekHex, env...), nil
 }
 

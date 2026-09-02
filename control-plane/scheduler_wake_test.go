@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -193,11 +194,11 @@ func TestInjectSessionAgentError(t *testing.T) {
 // safe: it must NOT be spelled as the member opt-in being off, whose entrypoint branch
 // also tears down the ~/.local shadow and reverts to the baked pin.
 func TestUnattendedStartEnvIsNotOptOut(t *testing.T) {
-	if unattendedStartEnv == "AF_AGENT_SELF_UPDATE=0" {
+	if runtime.UnattendedStartEnv == "AF_AGENT_SELF_UPDATE=0" {
 		t.Fatal("unattended start must not reuse the opt-in-off env: that branch uninstalls the ~/.local CLI shadow")
 	}
-	if !strings.HasSuffix(unattendedStartEnv, "=1") || !strings.HasPrefix(unattendedStartEnv, "AF_") {
-		t.Fatalf("unexpected unattended marker %q", unattendedStartEnv)
+	if !strings.HasSuffix(runtime.UnattendedStartEnv, "=1") || !strings.HasPrefix(runtime.UnattendedStartEnv, "AF_") {
+		t.Fatalf("unexpected unattended marker %q", runtime.UnattendedStartEnv)
 	}
 }
 

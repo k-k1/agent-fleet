@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -25,7 +26,7 @@ func handlePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	// Same guard as the browser pane: the default 7700 AND the actual AGENT_ADDR port
 	// (they differ when the agent listens elsewhere) — forwarding here would loop.
-	if reservedBrowserAgentPort(port) {
+	if browserx.ReservedBrowserAgentPort(port) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_port", "this port is the workspace agent")
 		return
 	}

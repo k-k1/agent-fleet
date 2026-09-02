@@ -17,6 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -110,7 +111,7 @@ func main() {
 	// pipe CDP, sandbox, two simultaneous Pages and capture pacing without booting
 	// the rest of the Agent subsystems. deploy/local/e2e-smoke.sh is the caller.
 	if len(os.Args) > 1 && os.Args[1] == "browser-smoke" {
-		if err := runBrowserImageSmoke(); err != nil {
+		if err := browserx.RunBrowserImageSmoke(); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -178,7 +179,7 @@ func main() {
 	// resolveBrowserHandoff は済んだが deliverBrowserHandoff が完了する前に落ちた
 	// 分を拾い直す。busy/idle の settle 判定を持たないので上のリコンサイラとは
 	// 無関係に一度きりでよい。
-	sweepUndeliveredBrowserHandoffs()
+	browserx.SweepUndeliveredBrowserHandoffs()
 	// リポジトリ取り込みジョブ（docs/log/78）: 前回の clone / checkout は Agent ごと死ぬ
 	// （タスク入れ替え・idle-stop）。生き残った marker を「中断」として復元しないと、
 	// 半端な作業コピーだけが普通のリポジトリ顔で一覧に戻る。

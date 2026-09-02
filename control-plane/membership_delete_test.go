@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -170,7 +171,7 @@ func TestDeleteMembershipRefusesAReservedMembership(t *testing.T) {
 	if _, err := st.EnsureMembership(ctx, admin.ID, tn.ID, "tenant_admin"); err != nil {
 		t.Fatalf("admin membership: %v", err)
 	}
-	seed, _ := st.UpsertIdentity(ctx, "", goldenSeedKey, "")
+	seed, _ := st.UpsertIdentity(ctx, "", runtime.GoldenSeedKey, "")
 	seedMem, err := st.EnsureMembership(ctx, seed.ID, tn.ID, "member")
 	if err != nil {
 		t.Fatalf("seed membership: %v", err)
@@ -179,7 +180,7 @@ func TestDeleteMembershipRefusesAReservedMembership(t *testing.T) {
 		t.Fatalf("deactivate: %v", err)
 	}
 
-	w := callDeleteMembership(mgr, goldenTenantSlug, goldenSeedKey)
+	w := callDeleteMembership(mgr, goldenTenantSlug, runtime.GoldenSeedKey)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("delete of a reserved membership = %d %s, want 409", w.Code, w.Body.String())
 	}

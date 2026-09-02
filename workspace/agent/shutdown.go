@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -77,10 +78,10 @@ func gracefulShutdown(budget time.Duration) {
 	deadline := time.Now().Add(budget)
 	// Chromium owns a temporary profile and a process group. Close its pipe first
 	// so browser pages cannot outlive the Workspace Agent during Stop/recreate.
-	workspaceBrowserManager.Close()
+	browserx.WorkspaceBrowserManager.Close()
 	// Attachments own neither Page nor Chromium. Closing them detaches AF's target
 	// sessions and WebSockets only; the external owner remains responsible for exit.
-	workspaceBrowserAttachmentManager.Close()
+	browserx.WorkspaceBrowserAttachmentManager.Close()
 	// ★保留中の対話を持ち越す（docs/log/75 §75.6.3 の契機 2）。**abort と kill より前**に
 	// 置くのが要点で、ここが claude 以外にとっては最後の機会になる: claude の保留は
 	// pending-* としてホームに残るので後の契機（一覧・boot フック）が拾えるが、kiro の

@@ -10,6 +10,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 )
 
 // buildMux は Agent の全ルートを登録した mux を返す（docs/log/23 P0-2: main() からの
@@ -127,25 +128,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/{name}/committed", handleSessionCommittedFiles)
 	mux.HandleFunc("POST /sessions/{name}/rename-branch", handleSessionRenameBranch)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
-	// Browser pane — ephemeral BrowserContext + Page ownership and a restricted
-	// screencast/input WebSocket. The CP proxies these internal routes verbatim.
-	mux.HandleFunc("POST /browser/pages", handleBrowserPagesCreate)
-	mux.HandleFunc("GET /browser/pages/{id}", handleBrowserPageGet)
-	mux.HandleFunc("DELETE /browser/pages/{id}", handleBrowserPageDelete)
-	mux.HandleFunc("GET /ws/browser", handleBrowserWebSocket)
-	// External-owner Chromium attachments use a separate namespace and manager:
-	// detach releases only AF's CDP session and never closes the target/process.
-	mux.HandleFunc("GET /browser/attach-targets", handleBrowserAttachTargets)
-	mux.HandleFunc("POST /browser/attachments", handleBrowserAttachmentCreate)
-	mux.HandleFunc("GET /browser/attachments", handleBrowserAttachmentList)
-	mux.HandleFunc("GET /browser/attachments/{id}", handleBrowserAttachmentGet)
-	mux.HandleFunc("DELETE /browser/attachments/{id}", handleBrowserAttachmentDelete)
-	mux.HandleFunc("POST /browser/attachments/{id}/control-mode", handleBrowserAttachmentControlMode)
-	mux.HandleFunc("GET /browser/attachments/{id}/targets", handleBrowserAttachmentSiblingTargets)
-	mux.HandleFunc("POST /browser/attachments/{id}/retarget", handleBrowserAttachmentRetarget)
-	mux.HandleFunc("POST /browser/attachments/{id}/handoff", handleBrowserAttachmentHandoff)
-	mux.HandleFunc("POST /browser/attachments/{id}/handoff-result", handleBrowserAttachmentHandoffResult)
-	mux.HandleFunc("GET /ws/browser-attachments", handleBrowserAttachmentWebSocket)
+	// Browser pane と外部所有 Chromium のアタッチ。**表は browserx 側が 1 つだけ持つ**
+	// （internal/browserx/mux.go）—— ここに写しを置くと、片方に足したときもう片方の
+	// テストが緑のまま通ってしまう。登録が落ちていないことは testdata/routes.golden が見る。
+	browserx.RegisterRoutes(mux)
 
 	// Assistant chat — headless-CLI LLM chat/translation, separate from tmux
 	// sessions (docs/log/19). Non-streaming; the CP proxies these verbatim.

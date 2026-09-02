@@ -45,13 +45,9 @@ import (
 // invoice. Money that does not add up is worse than no money at all.
 const costMicro = 1_000_000
 
-// ceTagMembership / ceTagTenant are the cost allocation tag keys, in the form Cost
-// Explorer wants them for GroupBy (bare key) and returns them in results
-// ("af-membership$<value>", with an empty value for everything untagged).
-const (
-	ceTagMembership = runtime.EC2TagMembership
-	ceTagTenant     = runtime.EC2TagTenant
-)
+// ⚠️ コスト配分タグのキーは adapters 側（runtime.EC2Tag*）が正。Cost Explorer は
+// GroupBy には素のキーを要求し、結果では "af-membership$<value>"（未タグは空値）で
+// 返す —— その綴りを 2 箇所に持つと黙ってずれる。
 
 // costExplorerAPI is the one call this file makes, as a port so the poller is testable
 // without AWS (and so nobody adds a second $0.01 call by accident).
@@ -206,7 +202,7 @@ func (p *cloudCostPoller) fetch(ctx context.Context) ([]store.CloudCostRow, []st
 			Metrics:       []string{"UnblendedCost", "AmortizedCost"},
 			NextPageToken: page,
 			GroupBy: []cetypes.GroupDefinition{
-				{Type: cetypes.GroupDefinitionTypeTag, Key: aws.String(ceTagMembership)},
+				{Type: cetypes.GroupDefinitionTypeTag, Key: aws.String(runtime.EC2TagMembership)},
 				{Type: cetypes.GroupDefinitionTypeDimension, Key: aws.String("SERVICE")},
 			},
 		})
@@ -293,7 +289,7 @@ func costRowFrom(day string, estimated bool, g cetypes.Group, tenants map[string
 	if len(g.Keys) < 2 {
 		return store.CloudCostRow{}, false
 	}
-	membership := strings.TrimPrefix(g.Keys[0], ceTagMembership+"$")
+	membership := strings.TrimPrefix(g.Keys[0], runtime.EC2TagMembership+"$")
 	if membership == g.Keys[0] {
 		// Not the tag key we asked for — refuse rather than guess. A silently
 		// mis-parsed key would attribute everyone's cost to one fictional member.
@@ -370,7 +366,7 @@ type cloudCostMeta struct {
 	// "we spent nothing" if it is swallowed.
 	Error string `json:"error,omitempty"`
 	// Profile lets one response answer "should this screen exist" too.
-	Profile costProfile `json:"profile"`
+	Profile runtime.CostProfile `json:"profile"`
 	// Tags is which cost allocation axes are actually switched on. A key still
 	// `pending` means AWS has not discovered it yet and spend on that axis is missing
 	// — and will stay missing, because activation is not retroactive.

@@ -382,7 +382,7 @@ func (a workspaceAPI) ensureWorkspaceStartedUnattended(ctx context.Context, res 
 		log.Printf("unattended runtime for ws %s: %v (falling back to normal start)", res.ws.ID, err)
 		return a.ensureWorkspaceStarted(ctx, res)
 	}
-	return a.ensureWorkspaceStartedRT(ctx, res, rt, unattendedStartEnv)
+	return a.ensureWorkspaceStartedRT(ctx, res, rt, runtime.UnattendedStartEnv)
 }
 
 // ensureWorkspaceStartedRT is the shared body, parameterized by the runtime that drives
