@@ -206,9 +206,11 @@ func TestPoolStatusCarriesTheTenantBudgetOnlyWhenItDoesNotFit(t *testing.T) {
 // It is the only name alias_runtime.go borrows whose far side is a variable, and it is a
 // variable precisely so the live AWS harness can point a whole run at a test account
 // (docs/log/64 §64.23). Bound once with `var awsConfigFor = runtime.AWSConfigFor`, the
-// swap would reach the CP's own two readers — Cost Explorer and the store's Secrets
-// Manager — and NOT the four adapters, which would keep the credentials they captured at
-// init. Nothing fails in that state; half the process just talks to the wrong account.
+// swap would reach the four adapters — they read the variable from inside its own package
+// on every call — and NOT the CP's own two readers, Cost Explorer and the store's Secrets
+// Manager, which would keep the credentials this file captured at init. Nothing fails in
+// that state; half the process just talks to the wrong account. The failure below names
+// the same direction.
 func TestAWSConfigForDispatchesPerCall(t *testing.T) {
 	prev := runtime.AWSConfigFor
 	t.Cleanup(func() { runtime.AWSConfigFor = prev })
