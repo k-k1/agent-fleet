@@ -47,6 +47,37 @@ export function openSessionDefault(s: Session): void {
   (agentOf(s.kind).caps.chat ? openSessionChat : openSessionTerminal)(s.name);
 }
 
+// openSessionFromList — 一覧の行から「開く」ときの行き先の規則。稼働中か・転写を持つ種か・
+// 作業フォルダが残っているかで行き先が変わるので、左ペインの行（SessionRow）とコマンド
+// パレットのセッション行が別々に条件を書くと必ずドリフトする。ここが唯一の正。
+//
+//   稼働中            → チャットできる種はミラー、それ以外は端末
+//   停止・転写あり    → 読み取り専用の履歴（再開しない。フォルダが消えていても転写は
+//                       エージェントの home 側に残るので開ける）
+//   停止・転写なし    → 端末の再生。ただしフォルダが消えている（resumable === false）か
+//                       ワークスペースが動いていなければ開けない
+//
+// running = ワークスペースが動いているか。開けなかったときは false を返すので、呼び手は
+// 「押したのに何も起きない」を黙って通さずに済む。
+export function openSessionFromList(s: Session, split: boolean, running: boolean): boolean {
+  const caps = agentOf(s.kind).caps;
+  if (s.alive) {
+    (caps.chat
+      ? split ? openSessionChatSplit : openSessionChat
+      : split ? openSessionTerminalSplit : openSessionTerminal)(s.name);
+    return true;
+  }
+  if (caps.transcript) {
+    (split ? openSessionChatSplit : openSessionChat)(s.name);
+    return true;
+  }
+  if (s.resumable !== false && running) {
+    (split ? openSessionTerminalSplit : openSessionTerminal)(s.name);
+    return true;
+  }
+  return false;
+}
+
 /** 稼働中セッションを delta 個ぶんローテートし、アクティブなペインに開く（docs/log/29 の
  * ペイン移動ではなく「セッションの持ち替え」）。行き先を返す — 対象が無い／1 件しか
  * 無ければ null で、呼び手はそのまま「他にありません」と伝えればよい。 */

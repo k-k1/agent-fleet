@@ -17,12 +17,7 @@ import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import {
-  openSessionTerminal,
-  openSessionTerminalSplit,
-  openSessionChat,
-  openSessionChatSplit,
-} from "./open.ts";
+import { openSessionFromList } from "./open.ts";
 import { SessionMenu } from "./SessionMenu.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
 import type { SessionActions } from "./useSessionActions.tsx";
@@ -110,35 +105,17 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
         }
         aria-disabled={inert || undefined}
+        // 行き先の規則（稼働中＝ミラー/端末、停止＝読み取り専用の履歴、転写を持たない
+        // 停止セッション＝端末の再生）は openSessionFromList が唯一の正。コマンドパレット
+        // のセッション行も同じ関数を呼ぶ。
         onClick={(e) => {
-          const split = e.ctrlKey || e.metaKey;
-          if (!s.alive) {
-            // Stopped chat-capable (claude) → read-only chat history (no resume;
-            // resume happens inside the chat). A dir-missing (dead) session keeps
-            // its transcript, so history stays viewable — only resume is blocked.
-            if (agentOf(s.kind).caps.transcript) {
-              (split ? openSessionChatSplit : openSessionChat)(s.name);
-            } else if (!inert && running) {
-              // Shell/SSM have a bounded terminal replay instead of a structured
-              // transcript. Opening it never resumes the stopped session.
-              (split ? openSessionTerminalSplit : openSessionTerminal)(s.name);
-            }
-            return;
-          }
-          // Alive: chat-capable opens the mirror (PTY attaches in the bg);
-          // other kinds open the terminal directly.
-          const chat = agentOf(s.kind).caps.chat;
-          (chat
-            ? split ? openSessionChatSplit : openSessionChat
-            : split ? openSessionTerminalSplit : openSessionTerminal)(s.name);
+          openSessionFromList(s, e.ctrlKey || e.metaKey, running);
         }}
         onMouseDown={(e) => e.button === 1 && e.preventDefault()}
         onAuxClick={(e) => {
-          if (e.button !== 1 || inert) return;
+          if (e.button !== 1) return;
           e.preventDefault();
-          if (s.alive) (agentOf(s.kind).caps.chat ? openSessionChatSplit : openSessionTerminalSplit)(s.name);
-          else if (agentOf(s.kind).caps.transcript) openSessionChatSplit(s.name);
-          else if (running) openSessionTerminalSplit(s.name);
+          openSessionFromList(s, true, running);
         }}
       >
         {/* Leading kind icon: color says claude/codex/… so the text tag is gone. */}
