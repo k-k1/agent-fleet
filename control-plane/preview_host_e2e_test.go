@@ -37,7 +37,7 @@ func newPreviewHostEnv(t *testing.T, agentURL string) *previewHostEnv {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	dflt, err := st.EnsureDefaultTenant(ctx)

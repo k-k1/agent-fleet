@@ -24,7 +24,7 @@ func p3Store(t *testing.T) *sqlStore {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.migrate(context.Background()); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return st

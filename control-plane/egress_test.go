@@ -74,7 +74,7 @@ func TestEgressStore(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	day := "2026-07-05"
@@ -116,7 +116,7 @@ func TestEgressIngestHandler(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", &egressAuditDedup{})
@@ -166,7 +166,7 @@ func TestAllowlistStore(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	add := func(entry, state string) string {
@@ -225,7 +225,7 @@ func TestEffectivePolicyEndpoint(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	_ = st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: "extra.internal", State: "active", AddedAt: nowTS()})

@@ -27,7 +27,7 @@ func newMCPServerAPITest(t *testing.T, withKey bool) (mcpServerAPI, context.Cont
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	m := &manager{store: st}

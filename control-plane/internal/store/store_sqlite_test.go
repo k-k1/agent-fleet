@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"context"
@@ -10,16 +10,16 @@ import (
 
 func TestSQLiteStore(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
 
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := st.migrate(ctx); err != nil { // idempotent
+	if err := st.Migrate(ctx); err != nil { // idempotent
 		t.Fatalf("migrate again: %v", err)
 	}
 
@@ -77,10 +77,10 @@ func TestSQLiteStore(t *testing.T) {
 		t.Fatalf("expected no workspace: ok=%v err=%v", ok, err)
 	}
 	ws := Workspace{
-		ID: newID(), TenantID: tn.ID, MembershipID: defMem,
+		ID: NewID(), TenantID: tn.ID, MembershipID: defMem,
 		ContainerName: "af-ws-dev-example-com", Network: "af-net-dev-example-com",
 		DataDir: "/tmp/af-data/dev-example-com", AgentPort: "7700",
-		AgentToken: "tok", State: "stopped", CreatedAt: nowTS(),
+		AgentToken: "tok", State: "stopped", CreatedAt: NowTS(),
 	}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatalf("create ws: %v", err)
@@ -99,12 +99,12 @@ func TestSQLiteStore(t *testing.T) {
 // memos sent before the cutoff.
 func TestSQLiteMemo(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -116,29 +116,21 @@ func TestSQLiteMemo(t *testing.T) {
 
 	past := "2000-01-01T00:00:00Z" // retention cutoff far in the future relative to this
 
-	m1 := Memo{ID: newID(), MembershipID: memA.ID, Repo: "repo-a", Category: "frontend",
-		Kind: "text", Body: "tighten padding", Position: 0, CreatedAt: nowTS()}
-	m2 := Memo{ID: newID(), MembershipID: memA.ID, Repo: "repo-a", Category: "api",
-		Kind: "file", RefPath: "~/repos/repo-a/x.go", Position: 1, CreatedAt: nowTS()}
-	mOther := Memo{ID: newID(), MembershipID: memB.ID, Repo: "repo-a",
-		Kind: "text", Body: "not yours", CreatedAt: nowTS()}
+	m1 := Memo{ID: NewID(), MembershipID: memA.ID, Repo: "repo-a", Category: "frontend",
+		Kind: "text", Body: "tighten padding", Position: 0, CreatedAt: NowTS()}
+	m2 := Memo{ID: NewID(), MembershipID: memA.ID, Repo: "repo-a", Category: "api",
+		Kind: "file", RefPath: "~/repos/repo-a/x.go", Position: 1, CreatedAt: NowTS()}
+	mOther := Memo{ID: NewID(), MembershipID: memB.ID, Repo: "repo-a",
+		Kind: "text", Body: "not yours", CreatedAt: NowTS()}
 	for _, m := range []Memo{m1, m2, mOther} {
 		if err := st.CreateMemo(ctx, m); err != nil {
 			t.Fatalf("create: %v", err)
 		}
 	}
-	// A newly-created memo joins the end of its repo/category group, rather than
-	// inheriting the zero-value position supplied by an omitted API field.
-	created, aerr := memoCreateFor(ctx, st, MembershipView{MembershipID: memA.ID}, memoDTO{
-		Repo: "repo-a", Category: "frontend", Kind: "text", Body: "add at bottom",
-	})
-	if aerr != nil || created.Position != 1 {
-		t.Fatalf("new memo position: err=%v memo=%+v", aerr, created)
-	}
-
-	// List is scoped to the caller's membership.
+	// List is scoped to the caller's membership（memoCreateFor の 1 件は
+	// store_memo_create_test.go へ移したので、ここは 2 件）。
 	rows, err := st.ListMemos(ctx, memA.ID, past)
-	if err != nil || len(rows) != 3 {
+	if err != nil || len(rows) != 2 {
 		t.Fatalf("list A: err=%v n=%d", err, len(rows))
 	}
 
@@ -154,7 +146,7 @@ func TestSQLiteMemo(t *testing.T) {
 	}
 
 	// MarkMemosSent stamps only owned ids (mOther is memB's, must be ignored).
-	sent := nowTS()
+	sent := NowTS()
 	if err := st.MarkMemosSent(ctx, memA.ID, []string{m1.ID, m2.ID, mOther.ID}, sent); err != nil {
 		t.Fatalf("mark sent: %v", err)
 	}
@@ -162,13 +154,13 @@ func TestSQLiteMemo(t *testing.T) {
 		t.Fatalf("foreign memo was stamped: %+v", o)
 	}
 	// Sent-but-within-retention memos still list (cutoff in the far past).
-	if rows, _ := st.ListMemos(ctx, memA.ID, past); len(rows) != 3 {
-		t.Fatalf("sent-within-retention list = %d, want 3", len(rows))
+	if rows, _ := st.ListMemos(ctx, memA.ID, past); len(rows) != 2 {
+		t.Fatalf("sent-within-retention list = %d, want 2", len(rows))
 	}
 	// A cutoff after the sent stamp hides them from the list.
 	future := "2999-01-01T00:00:00Z"
-	if rows, _ := st.ListMemos(ctx, memA.ID, future); len(rows) != 1 {
-		t.Fatalf("expired list = %d, want 1", len(rows))
+	if rows, _ := st.ListMemos(ctx, memA.ID, future); len(rows) != 0 {
+		t.Fatalf("expired list = %d, want 0", len(rows))
 	}
 
 	// Sweep drops sent memos before the cutoff; unsent survive.
@@ -201,12 +193,12 @@ func TestSQLiteMemo(t *testing.T) {
 // that cascades onto the memos and ReassignMemoCategory that empties/moves them.
 func TestSQLiteMemoCategory(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -215,15 +207,15 @@ func TestSQLiteMemoCategory(t *testing.T) {
 	memA, _ := st.EnsureMembership(ctx, iA.ID, tn.ID, "member")
 
 	// Two categories in the same repo bucket, plus a memo tagged with the first.
-	c1 := MemoCategory{ID: newID(), MembershipID: memA.ID, Repo: "repo-a", Name: "frontend", Position: 0, CreatedAt: nowTS()}
-	c2 := MemoCategory{ID: newID(), MembershipID: memA.ID, Repo: "repo-a", Name: "api", Position: 1, CreatedAt: nowTS()}
+	c1 := MemoCategory{ID: NewID(), MembershipID: memA.ID, Repo: "repo-a", Name: "frontend", Position: 0, CreatedAt: NowTS()}
+	c2 := MemoCategory{ID: NewID(), MembershipID: memA.ID, Repo: "repo-a", Name: "api", Position: 1, CreatedAt: NowTS()}
 	for _, c := range []MemoCategory{c1, c2} {
 		if err := st.CreateCategory(ctx, c); err != nil {
 			t.Fatalf("create cat: %v", err)
 		}
 	}
-	m := Memo{ID: newID(), MembershipID: memA.ID, Repo: "repo-a", Category: "frontend",
-		Kind: "text", Body: "note", CreatedAt: nowTS()}
+	m := Memo{ID: NewID(), MembershipID: memA.ID, Repo: "repo-a", Category: "frontend",
+		Kind: "text", Body: "note", CreatedAt: NowTS()}
 	if err := st.CreateMemo(ctx, m); err != nil {
 		t.Fatalf("create memo: %v", err)
 	}
@@ -266,12 +258,12 @@ func TestSQLiteMemoCategory(t *testing.T) {
 // tenant filter must scope correctly.
 func TestSQLiteUsage(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -314,36 +306,17 @@ func TestSQLiteUsage(t *testing.T) {
 	}
 }
 
-// aggregateUsage must sum per member across days and compute hours.
-func TestAggregateUsage(t *testing.T) {
-	rows := []UsageRow{
-		{TenantID: "default", TenantSlug: "default", MembershipID: "m1", UserKey: "a", Day: "2026-06-30", RunningSecs: 3600},
-		{TenantID: "default", TenantSlug: "default", MembershipID: "m1", UserKey: "a", Day: "2026-07-01", RunningSecs: 1800},
-		{TenantID: "default", TenantSlug: "default", MembershipID: "m2", UserKey: "b", Day: "2026-07-01", RunningSecs: 900},
-	}
-	got := aggregateUsage(rows)
-	if len(got) != 2 {
-		t.Fatalf("totals = %d, want 2 members", len(got))
-	}
-	if got[0].UserKey != "a" || got[0].RunningSecs != 5400 || got[0].RunningHrs != 1.5 {
-		t.Fatalf("member a total wrong: %+v", got[0])
-	}
-	if got[1].UserKey != "b" || got[1].RunningHrs != 0.25 {
-		t.Fatalf("member b total wrong: %+v", got[1])
-	}
-}
-
 // Workspace reads carry the owning tenant's SLUG (docs/log/67, ADR 0048 決定 3). It is not a
 // column on the row — the AWS adapters need it to stamp `af-tenant`, and reading it
 // there would mean a store call from inside a tag write, on every Start.
 func TestSQLiteWorkspaceCarriesTenantSlug(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	tn, err := st.CreateTenant(ctx, "acme", "Acme")
@@ -356,9 +329,9 @@ func TestSQLiteWorkspaceCarriesTenantSlug(t *testing.T) {
 		t.Fatalf("membership: %v", err)
 	}
 	ws := Workspace{
-		ID: newID(), TenantID: tn.ID, MembershipID: mem.ID,
+		ID: NewID(), TenantID: tn.ID, MembershipID: mem.ID,
 		ContainerName: "af-ws-acme-a", Network: "n", DataDir: "/d",
-		AgentPort: "7700", AgentToken: "tok", State: "stopped", CreatedAt: nowTS(),
+		AgentPort: "7700", AgentToken: "tok", State: "stopped", CreatedAt: NowTS(),
 	}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatalf("create workspace: %v", err)
@@ -380,7 +353,7 @@ func TestSQLiteWorkspaceCarriesTenantSlug(t *testing.T) {
 	}
 }
 
-// The migration runner splits statements on a naive `;` (see sqlStore.migrate), so a
+// The migration runner splits statements on a naive `;` (see SQL.migrate), so a
 // semicolon inside a `--` comment can cut a statement in half. The failure is a SQL
 // syntax error pointing at a random English word from the prose, which reads like
 // anything except "your comment has a semicolon in it" — measured while adding
@@ -440,13 +413,13 @@ func TestMigrationsHaveNoStatementSplittingSemicolonInComments(t *testing.T) {
 // 読み出しはエラーを握りつぶすので「保存だけが 500」という形でしか出なかった。
 // preview_slug（docs/log/81）も同じ穴に落ちる。
 func TestFreshSQLiteKeepsWorkspaceColumns(t *testing.T) {
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
 	ctx := context.Background()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	have := map[string]bool{}
@@ -484,7 +457,7 @@ func TestFreshSQLiteKeepsWorkspaceColumns(t *testing.T) {
 		t.Fatalf("membership: %v", err)
 	}
 	ws := Workspace{ID: "ws-cols", TenantID: dflt.ID, MembershipID: mem.ID, ContainerName: "c",
-		Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: nowTS()}
+		Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: NowTS()}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}

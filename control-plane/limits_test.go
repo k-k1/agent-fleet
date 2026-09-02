@@ -107,7 +107,7 @@ func TestPoolBudgetSkipsSuspendedTenants(t *testing.T) {
 	tn, _, _ := st.GetTenantBySlug(ctx, "gone")
 	// テナントを止める API はまだ無いので、行を直接落とす。列は存在し ListTenants は
 	// 状態で絞らずに返すので、この分岐は「まだ誰も通らない」であって「無い」ではない。
-	if _, err := st.db.ExecContext(ctx, `UPDATE tenant SET status='suspended' WHERE id=?`, tn.ID); err != nil {
+	if _, err := st.DB().ExecContext(ctx, `UPDATE tenant SET status='suspended' WHERE id=?`, tn.ID); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
 	b, _, _ := mgr.poolBudget(ctx, "", 0)

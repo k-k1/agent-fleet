@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"context"
@@ -73,3 +73,12 @@ func rebindDollar(q string) string {
 	}
 	return b.String()
 }
+
+// DB は移送（ADR 0067 / CP-STORE）で開けた逃がし口である。生 SQL でテーブルを
+// 直接いじる main 側のテスト（reaper_test.go の workspace_activity、
+// limits_test.go の tenant.status など）が、移送前は同一パッケージから
+// `st.db` を触れていた。戻り値の型を非公開のままにしてあるのは意図で、
+// 外からは「返ってきたものの ExecContext を呼ぶ」以上のことができない。
+//
+// 製品コードから使わないこと——ダイアレクト差は下の rebind に閉じている。
+func (s *SQL) DB() *sqlDB { return s.db }

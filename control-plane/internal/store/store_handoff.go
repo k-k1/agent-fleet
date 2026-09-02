@@ -1,4 +1,4 @@
-package main
+package store
 
 // メンバーへの引き継ぎ（docs/log/77 / ADR 0057）のストア。
 //
@@ -34,7 +34,7 @@ func scanHandoffOffer(row interface{ Scan(...any) error }) (SessionHandoffOffer,
 //
 // ⚠️ 件数を数えてから INSERT する形にはしていない。同時に 2 要求が来ると両方が「0 件」を見て
 // 両方通る。**部分ユニーク索引に落とさせて**、その違反だけを created=false に翻訳する。
-func (s *sqlStore) CreateSessionHandoffOffer(ctx context.Context, r SessionHandoffOffer) (bool, error) {
+func (s *SQL) CreateSessionHandoffOffer(ctx context.Context, r SessionHandoffOffer) (bool, error) {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO session_handoff_offer
 		(id,tenant_id,catalog_id,owner_membership_id,recipient_membership_id,title,ciphertext,key_ref,
 		 repo_remote,branch,head_sha,source_session_name,source_session_kind,status,created_at,expires_at)
@@ -60,12 +60,12 @@ func isUniqueViolation(err error) bool {
 		strings.Contains(m, "constraint failed: unique") // sqlite の別表現
 }
 
-func (s *sqlStore) GetSessionHandoffOffer(ctx context.Context, id string) (SessionHandoffOffer, bool, error) {
+func (s *SQL) GetSessionHandoffOffer(ctx context.Context, id string) (SessionHandoffOffer, bool, error) {
 	return scanHandoffOffer(s.db.QueryRowContext(ctx,
 		`SELECT `+handoffOfferCols+` FROM session_handoff_offer WHERE id=?`, id))
 }
 
-func (s *sqlStore) listHandoffOffers(ctx context.Context, where string, arg string) ([]SessionHandoffOffer, error) {
+func (s *SQL) listHandoffOffers(ctx context.Context, where string, arg string) ([]SessionHandoffOffer, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+handoffOfferCols+` FROM session_handoff_offer WHERE `+where+` ORDER BY created_at DESC`, arg)
 	if err != nil {
@@ -85,14 +85,14 @@ func (s *sqlStore) listHandoffOffers(ctx context.Context, where string, arg stri
 
 // ListSessionHandoffOffersByOwner は A の台帳（出した引き継ぎの履歴）。通知を流れ物と決めた
 // 以上、後から辿れるのはここだけなので、決着済みも返す（docs/log/77 §77.10）。
-func (s *sqlStore) ListSessionHandoffOffersByOwner(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error) {
+func (s *SQL) ListSessionHandoffOffersByOwner(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error) {
 	return s.listHandoffOffers(ctx, `owner_membership_id=?`, membershipID)
 }
 
 // ListSessionHandoffOffersByRecipient は B の受信箱。**未処理だけ**を返し、所有者がアーカイブ
 // したセッションのものは外す —— 共有の一覧と同じ規律（docs/log/59 §1: 畳んだ会話は共有先に出さない）。
 // 決着済みを返さないのは、受け取ったなら新しいセッションが証拠で、辞退したなら消えてよいため。
-func (s *sqlStore) ListSessionHandoffOffersByRecipient(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error) {
+func (s *SQL) ListSessionHandoffOffersByRecipient(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+handoffOfferCols+` FROM session_handoff_offer
 		WHERE recipient_membership_id=? AND status='pending'
 		  AND EXISTS (SELECT 1 FROM shared_session_catalog c
@@ -116,7 +116,7 @@ func (s *sqlStore) ListSessionHandoffOffersByRecipient(ctx context.Context, memb
 // TransitionSessionHandoffOffer は from → to の条件付き更新。changed=false は「誰かが先に
 // 決着させた」。accepted 以外は本文を消す —— 決着した引き継ぎの本文を CP に残す理由が無い
 // （accepted は受け手が起動し直せるよう残す）。
-func (s *sqlStore) TransitionSessionHandoffOffer(ctx context.Context, id, from, to, decidedAt, acceptedSessionName string) (bool, error) {
+func (s *SQL) TransitionSessionHandoffOffer(ctx context.Context, id, from, to, decidedAt, acceptedSessionName string) (bool, error) {
 	body := `''`
 	if to == "accepted" {
 		body = `ciphertext`
@@ -134,7 +134,7 @@ func (s *sqlStore) TransitionSessionHandoffOffer(ctx context.Context, id, from, 
 // ExpireSessionHandoffOffers は期限切れを失効させ、**失効した行を返す**。返すのは、docs/log/77 §77.9 の
 // 「失効の直前に所有者へ 1 回だけ知らせる」を呼び出し側が組み立てるため —— 失効させてから
 // 誰が対象だったかを問い直すと、その問い合わせは既に空になっている。
-func (s *sqlStore) ExpireSessionHandoffOffers(ctx context.Context, now string) ([]SessionHandoffOffer, error) {
+func (s *SQL) ExpireSessionHandoffOffers(ctx context.Context, now string) ([]SessionHandoffOffer, error) {
 	due, err := s.listHandoffOffers(ctx, `status='pending' AND expires_at<=?`, now)
 	if err != nil || len(due) == 0 {
 		return nil, err
