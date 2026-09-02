@@ -1,4 +1,4 @@
-package main
+package gitx
 
 // Submodule sync for a working copy a session is about to start in.
 //
