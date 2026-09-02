@@ -19,6 +19,41 @@ Parameters:
       <service>.<namespace>). Internal only.
 
 Resources:
+  # --- CFN template staging ---
+  # CloudFormation refuses a template body over 51,200 bytes; anything bigger has to be
+  # handed over via S3 (`aws cloudformation deploy --s3-bucket`). 30-ingress crossed that
+  # line on 2026-09-01 (54,681 bytes) and every path that deploys it — standup.sh and
+  # update.sh, i.e. stand-up AND every release — stopped working at that moment. Nobody
+  # saw it because the CLI refuses on file size before it calls the API, and the last
+  # successful deploy predates the growth (docs/log/73 §73.7.2: stand-up had never been
+  # exercised end to end).
+  #
+  # ⚠️ The bucket lives HERE, in 20-platform, because that stack is created before
+  # 30-ingress and outlives it. Putting it in 30-ingress would need the bucket to deploy
+  # the stack that creates the bucket.
+  CfnTemplates:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub "af-cfn-templates-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      # 中身はデプロイのたびに使い捨てられる転送物なので、放っておくと積み上がるだけ。
+      # 7 日で expire させる（撤収時に空にする手間も、これで軽くなる）。
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-staged-templates
+            Status: Enabled
+            ExpirationInDays: 7
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 }
+
   # --- ECR ---
   EcrControlPlane:
     Type: AWS::ECR::Repository
@@ -332,6 +367,11 @@ Resources:
                 Resource: "*"
 
 Outputs:
+  # ⚠️ 空にならない値であること。空の Export は CREATE の最終段で全ロールバックを起こす
+  # （docs/log/64 の実例）。BucketName は必ず解決するので安全。
+  CfnTemplatesBucket:
+    Value: !Ref CfnTemplates
+    Export: { Name: !Sub "${AWS::StackName}-CfnTemplatesBucket" }
   EcrControlPlaneUri:
     Value: !GetAtt EcrControlPlane.RepositoryUri
     Export: { Name: !Sub "${AWS::StackName}-EcrControlPlaneUri" }

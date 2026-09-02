@@ -172,6 +172,52 @@ af_stack_output() {
   echo "$v"
 }
 
+# --- CFN テンプレートの受け渡し（51,200 バイトの壁） -------------------------------
+#
+# 🔥 CloudFormation はテンプレート本文が **51,200 バイト**を超えると受け取らない。超える分は
+# S3 経由（`aws cloudformation deploy --s3-bucket`）で渡す。2026-09-01 に 30-ingress が
+# 54,681 バイトへ育った瞬間、**それを配備する経路が全部止まった** —— standup.sh（立てる）も
+# update.sh（リリース）も同じ `cloudformation deploy --template-file` を呼ぶからである。
+#
+# ⚠️ 気付けなかった形がここの肝: AWS CLI は **API を叩く前にファイルサイズで断る**ので、
+# 症状は CFN のエラーではなく CLI のエラーとして出る。しかも撤収→再構築を 1 往復して
+# いなかった（docs/log/73 §73.7.2）ため、ingress を「作る」経路は 09-01 以降 1 度も
+# 走っていなかった。**だから閾値を人が覚えるのではなく、下の af_cfn_deploy が毎回測る。**
+AF_CFN_TEMPLATE_MAX=51200
+
+# af_cfn_bucket — テンプレート受け渡し用バケット。解決順は 1 か所にまとめる:
+#   1. 環境ファイル / env の AF_CFN_BUCKET（手で上書きしたいとき）
+#   2. 20-platform スタックの出力 CfnTemplatesBucket（通常はこれ）
+# 見つからなければ空を返す（呼び側が「S3 が要るのに無い」と言って落ちる）。
+af_cfn_bucket() {
+  if [ -n "${AF_CFN_BUCKET:-}" ]; then echo "$AF_CFN_BUCKET"; return; fi
+  local stack="${AF_STACK_PLATFORM:-af-ecs-platform}"
+  af_stack_output "$stack" CfnTemplatesBucket
+}
+
+# af_cfn_deploy <stack> <template> [追加の引数...] — `cloudformation deploy` の唯一の入口。
+#
+# ★ 判定はファイルサイズで機械的に行う。「30-ingress は大きいから S3」と名前で覚えると、
+# 次に太るテンプレートで同じ事故を繰り返す。
+af_cfn_deploy() {
+  local stack="$1" tpl="$2"; shift 2
+  local size bucket extra=()
+  size="$(wc -c < "$tpl" | tr -d ' ')"
+  if [ "$size" -gt "$AF_CFN_TEMPLATE_MAX" ]; then
+    bucket="$(af_cfn_bucket)"
+    if [ -z "$bucket" ]; then
+      echo "ERROR: $(basename "$tpl") は $size バイト（上限 $AF_CFN_TEMPLATE_MAX）で S3 経由が要るが、" >&2
+      echo "       受け渡し用バケットが引けない。20-platform（出力 CfnTemplatesBucket）を先に" >&2
+      echo "       立てるか、AF_CFN_BUCKET で明示すること。" >&2
+      return 1
+    fi
+    echo "    · $(basename "$tpl") は $size バイト > $AF_CFN_TEMPLATE_MAX — s3://$bucket 経由で渡す"
+    extra=(--s3-bucket "$bucket" --s3-prefix cfn)
+  fi
+  "${AWS[@]}" cloudformation deploy --stack-name "$stack" \
+    --template-file "$tpl" ${extra[@]+"${extra[@]}"} "$@"
+}
+
 # af_params_file <slug> — キャプチャした Key=Value 行のファイル（1 行 1 引数）。
 #
 # ★ この形式は「値に空白・括弧・`|`・カンマが入る」から選んでいる。実物の

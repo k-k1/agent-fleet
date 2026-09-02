@@ -247,6 +247,21 @@ if [ "$AF_PERSISTENCE" = retain ] && [ -n "$DB_ID" ]; then
     --no-deletion-protection --apply-immediately >/dev/null 2>&1 || true
 fi
 
+# --- 8 前半) CFN 受け渡し用バケットを空にする（空でないと 20-platform が消せない） ----
+#
+# 🔥 CloudFormation は**中身のあるバケットを削除できない**。ここを飛ばすと 20-platform の
+# 削除が DELETE_FAILED で止まり、撤収が途中で死ぬ。そして「撤収が途中で死ぬ」は、まさに
+# 今回 51,200 バイトの壁を 09-01 から誰も踏まなかった原因（docs/log/73 §73.7.2）と同じ形
+# —— **走らせていない経路は壊れていても分からない**。ライフサイクル（7 日で expire）も
+# 効いているが、それは事故を減らすだけで、削除の前提を満たすものではない。
+CFN_BUCKET="$(af_stack_output "$AF_STACK_PLATFORM" CfnTemplatesBucket)"
+if [ -n "$CFN_BUCKET" ]; then
+  echo "==> 8pre2. emptying s3://$CFN_BUCKET (CFN template staging)"
+  # バージョニングは付けていないので `s3 rm --recursive` で足りる。
+  af_run "${AWS[@]}" s3 rm "s3://$CFN_BUCKET" --recursive >/dev/null 2>&1 \
+    || echo "    (skip: 空にできなかった。20-platform の削除が落ちたらここを見る)"
+fi
+
 # --- 8) スタックを逆順に 1 本ずつ -------------------------------------------
 echo "==> 8. deleting stacks in reverse order, one at a time"
 for st in "$AF_STACK_INGRESS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_DATA" "$AF_STACK_NETWORK"; do

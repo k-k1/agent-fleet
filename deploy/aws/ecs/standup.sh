@@ -75,7 +75,10 @@ if [ ! -r "$AF_ENV_DIR/params/30-ingress" ]; then
 fi
 : "${TAG:=${AF_IMAGE_TAG:-}}"
 [ -n "$TAG" ] || { echo "ERROR: no image tag (env has no AF_IMAGE_TAG; pass --image-tag)" >&2; exit 2; }
-CFN_DIR="$HERE/cfn"
+# CFN_DIR はテスト（deploy/local/ecs-lifecycle-stub-test.sh）が差し替えられるようにする。
+# 51,200 バイトの分岐は**サイズで**決まるので、太らせたテンプレートを食わせて実際に
+# --s3-bucket が付くところまで踏ませないと、この経路はまた走らないまま腐る。
+CFN_DIR="${AF_STANDUP_CFN_DIR:-$HERE/cfn}"
 
 echo "==> standup plan: ${AF_FQDN:-<from the captured parameters>} (profile=$AF_PROFILE region=$AF_REGION)"
 echo "    order : $AF_STACK_NETWORK → $AF_STACK_DATA → $AF_STACK_PLATFORM → images:$TAG${AF_STACK_POOL:+ → $AF_STACK_POOL} → $AF_STACK_INGRESS"
@@ -118,6 +121,36 @@ if [ -n "$HOSTED_ZONE" ]; then
     || say_missing "ホストゾーン $HOSTED_ZONE が引けない（ACM の DNS 検証と alias がここに入る）"
 fi
 command -v crane >/dev/null || say_missing "crane が無い（GHCR → ECR を index ごと運ぶのに要る）"
+
+# ★ 控えのパラメータが**いまのテンプレート**と噛み合うか。
+#
+# 🔥 これが無いと、00〜20 を立てた**後で** CFN が「必須パラメータが足りない」と拒む —— 立て
+# 始めてから足りないと分かるのが一番高い、というこの preflight の趣旨そのものの穴だった。
+# 控えは配備を撮った日のもので、テンプレートはそれから育つ（実例: 2026-08-23 の控えと
+# 2026-09-02 のテンプレート）。**Default を持たない引数**だけが必須である。
+for slug in 00-network 10-data 20-platform 30-ingress 40-ec2-pool; do
+  f="$(af_params_file "$slug")"; t="$CFN_DIR/$slug.yaml"
+  [ -r "$f" ] && [ -r "$t" ] || continue
+  missing="$(awk '
+    /^[A-Za-z]/        { inp = ($0 ~ /^Parameters:/); name = ""; next }
+    !inp               { next }
+    /^  [A-Za-z0-9]+:/ { name = $1; sub(":", "", name); req[name] = 1; next }
+    /^    Default:/    { if (name != "") delete req[name] }
+    END                { for (k in req) print k }
+  ' "$t" | sort)"
+  for k in $missing; do
+    grep -q "^$k=" "$f" || say_missing "params/$slug に必須パラメータ $k が無い（テンプレートが控えより新しい）"
+  done
+done
+
+# ★ テンプレートが 51,200 バイトを超えるなら S3 経由が要る（af_cfn_deploy が切り替える）。
+# ここでは「切り替え先が用意できるか」だけを先に言う —— 20-platform を立てた後でしか
+# バケットは引けないので、まだ無いのは正常。**af_cfn_deploy は毎回サイズを測る**ので、
+# 将来どのテンプレが太っても黙って落ちることはない。
+for t in "$CFN_DIR"/*.yaml; do
+  sz="$(wc -c < "$t" | tr -d ' ')"
+  [ "$sz" -gt "$AF_CFN_TEMPLATE_MAX" ] && echo "    · $(basename "$t") は $sz バイト > $AF_CFN_TEMPLATE_MAX — S3 経由で渡す（20-platform の CfnTemplatesBucket）"
+done
 
 # ★ イメージが**両方**そのタグで手に入るか。ここを見ないと 00〜20 を立てたあと、
 # 「workspace が GHCR に無い」で止まる。実際にそうなる経路がある: dev-deploy は
@@ -186,8 +219,7 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
     echo "     --parameter-overrides $(af_params_masked | tr '\n' ' ')"
     return 0
   fi
-  "${AWS[@]}" cloudformation deploy --stack-name "$stack" \
-    --template-file "$CFN_DIR/$tpl" \
+  af_cfn_deploy "$stack" "$CFN_DIR/$tpl" \
     ${caps[@]+"${caps[@]}"} \
     --parameter-overrides ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} \
     --no-fail-on-empty-changeset
@@ -263,8 +295,7 @@ if [ "$AF_DRY" = 1 ]; then
   echo "DRY: cloudformation deploy --stack-name $AF_STACK_INGRESS --template-file $CFN_DIR/30-ingress.yaml \\"
   echo "     --parameter-overrides $(af_params_masked | tr '\n' ' ')"
 else
-  "${AWS[@]}" cloudformation deploy --stack-name "$AF_STACK_INGRESS" \
-    --template-file "$CFN_DIR/30-ingress.yaml" \
+  af_cfn_deploy "$AF_STACK_INGRESS" "$CFN_DIR/30-ingress.yaml" \
     --parameter-overrides ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} \
     --no-fail-on-empty-changeset
 fi

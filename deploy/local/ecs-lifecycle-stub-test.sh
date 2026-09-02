@@ -77,6 +77,7 @@ case "$args" in
   *"describe-stack-resource"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "lt-NEW" ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='Url']"*) echo "https://af.example.test" ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
@@ -217,6 +218,41 @@ grep -q "deploy --stack-name t-ingress .*ImageTag=9.9.9-dev-test" "$LOG" || fail
 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --cp-arch arm64 > /dev/null </dev/null
 grep -q "deploy --stack-name t-ingress .*CpArch=arm64" "$LOG" || fail "--cp-arch did not reach the CFN parameters"
 if grep -q "deploy --stack-name t-ingress .*CpArch=x86_64" "$LOG"; then fail "the captured CpArch overrode the flag"; fi
+
+echo "== case 3b: 51,200 バイトを超えるテンプレートは S3 経由で渡す =="
+#
+# 🔥 これが無いと 2026-09-01 の再演になる。30-ingress.yaml が 51,200 バイトを超えた瞬間、
+# **それを配備する経路が全部止まった**（standup も update も同じ `cloudformation deploy
+# --template-file` を呼ぶ）。AWS CLI は API を叩く前にファイルサイズで断るので、症状は
+# CFN ではなく CLI のエラーとして出る。しかも撤収→再構築を 1 往復していなかったため、
+# ingress を「作る」経路は 3 か月近く 1 度も走っていなかった（docs/log/73 §73.7.2）。
+#
+# ★ 判定は**サイズ**であって名前ではない。テンプレートを 1 つ太らせて、そのときだけ
+#   --s3-bucket が付くことを見る。
+: > "$LOG"
+FATCFN="$WORK/cfn"; mkdir -p "$FATCFN"; cp "$ECS"/cfn/*.yaml "$FATCFN"/
+python3 - "$FATCFN/30-ingress.yaml" <<'PYEOF'
+import sys
+p = sys.argv[1]
+with open(p, "a") as f:
+    f.write("\n# pad " + "x" * 60000 + "\n")
+PYEOF
+[ "$(wc -c < "$FATCFN/30-ingress.yaml")" -gt 51200 ] || fail "パディングが効いていない"
+[ "$(wc -c < "$FATCFN/00-network.yaml")" -le 51200 ] || fail "00-network まで大きい（前提が違う）"
+AF_STANDUP_CFN_DIR="$FATCFN" "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3b" </dev/null
+grep -q "deploy --stack-name t-ingress .*--s3-bucket t-cfn-bucket" "$LOG" \
+  || fail "大きい 30-ingress が --s3-bucket 無しで渡された（2026-09-01 の再演）"
+# 小さいテンプレートは従来どおり（S3 を経由させると余計な権限と後片付けが要る）
+if grep -q "deploy --stack-name t-network .*--s3-bucket" "$LOG"; then
+  fail "小さいテンプレートまで S3 経由になっている"
+fi
+
+echo "== case 3c: 撤収は 20-platform を消す前にバケットを空にする =="
+# CFN は**中身のあるバケットを削除できない**。ここを飛ばすと 20-platform が
+# DELETE_FAILED で止まり、撤収が途中で死ぬ＝次の立て直しがまた実証されないまま残る。
+: > "$LOG"
+"$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3c" </dev/null
+order "s3 rm s3://t-cfn-bucket --recursive" "cloudformation delete-stack --stack-name t-platform"
 
 echo "== case 4: pause stops the control plane LAST =="
 : > "$LOG"
