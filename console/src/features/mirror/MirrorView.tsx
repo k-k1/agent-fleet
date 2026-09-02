@@ -77,7 +77,6 @@ import { ContextBar } from "./ContextBar.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { t as tr, useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
-import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
@@ -85,7 +84,10 @@ import { ViewHead } from "../../ui/ViewHead.tsx";
 import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
 // workSplit はターン描画とともに transcript/ へ移った（TranscriptTurn が持つ）。
 import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts } from "./mirrorParts.ts";
-import { echoLanded, echoNeedsResync, type PendingEcho } from "./pendingEcho.ts";
+import { echoLanded, echoNeedsResync } from "./pendingEcho.ts";
+import { echoStore, nextEchoId, type SendEcho } from "./parts/sendEcho.ts";
+import { findDiffPane, findPane, findPlanPane } from "./parts/panes.ts";
+import { SkillOriginBadge } from "./parts/SkillOriginBadge.tsx";
 import { applyMark, captureMark, saveMark, scrollTopForTurn, loadMark, type ScrollMark } from "./scrollMark.ts";
 import { PLAN_APPROVE_KEYS } from "./planDecision.ts";
 import { deliverPlanComments, planKey } from "./planComments.ts";
@@ -97,7 +99,6 @@ import {
   exactSkills,
   filterSkills,
   hasTriggerHead,
-  originKind,
   pickerTokenAt,
   slashTokenAt,
   type SlashToken,
@@ -124,19 +125,6 @@ import { MarkStrip } from "./transcript/MarkStrip.tsx";
 
 const q = encodeURIComponent;
 
-// foreign スキルの出所バッジ（docs/log/50 §8）: kind 色（--kind-* 1 ソース）のミニチップで
-// 出所エージェントを示す。.agents はどの kind でもない共有規約 → 中立の「共有」。
-// ネイティブ項目はバッジ無し（従来どおり）。
-function SkillOriginBadge({ origin }: { origin: string }) {
-  const k = originKind(origin);
-  if (!k) return <span className="mirror-skill-src" title={origin}>{tr("mirror.skills_src_shared")}</span>;
-  return (
-    <span className={"mirror-skill-src kind-" + kindClass(k)} title={origin}>
-      <Icon name={kindIcon(k)} /> {kindLabel(k)}
-    </span>
-  );
-}
-
 // Transcript window size (jsonl lines) for the initial tail load and each backward page.
 // The server clamps it; matches docs/decisions/0009 (P2).
 const WINDOW = 400;
@@ -162,16 +150,6 @@ const INTERACT_HOLD_MS = 600;
 
 // 「返信を頭から」の頭出しで、返信ブロックの上端に残す余白（px）。0 だと切り出しに見える。
 const REPLY_TOP_PAD = 8;
-
-// Optimistic send echoes ("反映待ち"), stashed per session at module level. MirrorView
-// unmounts on a チャット→ターミナル switch, so keeping them only in component state made a
-// just-sent (or worse, never-delivered) message vanish from the chat on return. They are
-// restored on mount and removed exactly as before — when the real turn lands or the POST
-// fails. The id counter is module-level for the same reason: a remount must not reissue
-// ids still held by stashed echoes.
-type SendEcho = PendingEcho & { id: number };
-const echoStore = new Map<string, SendEcho[]>();
-let echoSeqCounter = 0;
 
 // MirrorView (user-facing: チャット) is a read-mostly Markdown view of a claude
 // session, built on the same Agent endpoints the MCP drive tools use: GET
@@ -1498,7 +1476,7 @@ export function MirrorView({
     setShowJump(false);
     // Show the message immediately (optimistic echo) so it never looks lost while claude
     // is busy — reconciled away once its real user turn appears in the transcript.
-    const echoId = ++echoSeqCounter;
+    const echoId = nextEchoId();
     applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), attachmentPaths: attachments, at: Date.now() }]);
     const res = await postInput(t, op, attachments);
     if (!res.ok) {
@@ -1544,7 +1522,7 @@ export function MirrorView({
     const seed = takeLaunchSeed(session);
     if (!seed) return;
     seededRef.current = true;
-    const echoId = ++echoSeqCounter;
+    const echoId = nextEchoId();
     applyEchoes((p) => [...p, { id: echoId, text: seed.trim(), sinceIdx: -1, at: Date.now() }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, stateSession]);
@@ -2067,7 +2045,7 @@ export function MirrorView({
       return;
     }
     if (res.via === "reject") {
-      const echoId = ++echoSeqCounter; // 実ターンが載るまでの楽観エコー（sendPrompt と同じ）
+      const echoId = nextEchoId(); // 実ターンが載るまでの楽観エコー（sendPrompt と同じ）
       applyEchoes((p) => [...p, { id: echoId, text: res.feedback, sinceIdx: newestIdx(), at: Date.now() }]);
       setTimeout(() => tickRef.current?.(), 400);
     }
@@ -3457,42 +3435,4 @@ export function MirrorView({
         )}
     </div>
   );
-}
-
-
-// findPlanPane returns the id of a pane already reviewing THIS session's plan, if any.
-// Read straight from the store (not a subscription): it is consulted at click time,
-// and subscribing would re-render the whole mirror on every layout change.
-// Stays here rather than in transcript/: opening a pane is an owner action, and the
-// shared view has no local layout to open a plan into.
-function findPlanPane(session: string): string | null {
-  const layout = useLayoutStore.getState().layout;
-  for (const col of layout?.cols || []) {
-    for (const cell of col.cells) for (const pane of cell.views) {
-      if (pane.content.kind === "doc" && pane.content.docSession === session) return pane.id;
-    }
-  }
-  return null;
-}
-
-// findDiffPane returns the id of an already-open captured-edit diff pane. Clicking one
-// edit trace after another retargets that single pane instead of spawning one each — the
-// same reuse the SCM list does for working diffs (features/scm/open.ts).
-function findDiffPane(): string | null {
-  const layout = useLayoutStore.getState().layout;
-  for (const col of layout?.cols || []) {
-    for (const cell of col.cells) for (const pane of cell.views) {
-      if (pane.content.kind === "diff") return pane.id;
-    }
-  }
-  return null;
-}
-
-/** findPane reads one pane out of the live layout (same no-subscription rationale). */
-function findPane(id: string) {
-  const layout = useLayoutStore.getState().layout;
-  for (const col of layout?.cols || []) {
-    for (const cell of col.cells) for (const pane of cell.views) if (pane.id === id) return pane;
-  }
-  return null;
 }
