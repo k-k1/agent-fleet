@@ -23,8 +23,13 @@ package main
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,5 +204,64 @@ func TestStartGitRepoJobCarriesTheRealSink(t *testing.T) {
 		// 🔥 素の `<-done` にしない。配線事故のとき **CI が「赤」ではなく
 		// ジョブのタイムアウト**になり、何を待っていたのか残らない。
 		t.Fatal("5 秒待っても run が呼ばれない（startRepoJob へ渡す詰め替えが壊れている）")
+	}
+}
+
+// TestGitRepoJobSinkHasOneConstructionSite は、`startGitRepoJob` の
+// `if sink == nil` ガードが**到達不能である前提**を機械で固定する（RECLAIM-C の債務）。
+//
+// 前提は 2 つ: ①`*repoJobSink` を作るのは `startRepoJob` の 1 箇所だけ
+// ②`gitRepoJobSink{…}` を組むのも 1 箇所だけ。どちらかが増えると、
+// **中身が nil の非 nil インターフェース**（`gitRepoJobSink{nil}`）を渡す経路が生まれ、
+// gitx 側の `if sink != nil` が真になって nil の Writer へ書きに行く。
+//
+// 🔥 これまでこの罠は**コメントにしか書かれておらず、ガード自身はどのテストも通らない**
+// （到達不能なので変異を当てても赤くならない）。守っているのは「作る箇所の数」なので、
+// そこをソースで見る。
+// 🔥 **走査した本数も確かめる**（#320 の「1 件も見つからなければ何も検査しない」対策）。
+func TestGitRepoJobSinkHasOneConstructionSite(t *testing.T) {
+	ents, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanned, sinkNew, wrapNew := 0, 0, 0
+	for _, e := range ents {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), n, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", n, err)
+		}
+		scanned++
+		ast.Inspect(f, func(node ast.Node) bool {
+			lit, ok := node.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			switch id := lit.Type.(type) {
+			case *ast.Ident:
+				switch id.Name {
+				case "repoJobSink":
+					sinkNew++
+				case "gitRepoJobSink":
+					wrapNew++
+				}
+			}
+			return true
+		})
+	}
+	if scanned < 50 {
+		t.Fatalf("非テストの .go を %d 本しか読めていない＝この検査が無言化している", scanned)
+	}
+	if sinkNew != 1 {
+		t.Errorf("repoJobSink を組む箇所が %d 箇所（want 1）。"+
+			"増やすなら nil を渡さないことを各所で保証すること", sinkNew)
+	}
+	if wrapNew != 1 {
+		t.Errorf("gitRepoJobSink を組む箇所が %d 箇所（want 1）。"+
+			"gitRepoJobSink{nil} は『中身が nil の非 nil インターフェース』になり、"+
+			"gitx 側の nil 判定を素通りする", wrapNew)
 	}
 }

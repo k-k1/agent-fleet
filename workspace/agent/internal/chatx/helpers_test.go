@@ -161,3 +161,39 @@ func stubAbortResumeHolds(t *testing.T, name string, hold bool) {
 	}
 	t.Cleanup(func() { deps.AbortResumeHolds = old })
 }
+
+// TestJapaneseRangesMatchesTheOriginal は、**この写しが原本と byte 一致であり続けること**を
+// 固定する（RECLAIM-C の債務 2）。
+//
+// 原本は main の `prompt_lang_test.go`。**1 本化しなかった理由**: どちらもテスト専用で、
+// production に和文判定はあるが**別の範囲表**（`session_title.go` の件名整形・CP の `tts.go`）
+// であり、共有の家が無い。テスト専用の表のために production パッケージを新設すると、
+// **呼び出し 0 件の production コード**が生まれる。写しを許すかわりに、**割れたら赤くする**。
+//
+// 🔥 なぜ表を写すのか（書き直してはいけない理由）: `unicode.Hiragana/Katakana/Han` で
+// 書き直すと **CJK 記号・句読点 (0x3000-0x303F) と全角英数 (0xFF01-0xFF60) が落ちて
+// 検査が黙って弱くなる**（AG-CHAT2 が実際に踏んだ）。**アサーションも通る枝も同じで
+// 入力の被覆だけが縮むので、両側変異試験でも捕まらない型**である。
+func TestJapaneseRangesMatchesTheOriginal(t *testing.T) {
+	const origin = "../../prompt_lang_test.go"
+	extract := func(path string) string {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v（置き場が変わった？）", path, err)
+		}
+		s := string(b)
+		i := strings.Index(s, "var japaneseRanges = ")
+		if i < 0 {
+			t.Fatalf("%s に japaneseRanges の宣言が見つからない＝この検査が無言化している", path)
+		}
+		j := strings.Index(s[i:], "\n}\n")
+		if j < 0 {
+			t.Fatalf("%s の japaneseRanges の終端が見つからない", path)
+		}
+		return s[i : i+j]
+	}
+	a, b := extract(origin), extract("helpers_test.go")
+	if a != b {
+		t.Fatalf("japaneseRanges の写しが原本と割れた。\n原本(%s):\n%s\n写し:\n%s", origin, a, b)
+	}
+}
