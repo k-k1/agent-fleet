@@ -52,9 +52,7 @@ func TestMCPSendToSessionResumesStoppedSessionAndConfirmsSend(t *testing.T) {
 	}
 	t.Setenv("AGENT_ADDR", u.Host)
 
-	oldWrite := mcpWriteEnabled
-	mcpWriteEnabled = true
-	t.Cleanup(func() { mcpWriteEnabled = oldWrite })
+	setWriteEnabled(true)
 	args, _ := json.Marshal(map[string]any{"name": "slot01", "prompt": "続けて"})
 	params, _ := json.Marshal(map[string]any{"name": "send_to_session", "arguments": json.RawMessage(args)})
 	resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
@@ -75,9 +73,7 @@ func TestMCPSendToSessionDoesNotMaskConflictAsSuccess(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	t.Setenv("AGENT_ADDR", u.Host)
 
-	oldWrite := mcpWriteEnabled
-	mcpWriteEnabled = true
-	t.Cleanup(func() { mcpWriteEnabled = oldWrite })
+	setWriteEnabled(true)
 	args, _ := json.Marshal(map[string]any{"name": "slot01", "prompt": "続けて"})
 	params, _ := json.Marshal(map[string]any{"name": "send_to_session", "arguments": json.RawMessage(args)})
 	resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
@@ -135,9 +131,9 @@ func TestMCPGetSessionOutputCursorMemory(t *testing.T) {
 	defer srv.Close()
 	u, _ := url.Parse(srv.URL)
 	t.Setenv("AGENT_ADDR", u.Host)
-	oldConv := mcpConvID
-	mcpConvID = "conv-cursor-test"
-	t.Cleanup(func() { mcpConvID = oldConv })
+	oldConv := convID()
+	setConvID("conv-cursor-test")
+	t.Cleanup(func() { setConvID(oldConv) })
 
 	call := func(id string, args map[string]any) string {
 		t.Helper()
@@ -204,9 +200,7 @@ func TestMCPCreateSessionForwardsWorktreeOptions(t *testing.T) {
 	}
 	t.Setenv("AGENT_ADDR", u.Host)
 
-	oldWrite := mcpWriteEnabled
-	mcpWriteEnabled = true
-	t.Cleanup(func() { mcpWriteEnabled = oldWrite })
+	setWriteEnabled(true)
 	args, _ := json.Marshal(map[string]any{
 		"dir": "/repos/app", "kind": "codex", "initial_prompt": "start",
 		"worktree": true, "branch": "main", "new_branch": "feat/mcp-wt",
@@ -250,9 +244,7 @@ func TestMCPGetAgentUsageMergesEndpoints(t *testing.T) {
 	}
 	t.Setenv("AGENT_ADDR", u.Host)
 
-	oldWrite := mcpWriteEnabled
-	mcpWriteEnabled = false // read-only server must serve it
-	t.Cleanup(func() { mcpWriteEnabled = oldWrite })
+	setWriteEnabled(false) // read-only server must serve it
 
 	params, _ := json.Marshal(map[string]any{"name": "get_agent_usage", "arguments": map[string]any{}})
 	resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
@@ -331,8 +323,7 @@ func TestMCPCleanupToolsRelay(t *testing.T) {
 	}
 
 	// list_cleanup_candidates works WITHOUT --write (read tool).
-	oldWrite := mcpWriteEnabled
-	mcpWriteEnabled = false
+	setWriteEnabled(false)
 	call("list_cleanup_candidates", "")
 	if h := <-got; h.method != "GET" || h.path != "/sessions/cleanup" {
 		t.Fatalf("list_cleanup_candidates hit %s %s", h.method, h.path)
@@ -355,8 +346,7 @@ func TestMCPCleanupToolsRelay(t *testing.T) {
 	default:
 	}
 
-	mcpWriteEnabled = true
-	t.Cleanup(func() { mcpWriteEnabled = oldWrite })
+	setWriteEnabled(true)
 
 	call("archive_session", "slot01")
 	if h := <-got; h.method != "POST" || h.path != "/sessions/slot01/archive" {
@@ -423,9 +413,7 @@ func TestMCPStopResumeSessionRelay(t *testing.T) {
 	}
 	t.Setenv("AGENT_ADDR", u.Host)
 
-	oldWrite := mcpWriteEnabled
-	mcpWriteEnabled = true
-	t.Cleanup(func() { mcpWriteEnabled = oldWrite })
+	setWriteEnabled(true)
 
 	call := func(tool, name string) []byte {
 		args, _ := json.Marshal(map[string]any{"name": name})
@@ -452,7 +440,7 @@ func TestMCPStopResumeSessionRelay(t *testing.T) {
 	}
 
 	// Without --write the tools are refused in-band and the Agent is never called.
-	mcpWriteEnabled = false
+	setWriteEnabled(false)
 	for _, tool := range []string{"stop_session", "resume_session"} {
 		resp := call(tool, "slot01")
 		var parsed struct {
@@ -512,9 +500,7 @@ func mcpIsError(t *testing.T, resp string) bool {
 // secret スキャン＋本人の明示 ack を課したのに、モデルが ack できる経路を作ると
 // 防御を迂回する二つ目の出口になる。広告ツール集合がゲートなので、ここで固定する。
 func TestMCPMemoryToolsExposeNoExportOrImport(t *testing.T) {
-	old := mcpWriteEnabled
-	mcpWriteEnabled = true
-	t.Cleanup(func() { mcpWriteEnabled = old })
+	setWriteEnabled(true)
 	names := map[string]bool{}
 	for _, tool := range mcpStdioToolList() {
 		names[tool["name"].(string)] = true
@@ -530,7 +516,7 @@ func TestMCPMemoryToolsExposeNoExportOrImport(t *testing.T) {
 		}
 	}
 	// 読み取り専用の会話には restore を一切広告しない。
-	mcpWriteEnabled = false
+	setWriteEnabled(false)
 	for _, tool := range mcpStdioToolList() {
 		if tool["name"] == "restore_memory_snapshot" {
 			t.Fatal("restore_memory_snapshot is advertised to an af_read conversation")
@@ -542,9 +528,7 @@ func TestMCPMemoryToolsExposeNoExportOrImport(t *testing.T) {
 // 巻き戻ると、利用者が承認した範囲を超えた操作になる。
 func TestMCPRestoreMemoryRequiresExplicitScope(t *testing.T) {
 	paths := mcpMemoryStub(t, func(string) string { return `{"committed":true}` })
-	old := mcpWriteEnabled
-	mcpWriteEnabled = true
-	t.Cleanup(func() { mcpWriteEnabled = old })
+	setWriteEnabled(true)
 
 	if resp := mcpCall(t, "restore_memory_snapshot", map[string]any{"rev": "abc"}); !mcpIsError(t, resp) {
 		t.Fatalf("a scope-less restore was accepted: %s", resp)
@@ -567,9 +551,7 @@ func TestMCPRestoreMemoryRequiresExplicitScope(t *testing.T) {
 
 func TestMCPRestoreMemoryDeniedWithoutWrite(t *testing.T) {
 	paths := mcpMemoryStub(t, func(string) string { return `{}` })
-	old := mcpWriteEnabled
-	mcpWriteEnabled = false
-	t.Cleanup(func() { mcpWriteEnabled = old })
+	setWriteEnabled(false)
 	if resp := mcpCall(t, "restore_memory_snapshot", map[string]any{"rev": "abc", "all": true}); !mcpIsError(t, resp) {
 		t.Fatalf("an af_read conversation restored memory: %s", resp)
 	}
@@ -587,9 +569,7 @@ func TestMCPGetMemorySnapshotJoinsTreeAndDiff(t *testing.T) {
 		}
 		return `{"diff":"--- a\n+++ b\n"}`
 	})
-	old := mcpWriteEnabled
-	mcpWriteEnabled = false // 読み取りツールなので af_read でも使える
-	t.Cleanup(func() { mcpWriteEnabled = old })
+	setWriteEnabled(false) // 読み取りツールなので af_read でも使える
 
 	if resp := mcpCall(t, "get_memory_snapshot", map[string]any{}); !mcpIsError(t, resp) {
 		t.Fatalf("a snapshot lookup without rev/at was accepted: %s", resp)
@@ -664,7 +644,7 @@ func TestMCPSetChatPlanRefusesEmpty(t *testing.T) {
 // 広告集合がスコープの境界（docs/log/19 Q2 と同じ作法）: read/write とも --write 下でのみ。
 func TestMCPChatPlanToolsDeniedWithoutWrite(t *testing.T) {
 	withMCPWriteConv(t, "conv-1")
-	mcpWriteEnabled = false
+	setWriteEnabled(false)
 	for _, name := range []string{"get_chat_plan", "set_chat_plan"} {
 		if !mcpIsError(t, mcpCall(t, name, map[string]any{"plan": "x"})) {
 			t.Fatalf("%s: want denial without --write", name)
@@ -718,7 +698,8 @@ func TestMCPChatPlanToolsAdvertisedOnlyUnderWrite(t *testing.T) {
 
 func withMCPWriteConv(t *testing.T, conv string) {
 	t.Helper()
-	oldWrite, oldConv := mcpWriteEnabled, mcpConvID
-	mcpWriteEnabled, mcpConvID = true, conv
-	t.Cleanup(func() { mcpWriteEnabled, mcpConvID = oldWrite, oldConv })
+	oldWrite, oldConv := writeEnabled(), convID()
+	setWriteEnabled(true)
+	setConvID(conv)
+	t.Cleanup(func() { setWriteEnabled(oldWrite); setConvID(oldConv) })
 }

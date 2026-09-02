@@ -28,11 +28,7 @@ var chromiumWriteToolNames = []string{
 }
 
 func TestMCPChromiumToolsReadWriteGateAndSchemas(t *testing.T) {
-	oldWrite, oldSelfReport, oldSessionChromium := mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled
-	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = false, false, false
-	t.Cleanup(func() {
-		mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = oldWrite, oldSelfReport, oldSessionChromium
-	})
+	withMCPFlags(t, false, false, false)
 
 	assertToolSet := func(wantWrite bool) {
 		t.Helper()
@@ -65,15 +61,12 @@ func TestMCPChromiumToolsReadWriteGateAndSchemas(t *testing.T) {
 		}
 	}
 
-	mcpWriteEnabled = true
+	setWriteEnabled(true)
 	assertToolSet(true)
 }
 
 func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
-	oldWrite, oldSelfReport, oldSessionChromium := mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled
-	t.Cleanup(func() {
-		mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = oldWrite, oldSelfReport, oldSessionChromium
-	})
+	withMCPFlags(t, false, false, false)
 
 	toolNames := func() map[string]map[string]any {
 		t.Helper()
@@ -86,7 +79,7 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 
 	// Backward compatibility: --self-report without the additive capability remains
 	// the historical one-tool server.
-	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = false, true, false
+	setFlags(false, true, false)
 	legacy := toolNames()
 	if len(legacy) != 2 || legacy["af_report"] == nil || legacy["propose_session_handoff"] == nil {
 		t.Fatalf("legacy self-report tools = %v, want [af_report propose_session_handoff]", sortedChromiumToolMapKeys(legacy))
@@ -97,7 +90,7 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 
 	// The current session builtin adds exactly Chromium Attach View. It does not
 	// inherit the assistant's fleet read/write grants.
-	mcpSessionChromiumEnabled = true
+	setSessionChromiumEnabled(true)
 	found := toolNames()
 	wantNames := append([]string{"af_report", "propose_session_handoff"}, chromiumReadToolNames...)
 	wantNames = append(wantNames, chromiumWriteToolNames...)
@@ -154,11 +147,7 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	t.Setenv("AGENT_ADDR", u.Host)
 
-	oldWrite, oldSelfReport, oldSessionChromium := mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled
-	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = false, true, true
-	t.Cleanup(func() {
-		mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = oldWrite, oldSelfReport, oldSessionChromium
-	})
+	withMCPFlags(t, false, true, true)
 
 	list := structuredMCPValue(t, callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222}))
 	if len(list) != 1 || list["targets"] == nil {
@@ -279,10 +268,10 @@ func TestMCPRequestBrowserActionCarriesOwningSessionForDelivery(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	t.Chdir(t.TempDir())
 
-	oldWrite, oldSelfReport, oldSessionChromium, oldSource := mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpSourceSession
-	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = false, true, true
+	oldSource := mcpSourceSession
+	withMCPFlags(t, false, true, true)
 	t.Cleanup(func() {
-		mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpSourceSession = oldWrite, oldSelfReport, oldSessionChromium, oldSource
+		mcpSourceSession = oldSource
 	})
 
 	mcpSourceSession = "the-requesting-session"
@@ -346,11 +335,7 @@ func TestMCPChromiumCarriesBrowserIdentity(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	t.Setenv("AGENT_ADDR", u.Host)
 
-	oldWrite, oldSelfReport, oldSessionChromium := mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled
-	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = false, true, true
-	t.Cleanup(func() {
-		mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = oldWrite, oldSelfReport, oldSessionChromium
-	})
+	withMCPFlags(t, false, true, true)
 
 	list := structuredMCPValue(t, callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222}))
 	if list["browser_id"] != guid {

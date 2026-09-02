@@ -25,9 +25,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 )
 
-// startMCPTenantSync fetches the distributed set once, then keeps polling. The first
+// StartTenantSync fetches the distributed set once, then keeps polling. The first
 // fetch is in the goroutine too: boot must not block on the CP being reachable.
-func startMCPTenantSync() {
+func StartTenantSync() {
 	go func() {
 		syncMCPTenant("agent boot")
 		for range time.Tick(mcpreg.TenantPollInterval) {
@@ -54,16 +54,16 @@ func syncMCPTenant(why string) mcpreg.TenantFetchResult {
 	}
 	if res.Changed {
 		log.Printf("mcp tenant sync (%s): %d server(s), materializing", why, res.Servers)
-		materializeMCPAll()
+		MaterializeAll()
 	}
 	return res
 }
 
-// handleMCPTenantRefresh (POST /mcp-servers/tenant-refresh) pulls the tenant set now and
+// HandleTenantRefresh (POST /mcp-servers/tenant-refresh) pulls the tenant set now and
 // returns the refreshed registry, so the Console's refresh button shows the outcome in
 // one round trip. A fetch failure is reported as a 502 with the CP's own message: the
 // member can act on "the CP said 401" but not on a silently stale list.
-func handleMCPTenantRefresh(w http.ResponseWriter, r *http.Request) {
+func HandleTenantRefresh(w http.ResponseWriter, r *http.Request) {
 	res, err := mcpreg.FetchTenant()
 	if errors.Is(err, mcpreg.ErrTenantBridgeOff) {
 		httpx.WriteErr(w, http.StatusNotImplemented, "mcp_tenant_bridge_off", err.Error())
@@ -74,7 +74,7 @@ func handleMCPTenantRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res.Changed {
-		materializeMCPAll()
+		MaterializeAll()
 	}
 	reg, lerr := mcpreg.Load()
 	if lerr != nil {
@@ -93,11 +93,11 @@ func handleMCPTenantRefresh(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleMCPServerSecrets (PUT /mcp-servers/{id}/secrets) stores the member's own header
+// HandleServerSecrets (PUT /mcp-servers/{id}/secrets) stores the member's own header
 // values for a tenant-distributed user_secret definition (docs/log/48 §5.2). This is the only
 // write a member has into a tenant row's content, and it lands in the member's own
 // encrypted store — the distributed definition is never modified.
-func handleMCPServerSecrets(w http.ResponseWriter, r *http.Request) {
+func HandleServerSecrets(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Headers map[string]string `json:"headers"`
 	}
@@ -110,6 +110,6 @@ func handleMCPServerSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 	// Filling in a value can flip a server from "held back" to usable, so write the CLI
 	// configs before answering — otherwise the member has to launch two sessions.
-	materializeMCPAll()
-	handleMCPServersGet(w, r)
+	MaterializeAll()
+	HandleServersGet(w, r)
 }

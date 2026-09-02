@@ -65,45 +65,18 @@ const (
 	mcpErrInvalidParams      = -32602
 )
 
-// mcpSessionOutputTailBytes caps get_session_output at the LAST N bytes of the
+// SessionOutputTailBytes caps get_session_output at the LAST N bytes of the
 // flattened assistant text (/output?tail= — session_io.go): 約32KiB ≒ 数千〜1万
 // トークン。ツール結果はオペレーター会話のコンテキストに残り続けるため、ここの
 // 上限が以降の全ターンの単価に複利で効く（実測 2026-07: 上限なし時代のオペレーター
 // 会話は 200〜400k トークンを常時引きずった）。設定（設定 > アシスタント）で変更可
-// — 実効値は mcpSessionOutputTail()。
-const mcpSessionOutputTailBytes = 32 << 10
-
-// mcpWriteEnabled gates the write tools. Set once from the `--write` arg before the
-// stdio loop starts; a global is safe because each spawn is a fresh short-lived process
-// serving exactly one chat conversation.
-var mcpWriteEnabled bool
-
-// mcpConvID is the owning conversation's id, passed as `--conv <id>` by chat.go's
-// MCP config (docs/log/30). create_session / send_to_session forward it as report_to so
-// the spawned/steered session reports back to THIS conversation automatically — the
-// link is tool-side plumbing, never something the model has to remember.
-var mcpConvID string
+// — 実効値は SessionOutputTail()。
+const SessionOutputTailBytes = 32 << 10
 
 // mcpSourceSession is the Agent Fleet slot that owns a session-side MCP process.
 // It is deliberately not a tool argument: native conversation ids such as
 // CLAUDE_CODE_SESSION_ID are provider-specific and must never decide AF ownership.
 var mcpSourceSession string
-
-// mcpSelfReportOnly serves the SESSION-side server (docs/log/51 Phase 3 §自己申告
-// ファストパス): the same stdio loop, with af_report as its base tool.
-// このモードは builtin「af」としてCLIを持つ全 kind のセッション設定へ materialize される
-// （mcpreg/builtin.go）ので、広告するツール集合そのものがスコープの境界になる。
-// フリートの観測・操縦ツールは1つも出さない: セッションは自分の完了を申告するだけで
-// よく、他セッションを読ませる理由が無い。Chromium Attach Viewだけは、下の独立した
-// capability flagが同時に立ったときに限り、この狭いsession scopeへ追加する。
-var mcpSelfReportOnly bool
-
-// mcpSessionChromiumEnabled adds ONLY Chromium Attach View's seven tools to the
-// session-side server. It is enabled by the explicit combination
-// `--self-report --chromium-attach`; `--self-report` alone deliberately keeps its
-// historical one-tool contract. This is separate from mcpWriteEnabled because the
-// interactive session must not inherit the assistant chat's fleet-wide write grant.
-var mcpSessionChromiumEnabled bool
 
 // mcpPeerMessagingEnabled adds ONLY the two session-to-session messaging tools to the
 // session-side server (docs/log/58 / ADR 0041 決定3). Enabled by `--self-report
@@ -113,21 +86,25 @@ var mcpSessionChromiumEnabled bool
 // (no arm, no shell targets, server-built envelope).
 var mcpPeerMessagingEnabled bool
 
-// runMCPStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
+// RunStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
 // Pass --write to additionally expose the write tools (docs/log/19 Q2 af_write opt-in),
 // or --self-report for the session-side server (docs/log/51 Phase 3). Combining
 // --self-report with --chromium-attach adds the narrowly scoped Chromium Attach View
 // tools without granting any other read/write tool (docs/log/53 §53.8).
-func runMCPStdio(args []string) {
-	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpConvID, mcpSourceSession = false, false, false, "", os.Getenv("AF_SESSION_NAME")
+func RunStdio(args []string) {
+	setWriteEnabled(false)
+	setSelfReportOnly(false)
+	setSessionChromiumEnabled(false)
+	mcpSourceSession = os.Getenv("AF_SESSION_NAME")
+	setConvID("")
 	mcpPeerMessagingEnabled = false
 	chromiumAttachRequested, peerMessagingRequested := false, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--write":
-			mcpWriteEnabled = true
+			setWriteEnabled(true)
 		case "--self-report":
-			mcpSelfReportOnly = true
+			setSelfReportOnly(true)
 		case "--chromium-attach":
 			chromiumAttachRequested = true
 		case "--peer-messaging":
@@ -135,15 +112,15 @@ func runMCPStdio(args []string) {
 		case "--conv":
 			if i+1 < len(args) {
 				i++
-				mcpConvID = args[i]
+				setConvID(args[i])
 			}
 		}
 	}
 	// The additive capability is valid only on the session-side server. Keeping the
 	// conjunction here means a guessed/accidental --chromium-attach on an assistant
 	// invocation cannot widen that assistant's scope.
-	mcpSessionChromiumEnabled = mcpSelfReportOnly && chromiumAttachRequested
-	mcpPeerMessagingEnabled = mcpSelfReportOnly && peerMessagingRequested
+	setSessionChromiumEnabled(selfReportOnly() && chromiumAttachRequested)
+	mcpPeerMessagingEnabled = selfReportOnly() && peerMessagingRequested
 	r := bufio.NewReaderSize(os.Stdin, 1<<20)
 	w := bufio.NewWriter(os.Stdout)
 	for {
@@ -314,8 +291,8 @@ func mcpStdioDiscoverResult() map[string]any {
 }
 
 func mcpStdioInstructions() string {
-	if mcpSelfReportOnly {
-		if mcpSessionChromiumEnabled {
+	if selfReportOnly() {
+		if sessionChromiumEnabled() {
 			return "Agent Fleet の対話セッション用ローカル MCP。自分の完了申告と Chromium Attach View の引き渡しだけを提供する。"
 		}
 		return "Agent Fleet の対話セッション用ローカル MCP。自分の完了申告だけを提供する。"
@@ -327,9 +304,9 @@ func mcpStdioInstructions() string {
 // tools plus write tools under --write (docs/log/19 Q2); the session surface gets its
 // explicit narrow set (docs/log/51 + docs/log/53).
 func mcpStdioToolList() []map[string]any {
-	if mcpSelfReportOnly {
+	if selfReportOnly() {
 		tools := append([]map[string]any{}, mcpStdioSelfReportTools...)
-		if mcpSessionChromiumEnabled {
+		if sessionChromiumEnabled() {
 			tools = appendMatchingMCPTools(tools, mcpStdioTools, isChromiumReadTool)
 			tools = appendMatchingMCPTools(tools, mcpStdioWriteTools, isChromiumWriteTool)
 		}
@@ -338,7 +315,7 @@ func mcpStdioToolList() []map[string]any {
 		}
 		return tools
 	}
-	if mcpWriteEnabled {
+	if writeEnabled() {
 		return append(append([]map[string]any{}, mcpStdioTools...), mcpStdioWriteTools...)
 	}
 	return mcpStdioTools
@@ -1141,10 +1118,10 @@ func mcpStdioCall(req mcpReq) []byte {
 	}
 	_ = json.Unmarshal(req.Params, &p)
 	// The session-side advertised set IS the scope boundary (see
-	// mcpSelfReportOnly/mcpSessionChromiumEnabled). Refuse every unadvertised name here
+	// selfReportOnly()/sessionChromiumEnabled()). Refuse every unadvertised name here
 	// too, or a client that guesses names could reach fleet read/write handlers from any
 	// interactive session.
-	if mcpSelfReportOnly && !mcpStdioToolAdvertised(p.Name) {
+	if selfReportOnly() && !mcpStdioToolAdvertised(p.Name) {
 		return mcpToolErr(req.ID, "この対話セッション用サーバーでは許可されていないツールです: "+p.Name)
 	}
 	var a struct {
@@ -1262,7 +1239,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		reqBody, _ := json.Marshal(map[string]any{
 			"prompt": a.Message, "peer_from": self, "peer_intent": a.Intent,
 		})
-		out, resumed, err := agentSendToSession(a.Name, reqBody)
+		out, resumed, err := AgentSendToSession(a.Name, reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "メッセージを届けられませんでした: "+err.Error())
 		}
@@ -1273,7 +1250,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		b, _ := json.Marshal(result)
 		return mcpTextResult(req.ID, string(b))
 	case "propose_session_handoff":
-		if !mcpSelfReportOnly {
+		if !selfReportOnly() {
 			return mcpToolErr(req.ID, "propose_session_handoff はセッション側の Agent Fleet サーバー専用です")
 		}
 		if strings.TrimSpace(a.Prompt) == "" {
@@ -1316,14 +1293,14 @@ func mcpStdioCall(req mcpReq) []byte {
 		// サーバー専用 — アシスタントの af_read/af_write はこのツールを広告しないので、
 		// 広告していない経路から呼ばれたら断る（広告集合がスコープの境界・docs/log/19 Q2 と
 		// 同じ作法）。
-		if !mcpSelfReportOnly {
+		if !selfReportOnly() {
 			return mcpToolErr(req.ID, "af_report はセッション側の Agent Fleet サーバー専用です")
 		}
 		if !session.ValidName(a.Session) {
 			return mcpToolErr(req.ID, "session（自分のセッション名）が必要です")
 		}
 		body, _ := json.Marshal(map[string]string{"name": a.Session, "kind": reportKindSelfReport})
-		if _, err := agentPOST("/chat/report", body); err != nil {
+		if _, err := AgentPOST("/chat/report", body); err != nil {
 			return mcpToolErr(req.ID, "完了の申告に失敗しました: "+err.Error())
 		}
 		// 申告は「早める」だけで、報告そのものはサーバが判定して配る。ここでモデルに
@@ -1357,7 +1334,7 @@ func mcpStdioCall(req mcpReq) []byte {
 	case "list_models":
 		// write セットで広告するツールなので呼び出しも同じ境界で断る（広告集合が
 		// スコープの境界・docs/log/19 Q2）。
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはモデル一覧の取得を許可されていません")
 		}
 		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" && a.Kind != "agy" && a.Kind != "copilot" && a.Kind != "cursor" && a.Kind != "kiro" {
@@ -1375,7 +1352,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "add_memo":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはメモの追加を許可されていません")
 		}
 		out, err := cpMemoDo(http.MethodPost, "/internal/memos", []byte(p.Args))
@@ -1384,7 +1361,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "update_memo":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはメモの編集を許可されていません")
 		}
 		if a.ID == "" {
@@ -1396,7 +1373,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "delete_memo":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはメモの削除を許可されていません")
 		}
 		if a.ID == "" {
@@ -1408,7 +1385,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "flush_memos":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはメモの一括送信を許可されていません")
 		}
 		out, err := cpMemoDo(http.MethodPost, "/internal/memos/flush", []byte(p.Args))
@@ -1417,7 +1394,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "list_schedules":
-		out, err := cpScheduleDo(http.MethodGet, "/internal/schedules", nil)
+		out, err := CPScheduleDo(http.MethodGet, "/internal/schedules", nil)
 		if err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
@@ -1426,55 +1403,55 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.ID == "" {
 			return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
 		}
-		out, err := cpScheduleDo(http.MethodGet, "/internal/schedules/"+url.PathEscape(a.ID)+"/runs", nil)
+		out, err := CPScheduleDo(http.MethodGet, "/internal/schedules/"+url.PathEscape(a.ID)+"/runs", nil)
 		if err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "create_schedule":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはスケジュールの登録を許可されていません")
 		}
 		// Route completion reports back to THIS operator conversation (docs/log/30): stamp
 		// owner_conv = the operator's own conv id, overriding any client-supplied value.
-		out, err := cpScheduleDo(http.MethodPost, "/internal/schedules", withOwnerConv(p.Args, mcpConvID))
+		out, err := CPScheduleDo(http.MethodPost, "/internal/schedules", WithOwnerConv(p.Args, convID()))
 		if err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "update_schedule":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはスケジュールの編集を許可されていません")
 		}
 		if a.ID == "" {
 			return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
 		}
-		out, err := cpScheduleDo(http.MethodPatch, "/internal/schedules/"+url.PathEscape(a.ID), []byte(p.Args))
+		out, err := CPScheduleDo(http.MethodPatch, "/internal/schedules/"+url.PathEscape(a.ID), []byte(p.Args))
 		if err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "delete_schedule":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはスケジュールの削除を許可されていません")
 		}
 		if a.ID == "" {
 			return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
 		}
-		out, err := cpScheduleDo(http.MethodDelete, "/internal/schedules/"+url.PathEscape(a.ID), nil)
+		out, err := CPScheduleDo(http.MethodDelete, "/internal/schedules/"+url.PathEscape(a.ID), nil)
 		if err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "pause_schedule", "resume_schedule", "run_schedule_now":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはスケジュールの操作を許可されていません")
 		}
 		if a.ID == "" {
 			return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
 		}
 		action := map[string]string{"pause_schedule": "pause", "resume_schedule": "resume", "run_schedule_now": "run-now"}[p.Name]
-		out, err := cpScheduleDo(http.MethodPost, "/internal/schedules/"+url.PathEscape(a.ID)+"/"+action, nil)
+		out, err := CPScheduleDo(http.MethodPost, "/internal/schedules/"+url.PathEscape(a.ID)+"/"+action, nil)
 		if err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
@@ -1484,20 +1461,20 @@ func mcpStdioCall(req mcpReq) []byte {
 	// Write/orchestrate tools — only when this server was started with --write.
 	switch p.Name {
 	case "get_chat_plan", "set_chat_plan":
-		// 作業計画（docs/log/33 第5段 案D）。対象は**常に自分の会話**（mcpConvID）で、
+		// 作業計画（docs/log/33 第5段 案D）。対象は**常に自分の会話**（convID()）で、
 		// 会話 id を引数に取らない — create_schedule の owner_conv 上書きと同じ作法で、
 		// 「オペレーターは自分にしか書かない」を配線側の性質にしておく。
 		//
 		// 読み取りも --write ゲート下に置く: この2本は write ツールとしてしか広告して
 		// いないので、広告集合＝スコープの境界という既存の作法（af_report・docs/log/19 Q2）
 		// に合わせる。
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
 		}
-		if mcpConvID == "" {
+		if convID() == "" {
 			return mcpToolErr(req.ID, "この経路には会話が結び付いていないため、作業計画は扱えません")
 		}
-		path := "/chat/conversations/" + url.PathEscape(mcpConvID) + "/plan"
+		path := "/chat/conversations/" + url.PathEscape(convID()) + "/plan"
 		if p.Name == "get_chat_plan" {
 			out, err := agentGET(path)
 			if err != nil {
@@ -1518,7 +1495,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		// 会話まるごとを返さない（返すと計画を書くたびに会話全文がモデルへ戻る）。
 		return mcpTextResult(req.ID, "作業計画を更新しました（以降の新しいセッションへ原文のまま引き継がれます）。")
 	case "create_session":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの作成を許可されていません")
 		}
 		// P3: a raw shell session executes arbitrary commands (no agent guardrails) — gate
@@ -1535,7 +1512,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		// Deterministic idempotency key (conversation + launch intent): an LLM re-issuing
 		// the same create_session reproduces it, so a timed-out-then-retried create
 		// collapses onto the first session instead of spawning a duplicate.
-		idemKey := createSessionKey(mcpConvID, a.Dir, a.Subdir, a.Kind, a.Model, a.InitialPrompt, a.Worktree, a.Branch, a.NewBranch)
+		idemKey := CreateSessionKey(convID(), a.Dir, a.Subdir, a.Kind, a.Model, a.InitialPrompt, a.Worktree, a.Branch, a.NewBranch)
 		reqBody, _ := json.Marshal(map[string]any{
 			"dir":             a.Dir,
 			"subdir":          a.Subdir,
@@ -1547,13 +1524,13 @@ func mcpStdioCall(req mcpReq) []byte {
 			"branch":          a.Branch,
 			"new_branch":      a.NewBranch,
 			"driver":          driver,
-			"report_to":       mcpConvID, // docs/log/30: 完了報告をこの会話へ（空なら無効）
+			"report_to":       convID(), // docs/log/30: 完了報告をこの会話へ（空なら無効）
 			"idempotency_key": idemKey,
 			// ADR 0029 §6: オペレーターが立てたセッションであることを出自として明示する。
 			// 無人で増える消費（自動走行・定時実行との組み合わせ）を使用量集計で
 			// 「人が開いたセッション」と分けるための軸。
 			"origin":      session.OriginOperator,
-			"origin_conv": mcpConvID,
+			"origin_conv": convID(),
 		})
 		out, err := agentCreateSession(reqBody, idemKey)
 		if err != nil {
@@ -1561,7 +1538,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "send_to_session":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
 		}
 		if a.Name == "" {
@@ -1581,8 +1558,8 @@ func mcpStdioCall(req mcpReq) []byte {
 		// なく「ターンが実際に始まった証拠」まで待つ。飲まれた場合は Agent 側が
 		// 自己修復（Enter 再送/再タイプ）し、それでも未確認なら delivery_unconfirmed
 		// がツールエラーとして返る（停止中セッションへの指示空振り bc5d685e の対策）。
-		reqBody, _ := json.Marshal(map[string]any{"prompt": a.Prompt, "report_to": mcpConvID, "confirm": true})
-		out, resumed, err := agentSendToSession(a.Name, reqBody)
+		reqBody, _ := json.Marshal(map[string]any{"prompt": a.Prompt, "report_to": convID(), "confirm": true})
+		out, resumed, err := AgentSendToSession(a.Name, reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "Agent への送信に失敗しました: "+err.Error())
 		}
@@ -1593,7 +1570,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		b, _ := json.Marshal(result)
 		return mcpTextResult(req.ID, string(b))
 	case "answer_session_question":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
 		}
 		if a.Name == "" {
@@ -1603,13 +1580,13 @@ func mcpStdioCall(req mcpReq) []byte {
 			return mcpToolErr(req.ID, "choices（質問順の 1-based 選択肢番号の配列）が必要です")
 		}
 		reqBody, _ := json.Marshal(map[string]any{"choices": a.Choices})
-		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/answer-question", reqBody)
+		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/answer-question", reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "質問への回答に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "respond_session_plan":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
 		}
 		if a.Name == "" {
@@ -1619,13 +1596,13 @@ func mcpStdioCall(req mcpReq) []byte {
 			return mcpToolErr(req.ID, "decision は approve か reject を指定してください")
 		}
 		reqBody, _ := json.Marshal(map[string]string{"decision": a.Decision, "feedback": a.Feedback})
-		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/plan-respond", reqBody)
+		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/plan-respond", reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "プランへの応答に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "stop_session":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの停止を許可されていません")
 		}
 		if a.Name == "" {
@@ -1634,7 +1611,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		// disarm_report: オペレーターの停止＝指示の取り消しなので、arm 済みの
 		// ワンショット報告を握りつぶす（後日の再開完了で古い報告が届かないように）。
 		reqBody, _ := json.Marshal(map[string]bool{"disarm_report": true})
-		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/halt", reqBody)
+		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/halt", reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "セッションの停止に失敗しました: "+err.Error())
 		}
@@ -1674,7 +1651,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		})
 		return mcpTextResult(req.ID, string(out))
 	case "restore_memory_snapshot":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはメモリの復元を許可されていません")
 		}
 		if a.Rev == "" && a.At == "" {
@@ -1690,37 +1667,37 @@ func mcpStdioCall(req mcpReq) []byte {
 			"rev": a.Rev, "at": a.At,
 			"scope": map[string]any{"all": a.All, "kinds": a.Kinds, "projects": a.Projects},
 		})
-		out, err := agentPOST("/agents/memory/restore", reqBody)
+		out, err := AgentPOST("/agents/memory/restore", reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "メモリの復元に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "resume_session":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの再開を許可されていません")
 		}
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
 		}
-		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/start", nil)
+		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/start", nil)
 		if err != nil {
 			return mcpToolErr(req.ID, "セッションの再開に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "archive_session":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはセッションのアーカイブを許可されていません")
 		}
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
 		}
-		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/archive", nil)
+		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/archive", nil)
 		if err != nil {
 			return mcpToolErr(req.ID, "セッションのアーカイブに失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "delete_worktree":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントは worktree の削除を許可されていません")
 		}
 		if a.Name == "" {
@@ -1737,7 +1714,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "delete_session":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの削除を許可されていません")
 		}
 		if a.Name == "" {
@@ -1753,7 +1730,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "delete_branch":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはブランチの削除を許可されていません")
 		}
 		if a.Repo == "" || a.Branch == "" {
@@ -1769,19 +1746,19 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "restore_cleanup_archive":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはアーカイブの復元を許可されていません")
 		}
 		if a.ID == "" {
 			return mcpToolErr(req.ID, "id（アーカイブ id）が必要です")
 		}
-		out, err := agentPOST("/cleanup/archives/"+url.PathEscape(a.ID)+"/restore", nil)
+		out, err := AgentPOST("/cleanup/archives/"+url.PathEscape(a.ID)+"/restore", nil)
 		if err != nil {
 			return mcpToolErr(req.ID, "アーカイブの復元に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "purge_cleanup_archive":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはアーカイブの完全削除を許可されていません")
 		}
 		if a.ID == "" {
@@ -1796,7 +1773,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "list_assistants":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントは他アシスタントへの相談を許可されていません")
 		}
 		out, err := agentGET("/assistants")
@@ -1805,14 +1782,14 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "ask_assistant":
-		if !mcpWriteEnabled {
+		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントは他アシスタントへの相談を許可されていません")
 		}
 		if a.Assistant == "" || a.Prompt == "" {
 			return mcpToolErr(req.ID, "assistant（相手）と prompt（相談内容）が必要です")
 		}
 		reqBody, _ := json.Marshal(map[string]string{"assistant": a.Assistant, "prompt": a.Prompt})
-		out, err := agentPOST("/chat/ask", reqBody)
+		out, err := AgentPOST("/chat/ask", reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "相談の実行に失敗しました: "+err.Error())
 		}
@@ -1952,7 +1929,7 @@ func isChromiumReadTool(name string) bool {
 }
 
 func mcpChromiumWriteEnabled() bool {
-	return mcpWriteEnabled || (mcpSelfReportOnly && mcpSessionChromiumEnabled)
+	return writeEnabled() || (selfReportOnly() && sessionChromiumEnabled())
 }
 
 func mcpListChromiumTargets(id json.RawMessage, port int) []byte {
@@ -2086,7 +2063,7 @@ func mcpRequestBrowserAction(id json.RawMessage, attachmentID, message, completi
 		req["sessionName"] = self
 	}
 	reqBody, _ := json.Marshal(req)
-	body, err := agentPOST("/browser/attachments/"+url.PathEscape(attachmentID)+"/handoff", reqBody)
+	body, err := AgentPOST("/browser/attachments/"+url.PathEscape(attachmentID)+"/handoff", reqBody)
 	if err != nil {
 		return mcpChromiumToolErr(id, "ブラウザ操作依頼の作成", err)
 	}
@@ -2137,7 +2114,7 @@ func mcpSetChromiumControlMode(id json.RawMessage, attachmentID, controlMode str
 		return mcpToolErr(id, "control_modeはview-only、user-control、lockedのいずれかです")
 	}
 	reqBody, _ := json.Marshal(map[string]string{"controlMode": controlMode})
-	body, err := agentPOST("/browser/attachments/"+url.PathEscape(attachmentID)+"/control-mode", reqBody)
+	body, err := AgentPOST("/browser/attachments/"+url.PathEscape(attachmentID)+"/control-mode", reqBody)
 	if err != nil {
 		return mcpChromiumToolErr(id, "Chromium control modeの変更", err)
 	}
@@ -2227,18 +2204,18 @@ func mcpChromiumToolErr(id json.RawMessage, action string, err error) []byte {
 	return mcpToolErr(id, action+"に失敗しました（Workspace Agentへ接続できません）")
 }
 
-// outputCursors remembers, per conversation, the last /output cursor returned for
+// OutputCursors remembers, per conversation, the last /output cursor returned for
 // each session（ファイル名 = 会話ID・中身 = セッション名→cursor）。since 省略時の
 // 既定にする: オペレーターは同じセッションを報告のたびに読み直すので、毎回 32KiB の
 // 末尾を取り直すとその全部がコンテキストに積み直される — 差分だけ返せば以降の
 // ターンが軽くなる。mcp-stdio はターン毎の短命プロセスなのでメモリではなくファイル
 // （会話削除時に chat.go が消す）。
-var outputCursors = fstore.JSON[map[string]int64](paths.AgentConfigDir, "mcp-output-cursor", ".json")
+var OutputCursors = fstore.JSON[map[string]int64](paths.AgentConfigDir, "mcp-output-cursor", ".json")
 
-// mcpSessionOutputTail is the effective get_session_output tail cap（設定 >
+// SessionOutputTail is the effective get_session_output tail cap（設定 >
 // アシスタント「セッション出力の取得上限」・ui-prefs assistantOutputTailKiB → 既定
-// mcpSessionOutputTailBytes）。
-func mcpSessionOutputTail() int {
+// SessionOutputTailBytes）。
+func SessionOutputTail() int {
 	if v, ok := readUIPrefs()["assistantOutputTailKiB"].(float64); ok && v > 0 {
 		n := int(v) << 10
 		if n < 4<<10 {
@@ -2249,7 +2226,7 @@ func mcpSessionOutputTail() int {
 		}
 		return n
 	}
-	return mcpSessionOutputTailBytes
+	return SessionOutputTailBytes
 }
 
 // mcpSessionOutput handles get_session_output: tail 上限を常時指定し、since 省略時は
@@ -2259,14 +2236,14 @@ func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 	fromStore := false
 	if since != nil {
 		eff = *since
-	} else if mcpConvID != "" {
-		if cur, ok := outputCursors.Read(mcpConvID); ok {
+	} else if convID() != "" {
+		if cur, ok := OutputCursors.Read(convID()); ok {
 			if v, ok2 := cur[name]; ok2 {
 				eff, fromStore = v, true
 			}
 		}
 	}
-	path := "/sessions/" + url.PathEscape(name) + "/output?tail=" + strconv.Itoa(mcpSessionOutputTail())
+	path := "/sessions/" + url.PathEscape(name) + "/output?tail=" + strconv.Itoa(SessionOutputTail())
 	if eff >= 0 {
 		path += fmt.Sprintf("&since=%d", eff)
 	}
@@ -2277,14 +2254,14 @@ func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 	var resp map[string]any
 	if json.Unmarshal([]byte(body), &resp) == nil {
 		// 返ってきた cursor を次回の既定 since として会話別に記憶する。
-		if cursor, ok := resp["cursor"].(float64); ok && mcpConvID != "" {
-			cur, _ := outputCursors.Read(mcpConvID)
+		if cursor, ok := resp["cursor"].(float64); ok && convID() != "" {
+			cur, _ := OutputCursors.Read(convID())
 			if cur == nil {
 				cur = map[string]int64{}
 			}
 			if cur[name] != int64(cursor) {
 				cur[name] = int64(cursor)
-				_ = outputCursors.Write(mcpConvID, cur)
+				_ = OutputCursors.Write(convID(), cur)
 			}
 		}
 		// 既定の続き読みで新規出力ゼロ — 空文字のまま返すと「何も出力していない
@@ -2353,11 +2330,11 @@ func cpMemoDo(method, path string, body []byte) (string, error) {
 	return string(b), nil
 }
 
-// cpScheduleDo calls the CP's /internal/schedules bridge over the public hairpin
+// CPScheduleDo calls the CP's /internal/schedules bridge over the public hairpin
 // (AF_CP_BASE_URL) authenticated by the per-membership AF_SCHEDULE_TOKEN — schedules
 // live in the CP store (docs/log/38), not the local Agent. Mirrors cpMemoDo; both env vars
 // are injected by the CP only when PUBLIC_BASE_URL is set.
-func cpScheduleDo(method, path string, body []byte) (string, error) {
+func CPScheduleDo(method, path string, body []byte) (string, error) {
 	base := os.Getenv("AF_CP_BASE_URL")
 	if base == "" || os.Getenv("AF_SCHEDULE_TOKEN") == "" {
 		return "", fmt.Errorf("定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）")
@@ -2386,11 +2363,11 @@ func cpScheduleDo(method, path string, body []byte) (string, error) {
 	return string(b), nil
 }
 
-// withOwnerConv stamps owner_conv onto a create_schedule body so the schedule's
+// WithOwnerConv stamps owner_conv onto a create_schedule body so the schedule's
 // completion reports (docs/log/30) land in the operator's own conversation. A client-
 // supplied owner_conv is overridden — the operator only ever reports to itself. On a
 // parse failure the original body is returned unchanged (the CP then validates it).
-func withOwnerConv(args json.RawMessage, conv string) []byte {
+func WithOwnerConv(args json.RawMessage, conv string) []byte {
 	var m map[string]any
 	if err := json.Unmarshal(args, &m); err != nil || m == nil {
 		return []byte(args)
@@ -2406,8 +2383,8 @@ func withOwnerConv(args json.RawMessage, conv string) []byte {
 // agentGET calls the local Agent REST with the shared AGENT_TOKEN.
 func agentGET(path string) (string, error) { return agentDo(http.MethodGet, path, nil) }
 
-// agentPOST calls the local Agent REST with a JSON body and the shared AGENT_TOKEN.
-func agentPOST(path string, body []byte) (string, error) {
+// AgentPOST calls the local Agent REST with a JSON body and the shared AGENT_TOKEN.
+func AgentPOST(path string, body []byte) (string, error) {
 	return agentDo(http.MethodPost, path, body)
 }
 
@@ -2453,11 +2430,11 @@ func agentDoTimeoutHeaders(method, path string, body []byte, timeout time.Durati
 	return string(b), nil
 }
 
-// createSessionKey derives a STABLE idempotency key from the launch intent so the LLM
+// CreateSessionKey derives a STABLE idempotency key from the launch intent so the LLM
 // re-issuing create_session with the same arguments reproduces it — that is what lets a
 // timed-out-then-retried create collapse onto the first session (see session_idempotency.go).
 // Scoped by the conversation id so unrelated conversations never collide.
-func createSessionKey(conv, dir, subdir, kind, model, prompt string, worktree bool, branch, newBranch string) string {
+func CreateSessionKey(conv, dir, subdir, kind, model, prompt string, worktree bool, branch, newBranch string) string {
 	h := sha256.New()
 	for _, f := range []string{conv, dir, subdir, kind, model, prompt, strconv.FormatBool(worktree), branch, newBranch} {
 		h.Write([]byte(f))
@@ -2570,11 +2547,11 @@ func (e *agentHTTPError) hasCode(code string) bool {
 	return e.code() == code
 }
 
-// agentSendToSession makes the orchestration contract atomic from the model's point
+// AgentSendToSession makes the orchestration contract atomic from the model's point
 // of view: try delivery, resume only on the explicit stopped-state response, then
 // retry delivery. Other conflicts (for example question_pending) remain errors and
 // can never be reported as successful sends.
-func agentSendToSession(name string, body []byte) (out string, resumed bool, err error) {
+func AgentSendToSession(name string, body []byte) (out string, resumed bool, err error) {
 	inputPath := "/sessions/" + url.PathEscape(name) + "/input"
 	state, err := agentSessionStatus(name)
 	if err != nil {
@@ -2585,7 +2562,7 @@ func agentSendToSession(name string, body []byte) (out string, resumed bool, err
 	}
 	// /input with confirm (配達検証) blocks until the turn provably started — up to two
 	// evidence windows plus one self-heal — so the client budget must exceed the
-	// server-side worst case (agentPOST's default 15s does not).
+	// server-side worst case (AgentPOST's default 15s does not).
 	out, err = agentDoTimeout(http.MethodPost, inputPath, body, 45*time.Second)
 	if err == nil {
 		return out, false, nil
@@ -2600,14 +2577,14 @@ func agentSendToSession(name string, body []byte) (out string, resumed bool, err
 }
 
 func agentResumeAndSend(name, inputPath string, body []byte) (out string, resumed bool, err error) {
-	if _, err = agentPOST("/sessions/"+url.PathEscape(name)+"/start", nil); err != nil {
+	if _, err = AgentPOST("/sessions/"+url.PathEscape(name)+"/start", nil); err != nil {
 		return "", false, fmt.Errorf("停止中セッションの再開に失敗しました: %w", err)
 	}
 	if err = agentWaitSessionReady(name, 30*time.Second, 500*time.Millisecond); err != nil {
 		return "", true, err
 	}
 	// 45s for the same reason as the alive path: /input with confirm blocks until the
-	// prompt provably became a turn (配達検証), beyond agentPOST's default 15s.
+	// prompt provably became a turn (配達検証), beyond AgentPOST's default 15s.
 	out, err = agentDoTimeout(http.MethodPost, inputPath, body, 45*time.Second)
 	if err != nil {
 		return "", true, fmt.Errorf("再開後の送信に失敗しました: %w", err)
