@@ -1,4 +1,4 @@
-package main
+package memoryx
 
 import (
 	"archive/tar"

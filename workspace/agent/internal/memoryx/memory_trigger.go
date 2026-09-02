@@ -1,4 +1,4 @@
-package main
+package memoryx
 
 // エージェントメモリの版管理（docs/log/39 / ADR 0022）— 自動 snapshot の契機。
 //

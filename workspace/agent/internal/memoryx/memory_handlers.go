@@ -1,4 +1,4 @@
-package main
+package memoryx
 
 // エージェントメモリの版管理（docs/log/39 / ADR 0022）— REST
 // （P1: roots / snapshots / diff、P2: tree / restore / settings、P3: export / import）。

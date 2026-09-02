@@ -1,4 +1,4 @@
-package main
+package memoryx
 
 // エージェントメモリの版管理（docs/log/39 ⑤ / ADR 0022 決定 5）— export。
 //
