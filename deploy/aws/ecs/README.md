@@ -467,6 +467,68 @@ probe fails, the CP reports "unknown", and the badge simply never appears — a
 silent loss, not an error. A deployment whose `AF_ECS_WORKSPACE_IMAGE` is not an
 ECR reference (mirroring GHCR directly, say) gets no badge either, by design.
 
+## The 51,200-byte wall (why a deploy can stop working without anyone touching it)
+
+CloudFormation refuses a template body over **51,200 bytes**; anything larger has to be
+handed over through S3. `cfn/30-ingress.yaml` crossed that line on **2026-09-01** (PR #277,
+RDS managed-password rotation: 50,191 → 54,681 bytes), and at that moment **every path that
+deploys it stopped working** — `standup.sh` (build it) and `update.sh` (every release,
+production included), because both call the same `cloudformation deploy --template-file`.
+
+It was found on 2026-09-02, by the first stand-up since. Three things kept it hidden:
+
+1. **The AWS CLI refuses on file size before it calls the API.** The failure is a CLI error,
+   not a CloudFormation one, so there is nothing in the stack events to find.
+2. **`update.sh` looked healthy.** It only ever overrides `ImageTag`, so people think of it
+   as a parameter change — but it passes the whole template on every run, so it was equally
+   broken.
+3. **The stand-up path had never been exercised end to end.** Creating `30-ingress` is the
+   only operation that had not been run since the growth.
+
+★ The general rule this is an instance of: **a deployment script is only verified along the
+paths somebody actually runs.** Green unit tests do not touch it, and a path that is skipped
+because "it obviously still works" is exactly the one that rots. That is why the fix is not
+just "big templates go to S3":
+
+- `env.sh`'s **`af_cfn_deploy` is the only entry point** to `cloudformation deploy`, and it
+  **measures the file on every call**. Remembering that "30-ingress is the big one" would
+  reproduce the incident on whichever template grows next.
+- The staging bucket lives in **20-platform** (created before 30-ingress, outlives it;
+  putting it in 30-ingress would need the bucket to deploy the stack that creates it).
+  Objects expire after 7 days.
+- `teardown.sh` **empties the bucket before deleting 20-platform** — CloudFormation cannot
+  delete a non-empty bucket, and a teardown that dies half-way is how "the create path is
+  never exercised" gets reproduced.
+- `deploy/local/ecs-lifecycle-stub-test.sh` cases **3b / 3c** run both of those on every CI
+  run, against a deliberately padded template. A fix nobody executes is the original bug.
+
+### Round trip, measured (2026-09-02)
+
+Teardown → stand-up had never been done end to end. It has now, on the dev deployment, at
+`0.14.3-dev-ecbbcc59`:
+
+| Step | Result |
+|---|---|
+| `dev-image.yml`, `image=both`, 2 architectures | ~11 min; both images are `[amd64, arm64]` indexes |
+| `standup.sh` 00 → 10 → 20 → images → 40 → 30 | `30-ingress` went through S3, `CREATE_COMPLETE` |
+| CP boot | `metadata store: postgres`, `/readyz` 200 |
+| Agent, both architectures | golden bake booted real workspaces: `Agent healthy` 99 s (arm64) / 101 s (x86_64) |
+| CP → Agent | the Cloud Map fallback fired and succeeded: `Service Connect の別名で引けなかった → Cloud Map の 10.20.x.x:7700 を使う` |
+| `teardown.sh` | 5 stacks gone; sweep and an independent count both show 0 stacks / 0 NAT / 0 RDS / 0 ALB / 0 EC2 / 0 EFS / 0 ECR |
+
+⚠️ **Check `/readyz`, not `/healthz`.** `/healthz` answers 200 with a dead database — that is
+how the RDS rotation outage stayed silent for so long. `/readyz` is the one that touches it.
+
+Two rough edges found on the way, still open:
+
+- **`standup.sh`'s preflight now compares the capture against the templates** (parameters with
+  no `Default` must be present). It previously checked only that the capture *files existed*,
+  so a capture older than the templates would fail **after** 00–20 were already built — the
+  most expensive moment to find out.
+- **`teardown.sh`'s bucket-emptying step discards the reason it failed** (`>/dev/null 2>&1
+  || echo "(skip: …)"`). It worked on this round trip, but if it ever prints `(skip: …)` the
+  next thing to fail is the 20-platform delete, with no clue why.
+
 ## Egress IP (the address a customer allow-lists)
 
 A deployment egresses from **exactly one address**: the Elastic IP on `00-network`'s
@@ -489,8 +551,25 @@ Inbound is the FQDN's job.
 
 **Keeping the address across a rebuild.** `NatEip` carries `DeletionPolicy: Retain`
 and `UpdateReplacePolicy: Retain`, so no stack operation — including a full
-`teardown.sh` — can release it. Capture the allocation id (`capture-env.sh` stores
-it as a `00-network` parameter) and pass it back at the next stand-up:
+`teardown.sh` — can release it. Capture the allocation id and pass it back at the next
+stand-up:
+
+🔴 **`capture-env.sh` does not carry it after a stand-up that created the EIP itself.**
+It saves stack **Parameters**, and in that case `NatEipAllocationId` *is* the empty
+parameter that selected the `CreateNatEip` branch — the real id exists only as the
+stack **Output**. So the sequence "stand up (new EIP) → tear down → stand up again"
+allocates a **second** EIP and orphans the first: a silent change of the address every
+customer allow-listed, plus ~$3.6/month per orphan. Measured on 2026-09-02: after one
+round trip the account held one unassociated `af-…-nat-eip` and the capture had no
+`NatEipAllocationId` line. **Re-capture (or read the Output and write the line by hand)
+while the deployment is still up**, before tearing it down:
+
+```bash
+aws cloudformation describe-stacks --stack-name af-ecs-network \
+  --query "Stacks[0].Outputs[?OutputKey=='NatEipAllocationId'].OutputValue" --output text
+# -> NatEipAllocationId=eipalloc-... into ~/.config/agent-fleet/deploy/<p>.<r>/params/00-network
+```
+
 
 ```bash
 aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
