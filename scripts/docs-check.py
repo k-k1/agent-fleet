@@ -1077,13 +1077,17 @@ def check_ref(f: Findings) -> None:
                 + ", ".join(missing)
             )
 
-    targets = os.path.join(GUIDE, "ref", "deploy-targets.md")
-    if os.path.exists(targets):
+    # ⚠️ 両言語をまわす。英語版だけを見ていた頃は、`.ja.md` の表を壊しても緑だった
+    # （10 行上の設定タブ検査は最初からループしている——同じ形に揃えただけ）。
+    for name in ("deploy-targets.md", "deploy-targets.ja.md"):
+        targets = os.path.join(GUIDE, "ref", name)
+        if not os.path.exists(targets):
+            continue
         rows = {c.strip("`*") for c in table_first_column(targets)}
         for group in source_runtime_groups():
             if not (group & rows):
                 f.error(
-                    "ref/deploy-targets.md: コードにある形態が表に無い -> "
+                    f"ref/{name}: コードにある形態が表に無い -> "
                     + "|".join(sorted(group))
                 )
 
