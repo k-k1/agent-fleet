@@ -9,8 +9,7 @@ import type { CSSProperties, FocusEvent, KeyboardEvent, ReactNode } from "react"
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
 import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
-import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat, isDrawioFile, isPdfFile, documentFormat, documentLabel } from "../../lib/filemeta.ts";
-import FileIcon from "../../ui/FileIcon.tsx";
+import { baseName, langFor, humanSize, countLines, isMarpDoc, imageFormat, isDrawioFile, isPdfFile, documentFormat } from "../../lib/filemeta.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
@@ -27,6 +26,15 @@ import { PdfView } from "./PdfView.tsx";
 import { DocPreview } from "./DocPreview.tsx";
 import { DrawioView, type DrawioState } from "./DrawioView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
+import {
+  FileDiagramControls,
+  FileEditControls,
+  FileHeadMeta,
+  FileHeadPath,
+  FileImageModeToggle,
+  FileMarkdownControls,
+  FileReaderButton,
+} from "./parts/FileHeadControls.tsx";
 import { EditorResolutionPanel } from "./parts/EditorResolutionPanel.tsx";
 import { EditorSuggestPanel } from "./parts/EditorSuggestPanel.tsx";
 import type { LineMarks } from "./CodeView.tsx";
@@ -40,9 +48,7 @@ import { useDebounced } from "../../lib/useDebounced.ts";
 import { revisionOf, type BufferValidationError } from "../editor/buffer.ts";
 import {
   cycleFileMode,
-  diagramModeControls,
   initialFileMode,
-  markdownModeControls,
   paneModeOf,
   reconcileFileMode,
   rendererControls,
@@ -818,210 +824,70 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     // grew. Mouse selection keeps its instant onMouseUp (one event per drag).
     <div className="fileview" style={viewerStyle} ref={bodyRef} onFocusCapture={onFocusCapture} onMouseUp={captureSelection}>
       <ViewHead className="fileinfo" actions={headerActions}>
-        <span className="fi-name mono">
-          <FileIcon name={baseName(filePath)} /> {baseName(filePath)}
-        </span>
-        {isImage ? (
-          <span className="fi-tag">{imgFmt.toUpperCase()}</span>
-        ) : isPdf ? (
-          <span className="fi-tag">PDF</span>
-        ) : isDoc ? (
-          <span className="fi-tag">{documentLabel(filePath)}</span>
-        ) : isText ? (
-          <span className="fi-tag">{langLabel(filePath)}</span>
-        ) : null}
-        <span className="fi-meta muted">
-          {humanSize(data?.size)}
-          {isImage && imgDims ? ` · ${imgDims.w}×${imgDims.h}` : ""}
-          {isPdf && pdfPages != null ? tr("view.pdf.pages_meta", { n: pdfPages }) : ""}
-          {!isImage && !isPdf && !isDoc && isText ? tr("view.lines_meta", { n: lines }) : ""}
-          {data?.truncated ? tr("view.head_only") : ""}
-        </span>
-        {huge && (
-          <span className="fi-tag" title={tr("view.plain_mode_tip")}>
-            {tr("view.plain_mode")}
-          </span>
-        )}
-        {data?.lfs && (
-          <span className="fi-tag" title={tr("view.lfs_tip")}>
-            {tr("view.lfs_pointer")}
-          </span>
-        )}
+        <FileHeadMeta
+          filePath={filePath}
+          size={data?.size}
+          truncated={data?.truncated}
+          lfs={data?.lfs}
+          imgFmt={imgFmt}
+          isPdf={isPdf}
+          isDoc={isDoc}
+          isText={isText}
+          imgDims={imgDims}
+          pdfPages={pdfPages}
+          lines={lines}
+          huge={huge}
+        />
         {canEdit && (
-          <>
-            {/* Non-Markdown keeps the view/edit tablist. Markdown drives the same
-                pane layer from its own top-level button group below, so the two
-                control kinds never appear together (docs/log/44 §1.1, §5). */}
-            {fileMode.kind === "plain" && (
-              <div
-                className="ui-seg sm file-mode-tabs"
-                role="tablist"
-                aria-label={tr("editor.mode_group")}
-                onKeyDown={onModeKeyDown}
-              >
-                <button
-                  ref={viewTabRef}
-                  type="button"
-                  className={"seg-btn" + (paneMode === "view" ? " active" : "")}
-                  role="tab"
-                  aria-selected={paneMode === "view"}
-                  tabIndex={paneMode === "view" ? 0 : -1}
-                  onClick={() => changeMode("view")}
-                >
-                  {tr("editor.mode.view")}
-                </button>
-                <button
-                  ref={editTabRef}
-                  type="button"
-                  className={"seg-btn" + (paneMode === "edit" ? " active" : "")}
-                  role="tab"
-                  aria-selected={paneMode === "edit"}
-                  tabIndex={paneMode === "edit" ? 0 : -1}
-                  onClick={() => changeMode("edit")}
-                >
-                  {tr("editor.mode.edit")}
-                </button>
-              </div>
-            )}
-            <button
-              type="button"
-              className="file-save-btn"
-              disabled={
-                !editor.model?.dirty ||
-                phase === "saving" ||
-                phase === "conflict" ||
-                phase === "conflict_remote_unavailable" ||
-                phase === "save_state_unknown"
-              }
-              onClick={() => {
-                setEditorNotice("");
-                void editor.save();
-              }}
-              title={tr("editor.save_tip")}
-            >
-              <Icon name={phase === "saving" ? "loading" : "save"} spin={phase === "saving"} /> {tr("editor.save")}
-            </button>
-            <button
-              type="button"
-              className="file-save-btn file-suggest-btn"
-              disabled={editorAlert || phase === "saving" || editor.suggesting}
-              onClick={() => setSuggestOpen(true)}
-              title={tr("editor.suggestion.button_tip")}
-            >
-              <Icon name={editor.suggesting ? "loading" : "sparkle"} spin={editor.suggesting} />{" "}
-              {tr("editor.suggestion.button")}
-            </button>
-          </>
+          <FileEditControls
+            showTabs={fileMode.kind === "plain"}
+            paneMode={paneMode}
+            viewTabRef={viewTabRef}
+            editTabRef={editTabRef}
+            onModeKeyDown={onModeKeyDown}
+            onChangeMode={changeMode}
+            saveDisabled={
+              !editor.model?.dirty ||
+              phase === "saving" ||
+              phase === "conflict" ||
+              phase === "conflict_remote_unavailable" ||
+              phase === "save_state_unknown"
+            }
+            saving={phase === "saving"}
+            suggestDisabled={editorAlert || phase === "saving" || editor.suggesting}
+            suggesting={editor.suggesting}
+            onSave={() => {
+              setEditorNotice("");
+              void editor.save();
+            }}
+            onSuggest={() => setSuggestOpen(true)}
+          />
         )}
         {fileMode.kind === "diagram" && (
-          <>
-            <span
-              ref={modeGroupRef}
-              className="ui-seg sm md-toggle"
-              role="group"
-              aria-label={tr("view.diagram_display_mode")}
-            >
-              {diagramModeControls(fileMode, caps).map((control) => (
-                <button
-                  key={control.mode}
-                  type="button"
-                  aria-pressed={control.pressed}
-                  className={"seg-btn" + (control.pressed ? " active" : "")}
-                  onClick={() => changeDiagramMode(control.mode)}
-                >
-                  {control.mode === "figure"
-                    ? tr("view.diagram")
-                    : // 編集面が無いときは読み取り専用の「ソース」と名乗る
-                      control.readOnlySource
-                      ? tr("view.source")
-                      : tr("editor.mode.edit")}
-                </button>
-              ))}
-            </span>
-            {surfaces.diagram && diagramState && (
-              <span className="fi-meta muted">
-                {diagramState.pages > 1
-                  ? tr("view.diagram_page", { page: diagramState.page, pages: diagramState.pages })
-                  : ""}
-                {diagramState.scale !== 1 ? ` ${Math.round(diagramState.scale * 100)}%` : ""}
-              </span>
-            )}
-          </>
+          <FileDiagramControls
+            fileMode={fileMode}
+            caps={caps}
+            modeGroupRef={modeGroupRef}
+            onChangeMode={changeDiagramMode}
+            showState={surfaces.diagram}
+            diagramState={diagramState}
+          />
         )}
         {fileMode.kind === "markdown" && (
-          <>
-            <span
-              ref={modeGroupRef}
-              className="ui-seg sm md-toggle"
-              role="group"
-              aria-label={tr("view.markdown_display_mode")}
-            >
-              {markdownModeControls(fileMode, caps).map((control) => (
-                <button
-                  key={control.mode}
-                  type="button"
-                  aria-pressed={control.pressed}
-                  className={"seg-btn" + (control.pressed ? " active" : "")}
-                  onClick={() => changeMarkdownMode(control.mode)}
-                >
-                  {control.mode === "split"
-                    ? tr("editor.mode.split")
-                    : control.mode === "preview"
-                      ? tr("view.preview")
-                      : // Without an edit surface this is the read-only source
-                        // view the pane has always offered — say so.
-                        control.readOnlySource
-                        ? tr("view.source")
-                        : tr("editor.mode.edit")}
-                </button>
-              ))}
-            </span>
-            {renderers.length > 0 && (
-              <span className="ui-seg sm md-toggle" role="group" aria-label={tr("editor.renderer_group")}>
-                {renderers.map((control) => (
-                  <button
-                    key={control.renderer}
-                    type="button"
-                    aria-pressed={control.pressed}
-                    className={"seg-btn" + (control.pressed ? " active" : "")}
-                    onClick={() => changeRenderer(control.renderer)}
-                  >
-                    {control.renderer === "slides" ? tr("view.slides") : tr("editor.renderer.doc")}
-                  </button>
-                ))}
-              </span>
-            )}
-          </>
+          <FileMarkdownControls
+            fileMode={fileMode}
+            caps={caps}
+            modeGroupRef={modeGroupRef}
+            onChangeMode={changeMarkdownMode}
+            renderers={renderers}
+            onChangeRenderer={changeRenderer}
+          />
         )}
-        {isImage && isText && (
-          <span className="ui-seg sm md-toggle" role="group" aria-label={tr("view.image_display_mode")}>
-            <button type="button" aria-pressed={imgMode === "preview"} className={"seg-btn" + (imgMode === "preview" ? " active" : "")} onClick={() => setImgMode("preview")}>
-              {tr("view.preview")}
-            </button>
-            <button type="button" aria-pressed={imgMode === "source"} className={"seg-btn" + (imgMode === "source" ? " active" : "")} onClick={() => setImgMode("source")}>
-              {tr("view.source")}
-            </button>
-          </span>
-        )}
+        {isImage && isText && <FileImageModeToggle mode={imgMode} onChange={setImgMode} />}
         {/* 図には朗読を出さない。読み上げる本文が無く（あるのは mxfile の XML）、
             押しても意味のある結果にならない —— 能力が無いなら操作要素を出さない。 */}
-        {isText && !huge && !isDiagram && (
-          <span className="ui-seg sm md-toggle">
-            <button type="button" className="seg-btn" onClick={openReader} title={tr("view.open_reader_tip")}>
-              <Icon name="book" /> {tr("view.read_aloud")}
-            </button>
-          </span>
-        )}
-        {/* One flex child so path + download wrap (fileinfo flex-wrap) together —
-            never the lone download icon on its own line. */}
-        <span className="fi-end">
-          <span className="fi-path muted" title={filePath}>
-            {filePath}
-          </span>
-          <a className="fi-dl" href={downloadURL(filePath)} download={baseName(filePath)} title={tr("view.download")}>
-            <Icon name="cloud-download" />
-          </a>
-        </span>
+        {isText && !huge && !isDiagram && <FileReaderButton onOpen={openReader} />}
+        <FileHeadPath filePath={filePath} />
       </ViewHead>
 
       {canEdit && (
