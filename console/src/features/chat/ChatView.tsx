@@ -11,13 +11,12 @@ import { useTtsStore } from "../../core/store/tts.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useChatStore } from "./store.ts";
 import { chatGet, chatStream, chatStop, chatCreate, chatCompact, chatSetAgent, assistantGet, chatPasteImage, chatSuggestReplies } from "./api.ts";
-import { errText, raw, isTransientErr } from "../../core/api/client.ts";
+import { errText, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
 import { useDragScroll } from "../../lib/dragScroll.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
-import { fmtDateTime } from "../../lib/intl.ts";
 import { prettyModel } from "../../lib/modelName.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
@@ -68,6 +67,9 @@ import { getCachedConns, subscribeConns } from "../repos/connsCache.ts";
 import { assistantName, assistantDesc } from "./assistantI18n.ts";
 import { noticeText } from "./notice.ts";
 import { reportText } from "./report.ts";
+import { formatMsgTS } from "./parts/chatFormat.ts";
+import { ChatCopyButton } from "./parts/ChatCopyButton.tsx";
+import { ChatPastedThumb } from "./parts/ChatPastedThumb.tsx";
 import { kindClass } from "../../lib/sessionkind.ts";
 import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
@@ -2013,80 +2015,5 @@ function AssistantTurn({
         <ChatCopyButton text={text} />
       </div>
     </>
-  );
-}
-
-// formatMsgTS renders a unix-millis timestamp as local "MM/DD HH:MM" — same shape as
-// MirrorView's turn footer (date kept so a thread that spans days stays unambiguous).
-const formatMsgTS = (ms: number) => fmtDateTime(ms);
-
-// ChatCopyButton copies the reply's RAW Markdown (not the rendered HTML) to the
-// clipboard — same behavior as MirrorView's CopyButton.
-function ChatCopyButton({ text }: { text: string }) {
-  const tr = useT();
-  const [done, setDone] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setDone(true);
-      setTimeout(() => setDone(false), 1500);
-    } catch {
-      /* clipboard blocked (insecure context / permission) — no-op */
-    }
-  };
-  return (
-    <button type="button" className="ghost cm-copy" title={tr("chat.copy_md_title")} onClick={copy}>
-      <Icon name={done ? "check" : "copy"} /> {done ? tr("chat.copied") : tr("chat.copy")}
-    </button>
-  );
-}
-
-// ChatPastedThumb previews a pasted image referenced in a chat turn. It fetches the bytes
-// through the authenticated API wrapper (an <img src> can't carry the tenant header) into
-// an object URL; clicking opens the full image in a new tab.
-function ChatPastedThumb({ convId, name }: { convId: string; name: string }) {
-  const tr = useT();
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    let obj = "";
-    raw(`api/chat/conversations/${encodeURIComponent(convId)}/pasted/${encodeURIComponent(name)}`)
-      .then((r) => (r.ok ? r.blob() : null))
-      .then((b) => {
-        if (!alive) return;
-        if (!b) {
-          setFailed(true);
-          return;
-        }
-        obj = URL.createObjectURL(b);
-        setUrl(obj);
-      })
-      .catch(() => {
-        if (alive) setFailed(true);
-      });
-    return () => {
-      alive = false;
-      if (obj) URL.revokeObjectURL(obj);
-    };
-  }, [convId, name]);
-  if (failed) {
-    return (
-      <span className="chat-img chat-img-loading" title={tr("chat.preview_failed")}>
-        <Icon name="file-media" />
-      </span>
-    );
-  }
-  if (!url) {
-    return (
-      <span className="chat-img chat-img-loading">
-        <Icon name="loading" spin />
-      </span>
-    );
-  }
-  return (
-    <button type="button" className="chat-img" title={tr("chat.click_to_zoom")} onClick={() => window.open(url, "_blank", "noopener")}>
-      <img src={url} alt={tr("chat.pasted_image_alt")} />
-    </button>
   );
 }
