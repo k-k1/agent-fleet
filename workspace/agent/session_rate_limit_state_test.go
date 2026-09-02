@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,9 +50,25 @@ func paneShowing(t *testing.T, name, frame string) session.Meta {
 	return m
 }
 
+// tmuxSocketSeq は隔離 tmux サーバに**毎回違う名前**を与える連番。
+var tmuxSocketSeq atomic.Int64
+
 func isolateAgentState(t *testing.T) {
 	t.Helper()
-	t.Setenv("AF_TMUX_SOCKET", fmt.Sprintf("af-test-%d", os.Getpid()))
+	// 🔥 **ソケット名はテストごとに変える。** 以前は `af-test-<pid>` 固定で、この隔離を
+	// 使う 4 ファイルの全テスト（と同じ名前を使う shutdown_isolation_test.go）が
+	// **1 つの tmux サーバを共有**していた。各テストの Cleanup は `kill-server` を撃つが、
+	// **tmux はコマンドを受け取った時点で返り、サーバの終了は非同期**である。だから次の
+	// テストの `new-session` が死にかけのサーバへ繋がり、`server exited unexpectedly` で
+	// 落ちる —— テスト本体とは無関係な、理由の見えない赤になる。
+	//
+	// 窓は負荷が高いほど広がる（実測 2026-09-02: 無負荷の `-count=30` では 0 回、CPU 負荷
+	// 6 本の下の `-count=40` では 7 回。落ちたのは TestDriveStateIdlePaneNotBlocked と
+	// TestDriveStateAuthValid ＝ **実 CI の run 33584943716 で落ちたのと同じ形**）。
+	//
+	// 連番まで入れるのは `-count=N` のため: テスト名だけだと、同じ名前の**前の周回**の
+	// kill-server と競る。
+	t.Setenv("AF_TMUX_SOCKET", fmt.Sprintf("af-test-%d-%d", os.Getpid(), tmuxSocketSeq.Add(1)))
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	// status ストアは HOME 直下（paths.AgentConfigDir）— 実フリートのマーカーを書かない。
 	t.Setenv("HOME", t.TempDir())
