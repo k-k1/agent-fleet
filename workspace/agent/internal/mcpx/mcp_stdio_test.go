@@ -211,7 +211,7 @@ func TestMCPCreateSessionForwardsWorktreeOptions(t *testing.T) {
 		t.Fatal("empty MCP response")
 	}
 
-	body := <-got
+	body := awaitHit(t, got, "create_session")
 	if body["worktree"] != true || body["branch"] != "main" || body["new_branch"] != "feat/mcp-wt" {
 		t.Fatalf("forwarded body = %#v", body)
 	}
@@ -325,7 +325,7 @@ func TestMCPCleanupToolsRelay(t *testing.T) {
 	// list_cleanup_candidates works WITHOUT --write (read tool).
 	withWriteEnabled(t, false)
 	call("list_cleanup_candidates", "")
-	if h := <-got; h.method != "GET" || h.path != "/sessions/cleanup" {
+	if h := awaitHit(t, got, "list_cleanup_candidates"); h.method != "GET" || h.path != "/sessions/cleanup" {
 		t.Fatalf("list_cleanup_candidates hit %s %s", h.method, h.path)
 	}
 	// The write tools are refused read-only and never reach the Agent.
@@ -349,11 +349,11 @@ func TestMCPCleanupToolsRelay(t *testing.T) {
 	withWriteEnabled(t, true)
 
 	call("archive_session", "slot01")
-	if h := <-got; h.method != "POST" || h.path != "/sessions/slot01/archive" {
+	if h := awaitHit(t, got, "archive_session"); h.method != "POST" || h.path != "/sessions/slot01/archive" {
 		t.Fatalf("archive_session hit %s %s", h.method, h.path)
 	}
 	call("delete_worktree", "app@wip-x")
-	h := <-got
+	h := awaitHit(t, got, "delete_worktree")
 	if h.method != "DELETE" || h.path != "/repos/app@wip-x" {
 		t.Fatalf("delete_worktree hit %s %s", h.method, h.path)
 	}
@@ -366,26 +366,26 @@ func TestMCPCleanupToolsRelay(t *testing.T) {
 
 	// delete_session reclaims (jsonl) → DELETE /sessions/{name}?reclaim=1.
 	call("delete_session", "slot9")
-	if h = <-got; h.method != "DELETE" || h.path != "/sessions/slot9" || h.query != "reclaim=1" {
+	if h = awaitHit(t, got, "delete_session"); h.method != "DELETE" || h.path != "/sessions/slot9" || h.query != "reclaim=1" {
 		t.Fatalf("delete_session hit %s %s?%s", h.method, h.path, h.query)
 	}
 	// delete_branch → DELETE /repos/{repo}/branch?branch=<name> (slash-safe query).
 	dbArgs, _ := json.Marshal(map[string]any{"repo": "app", "branch": "temp/wip-x"})
 	dbParams, _ := json.Marshal(map[string]any{"name": "delete_branch", "arguments": json.RawMessage(dbArgs)})
 	mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: dbParams})
-	if h = <-got; h.method != "DELETE" || h.path != "/repos/app/branch" || h.query != "branch=temp%2Fwip-x" {
+	if h = awaitHit(t, got, "delete_branch"); h.method != "DELETE" || h.path != "/repos/app/branch" || h.query != "branch=temp%2Fwip-x" {
 		t.Fatalf("delete_branch hit %s %s?%s", h.method, h.path, h.query)
 	}
 	// restore / purge cleanup archives.
 	idArgs, _ := json.Marshal(map[string]any{"id": "20260720-090000-slot9"})
 	restoreParams, _ := json.Marshal(map[string]any{"name": "restore_cleanup_archive", "arguments": json.RawMessage(idArgs)})
 	mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: restoreParams})
-	if h = <-got; h.method != "POST" || h.path != "/cleanup/archives/20260720-090000-slot9/restore" {
+	if h = awaitHit(t, got, "restore_cleanup_archive"); h.method != "POST" || h.path != "/cleanup/archives/20260720-090000-slot9/restore" {
 		t.Fatalf("restore hit %s %s", h.method, h.path)
 	}
 	purgeParams, _ := json.Marshal(map[string]any{"name": "purge_cleanup_archive", "arguments": json.RawMessage(idArgs)})
 	mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: purgeParams})
-	if h = <-got; h.method != "DELETE" || h.path != "/cleanup/archives/20260720-090000-slot9" {
+	if h = awaitHit(t, got, "purge_cleanup_archive"); h.method != "DELETE" || h.path != "/cleanup/archives/20260720-090000-slot9" {
 		t.Fatalf("purge hit %s %s", h.method, h.path)
 	}
 }
@@ -424,7 +424,7 @@ func TestMCPStopResumeSessionRelay(t *testing.T) {
 	if resp := call("stop_session", "slot01"); string(resp) == "" {
 		t.Fatal("empty stop_session response")
 	}
-	h := <-got
+	h := awaitHit(t, got, "stop_session")
 	if h.path != "POST /sessions/slot01/halt" {
 		t.Fatalf("stop_session hit %q, want POST /sessions/slot01/halt", h.path)
 	}
@@ -435,7 +435,7 @@ func TestMCPStopResumeSessionRelay(t *testing.T) {
 	if resp := call("resume_session", "slot01"); string(resp) == "" {
 		t.Fatal("empty resume_session response")
 	}
-	if h = <-got; h.path != "POST /sessions/slot01/start" {
+	if h = awaitHit(t, got, "resume_session"); h.path != "POST /sessions/slot01/start" {
 		t.Fatalf("resume_session hit %q, want POST /sessions/slot01/start", h.path)
 	}
 
