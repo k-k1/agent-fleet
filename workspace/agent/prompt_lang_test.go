@@ -14,6 +14,7 @@ import (
 	"testing"
 	"unicode"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -53,7 +54,7 @@ func enPrompts() []langPrompt {
 		{Role: "user", Text: "使用量のグラフを作りたい"},
 		{Role: "assistant", Text: "台帳を設計します。どちらで進める?"},
 	}
-	msgs := []chatMessage{{Role: "user", Content: "使用量のグラフを作りたい"}}
+	msgs := []chatx.ChatMessage{{Role: "user", Content: "使用量のグラフを作りたい"}}
 	return []langPrompt{
 		{"replySuggestPersona", replySuggestPersona},
 		{"replySuggestInstructions/session", func(l string) string {
@@ -68,26 +69,26 @@ func enPrompts() []langPrompt {
 			return promptFrame(replySuggestPrompt(turns, l), replySuggestLogHeader(l))
 		}},
 		{"chatReplySuggestPrompt/frame", func(l string) string {
-			return promptFrame(chatReplySuggestPrompt(msgs, l), replySuggestLogHeader(l))
+			return promptFrame(chatx.ChatReplySuggestPrompt(msgs, l), replySuggestLogHeader(l))
 		}},
-		{"compactSummaryPromptFor", compactSummaryPromptFor},
-		{"handoffPreambleFor", handoffPreambleFor},
-		{"planShapeFor", planShapeFor},
-		{"planUpdateInstructionFor", planUpdateInstructionFor},
-		{"planPreambleFor", planPreambleFor},
-		{"planTruncatedNote", planTruncatedNote},
-		{"planRefreshPersonaFor", planRefreshPersonaFor},
-		{"planRefreshInstructions/新規", func(l string) string { return planRefreshInstructions("", l) }},
-		{"planRefreshInstructions/差分更新", func(l string) string { return planRefreshInstructions("plan body", l) }},
-		{"planContextHeader", planContextHeader},
-		{"chatPersonaFor", chatPersonaFor},
-		{"verbPersona/translate", func(l string) string { return verbPersona("translate", l) }},
-		{"verbPersona/summarize", func(l string) string { return verbPersona("summarize", l) }},
-		{"seedFor/translate", func(l string) string { return seedFor("translate", "/w/a.md", false, l) }},
-		{"seedFor/summarize", func(l string) string { return seedFor("summarize", "/w/a.md", false, l) }},
-		{"seedFor/ask", func(l string) string { return seedFor("", "/w/a.md", false, l) }},
-		{"seedFor/dir", func(l string) string { return seedFor("", "/w", true, l) }},
-		{"chatDefaultTitle", chatDefaultTitle},
+		{"compactSummaryPromptFor", chatx.CompactSummaryPromptFor},
+		{"handoffPreambleFor", chatx.HandoffPreambleFor},
+		{"planShapeFor", chatx.PlanShapeFor},
+		{"planUpdateInstructionFor", chatx.PlanUpdateInstructionFor},
+		{"planPreambleFor", chatx.PlanPreambleFor},
+		{"planTruncatedNote", chatx.PlanTruncatedNote},
+		{"planRefreshPersonaFor", chatx.PlanRefreshPersonaFor},
+		{"planRefreshInstructions/新規", func(l string) string { return chatx.PlanRefreshInstructions("", l) }},
+		{"planRefreshInstructions/差分更新", func(l string) string { return chatx.PlanRefreshInstructions("plan body", l) }},
+		{"planContextHeader", chatx.PlanContextHeader},
+		{"chatPersonaFor", chatx.ChatPersonaFor},
+		{"verbPersona/translate", func(l string) string { return chatx.VerbPersona("translate", l) }},
+		{"verbPersona/summarize", func(l string) string { return chatx.VerbPersona("summarize", l) }},
+		{"seedFor/translate", func(l string) string { return chatx.SeedFor("translate", "/w/a.md", false, l) }},
+		{"seedFor/summarize", func(l string) string { return chatx.SeedFor("summarize", "/w/a.md", false, l) }},
+		{"seedFor/ask", func(l string) string { return chatx.SeedFor("", "/w/a.md", false, l) }},
+		{"seedFor/dir", func(l string) string { return chatx.SeedFor("", "/w", true, l) }},
+		{"chatDefaultTitle", chatx.ChatDefaultTitle},
 	}
 }
 
@@ -95,8 +96,8 @@ func enPrompts() []langPrompt {
 // 実際の配送（recordSessionReport）と同じ材料の組み方で作る。日本語側の文言を見る既存の
 // テストが使う。
 func reportBodyForTest(display, name, kind, reason string) string {
-	args := reportArgs(display, name, kind, reason, 0)
-	return reportPromptFor(chatMessage{
+	args := chatx.ReportArgs(display, name, kind, reason, 0)
+	return chatx.ReportPromptFor(chatx.ChatMessage{
 		Role: "report", ReportKind: kind, ReportReason: reason, NoticeArgs: args,
 	}, "ja")
 }
@@ -114,22 +115,22 @@ func promptFrame(prompt, header string) string {
 // 日本語固定のままなら意味がない — P6 で実際に起きうる取りこぼし）。
 func TestCarryoverPromptsFollowUILocale(t *testing.T) {
 	writeUIPrefs(t, `{"locale":"en"}`)
-	c := &chatConversation{Plan: "## What comes next\n- lane A", PendingHandoff: "previous summary"}
+	c := &chatx.ChatConversation{Plan: "## What comes next\n- lane A", PendingHandoff: "previous summary"}
 
-	if got := compactPrompt(c); hasJapanese(promptFrame(got, "## What comes next")) {
+	if got := chatx.CompactPrompt(c); hasJapanese(promptFrame(got, "## What comes next")) {
 		t.Fatalf("英語ロケールの圧縮プロンプトに日本語が混ざる:\n%s", got)
 	}
-	p, _ := injectPlan(c, "claude", "go on")
+	p, _ := chatx.InjectPlan(c, "claude", "go on")
 	if hasJapanese(p) {
 		t.Fatalf("英語ロケールの計画前置きに日本語が混ざる:\n%s", p)
 	}
-	h, _ := injectHandoff(c, "go on")
+	h, _ := chatx.InjectHandoff(c, "go on")
 	if hasJapanese(h) {
 		t.Fatalf("英語ロケールの引き継ぎ前置きに日本語が混ざる:\n%s", h)
 	}
 
 	writeUIPrefs(t, `{"locale":"ja"}`)
-	if got := compactPrompt(c); !strings.Contains(got, "引き継ぎの作成") {
+	if got := chatx.CompactPrompt(c); !strings.Contains(got, "引き継ぎの作成") {
 		t.Fatalf("日本語ロケールで従来の圧縮プロンプトが出ない:\n%s", got)
 	}
 }

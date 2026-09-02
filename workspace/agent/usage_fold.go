@@ -24,8 +24,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // usageFoldMark は1セッション分の watermark。
@@ -71,7 +73,7 @@ var (
 	usageFoldPeriod  = time.Minute
 )
 
-func usageStatePath() string { return filepath.Join(usageDir(), "state.json") }
+func usageStatePath() string { return filepath.Join(usagex.Dir(), "state.json") }
 
 func readUsageFoldState() usageFoldState {
 	st := usageFoldState{Sessions: map[string]usageFoldMark{}}
@@ -92,7 +94,7 @@ func writeUsageFoldState(st usageFoldState) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(usageDir(), 0o700); err != nil {
+	if err := os.MkdirAll(usagex.Dir(), 0o700); err != nil {
 		return err
 	}
 	tmp := usageStatePath() + ".tmp"
@@ -109,7 +111,7 @@ type usageTurnRow struct {
 	Model     string
 	Trigger   string // 直前のユーザーターンの注入元由来
 	Sidechain bool
-	Tokens    usageTokens
+	Tokens    usagex.Tokens
 	LastIdx   int // 最後のイベントの転写行番号（診断用）
 }
 
@@ -123,7 +125,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 	var rows []usageTurnRow
 	var cur usageTurnRow
 	inGroup, sidechain := false, false
-	trigger := usageTriggerUser
+	trigger := usagex.TriggerUser
 	fold := func() {
 		if !inGroup {
 			return
@@ -172,15 +174,15 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 func usageTriggerFromTurnSource(src string) string {
 	switch src {
 	case turnSourceOperator:
-		return usageTriggerOperator
+		return usagex.TriggerOperator
 	case turnSourceDiscord, turnSourceSlack:
-		return usageTriggerBridge
+		return usagex.TriggerBridge
 	case turnSourceSchedule, turnSourceScheduleManual:
-		return usageTriggerSchedule
+		return usagex.TriggerSchedule
 	case turnSourceAutoResume:
-		return usageTriggerRecovery // 中断からの自動再開（docs/log/47 §4-6）は自己修復の消費
+		return usagex.TriggerRecovery // 中断からの自動再開（docs/log/47 §4-6）は自己修復の消費
 	}
-	return usageTriggerUser
+	return usagex.TriggerUser
 }
 
 // usageMeasuredForKind は kind ごとの計測精度（docs/log/46 §1-c）。トークンを報告しない
@@ -189,11 +191,11 @@ func usageTriggerFromTurnSource(src string) string {
 func usageMeasuredForKind(kind string) string {
 	switch kind {
 	case session.KindClaude, session.KindCodex, session.KindOpencode:
-		return usageMeasuredExact
+		return usagex.MeasuredExact
 	case session.KindCopilot:
-		return usageMeasuredPartial // 転写に outTok しかない
+		return usagex.MeasuredPartial // 転写に outTok しかない
 	}
-	return usageMeasuredNone // kiro / cursor / agy: 転写にトークンが無い
+	return usagex.MeasuredNone // kiro / cursor / agy: 転写にトークンが無い
 }
 
 // foldSessionUsage は1セッションの未折り込み分を台帳へ書き、折り込んだ論理ターン数を返す。
@@ -225,15 +227,15 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 	}
 	origin, originConv := session.OriginOf(m), m.OriginConv
 	measured := usageMeasuredForKind(m.Kind)
-	out := make([]usageRecord, 0, len(fresh))
+	out := make([]usagex.Record, 0, len(fresh))
 	for _, r := range fresh {
-		rec := usageRecord{
-			TS: r.TS, Call: randUUID(), Feature: usageFeatureSession, Trigger: r.Trigger,
+		rec := usagex.Record{
+			TS: r.TS, Call: chatx.RandUUID(), Feature: usagex.FeatureSession, Trigger: r.Trigger,
 			Origin: origin, OriginConv: originConv, Kind: m.Kind,
 			Ref: m.Name, Sidechain: r.Sidechain, Idx: r.Idx,
 			In: r.Tokens.In, Out: r.Tokens.Out,
 			CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate,
-			Spend:    usageSpend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out),
+			Spend:    usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out),
 			OK:       true,
 			Measured: measured,
 		}
@@ -242,9 +244,9 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 		}
 		if r.Model != "" {
 			// 転写が報告したモデルはそのまま実測値。版込みの生 id なので model_raw にも残す。
-			rec.Model, rec.ModelRaw, rec.ModelSrc = r.Model, r.Model, usageModelReported
+			rec.Model, rec.ModelRaw, rec.ModelSrc = r.Model, r.Model, usagex.ModelReported
 		} else {
-			rec.Model, rec.ModelSrc = usageModelFallback(m.Model)
+			rec.Model, rec.ModelSrc = usagex.ModelFallback(m.Model)
 		}
 		out = append(out, rec)
 	}
@@ -252,7 +254,7 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 	// **取りこぼしは復旧後に必ず回収される**（部分的に書けていた分は集計側の (ref, idx)
 	// 重複排除が落とす — usage_dedup.go）。進めてしまうと、この分は次のパスでも差分に出てこず
 	// 二度と台帳へ入らない（台帳側に取りこぼしを拾い直す口は無い）。
-	if err := appendUsageRows(out); err != nil {
+	if err := usagex.AppendRows(out); err != nil {
 		return 0, err
 	}
 	last := fresh[len(fresh)-1]
@@ -337,7 +339,7 @@ func commitSessionUsageFold(m session.Meta, includeTrailing bool) (int, error) {
 // 走るので、**過去分のセッション消費がそのまま遡って入る**（バックフィルの専用経路は要らない）。
 // アーカイブ済みも対象 — 転写は残っており、消費は実際に起きているので。
 func foldAllSessionUsage() int {
-	if !usageEnabled() {
+	if !usagex.Enabled() {
 		return 0
 	}
 	n := 0
@@ -371,7 +373,7 @@ func maybeFoldSessionUsage() { startFoldSessionUsage(false) }
 // 押し付けない（＝最新になるまで再取得を何度も押させない）ための唯一の手掛かりなので、
 // 応答へ必ず載せること（usage_series.go の folding）。
 func startFoldSessionUsage(force bool) bool {
-	if !usageEnabled() {
+	if !usagex.Enabled() {
 		return false
 	}
 	// 走行中の判定に usageFoldMu を使わない。使うと「走っているか?」を聞くだけの呼び出しが
@@ -405,7 +407,7 @@ func startFoldSessionUsage(force bool) bool {
 // ターンまで含めて折り込む — この後もう転写は伸びないので、二重計上の心配が無い。
 // 呼ばないと「最後の1ターン」が永久に台帳へ入らない。
 func finalizeSessionUsage(m session.Meta) {
-	if !usageEnabled() {
+	if !usagex.Enabled() {
 		return
 	}
 	usageFoldMu.Lock()

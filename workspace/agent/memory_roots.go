@@ -23,6 +23,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 )
 
 // memoryRoot は版管理する 1 つのメモリルートの宣言。
@@ -328,7 +329,7 @@ func memoryScopeSlug(repoPath string) (string, bool) {
 // 名前へ整形する（★6）。~/repos 配下の実ディレクトリから逆引きできれば確実なので
 // まずそれを試し、駄目なら "-repos-" 以降を採る。
 func memorySlugDisplay(slug string) string {
-	root := reposRoot()
+	root := gitx.ReposRoot()
 	if ents, err := os.ReadDir(root); err == nil {
 		for _, e := range ents {
 			if !e.IsDir() {

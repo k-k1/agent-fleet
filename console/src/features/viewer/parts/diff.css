@@ -1,0 +1,89 @@
+/* Diff pane: an edit-family tool's before/after, rendered line-level. */
+.diffview .dv-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: var(--viewer-size, 13px);
+  line-height: 1.5;
+  background: transparent;
+}
+.dv-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dv-stat .dv-add {
+  color: #3fb950;
+  font-weight: 600;
+}
+.dv-stat .dv-del {
+  color: #f85149;
+  font-weight: 600;
+}
+.dv-hunk + .dv-hunk {
+  border-top: 1px solid var(--border);
+}
+.dv-hunk-head {
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.dv-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.dv-row td {
+  padding: 0 4px;
+  vertical-align: top;
+}
+.dv-gutter {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--muted);
+  opacity: 0.55;
+  user-select: none;
+  padding: 0 6px;
+}
+.dv-mark {
+  width: 1ch;
+  text-align: center;
+  user-select: none;
+  color: var(--muted);
+}
+.dv-code {
+  width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* wrap toggle off: long lines scroll horizontally instead of wrapping */
+.diffview.nowrap .dv-code {
+  white-space: pre;
+  word-break: normal;
+}
+.dv-row.dv-add {
+  background: rgba(63, 185, 80, 0.14);
+}
+.dv-row.dv-add .dv-mark {
+  color: #3fb950;
+}
+.dv-row.dv-del {
+  background: rgba(248, 81, 73, 0.14);
+}
+.dv-row.dv-del .dv-mark {
+  color: #f85149;
+}
+
+
+.filebody,
+.diff {
+  flex: 1;
+  margin: 0;
+  overflow: auto;
+  padding: 8px 12px;
+  font: 12px/1.45 var(--mono);
+  white-space: pre;
+}
+

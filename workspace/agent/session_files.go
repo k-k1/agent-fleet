@@ -163,7 +163,7 @@ func absEditPath(p, cwd string) string {
 // Both are empty for anything outside ~/repos (a file in the home dir, an agent config):
 // the row is still listed, it just has no git side to be joined with.
 func repoRelOf(abs string) (repo, rel string) {
-	r, err := filepath.Rel(reposRoot(), abs)
+	r, err := filepath.Rel(gitx.ReposRoot(), abs)
 	if err != nil || r == "." || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 		return "", ""
 	}

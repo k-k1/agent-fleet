@@ -519,15 +519,19 @@ Teardown → stand-up had never been done end to end. It has now, on the dev dep
 ⚠️ **Check `/readyz`, not `/healthz`.** `/healthz` answers 200 with a dead database — that is
 how the RDS rotation outage stayed silent for so long. `/readyz` is the one that touches it.
 
-Two rough edges found on the way, still open:
+Two rough edges found on the way, **both since closed**:
 
-- **`standup.sh`'s preflight now compares the capture against the templates** (parameters with
+- **`standup.sh`'s preflight compares the capture against the templates** (parameters with
   no `Default` must be present). It previously checked only that the capture *files existed*,
   so a capture older than the templates would fail **after** 00–20 were already built — the
-  most expensive moment to find out.
-- **`teardown.sh`'s bucket-emptying step discards the reason it failed** (`>/dev/null 2>&1
-  || echo "(skip: …)"`). It worked on this round trip, but if it ever prints `(skip: …)` the
-  next thing to fail is the 20-platform delete, with no clue why.
+  most expensive moment to find out. It no longer counts those parameters by a fixed
+  indentation either: it takes the depth of the first key under `Parameters:`, and **says so
+  when it reads none at all**. A parser that quietly reports "0 required" is the same shape
+  as the wall above — a check that is not running, with nothing to see.
+- **`teardown.sh`'s bucket-emptying step prints why it failed.** It used to swallow stderr
+  (`>/dev/null 2>&1 || echo "(skip: …)"`), so "the bucket was already gone" and "it could
+  not be emptied" looked identical — and the next thing to fail is the 20-platform delete,
+  by which point the reason has been thrown away.
 
 ## Egress IP (the address a customer allow-lists)
 
@@ -554,20 +558,40 @@ and `UpdateReplacePolicy: Retain`, so no stack operation — including a full
 `teardown.sh` — can release it. Capture the allocation id and pass it back at the next
 stand-up:
 
-🔴 **`capture-env.sh` does not carry it after a stand-up that created the EIP itself.**
-It saves stack **Parameters**, and in that case `NatEipAllocationId` *is* the empty
-parameter that selected the `CreateNatEip` branch — the real id exists only as the
-stack **Output**. So the sequence "stand up (new EIP) → tear down → stand up again"
-allocates a **second** EIP and orphans the first: a silent change of the address every
-customer allow-listed, plus ~$3.6/month per orphan. Measured on 2026-09-02: after one
-round trip the account held one unassociated `af-…-nat-eip` and the capture had no
-`NatEipAllocationId` line. **Re-capture (or read the Output and write the line by hand)
-while the deployment is still up**, before tearing it down:
+**`capture-env.sh` carries it.** It saves stack **Parameters**, and after a stand-up that
+created the EIP itself `NatEipAllocationId` *is* the empty parameter that selected the
+`CreateNatEip` branch — the real id exists only as the stack **Output**. So `save_params`
+applies one rule (added 2026-09-02): **an Output whose key matches a parameter that was
+captured empty supplies the value.** The id lands in the capture like any other parameter,
+and the next stand-up hands it back.
+
+🔴 **A capture taken before that date has no `NatEipAllocationId` line, and standing up
+from it takes a second EIP.** The empty parameter selects `CreateNatEip` again, the
+retained address is orphaned, and the value every customer allow-listed changes silently
+(plus ~$3.6/month per orphan). Measured on 2026-09-02, before the fix: one round trip left
+one unassociated `af-…-nat-eip` behind and the capture had no `NatEipAllocationId` line.
+**Look at the capture before standing up from an old one:**
+
+```bash
+grep '^NatEipAllocationId=' ~/.config/agent-fleet/deploy/<p>.<r>/params/00-network
+```
+
+Missing or empty, and the deployment is **still up** → re-capture (`capture-env.sh
+--force`), or read the Output and write the line by hand:
 
 ```bash
 aws cloudformation describe-stacks --stack-name af-ecs-network \
   --query "Stacks[0].Outputs[?OutputKey=='NatEipAllocationId'].OutputValue" --output text
 # -> NatEipAllocationId=eipalloc-... into ~/.config/agent-fleet/deploy/<p>.<r>/params/00-network
+```
+
+Already torn down → the retained address is still in the account, so find it by tag rather
+than letting the next stand-up allocate a fresh one:
+
+```bash
+aws ec2 describe-addresses --output text --query \
+  "Addresses[].[AllocationId,PublicIp,AssociationId,Tags[?Key=='Name']|[0].Value]"
+# the row named af-<stack>-nat-eip with no association id is the one that was retained
 ```
 
 
@@ -1187,6 +1211,9 @@ hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
   the values are account-specific). The templates live here; **what was passed to them
   lives only inside the deployment**, and `delete-stack` takes it away. `teardown.sh`
   refuses to run without it, and `standup.sh` has nothing to deploy with.
+  A parameter captured **empty** takes its value from the stack **Output** of the same
+  name if there is one — an empty parameter often means "the stack made this itself", and
+  then the id of what it made exists only as an Output (`NatEipAllocationId`, above).
 - **Nothing happens without `--yes`.** They print the plan (and, for teardown, an
   inventory of what would go) and exit. With `--yes` on a terminal they also make you
   type the FQDN.

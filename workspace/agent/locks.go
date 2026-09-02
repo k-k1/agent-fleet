@@ -20,7 +20,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -210,7 +213,7 @@ func handleSessionKeepAwake(w http.ResponseWriter, r *http.Request) {
 // a linked worktree) against deletion — including the automatic prune that drops a
 // clean worktree once its last session goes away.
 func handleRepoLock(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoAnyDirFromPath(w, r)
+	dir, ok := gitx.RepoAnyDirFromPath(w, r)
 	if !ok {
 		return
 	}
@@ -229,7 +232,7 @@ func handleRepoLock(w http.ResponseWriter, r *http.Request) {
 // conversation against deletion.
 func handleChatLock(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !validConvID(id) {
+	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
 		return
 	}
@@ -237,15 +240,15 @@ func handleChatLock(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	unlock := lockConv(id) // serialize with an in-flight turn's load-modify-save
+	unlock := chatx.LockConv(id) // serialize with an in-flight turn's load-modify-save
 	defer unlock()
-	c, err := loadConv(id)
+	c, err := chatx.LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
 	}
 	c.Locked = req.Locked
-	if err := saveConv(c); err != nil {
+	if err := chatx.SaveConv(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return
 	}

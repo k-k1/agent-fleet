@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -65,16 +68,16 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 	if got := chatAutoTurnModel(); got != "" {
 		t.Fatalf("auto-turn model default = %q", got)
 	}
-	if chatQuietCompletionEnabled() {
+	if uiprefs.ChatQuietCompletion() {
 		t.Fatal("quiet completion must default OFF")
 	}
-	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokens {
+	if got := chatx.ChatAutoCompactTokenThreshold(); got != chatx.ChatCtxAutoCompactTokens {
 		t.Fatalf("compact tokens default = %d", got)
 	}
-	if got := chatAutoTurnDelay(); got != chatAutoTurnDelayDefault {
+	if got := chatx.ChatAutoTurnDelay(); got != chatx.ChatAutoTurnDelayDefault {
 		t.Fatalf("auto-turn delay default = %v", got)
 	}
-	if got := mcpSessionOutputTail(); got != mcpSessionOutputTailBytes {
+	if got := mcpx.SessionOutputTail(); got != mcpx.SessionOutputTailBytes {
 		t.Fatalf("output tail default = %d", got)
 	}
 
@@ -84,42 +87,42 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 	if got := chatAutoTurnModel(); got != "haiku" {
 		t.Fatalf("auto-turn model = %q", got)
 	}
-	if !chatQuietCompletionEnabled() {
+	if !uiprefs.ChatQuietCompletion() {
 		t.Fatal("quiet completion should be ON")
 	}
-	if got := chatAutoCompactTokenThreshold(); got != 80000 {
+	if got := chatx.ChatAutoCompactTokenThreshold(); got != 80000 {
 		t.Fatalf("compact tokens = %d", got)
 	}
-	if got := chatAutoTurnDelay(); got != 120*time.Second {
+	if got := chatx.ChatAutoTurnDelay(); got != 120*time.Second {
 		t.Fatalf("auto-turn delay = %v", got)
 	}
-	if got := mcpSessionOutputTail(); got != 64<<10 {
+	if got := mcpx.SessionOutputTail(); got != 64<<10 {
 		t.Fatalf("output tail = %d", got)
 	}
 
 	// 設定は env（デプロイ/E2E 用）より優先。
 	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "999999")
 	t.Setenv("AF_CHAT_AUTOTURN_DELAY", "1")
-	if got := chatAutoCompactTokenThreshold(); got != 80000 {
+	if got := chatx.ChatAutoCompactTokenThreshold(); got != 80000 {
 		t.Fatalf("pref should beat env: %d", got)
 	}
-	if got := chatAutoTurnDelay(); got != 120*time.Second {
+	if got := chatx.ChatAutoTurnDelay(); got != 120*time.Second {
 		t.Fatalf("pref should beat env: %v", got)
 	}
 
 	// クランプ: 圧縮閾値の下限・束ね時間の上限・出力上限の上下限。
 	writeUIPrefs(t, `{"assistantAutoCompactTokens":5000,"assistantAutoTurnDelay":100000,"assistantOutputTailKiB":100000}`)
-	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokensMin {
+	if got := chatx.ChatAutoCompactTokenThreshold(); got != chatx.ChatCtxAutoCompactTokensMin {
 		t.Fatalf("compact tokens floor = %d", got)
 	}
-	if got := chatAutoTurnDelay(); got != chatAutoTurnDelayMax {
+	if got := chatx.ChatAutoTurnDelay(); got != chatx.ChatAutoTurnDelayMax {
 		t.Fatalf("auto-turn delay cap = %v", got)
 	}
-	if got := mcpSessionOutputTail(); got != 1<<20 {
+	if got := mcpx.SessionOutputTail(); got != 1<<20 {
 		t.Fatalf("output tail cap = %d", got)
 	}
 	writeUIPrefs(t, `{"assistantOutputTailKiB":1}`)
-	if got := mcpSessionOutputTail(); got != 4<<10 {
+	if got := mcpx.SessionOutputTail(); got != 4<<10 {
 		t.Fatalf("output tail floor = %d", got)
 	}
 }
@@ -140,70 +143,6 @@ func TestAssistantModelPrefs(t *testing.T) {
 	}
 }
 
-// 累積データ（学習済みの返信候補・ピン・利用実績・キー割当…）は、事故で痩せた PUT が
-// 来ると復元不能に消える。実際に消えた（返信サジェストが全端末で初期状態に戻った）ので、
-// 「痩せる書き込みの直前の版を .prev に残す」ことを仕様として固定する。拒否はしない —
-// 設定 > キー の「全消去」は利用者の正当な操作で、拒否すると効かなくなる。
-func TestShrunkPrefKeys(t *testing.T) {
-	before := map[string]any{
-		"quickReplies":       map[string]any{"ok": map[string]any{"text": "OK"}},
-		"quickRepliesPinned": []any{"OK"},
-		"ttsUserDict":        "af=エーエフ",
-		"ssmHostUsage":       map[string]any{},
-		"assistantAutoTurn":  false,
-	}
-	tests := []struct {
-		name  string
-		after map[string]any
-		want  []string
-	}{
-		{"defaults over real data flags every populated key",
-			map[string]any{"quickReplies": map[string]any{}, "quickRepliesPinned": []any{}, "ttsUserDict": ""},
-			[]string{"quickReplies", "quickRepliesPinned", "ttsUserDict"}},
-		{"a missing key counts as lost too (an older Console omits it)",
-			map[string]any{},
-			[]string{"quickReplies", "quickRepliesPinned", "ttsUserDict"}},
-		{"carrying the same content through is not a loss",
-			before,
-			nil},
-		{"growing is not a loss",
-			map[string]any{
-				"quickReplies":       map[string]any{"ok": map[string]any{"text": "OK"}, "go": map[string]any{"text": "続けて"}},
-				"quickRepliesPinned": []any{"OK", "続けて"},
-				"ttsUserDict":        "af=エーエフ",
-			},
-			[]string{}},
-		{"an already-empty key cannot shrink", map[string]any{"ssmHostUsage": map[string]any{}}, nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := shrunkPrefKeys(before, tt.after)
-			if len(tt.want) == 0 && len(got) == 0 {
-				return
-			}
-			// 順序は accumulatedPrefKeys の並び（安定）。
-			if len(got) < len(tt.want) {
-				t.Fatalf("shrunk = %v, want %v", got, tt.want)
-			}
-			for _, k := range tt.want {
-				found := false
-				for _, g := range got {
-					if g == k {
-						found = true
-					}
-				}
-				if !found {
-					t.Fatalf("shrunk = %v, missing %q", got, k)
-				}
-			}
-		})
-	}
-	// 真偽値は「消えた」ではなく選ばれた値なので、false になっても退避の理由にはしない。
-	if got := shrunkPrefKeys(before, map[string]any{"assistantAutoTurn": true}); len(got) != 3 {
-		t.Fatalf("boolean flips must not be counted as accumulated loss: %v", got)
-	}
-}
-
 func TestPutUIPrefsBacksUpAShrinkingWrite(t *testing.T) {
 	writeUIPrefs(t, `{"quickReplies":{"ok":{"text":"OK","count":9,"at":1}},"iconSet":"seti"}`)
 
@@ -213,11 +152,11 @@ func TestPutUIPrefsBacksUpAShrinkingWrite(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT = %d", rec.Code)
 	}
-	if got := readUIPrefs()["iconSet"]; got != "vscode" {
+	if got := uiprefs.Read()["iconSet"]; got != "vscode" {
 		t.Fatalf("write must not be refused: iconSet = %v", got)
 	}
 	// 直前の版が残っていること＝復旧の手がかりがある。
-	b, err := os.ReadFile(uiPrefsBackupPath())
+	b, err := os.ReadFile(uiprefs.BackupPath())
 	if err != nil {
 		t.Fatalf("no backup kept: %v", err)
 	}
@@ -236,7 +175,7 @@ func TestPutUIPrefsBacksUpAShrinkingWrite(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second PUT = %d", rec.Code)
 	}
-	b2, err := os.ReadFile(uiPrefsBackupPath())
+	b2, err := os.ReadFile(uiprefs.BackupPath())
 	if err != nil || string(b2) != string(b) {
 		t.Fatalf("backup must survive later benign writes: %v", err)
 	}

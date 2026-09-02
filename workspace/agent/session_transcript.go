@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // Structured transcript for the Console chat view. Where /output (session_io.go)
@@ -154,7 +155,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	resolveUserFiles(turns)       // SendUserFile paths → browse-root-relative, per each turn's cwd
 	tagInjectedTurns(name, turns) // Source=operator/discord/… on injected user turns (docs/log/30 ②, docs/log/37 P2a)
 	mt := jsonlMtime(jpath)       // hoisted: also feeds the title-suggestion idle check below
-	if autoTitleSuggestEnabled() && meta.Title == "" && meta.SuggestedTitle == "" &&
+	if uiprefs.AutoTitleSuggest() && meta.Title == "" && meta.SuggestedTitle == "" &&
 		!meta.SuggestedTitleDismissed && titleGenReady(name) {
 		// Full-transcript parse — expensive, so only reached once the cheap field/backoff
 		// checks above pass. Once Title/SuggestedTitle/Dismissed settle, this line never
@@ -274,7 +275,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	td, _ := agentOf(meta.Kind).Transcript(meta)
 	all, path := td.Turns, td.Path
 	total := len(all)
-	if autoTitleSuggestEnabled() && meta.Title == "" && meta.SuggestedTitle == "" &&
+	if uiprefs.AutoTitleSuggest() && meta.Title == "" && meta.SuggestedTitle == "" &&
 		!meta.SuggestedTitleDismissed && titleGenReady(meta.Name) {
 		// `all` is already the full parse here (unlike claude's windowed path above), so
 		// this is free — no extra transcript read.

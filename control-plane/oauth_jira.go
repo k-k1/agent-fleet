@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"io"
 	"net/http"
 	"net/url"
@@ -97,7 +98,7 @@ func (c config) handleJiraOAuthStart(w http.ResponseWriter, r *http.Request) {
 func (c config) handleJiraOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
-	t := oauthCallbackText(preferredUILang(r), "Jira")
+	t := oauthCallbackText(auth.PreferredUILang(r), "Jira")
 
 	st, ok := jiraFlows.take(state)
 	if !ok {

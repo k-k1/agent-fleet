@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -145,7 +146,7 @@ func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, error) 
 	if err != nil {
 		return nil, err
 	}
-	githubHeaders(req, token)
+	gitx.GithubHeaders(req, token)
 	resp, err := workItemHTTPClient.Do(req)
 	if err != nil {
 		return nil, err

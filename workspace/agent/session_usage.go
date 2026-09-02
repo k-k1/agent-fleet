@@ -9,32 +9,14 @@ package main
 import (
 	"math"
 	"net/http"
-	"regexp"
-	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
-
-// contextUsage is the CURRENT context fill: the last main-chain assistant event's
-// input snapshot (cache read / cache creation / fresh input), like the Console's
-// ContextBar. Absent until the session's first assistant reply; after claude's
-// auto-compaction it reflects the post-compaction (smaller) context.
-type contextUsage struct {
-	Tokens int `json:"tokens"` // read + create + fresh
-	Read   int `json:"read"`
-	Create int `json:"create"`
-	Fresh  int `json:"fresh"`
-	Window int `json:"window,omitempty"` // context-window size the pct is against
-	// windowSource: "recorded" = the agent reported its real window (codex
-	// model_context_window); "estimated" = guessed from the model name.
-	WindowSource string  `json:"windowSource,omitempty"`
-	Pct          float64 `json:"pct,omitempty"` // 0–100, tokens/window
-	Model        string  `json:"model,omitempty"`
-}
 
 // cumulativeUsage sums consumption across the whole transcript. Events between user
 // turns are folded into one logical turn the way the Console does: output tokens
@@ -55,11 +37,11 @@ type cumulativeUsage struct {
 }
 
 type sessionUsage struct {
-	Name       string          `json:"name"`
-	Display    string          `json:"display"`
-	Kind       string          `json:"kind"`
-	Context    *contextUsage   `json:"context,omitempty"`
-	Cumulative cumulativeUsage `json:"cumulative"`
+	Name       string               `json:"name"`
+	Display    string               `json:"display"`
+	Kind       string               `json:"kind"`
+	Context    *usagex.ContextUsage `json:"context,omitempty"`
+	Cumulative cumulativeUsage      `json:"cumulative"`
 }
 
 // handleSessionsUsage (GET /sessions/usage?name=<optional>) returns usage for every
@@ -111,7 +93,7 @@ func overlayKiroLiveUsage(m session.Meta, u *sessionUsage) {
 		return
 	}
 	tokens := int(math.Round(pct / 100 * float64(window)))
-	u.Context = &contextUsage{
+	u.Context = &usagex.ContextUsage{
 		Tokens: tokens,
 		Fresh:  tokens, // single un-broken-down segment (no cache-read/create split available)
 		Window: window,
@@ -174,9 +156,9 @@ func aggregateUsage(turns []transcript.Turn) sessionUsage {
 				// event's snapshot is the SUBAGENT's context, not this session's.
 				window, source := t.CtxWindow, "recorded"
 				if window <= 0 {
-					window, source = contextWindowGuess(t.Model, t.InTok+t.CacheRead+t.CacheCreate), "estimated"
+					window, source = usagex.WindowGuess(t.Model, t.InTok+t.CacheRead+t.CacheCreate), "estimated"
 				}
-				c := &contextUsage{
+				c := &usagex.ContextUsage{
 					Tokens: t.InTok + t.CacheRead + t.CacheCreate,
 					Read:   t.CacheRead, Create: t.CacheCreate, Fresh: t.InTok,
 					Window: window, WindowSource: source, Model: t.Model,
@@ -190,36 +172,4 @@ func aggregateUsage(turns []transcript.Turn) sessionUsage {
 	}
 	fold()
 	return u
-}
-
-// smallWindowClaudeRe は「200k 側」の Claude だけを列挙する。Claude は Opus 4.6 /
-// Sonnet 4.6 以降 1M ネイティブで、今後出るモデルも 1M 前提なので、大きい方を
-// 列挙して新モデルのたびに追記する（＝漏れたら 200k に誤認される）運用をやめ、
-// 既定 1M・小さいものだけ例外、に反転してある。
-//   - haiku 系（4.5 まで 200k）
-//   - Claude 3.x 以前（claude-2 / claude-3-*）
-//   - Opus 4.0/4.1/4.5・Sonnet 4.0/4.5。日付入りIDは opus-4-20250514 の形なので
-//     「4-2」も旧世代側に含める（1M 側の 4-6/4-7/4-8 とは重ならない）。
-var smallWindowClaudeRe = regexp.MustCompile(`haiku|claude-[123]|opus-4-[0125]|sonnet-4-[025]`)
-
-// contextWindowGuess mirrors the Console's contextWindow() (ContextBar.tsx — keep
-// the two in sync). Order: 272k for GPT-5.x (codex normally records its real
-// window, so this is the fallback — e.g. the assistant chat's `codex exec`, whose
-// events don't carry it) → 200k for the legacy Claude generations above → 1M for
-// every other Claude → for non-Claude unknowns, 200k with a grow-to-fit fallback
-// when the observed usage already exceeds it.
-func contextWindowGuess(model string, used int) int {
-	m := strings.ToLower(model)
-	switch {
-	case strings.Contains(m, "gpt-5"):
-		return 272_000
-	case smallWindowClaudeRe.MatchString(m):
-		return 200_000
-	case strings.Contains(m, "claude"):
-		return 1_000_000
-	}
-	if used > 200_000 {
-		return 1_000_000
-	}
-	return 200_000
 }

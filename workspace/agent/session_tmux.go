@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -24,7 +25,7 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// Write the MCP registry into this kind's own config before the CLI reads it
 	// (docs/log/48 §8.3). Doing it here rather than in BuildLaunch keeps it out of the
 	// per-kind agents, and covers every tui launch — create, start, recreate, handoff.
-	materializeMCP(m.Kind)
+	mcpx.Materialize(m.Kind)
 	// Same timing for claude's own settings.json wiring (hooks + statusLine): it is
 	// shared state that another build of the agent can leave pointing at a binary that
 	// no longer exists.
@@ -90,7 +91,7 @@ func ensureSessionTmux(name string, ssmForce bool) error {
 		if !dok {
 			return fmt.Errorf("no driver for session %s (kind %q)", name, m.Kind)
 		}
-		if _, err := startManagedSession(d, m); err != nil {
+		if _, err := mcpx.StartManagedSession(d, m); err != nil {
 			log.Printf("managed resume %s: %v", name, err)
 			return err
 		}

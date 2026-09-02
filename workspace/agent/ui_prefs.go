@@ -1,5 +1,10 @@
 package main
 
+// ui-prefs のうち、**main の機能側**（chatProviders / defaultAutoTurns / modelHidden /
+// materializeMCPAll / agentOf）に依存するアクセサと HTTP ハンドラだけがここに残る。
+// prefs そのものの読み書きと、何にも依存しないアクセサは internal/uiprefs を直接呼ぶ
+// （ウェーブ B の別名 alias_uiprefs.go は RECLAIM-B で回収済み）。
+
 import (
 	"encoding/json"
 	"io"
@@ -11,139 +16,14 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
-// Per-user UI preferences (theme / icon set / fonts / viewer options). The Console
-// stores its display settings here so they follow the user across browsers/devices,
-// instead of living only in each browser's localStorage. The payload is an opaque
-// JSON object owned by the Console; the Agent just persists it verbatim. Stored under
-// the denylisted .config/agent-fleet (hidden from the file browser) in the home
-// volume, so it survives Stop→Start.
-
-const maxUIPrefsBytes = 64 << 10 // 64 KiB cap on the prefs blob
-
-func uiPrefsPath() string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "ui-prefs.json")
-}
-
-// 直前の版の退避先。PUT は本文をそのまま置き換えるので、事故で痩せた blob が来ると
-// それ以前の内容はどこにも残らない（実際に返信サジェストの学習が全端末で消えた）。
-func uiPrefsBackupPath() string {
-	return uiPrefsPath() + ".prev"
-}
-
-// 累積データのキー — 溜まっていく設定で、失っても作り直せない。Console 側の
-// ACCUMULATED（console/src/lib/settings.ts）と同じ顔ぶれにしてある。
-var accumulatedPrefKeys = []string{
-	"quickReplies",
-	"quickRepliesPinned",
-	"quickRepliesHidden",
-	"ssmHostUsage",
-	"ssmHostColors",
-	"keybindings",
-	"hiddenModels",
-	"expandThinking",
-	"claudeCustomModels",
-	"workingSets",
-	"ttsVoicePool",
-	"ttsUserDict",
-}
-
-// emptyPref は「中身が無い」— 欠落・null・空文字・空配列・空オブジェクト。
-// 数値/真偽値は対象外（0 や false は消えた印ではなく選ばれた値）。
-func emptyPref(v any) bool {
-	switch t := v.(type) {
-	case nil:
-		return true
-	case string:
-		return t == ""
-	case []any:
-		return len(t) == 0
-	case map[string]any:
-		return len(t) == 0
-	default:
-		return false
-	}
-}
-
-// shrunkPrefKeys は「前は中身があったのに、この PUT で空（または欠落）になる」累積キーを返す。
-// 利用者が明示的に消すこともある（設定 > キー の「学習済みの候補を全消去」）ので拒否はしない —
-// 拒否すると正当な操作が効かなくなる。代わりに直前の版を .prev へ退避し、何が痩せたかを
-// ログに残す（この形跡が無かったせいで、原因の特定に転写と mtime の突き合わせが要った）。
-func shrunkPrefKeys(before, after map[string]any) []string {
-	var out []string
-	for _, k := range accumulatedPrefKeys {
-		old, had := before[k]
-		if !had || emptyPref(old) {
-			continue
-		}
-		if now, ok := after[k]; !ok || emptyPref(now) {
-			out = append(out, k)
-		}
-	}
-	return out
-}
-
-// readUIPrefs loads the raw prefs blob from disk — the same file handleGetUIPrefs
-// serves over HTTP — for same-process feature gates that don't need (and shouldn't
-// pay for) an HTTP round trip. Any read/parse failure returns an empty map, same
-// fallback as the handler, so a corrupt/missing file just means "nothing set".
-func readUIPrefs() map[string]any {
-	b, err := os.ReadFile(uiPrefsPath())
-	if err != nil || len(b) == 0 {
-		return map[string]any{}
-	}
-	var obj map[string]any
-	if json.Unmarshal(b, &obj) != nil {
-		return map[string]any{}
-	}
-	return obj
-}
-
-// autoTitleSuggestEnabled is the ON/OFF for SESSION title suggestion — the automatic
-// banner plus the manual title/branch suggest endpoints (Console AgentsTab セッション).
-// The assistant-chat side gates separately (assistantTitleSuggestEnabled). Missing/
-// invalid key ⇒ true, matching the frontend's DEFAULTS.autoTitleSuggest (settings.ts)
-// so pre-feature clients get it without an explicit opt-in.
-func autoTitleSuggestEnabled() bool {
-	v, ok := readUIPrefs()["autoTitleSuggest"].(bool)
-	return !ok || v
-}
-
-// opencodeCatalogPref is how the opencode launch-model list is shaped (設定 >
-// エージェント > opencode, ui-prefs opencodeCatalog). One key serves both opencode.ai
-// billing routes, so the same model can appear as opencode/… (Zen, metered) and
-// opencode-go/… (the Go subscription); a Go subscriber rarely wants the metered twins
-// in the list at all. Read live per request — the Console picker and the MCP
-// list_models both go through handleAgentModels, so one preference shapes both.
-func opencodeCatalogPref() string {
-	v, _ := readUIPrefs()["opencodeCatalog"].(string)
-	return opencode.CatalogPref(v)
-}
-
-// peerMessagingPref is the ON/OFF for session-to-session messaging (docs/log/58 / ADR 0041,
-// ui-prefs peerMessaging). Missing/invalid ⇒ **false**: this one is opt-in, unlike
-// autoTitleSuggest. Letting sessions type into each other widens the injection surface
-// (a session that read a poisoned repo can now reach every other session), so it has to
-// be a deliberate choice rather than something a fleet inherits by upgrading.
-func peerMessagingPref() bool {
-	v, _ := readUIPrefs()["peerMessaging"].(bool)
-	return v
-}
-
-// mcpreg builds the session-side af server's launch args and must not read main's
-// config files itself, so it takes the answer as a hook (same shape as opencode.UsagePref).
-func init() { mcpreg.PeerMessagingEnabled = peerMessagingPref }
-
-// The opencode package needs the same preference to decide whether to inject
-// OPENCODE_API_KEY at all（無料枠は注入しない）and what to report to /connections.
-// It lives under internal/agents, which must not read main's config files itself.
-func init() { opencode.UsagePref = opencodeCatalogPref }
-
-// skipPermissionsPref is the per-kind default for「権限確認をスキップする」（設定 >
+// skipPermissionsPref は per-kind の既定「権限確認をスキップする」（設定 >
 // エージェント > 各カード、ui-prefs agentLaunchDefaults[<kind>].skipPermissions — docs/log/76）。
 // ok=false は「その kind に設定が無い」で、既定値そのものは agents.SkipPermissions が
 // 持つ（従来どおり true）。
@@ -160,7 +40,7 @@ func skipPermissionsPref(kind string) (bool, bool) {
 	if !agentOf(k).Caps().PermissionChoice {
 		return false, false
 	}
-	defs, ok := readUIPrefs()["agentLaunchDefaults"].(map[string]any)
+	defs, ok := uiprefs.Read()["agentLaunchDefaults"].(map[string]any)
 	if !ok {
 		return false, false
 	}
@@ -176,56 +56,6 @@ func skipPermissionsPref(kind string) (bool, bool) {
 // mcpreg.PeerMessagingEnabled と同じくフックで渡す。
 func init() { agents.SkipPermissionsPref = skipPermissionsPref }
 
-// claudeCustomModelsPref is the user's durable extension to Claude's fixed tier
-// aliases. Claude Code OAuth has no account-aware catalog endpoint, so only explicitly
-// registered full ids are advertised by Console and MCP; malformed/duplicate values
-// from older or corrupt prefs are ignored.
-func claudeCustomModelsPref() []string {
-	raw, ok := readUIPrefs()["claudeCustomModels"].([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(raw))
-	seen := map[string]bool{}
-	for _, value := range raw {
-		id, ok := value.(string)
-		id = strings.TrimSpace(id)
-		key := strings.ToLower(id)
-		if !ok || !validClaudeCustomModel(id) || seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, id)
-	}
-	return out
-}
-
-func validClaudeCustomModel(id string) bool {
-	id = strings.TrimSpace(id)
-	if !strings.HasPrefix(strings.ToLower(id), "claude-") || len(id) == len("claude-") {
-		return false
-	}
-	for _, r := range id {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-// assistantTitleSuggestEnabled is the ON/OFF for the assistant-chat title suggestion
-// (the rename dialog's AI-suggest button, chat_title.go; Console AssistantTab). Split
-// out of autoTitleSuggest so sessions and chats gate independently — prefs written
-// before the split lack the key, so fall back to the combined flag to preserve an
-// explicit OFF.
-func assistantTitleSuggestEnabled() bool {
-	if v, ok := readUIPrefs()["assistantTitleSuggest"].(bool); ok {
-		return v
-	}
-	return autoTitleSuggestEnabled()
-}
-
 // assistantAgentOrderPref returns the user's assistant-chat backend priority (the
 // AssistantTab 並べ替え UI, ui-prefs assistantAgentOrder), normalized into a TOTAL
 // order: unknown kinds and dupes are dropped, and kinds missing from the stored
@@ -236,11 +66,11 @@ func assistantTitleSuggestEnabled() bool {
 // chatOutputLanguage) so a change applies from the next builtin-assistant
 // conversation / one-shot call without a restart.
 func assistantAgentOrderPref() []string {
-	prefs := readUIPrefs()
-	out := make([]string, 0, len(defaultHeadlessOrder))
+	prefs := uiprefs.Read()
+	out := make([]string, 0, len(chatx.DefaultHeadlessOrder))
 	seen := map[string]bool{}
 	add := func(k string) {
-		if _, ok := chatProviders[k]; ok && !seen[k] {
+		if _, ok := chatx.ChatProviders[k]; ok && !seen[k] {
 			seen[k] = true
 			out = append(out, k)
 		}
@@ -254,7 +84,7 @@ func assistantAgentOrderPref() []string {
 	} else if pin, _ := prefs["assistantAgent"].(string); pin != "" {
 		add(pin) // legacy pin ("auto" is not a kind, so it falls through to the default)
 	}
-	for _, k := range defaultHeadlessOrder {
+	for _, k := range chatx.DefaultHeadlessOrder {
 		add(k)
 	}
 	return out
@@ -265,7 +95,7 @@ func assistantAgentOrderPref() []string {
 // empty means "let this CLI choose its default", while missing keeps the historical
 // backend-specific defaults.
 func assistantModelPref(key, kind string) (string, bool) {
-	raw, ok := readUIPrefs()[key].(map[string]any)
+	raw, ok := uiprefs.Read()[key].(map[string]any)
 	if !ok {
 		return "", false
 	}
@@ -276,7 +106,7 @@ func assistantModelPref(key, kind string) (string, bool) {
 	// 「使わないモデル」で除外された値が設定に残っていても採用しない（model_deny.go）。
 	// 未設定扱いに落とすことで、呼び出し側は推奨／CLI 既定へ退避する。
 	// "recommended" は実モデル id ではない番兵なのでそのまま通す。
-	if v != assistantRecommendedModel && modelHidden(kind, v) {
+	if v != chatx.AssistantRecommendedModel && modelHidden(kind, v) {
 		return "", false
 	}
 	return v, true
@@ -290,30 +120,21 @@ func assistantUtilityModelPref(kind string) (string, bool) {
 	return assistantModelPref("assistantUtilityModels", kind)
 }
 
-// chatAutoTurnEnabled is the global ON/OFF for the operator's automatic turn on a
-// session report (docs/log/30, 設定 > アシスタント「セッション報告への自動応答」). Missing/invalid
-// key ⇒ true, matching the frontend default — the feature ships ON, with the
-// per-conversation maxAutoTurns cap as the safety stop.
-func chatAutoTurnEnabled() bool {
-	v, ok := readUIPrefs()["assistantAutoTurn"].(bool)
-	return !ok || v
-}
-
 // chatAutoTurnLimit is the per-conversation ceiling on unattended auto turns
 // (docs/log/30, 設定 > アシスタント「自動応答の上限回数」). Missing/invalid ⇒
 // defaultAutoTurns; always clamped to [1, maxAutoTurnLimit] — there is no
 // unlimited mode, the clamp is the runaway stop.
 func chatAutoTurnLimit() int {
-	v, ok := readUIPrefs()["assistantAutoTurnLimit"].(float64)
+	v, ok := uiprefs.Read()["assistantAutoTurnLimit"].(float64)
 	if !ok {
-		return defaultAutoTurns
+		return chatx.DefaultAutoTurns
 	}
 	n := int(v)
 	if n < 1 {
 		return 1
 	}
-	if n > maxAutoTurnLimit {
-		return maxAutoTurnLimit
+	if n > chatx.MaxAutoTurnLimit {
+		return chatx.MaxAutoTurnLimit
 	}
 	return n
 }
@@ -325,124 +146,23 @@ func chatAutoTurnLimit() int {
 // 適用は claude の会話のみ（codex/opencode は c.Model 直参照で上書き口が無い —
 // runReportAutoTurn 側でゲート）。
 func chatAutoTurnModel() string {
-	v, _ := readUIPrefs()["assistantAutoTurnModel"].(string)
+	v, _ := uiprefs.Read()["assistantAutoTurnModel"].(string)
 	// claude 専用の設定なので claude の除外リストで判定する。除外されていれば空＝
 	// 会話のモデルのまま（model_deny.go）。
 	return visibleModel(session.KindClaude, strings.TrimSpace(v))
 }
 
-// chatQuietCompletionEnabled is the global ON/OFF for 静かな完了報告 (設定 >
-// アシスタント). ON のとき、正常な完了報告では自動ターンを回さず、報告カードと
-// 通知センターへの配信だけにする（報告は未配信のまま残り、次のターンに相乗りする
-// — injectPendingReports）。Missing/invalid key ⇒ FALSE: 完了の追撃・要約は既定の
-// 体験として残し、費用を絞りたい利用者だけが明示的に静かにする。
-func chatQuietCompletionEnabled() bool {
-	v, ok := readUIPrefs()["assistantQuietCompletion"].(bool)
-	return ok && v
-}
-
-// chatAutoPilotEnabled is the global ON/OFF for 自動走行 (docs/log/30, 設定 >
-// アシスタント「自動走行」): the operator autonomously answers a session's
-// AskUserQuestion with the session's own recommendation, and drives a presented plan
-// through review-by-another-session → feedback → approval. Missing/invalid key ⇒
-// FALSE — acting in the user's stead is consequential, so unlike auto-turn this mode
-// is a deliberate opt-in. The mode gates only the INSTRUCTION text carried on the
-// interim reports (reportHeadFor); the guardrails (share every decision, never
-// auto-handle destructive or unclear cases) ride in that text and in the persona.
-func chatAutoPilotEnabled() bool {
-	v, ok := readUIPrefs()["assistantAutoPilot"].(bool)
-	return ok && v
-}
-
-// chatAutoResumeEnabled is the global ON/OFF for 中断時の自動再開 (docs/log/47, 設定 >
-// アシスタント): on an aborted turn (接続断・一時的なレート制限で切れた — 原因が
-// 自然に解消する中断) the operator is told to nudge the session to continue instead of
-// only relaying to the user. Missing/invalid key ⇒ TRUE, unlike 自動走行: the nudge
-// carries no decision of the user's — it re-runs work the user already asked for, and
-// its blast radius is bounded by the retryable/blocked split (a failure whose cause
-// won't clear is never auto-resumed) and by maxAutoResumeAttempts.
-func chatAutoResumeEnabled() bool {
-	v, ok := readUIPrefs()["assistantAutoResume"].(bool)
-	return !ok || v
-}
-
-// rateLimitAutoResumeEnabled is the ON/OFF for 利用上限リセット後の自動再開 (docs/log/47
-// §4-4, 設定 > エージェント > Claude > 動作設定): when a claude session is cut off by
-// its usage limit, book a one-shot schedule at the reset instant that tells the session
-// to continue. Missing/invalid key ⇒ TRUE, like chatAutoResumeEnabled and for the same
-// reason — the nudge re-runs work the user already asked for and carries no decision of theirs.
-//
-// このトグルが左右するのは**再開の予約だけ**。上限メニューの自動解除（キー入力待ちで
-// 止まったペインを既定の「リセットまで待つ」で待機プロンプトへ戻す）は OFF でも行う:
-// メニューが出ている間セッションは通知も報告も注入も受け付けられず、待つ側の選択肢は
-// 課金判断を含まないため（tmuxx.DismissRateLimitModal）。
-func rateLimitAutoResumeEnabled() bool {
-	v, ok := readUIPrefs()["rateLimitAutoResume"].(bool)
-	return !ok || v
-}
-
-// abortAutoResumeEnabled is the ON/OFF for 中断からの自動再開 (docs/log/47 §4-6, 設定 >
-// エージェント > Claude > 動作設定): when a claude turn is cut off by something that
-// clears on its own (接続断・一時的なレート制限・ストリームの番犬), the Agent itself
-// re-sends「続けて」instead of routing the resume through the operator assistant.
-// Missing/invalid key ⇒ TRUE, for the same reason as the two toggles above — 再開は
-// 利用者が既に頼んだ作業を走らせ直すだけで、新しい判断を含まない。
-//
-// 置き場所が chatAutoResumeEnabled（設定 > アシスタント）と違うのは、効く範囲が違うから:
-// こちらはアシスタント会話の有無に関わらず**すべての claude TUI セッション**に適用される
-// （rateLimitAutoResume と同じ立場）。OFF にすると中断は従来どおり即座に報告され、会話を
-// 持つセッションだけがオペレーター主導で再開される（docs/log/47 §3-4）。
-func abortAutoResumeEnabled() bool {
-	v, ok := readUIPrefs()["claudeAbortAutoResume"].(bool)
-	return !ok || v
-}
-
-// chatAutoCompactEnabled is the global ON/OFF for the assistant chat's preventive
-// auto-compaction at the context threshold (docs/log/33 第4段, 設定 > アシスタント
-// 「コンテキストの自動圧縮」). Missing/invalid key ⇒ true, matching the frontend
-// default — the 80% notice gives the user a manual window first, and the summary
-// handoff keeps the stored thread intact, so ON is the safe default.
-func chatAutoCompactEnabled() bool {
-	v, ok := readUIPrefs()["assistantAutoCompact"].(bool)
-	return !ok || v
-}
-
-// chatOutputLanguage returns the user's forced chat output language ("ja" | "en"),
-// or "" when unset/"auto"/invalid — meaning "follow the input" (no language rule is
-// injected, preserving the persona-driven default). Read live per turn from ui-prefs
-// so a change takes effect on the next message of every conversation (not snapshotted).
-func chatOutputLanguage() string {
-	switch v, _ := readUIPrefs()["outputLanguage"].(string); v {
-	case "ja", "en":
-		return v
-	default:
-		return ""
-	}
-}
-
-// uiLocale returns the Console display language the user picked (設定 > 表示言語,
-// ADR 0016). The frontend keeps `locale` server-synced precisely because language is a
-// per-person setting rather than a per-device one, so the Agent can read it for text it
-// generates FOR that person — currently the title suggestion. Unknown/missing ⇒ "ja",
-// matching the frontend's DEFAULT_LOCALE.
-func uiLocale() string {
-	if v, _ := readUIPrefs()["locale"].(string); v == "en" {
-		return "en"
-	}
-	return "ja"
-}
-
 func handleGetUIPrefs(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, readUIPrefs())
+	httpx.WriteJSON(w, http.StatusOK, uiprefs.Read())
 }
 
 func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxUIPrefsBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, uiprefs.MaxBytes+1))
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "read failed")
 		return
 	}
-	if len(body) > maxUIPrefsBytes {
+	if len(body) > uiprefs.MaxBytes {
 		httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "too_large", "prefs too large")
 		return
 	}
@@ -452,24 +172,24 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_json", "body must be a JSON object")
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(uiPrefsPath()), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(uiprefs.Path()), 0o700); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
 		return
 	}
 	// 累積データが痩せる書き込みだけ、直前の版を退避してから置き換える。毎回退避しないのは
 	// 「復元したい版」が最後の 1 回で流れてしまうから — 事故の直前を残すことに意味がある。
-	if lost := shrunkPrefKeys(readUIPrefs(), obj); len(lost) > 0 {
-		if old, err := os.ReadFile(uiPrefsPath()); err == nil && len(old) > 0 {
-			if err := os.WriteFile(uiPrefsBackupPath(), old, 0o600); err != nil {
+	if lost := uiprefs.ShrunkKeys(uiprefs.Read(), obj); len(lost) > 0 {
+		if old, err := os.ReadFile(uiprefs.Path()); err == nil && len(old) > 0 {
+			if err := os.WriteFile(uiprefs.BackupPath(), old, 0o600); err != nil {
 				log.Printf("ui-prefs: backup before shrinking write failed: %v", err)
 			}
 		}
 		log.Printf("ui-prefs: incoming prefs drop accumulated keys %v (previous copy kept at %s)",
-			lost, uiPrefsBackupPath())
+			lost, uiprefs.BackupPath())
 	}
-	before := opencodeCatalogPref()
-	peerBefore := peerMessagingPref()
-	if err := os.WriteFile(uiPrefsPath(), body, 0o600); err != nil {
+	before := uiprefs.OpencodeCatalog()
+	peerBefore := uiprefs.PeerMessaging()
+	if err := os.WriteFile(uiprefs.Path(), body, 0o600); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
@@ -478,12 +198,12 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	// ので、ここで書き直さないと「トグルしたのに何も起きない」になる。既に起動している
 	// セッションは自分の設定を読み込み済みなので、効くのは次に起動するセッションから
 	// （UI の説明文もそう書いてある）。
-	if peerMessagingPref() != peerBefore {
-		materializeMCPAll()
+	if uiprefs.PeerMessaging() != peerBefore {
+		mcpx.MaterializeAll()
 	}
 	// 枠の切替は注入する env を変える（無料枠は OPENCODE_API_KEY を落とす）。鍵の
 	// 変更と同じ扱いで、動いている serve を作り直さないと古い環境のまま残る。
-	if after := opencodeCatalogPref(); after != before {
+	if after := uiprefs.OpencodeCatalog(); after != before {
 		opencode.ApplyUsageChange(before + " → " + after)
 	}
 	httpx.WriteJSON(w, http.StatusOK, obj)

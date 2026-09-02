@@ -1,0 +1,91 @@
+/* One CSS-grid row per logical line: [line-number gutter | code]. Because both cells
+   share a row, a soft-wrapped code cell grows the row and its line number (top-aligned
+   in the sticky first column) grows with it — fixing the gutter drift that happened when
+   wrap made a code line taller than its fixed-height number. */
+.codegrid {
+  display: grid;
+  grid-template-columns: auto max-content; /* code column sizes to the widest line */
+  align-content: start;
+  /* Pack tracks at the left. Without this the grid's default (justify-content: stretch)
+     hands leftover width — when the pane is wider than the code — to the `auto` gutter
+     track, so the line-number column balloons and a big band opens to the left of the
+     numbers. `start` leaves that slack unused on the right instead. (Wrap mode uses an
+     `fr` code column, which absorbs the slack regardless, so it was never affected.) */
+  justify-content: start;
+  padding: 8px 0;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: var(--viewer-size, 12px);
+  line-height: 1.55;
+  tab-size: var(--viewer-tab, 4);
+  /* read-only caret browsing: contentEditable gives a real caret for keyboard reading
+     (arrows / Home-End / Shift-select); no focus ring — the blinking caret marks focus. */
+  outline: none;
+  caret-color: var(--hl-fg);
+}
+.codegrid.no-gutter {
+  grid-template-columns: max-content;
+}
+/* wrap on: the code column fills the remaining width and soft-wraps instead of
+   scrolling horizontally. */
+.codeview.wrap .codegrid {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.codeview.wrap .codegrid.no-gutter {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* a row is display:contents so its two children land directly in the grid tracks. */
+.codegrid .cl-row {
+  display: contents;
+}
+/* line-number cell: sticky so it stays pinned while the code scrolls horizontally. */
+.codegrid .cl-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  text-align: right;
+  /* Was a literal #5a5a5a, which only ever suited the light theme (2.7:1 on the dark
+     code surface). Line numbers are read, not decoration — take the theme's tertiary. */
+  color: var(--muted2);
+  background: var(--panel2);
+  border-right: 1px solid var(--border2);
+  padding: 0 8px 0 10px;
+  min-height: 1.55em;
+  white-space: pre;
+  user-select: none;
+}
+.codegrid .cl-code {
+  padding: 0 14px;
+  min-height: 1.55em; /* keep blank lines one row tall so numbers stay aligned */
+  white-space: pre;
+  color: var(--hl-fg);
+  background: transparent;
+}
+.codegrid .cl-row.target-line .cl-gutter,
+.codegrid .cl-row.target-line .cl-code {
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel2));
+}
+.codegrid .cl-row.target-line .cl-code {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.codeview.wrap .codegrid .cl-code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* change bar folded into the gutter cell's left edge (aligns in wrap mode too). */
+.codegrid .cl-gutter.cb-add {
+  box-shadow: inset 3px 0 0 #2ea043;
+}
+.codegrid .cl-gutter.cb-mod {
+  box-shadow: inset 3px 0 0 #1f6feb;
+}
+/* a deletion between lines: a small wedge at the top edge of the line. */
+.codegrid .cl-gutter.cb-del {
+  box-shadow: inset 0 2px 0 -0.5px #f85149;
+}
+.codegrid .cl-gutter.cb-add.cb-del {
+  box-shadow: inset 3px 0 0 #2ea043, inset 0 2px 0 -0.5px #f85149;
+}
+.codegrid .cl-gutter.cb-mod.cb-del {
+  box-shadow: inset 3px 0 0 #1f6feb, inset 0 2px 0 -0.5px #f85149;
+}
+

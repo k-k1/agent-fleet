@@ -33,10 +33,12 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 const (
@@ -129,7 +131,7 @@ func abortResumeTick(now time.Time) {
 		if !sessionAlive(m) {
 			continue // 死んだセッションは record_exit.go の領分（中断ではなく異常終了）
 		}
-		if !abortAutoResumeEnabled() {
+		if !uiprefs.AbortAutoResume() {
 			continue // OFF: エピソードを開かない＝抑止もしない（従来の報告経路のまま）
 		}
 		abortResumeAttempt(m, st, a, now)
@@ -172,12 +174,12 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 		escalateManagedAbort(m, st)
 		return
 	}
-	if st.Attempts >= maxAutoResumeAttempts {
+	if st.Attempts >= chatx.MaxAutoResumeAttempts {
 		// 再送しても中断が続く＝一時的な不調ではない。ここから先はアシスタント／利用者の
 		// 領分なので、報告が「上限に達した」文面（reportKeyTurnAbortedCapped）で出るよう
 		// カウンタを合わせてから抑止を外す。
 		st.GaveUp = abortGaveUpCapped
-		setAutoResumeAttempts(m.Name, st.Attempts)
+		chatx.SetAutoResumeAttempts(m.Name, st.Attempts)
 		log.Printf("abort-resume: %s の自動再開を打ち切る（%d 回連続で中断）", m.Name, st.Attempts)
 		_ = abortResumeStates.Write(m.Name, st)
 		escalateManagedAbort(m, st)
@@ -221,7 +223,7 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 		return
 	}
 	recordInjection(m.Name, prompt, turnSourceAutoResume)
-	log.Printf("abort-resume: %s を自動再開した（%d/%d 回目）", m.Name, st.Attempts, maxAutoResumeAttempts)
+	log.Printf("abort-resume: %s を自動再開した（%d/%d 回目）", m.Name, st.Attempts, chatx.MaxAutoResumeAttempts)
 }
 
 // abortResumeReady reports whether a free-text prompt may be typed into the session right
@@ -282,7 +284,7 @@ func abortEpisodeStale(st abortResumeState, now time.Time) bool {
 // エピソードも無いなら、watcher が動いていない（機能 OFF・Agent が旧版・ループが死んだ）
 // ということなので、抑止せず従来どおり報告する。抑止が片道切符にならないための保険。
 func abortResumeHolds(name string, a claude.Abort, now time.Time) bool {
-	if !a.Retryable || !abortAutoResumeEnabled() {
+	if !a.Retryable || !uiprefs.AbortAutoResume() {
 		return false
 	}
 	st, ok := abortResumeStates.Read(name)
@@ -306,7 +308,7 @@ func abortResumeHolds(name string, a claude.Abort, now time.Time) bool {
 //
 // 言語は表示言語に合わせる（rateLimitResumePrompt と同じ理由 — セッションごとの言語を
 // 持たない以上、その利用者が読み書きしている言語が最良の推定）。
-func abortResumePrompt() string { return abortResumePromptFor(uiLocale()) }
+func abortResumePrompt() string { return abortResumePromptFor(uiprefs.Locale()) }
 
 func abortResumePromptFor(locale string) string {
 	if locale == "en" {

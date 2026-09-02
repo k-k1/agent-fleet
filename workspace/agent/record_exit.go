@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -63,8 +64,8 @@ func runRecordExit(args []string) {
 	// (docs/log/30) — a clean quit / graceful stop is not report-worthy.
 	switch reason {
 	case "oom", "crashed", "killed":
-		if sessionReportPending(name) {
-			kickSessionReport(name, "exit", reason)
+		if chatx.SessionReportPending(name) {
+			chatx.KickSessionReport(name, "exit", reason)
 		}
 		// Abnormal exits don't pass through the notice outbox (the sessions list
 		// surfaces ExitInfo directly), so the chat bridge (docs/log/37 P1) gets its

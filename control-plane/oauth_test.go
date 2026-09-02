@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -88,31 +90,31 @@ func stubIDToken(claims map[string]any) string {
 
 // --- config helpers --------------------------------------------------------
 
-func oauthTestConfig(t *testing.T, ps ...loginProvider) config {
+func oauthTestConfig(t *testing.T, ps ...auth.LoginProvider) config {
 	t.Helper()
 	cfg := config{
 		publicBaseURL: "https://af.example.com",
 		cookieSecret:  []byte("0123456789abcdef0123456789abcdef"),
 		cookieSecure:  true,
 		sessionTTL:    time.Hour,
-		allowEmails:   emailSet(""),
-		allowDomains:  domainSet("acme.co.jp"),
+		allowEmails:   envx.EmailSet(""),
+		allowDomains:  envx.DomainSet("acme.co.jp"),
 		mgr:           &manager{emailHeader: "X-Forwarded-Email"},
 	}
 	for _, p := range ps {
-		if op, ok := p.(*oidcProvider); ok && op.deployAllowed == nil {
-			op.deployAllowed = cfg.emailAllowed
+		if op, ok := p.(*auth.OIDCProvider); ok && op.DeployAllowed == nil {
+			op.DeployAllowed = cfg.emailAllowed
 		}
 	}
 	cfg.setProviders(ps)
 	return cfg
 }
 
-func stubProvider(id string, idp *stubIdP, trust string) *oidcProvider {
-	return &oidcProvider{
-		id: id, issuer: idp.URL, clientID: "client-id", clientSecret: "client-secret",
-		trust: trust, scope: "openid email profile", prompt: "select_account",
-		client: idp.Client(),
+func stubProvider(id string, idp *stubIdP, trust string) *auth.OIDCProvider {
+	return &auth.OIDCProvider{
+		ProviderID: id, Issuer: idp.URL, ClientID: "client-id", ClientSecret: "client-secret",
+		Trust: trust, Scope: "openid email profile", Prompt: "select_account",
+		HTTPClient: idp.Client(),
 	}
 }
 
@@ -184,20 +186,20 @@ func TestGoogleOnlyDeploymentIsUnchanged(t *testing.T) {
 	t.Setenv("AF_OIDC_PROVIDERS", "")
 	base := config{
 		googleClientID: "g-client", googleClientSecret: "g-secret",
-		allowDomains: domainSet("acme.co.jp"),
+		allowDomains: envx.DomainSet("acme.co.jp"),
 	}
 	ps, err := buildLoginProviders(base)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if len(ps) != 1 || ps[0].ID() != googleProviderID {
+	if len(ps) != 1 || ps[0].ID() != auth.GoogleProviderID {
 		t.Fatalf("providers: %#v", ps)
 	}
 	cfg := oauthTestConfig(t, ps...)
 
 	_, au := startLogin(t, cfg, "?next=%2Fsessions")
-	if au.Scheme+"://"+au.Host+au.Path != googleAuthorizeURL {
-		t.Fatalf("authorize endpoint = %q, want %q", au.String(), googleAuthorizeURL)
+	if au.Scheme+"://"+au.Host+au.Path != auth.GoogleAuthorizeURL {
+		t.Fatalf("authorize endpoint = %q, want %q", au.String(), auth.GoogleAuthorizeURL)
 	}
 	q := au.Query()
 	for k, want := range map[string]string{
@@ -244,7 +246,7 @@ func TestGoogleTrustEmailVerified(t *testing.T) {
 				idTokenClaims:  map[string]any{"sub": "g-sub-1", "email": "yamada@acme.co.jp", "email_verified": tc.verified},
 				userinfoClaims: map[string]any{"sub": "g-sub-1", "email": "yamada@acme.co.jp", "email_verified": tc.verified},
 			})
-			p := stubProvider(googleProviderID, idp, trustEmailVerified)
+			p := stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified)
 			cfg := oauthTestConfig(t, p)
 			st, au := startLogin(t, cfg, "?next=%2Fmemos")
 			w := callback(t, cfg, st, "the-code", au.Query().Get("state"))
@@ -272,7 +274,7 @@ func TestGoogleTrustEmailVerified(t *testing.T) {
 			if err := json.Unmarshal(payload, &claims); err != nil {
 				t.Fatalf("claims: %v", err)
 			}
-			if claims.Email != "yamada@acme.co.jp" || claims.Prov != googleProviderID || claims.Sub != "g-sub-1" {
+			if claims.Email != "yamada@acme.co.jp" || claims.Prov != auth.GoogleProviderID || claims.Sub != "g-sub-1" {
 				t.Fatalf("claims = %+v", claims)
 			}
 		})
@@ -291,8 +293,8 @@ func TestEntraTrustIssuerUsesIDTokenClaims(t *testing.T) {
 		},
 		userinfoClaims: map[string]any{"sub": "entra-sub-1"},
 	})
-	p := stubProvider("entra", idp, trustIssuer)
-	p.allowedTIDs = map[string]bool{"tenant-guid": true}
+	p := stubProvider("entra", idp, auth.TrustIssuer)
+	p.AllowedTIDs = map[string]bool{"tenant-guid": true}
 	cfg := oauthTestConfig(t, p)
 
 	st, au := startLogin(t, cfg, "?provider=entra")
@@ -316,8 +318,8 @@ func TestEntraForeignTenantIsRefused(t *testing.T) {
 		idTokenClaims:  map[string]any{"sub": "s", "tid": "someone-elses-tenant", "preferred_username": "yamada@acme.co.jp"},
 		userinfoClaims: map[string]any{"sub": "s"},
 	})
-	p := stubProvider("entra", idp, trustIssuer)
-	p.allowedTIDs = map[string]bool{"tenant-guid": true}
+	p := stubProvider("entra", idp, auth.TrustIssuer)
+	p.AllowedTIDs = map[string]bool{"tenant-guid": true}
 	cfg := oauthTestConfig(t, p)
 	st, au := startLogin(t, cfg, "?provider=entra")
 	w := callback(t, cfg, st, "code", au.Query().Get("state"))
@@ -342,7 +344,7 @@ func TestUserinfoFailureFallsBackToIDToken(t *testing.T) {
 		idTokenClaims:  map[string]any{"sub": "s1", "email": "yamada@acme.co.jp", "email_verified": true},
 		userinfoStatus: http.StatusInternalServerError,
 	})
-	cfg := oauthTestConfig(t, stubProvider("okta", idp, trustEmailVerified))
+	cfg := oauthTestConfig(t, stubProvider("okta", idp, auth.TrustEmailVerified))
 	st, au := startLogin(t, cfg, "?provider=okta")
 	w := callback(t, cfg, st, "code", au.Query().Get("state"))
 	if ck := sessionCookieOf(t, w); ck == nil {
@@ -352,7 +354,7 @@ func TestUserinfoFailureFallsBackToIDToken(t *testing.T) {
 
 func TestTokenEndpointErrorShowsExchangeError(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{tokenError: "invalid_grant"})
-	cfg := oauthTestConfig(t, stubProvider("okta", idp, trustEmailVerified))
+	cfg := oauthTestConfig(t, stubProvider("okta", idp, auth.TrustEmailVerified))
 	st, au := startLogin(t, cfg, "?provider=okta")
 	if got := loginErrorOf(t, callback(t, cfg, st, "code", au.Query().Get("state"))); got != "exchange" {
 		t.Fatalf("error = %q, want exchange", got)
@@ -365,7 +367,7 @@ func TestTokenEndpointErrorShowsExchangeError(t *testing.T) {
 // against the configured set before anything branches on it (決定 8).
 func TestCallbackRejectsStateForUnconfiguredProvider(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{idTokenClaims: map[string]any{"sub": "s", "email": "yamada@acme.co.jp", "email_verified": true}})
-	cfg := oauthTestConfig(t, stubProvider("okta", idp, trustEmailVerified))
+	cfg := oauthTestConfig(t, stubProvider("okta", idp, auth.TrustEmailVerified))
 	// A validly signed state naming a provider this deployment doesn't have (it
 	// was removed from AF_OIDC_PROVIDERS, say).
 	b, _ := json.Marshal(oauthState{Nonce: "nonce123", Next: "/", Exp: time.Now().Add(time.Minute).Unix(), Prov: "gone"})
@@ -382,7 +384,7 @@ func TestCallbackRejectsStateForUnconfiguredProvider(t *testing.T) {
 // nonce must match the query parameter (CSRF).
 func TestCallbackRejectsBadState(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
-	cfg := oauthTestConfig(t, stubProvider("okta", idp, trustEmailVerified))
+	cfg := oauthTestConfig(t, stubProvider("okta", idp, auth.TrustEmailVerified))
 	if got := loginErrorOf(t, callback(t, cfg, nil, "code", "n")); got != "session" {
 		t.Fatalf("no cookie: error = %q, want session", got)
 	}
@@ -405,7 +407,7 @@ func TestCallbackAcceptsPreP0StateCookie(t *testing.T) {
 		idTokenClaims:  map[string]any{"sub": "g1", "email": "yamada@acme.co.jp", "email_verified": true},
 		userinfoClaims: map[string]any{"sub": "g1", "email": "yamada@acme.co.jp", "email_verified": true},
 	})
-	cfg := oauthTestConfig(t, stubProvider(googleProviderID, idp, trustEmailVerified))
+	cfg := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified))
 	b, _ := json.Marshal(map[string]any{"n": "nonce123", "x": "/", "e": time.Now().Add(time.Minute).Unix()})
 	st := &http.Cookie{Name: stateCookie, Value: cfg.signCookie(b)}
 	w := callback(t, cfg, st, "code", "nonce123")
@@ -437,7 +439,7 @@ func TestSanitizeNextRejectsOffSiteRedirects(t *testing.T) {
 // session it was — and it must still be re-checked against the allowlist.
 func TestLegacySessionCookieKeepsWorkingAndIsStillRechecked(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
-	cfg := oauthTestConfig(t, stubProvider(googleProviderID, idp, trustEmailVerified))
+	cfg := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified))
 	gate := cfg.authGate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(r.Header.Get(cfg.mgr.emailHeader)))
 	}))
@@ -470,15 +472,15 @@ func TestAuthGateRereadsAllowlistFileEveryRequest(t *testing.T) {
 	if err := os.WriteFile(file, []byte("# people\nyamada@acme.co.jp\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := oauthTestConfig(t, stubProvider(googleProviderID, idp, trustEmailVerified))
-	cfg.allowDomains = domainSet("") // only the file decides
+	cfg := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified))
+	cfg.allowDomains = envx.DomainSet("") // only the file decides
 	cfg.allowEmailsFile = file
 	// The provider captured the pre-file config's method value, so rebind it.
-	cfg.providers[0].(*oidcProvider).deployAllowed = cfg.emailAllowed
+	cfg.providers[0].(*auth.OIDCProvider).DeployAllowed = cfg.emailAllowed
 	gate := cfg.authGate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	call := func() int {
-		b, _ := json.Marshal(sessionClaims{Email: "yamada@acme.co.jp", Exp: time.Now().Add(time.Hour).Unix(), Prov: googleProviderID, Sub: "s"})
+		b, _ := json.Marshal(sessionClaims{Email: "yamada@acme.co.jp", Exp: time.Now().Add(time.Hour).Unix(), Prov: auth.GoogleProviderID, Sub: "s"})
 		r := httptest.NewRequest(http.MethodGet, "/api/tenants", nil)
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)})
 		w := httptest.NewRecorder()
@@ -500,8 +502,8 @@ func TestAuthGateRereadsAllowlistFileEveryRequest(t *testing.T) {
 // provider only (docs/log/61 §61.8).
 func TestProviderAllowlistOverridesTheDeploymentOne(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
-	p := stubProvider("entra", idp, trustIssuer)
-	p.allowDomains = domainSet("sales.acme.co.jp")
+	p := stubProvider("entra", idp, auth.TrustIssuer)
+	p.AllowDomains = envx.DomainSet("sales.acme.co.jp")
 	oauthTestConfig(t, p) // binds the deployment-wide fallback list (@acme.co.jp)
 	for _, tc := range []struct {
 		email string
@@ -510,7 +512,7 @@ func TestProviderAllowlistOverridesTheDeploymentOne(t *testing.T) {
 		{"yamada@sales.acme.co.jp", true},
 		{"yamada@acme.co.jp", false}, // allowed deployment-wide, not for this provider
 	} {
-		got, err := p.Allowed(t.Context(), principal{Provider: "entra", Email: tc.email})
+		got, err := p.Allowed(t.Context(), auth.Principal{Provider: "entra", Email: tc.email})
 		if err != nil || got != tc.want {
 			t.Errorf("Allowed(%s) = %v (err %v), want %v", tc.email, got, err, tc.want)
 		}
@@ -521,12 +523,12 @@ func TestProviderAllowlistOverridesTheDeploymentOne(t *testing.T) {
 
 func TestLoginPageRendersOneButtonPerProvider(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
-	entra := stubProvider("entra", idp, trustIssuer)
-	entra.labelJA, entra.labelEN = "Microsoft でサインイン", "Sign in with Microsoft"
-	okta := stubProvider("okta", idp, trustEmailVerified) // no labels => generated
-	cfg := oauthTestConfig(t, stubProvider(googleProviderID, idp, trustEmailVerified), entra, okta)
-	cfg.providers[0].(*oidcProvider).labelJA = loginText["ja"].signin
-	cfg.providers[0].(*oidcProvider).labelEN = loginText["en"].signin
+	entra := stubProvider("entra", idp, auth.TrustIssuer)
+	entra.LabelJA, entra.LabelEN = "Microsoft でサインイン", "Sign in with Microsoft"
+	okta := stubProvider("okta", idp, auth.TrustEmailVerified) // no labels => generated
+	cfg := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified), entra, okta)
+	cfg.providers[0].(*auth.OIDCProvider).LabelJA = auth.LoginText["ja"].Signin
+	cfg.providers[0].(*auth.OIDCProvider).LabelEN = auth.LoginText["en"].Signin
 
 	for _, tc := range []struct{ lang, accept, want string }{
 		{"ja", "ja,en;q=0.8", "Microsoft でサインイン"},
@@ -615,7 +617,7 @@ func TestIncompleteProviderIsDisabledNotFatal(t *testing.T) {
 		{"no client secret", "CLIENT_SECRET", ""},
 		{"no trust declared", "TRUST", ""},
 		{"unknown trust", "TRUST", "whatever"},
-		{"api trust is the GitHub rule (P2)", "TRUST", trustAPI},
+		{"api trust is the GitHub rule (P2)", "TRUST", auth.TrustAPI},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("AF_OIDC_PROVIDERS", "okta")
@@ -630,7 +632,7 @@ func TestIncompleteProviderIsDisabledNotFatal(t *testing.T) {
 			if err != nil {
 				t.Fatalf("must not be fatal: %v", err)
 			}
-			if len(ps) != 1 || ps[0].ID() != googleProviderID {
+			if len(ps) != 1 || ps[0].ID() != auth.GoogleProviderID {
 				t.Fatalf("providers = %v, want google only", providerIDs(ps))
 			}
 		})
@@ -657,21 +659,21 @@ func TestBuildLoginProvidersOrderAndDefaults(t *testing.T) {
 	if got := strings.Join(providerIDs(ps), ","); got != "google,entra,keycloak" {
 		t.Fatalf("providers = %s", got)
 	}
-	entra := ps[1].(*oidcProvider)
+	entra := ps[1].(*auth.OIDCProvider)
 	if entra.Label("ja") != "Microsoft でサインイン" || entra.Label("en") != "Sign in with Microsoft" {
 		t.Errorf("entra labels: %q / %q", entra.Label("ja"), entra.Label("en"))
 	}
-	if !entra.hasOwnAllowlist() || !anyProviderAllowlist(ps) {
+	if !entra.HasOwnAllowlist() || !auth.AnyProviderAllowlist(ps) {
 		t.Error("entra should carry its own allowlist")
 	}
-	kc := ps[2].(*oidcProvider)
-	if kc.scope != "openid email profile" || kc.prompt != "select_account" {
-		t.Errorf("keycloak defaults: scope=%q prompt=%q", kc.scope, kc.prompt)
+	kc := ps[2].(*auth.OIDCProvider)
+	if kc.Scope != "openid email profile" || kc.Prompt != "select_account" {
+		t.Errorf("keycloak defaults: scope=%q prompt=%q", kc.Scope, kc.Prompt)
 	}
 	// Google keeps the exact scope/endpoints it has always used.
-	g := ps[0].(*oidcProvider)
-	if g.scope != "openid email" || g.ep.Token != googleTokenURL {
-		t.Errorf("google: scope=%q token=%q", g.scope, g.ep.Token)
+	g := ps[0].(*auth.OIDCProvider)
+	if g.Scope != "openid email" || g.CachedEndpoints().Token != auth.GoogleTokenURL {
+		t.Errorf("google: scope=%q token=%q", g.Scope, g.CachedEndpoints().Token)
 	}
 }
 
@@ -692,7 +694,7 @@ func TestBuildLoginProvidersRejectsBadIDs(t *testing.T) {
 		t.Fatalf("providers = %s", got)
 	}
 	// The google slot is still the historical one, not the AF_OIDC_GOOGLE_* copy.
-	if ps[0].(*oidcProvider).clientID != "g" {
+	if ps[0].(*auth.OIDCProvider).ClientID != "g" {
 		t.Fatal("AF_OIDC_GOOGLE_* must not shadow GOOGLE_OAUTH_CLIENT_ID")
 	}
 }
@@ -713,7 +715,7 @@ func TestGoogleNeedsBothHalvesAndZeroProvidersIsUnconfigured(t *testing.T) {
 	}
 }
 
-func providerIDs(ps []loginProvider) []string {
+func providerIDs(ps []auth.LoginProvider) []string {
 	out := make([]string, 0, len(ps))
 	for _, p := range ps {
 		out = append(out, p.ID())

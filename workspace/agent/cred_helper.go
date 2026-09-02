@@ -49,7 +49,7 @@ func runCredHelper(args []string) {
 	if host == "bitbucket.org" && s.Bitbucket != nil {
 		c := *s.Bitbucket
 		if time.Now().Unix() >= c.Expiry-120 { // refresh within 2 min of expiry
-			if nc, rerr := refreshBitbucket(c); rerr == nil {
+			if nc, rerr := gitx.RefreshBitbucket(c); rerr == nil {
 				c = nc
 				// Re-read-modify-write under the store lock: this helper runs as a
 				// SEPARATE process concurrent with agent handlers, and a blind Save

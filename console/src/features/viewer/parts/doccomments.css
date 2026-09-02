@@ -1,0 +1,174 @@
+/* プランレビュー（DocView）: 引用ハイライト・コメント入力ポップ・コメント控え。
+   ハイライトは番号バッジ付きで、カード側の一覧の番号と対応する。 */
+.markdown mark.quote-mark {
+  background: color-mix(in srgb, var(--chat-accent, #4c8dff) 26%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.markdown mark.quote-mark::after {
+  content: attr(data-n);
+  font-size: 9px;
+  vertical-align: super;
+  margin-left: 2px;
+  opacity: 0.75;
+}
+.doc-review-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.doc-comment-pop {
+  position: fixed;
+  z-index: 61;
+  width: min(340px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+}
+.doc-comment-pop-quote {
+  font-size: 11px;
+  opacity: 0.75;
+  font-style: italic;
+  max-height: 3.6em;
+  overflow: hidden;
+  border-left: 2px solid var(--border2, var(--border));
+  padding-left: 6px;
+}
+.doc-comment-pop-input {
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+  padding: 6px 8px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.doc-comment-pop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+/* 控え: 本文の下に畳める帯として置く（送信はミラー側なのでここには出さない）。 */
+.doc-comments {
+  flex: none;
+  max-height: 40%;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
+.doc-comments-head {
+  position: sticky;
+  top: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: inherit;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.doc-comments-hint {
+  margin-left: auto;
+  font-size: 11px;
+}
+.doc-comments-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  /* 5件ぶんで打ち切ってスクロール。行の高さはコメントの長さで変わるので、実際の高さは
+     DocView が6件目の位置から実測して max-height を上書きする。この値はその前の保険。 */
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.doc-comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12px;
+}
+.doc-comment.sent {
+  opacity: 0.55;
+}
+.doc-comment-n {
+  flex: none;
+  min-width: 17px;
+  height: 17px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  background: color-mix(in srgb, var(--chat-accent, #4c8dff) 30%, transparent);
+}
+/* 行そのものが「全文表示」のトグル。既定は引用1行＋本文2行で畳む。 */
+.doc-comment-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.doc-comment-quote {
+  opacity: 0.7;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-comment-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.doc-comment.open .doc-comment-quote {
+  white-space: pre-wrap;
+  overflow: visible;
+}
+.doc-comment.open .doc-comment-body {
+  display: block;
+  -webkit-line-clamp: none;
+  line-clamp: none;
+  overflow: visible;
+}
+.doc-comment-sent {
+  margin-left: auto;
+  font-size: 11px;
+}
+.doc-comment-del {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 4px;
+  border-radius: 5px;
+  opacity: 0.65;
+}
+.doc-comment-del:hover {
+  opacity: 1;
+}
+

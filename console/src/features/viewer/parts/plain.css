@@ -1,0 +1,12 @@
+/* Large-file plain mode: no grid, no highlight — just a scrollable pre. */
+.filebody.fb-plain {
+  color: var(--hl-fg);
+  font-family: var(--viewer-font, var(--mono));
+  font-size: var(--viewer-size, 12px);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  padding: 8px 14px;
+}
+

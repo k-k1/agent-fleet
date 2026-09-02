@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"strings"
 	"testing"
 )
@@ -13,7 +15,7 @@ type fakeChatProv struct {
 	prompt *string
 }
 
-func (f fakeChatProv) send(_ context.Context, _ *chatConversation, prompt string) (string, error) {
+func (f fakeChatProv) Send(_ context.Context, _ *chatx.ChatConversation, prompt string) (string, error) {
 	if f.prompt != nil {
 		*f.prompt = prompt
 	}
@@ -21,15 +23,15 @@ func (f fakeChatProv) send(_ context.Context, _ *chatConversation, prompt string
 }
 
 // stubChatProvider swaps a backend in the provider registry for the test's duration.
-func stubChatProvider(t *testing.T, kind string, p chatProvider) {
+func stubChatProvider(t *testing.T, kind string, p chatx.ChatProvider) {
 	t.Helper()
-	old, had := chatProviders[kind]
-	chatProviders[kind] = p
+	old, had := chatx.ChatProviders[kind]
+	chatx.ChatProviders[kind] = p
 	t.Cleanup(func() {
 		if had {
-			chatProviders[kind] = old
+			chatx.ChatProviders[kind] = old
 		} else {
-			delete(chatProviders, kind)
+			delete(chatx.ChatProviders, kind)
 		}
 	})
 }
@@ -42,12 +44,12 @@ func TestRunOperatorTurn(t *testing.T) {
 	var gotPrompt string
 	stubChatProvider(t, "claude", fakeChatProv{reply: "フリートは2件稼働中です", prompt: &gotPrompt})
 
-	conv := &chatConversation{
-		ID: randUUID(), Agent: "claude", Tools: toolsAFWrite, AssistantID: "operator",
+	conv := &chatx.ChatConversation{
+		ID: chatx.RandUUID(), Agent: "claude", Tools: assistants.ToolsAFWrite, AssistantID: "operator",
 		AutoTurns: 3, // a prior unattended run — a real user message must reset it
-		Messages:  []chatMessage{},
+		Messages:  []chatx.ChatMessage{},
 	}
-	if err := saveConv(conv); err != nil {
+	if err := chatx.SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 
@@ -62,7 +64,7 @@ func TestRunOperatorTurn(t *testing.T) {
 		t.Fatalf("provider prompt missing the (trimmed) user text: %q", gotPrompt)
 	}
 
-	c, err := loadConv(conv.ID)
+	c, err := chatx.LoadConv(conv.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +86,7 @@ func TestRunOperatorTurn(t *testing.T) {
 // operator conversation is gone.
 func TestRunOperatorTurnMissingConv(t *testing.T) {
 	withTempHome(t)
-	reply, err := runOperatorTurn(randUUID(), "hi")
+	reply, err := runOperatorTurn(chatx.RandUUID(), "hi")
 	if err == nil {
 		t.Fatal("expected an error for a missing conversation")
 	}
@@ -101,14 +103,14 @@ func TestCreateOperatorConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := loadConv(id)
+	c, err := chatx.LoadConv(id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.AssistantID != "operator" {
 		t.Fatalf("assistant id = %q", c.AssistantID)
 	}
-	if !c.afWriteEnabled() {
+	if !c.AFWriteEnabled() {
 		t.Fatalf("operator conversation must grant af_write, got tools=%q", c.Tools)
 	}
 	if strings.TrimSpace(c.Persona) == "" {

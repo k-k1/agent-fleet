@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -27,7 +29,7 @@ import (
 func p4Manager(t *testing.T, st *store.SQL) *manager {
 	t.Helper()
 	m := p3Manager(t, st)
-	m.tenantIdP = newTenantIdPRegistry(st, m.openTenantSecret)
+	m.tenantIdP = auth.NewTenantIdPRegistry(st, m.openTenantSecret)
 	return m
 }
 
@@ -37,7 +39,7 @@ func seedTenantIdP(t *testing.T, st *store.SQL, tenantID, name, domains, status 
 	row := store.TenantIdP{
 		ID: store.NewID(), TenantID: tenantID, Name: name,
 		Issuer:   "https://login.microsoftonline.com/guid-" + name + "/v2.0",
-		ClientID: "client-" + name, SecretEnc: "secret-" + name, Trust: trustIssuer,
+		ClientID: "client-" + name, SecretEnc: "secret-" + name, Trust: auth.TrustIssuer,
 		AllowedDomains: domains, Status: status, CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateTenantIdP(context.Background(), row); err != nil {
@@ -52,25 +54,25 @@ func seedTenantIdP(t *testing.T, st *store.SQL, tenantID, name, domains, status 
 // Google button is theirs. validProviderID must keep rejecting ":" — relaxing it
 // would let an env provider be named INTO the tenant namespace instead.
 func TestTenantProviderIDNamespaceIsSeparateFromEnv(t *testing.T) {
-	id := tenantProviderID("sub", "entra")
+	id := auth.TenantProviderID("sub", "entra")
 	if id != "t:sub:entra" {
 		t.Fatalf("id = %q", id)
 	}
-	slug, name, ok := parseTenantProviderID(id)
+	slug, name, ok := auth.ParseTenantProviderID(id)
 	if !ok || slug != "sub" || name != "entra" {
 		t.Fatalf("parse = (%q,%q,%v)", slug, name, ok)
 	}
 	for _, env := range []string{"google", "entra", "github", ""} {
-		if isTenantProviderID(env) {
+		if auth.IsTenantProviderID(env) {
 			t.Fatalf("%q must not read as tenant-defined", env)
 		}
 	}
 	for _, bad := range []string{"t:", "t::x", "t:sub:", "t:sub"} {
-		if isTenantProviderID(bad) {
+		if auth.IsTenantProviderID(bad) {
 			t.Fatalf("%q must not parse as a tenant provider id", bad)
 		}
 	}
-	if validProviderID("t:sub:entra") {
+	if auth.ValidProviderID("t:sub:entra") {
 		t.Fatal("validProviderID must keep rejecting ':' — env ids may not enter the tenant namespace")
 	}
 }
@@ -87,30 +89,30 @@ func TestTenantProviderGateDoesNotFallBackToTheDeployment(t *testing.T) {
 	mgr := p4Manager(t, st)
 
 	// A deployment that admits the parent company, and a colleague on some roster.
-	cfg := config{mgr: mgr, allowDomains: domainSet("acme.co.jp"), allowEmails: emailSet("")}
+	cfg := config{mgr: mgr, allowDomains: envx.DomainSet("acme.co.jp"), allowEmails: envx.EmailSet("")}
 	tn, _ := st.CreateTenant(ctx, "sub", "子会社")
 	ident, _ := st.UpsertIdentity(ctx, "member@acme.co.jp", "member-acme-co-jp", "")
 	if _, err := st.EnsureMembership(ctx, ident.ID, tn.ID, "member"); err != nil {
 		t.Fatalf("membership: %v", err)
 	}
 	mgr.tenantLogin.invalidate()
-	if ok, _ := (&oidcProvider{deployAllowed: cfg.emailAllowed, dbAllowed: cfg.tenantEmailAllowed}).
-		Allowed(ctx, principal{Email: "member@acme.co.jp"}); !ok {
+	if ok, _ := (&auth.OIDCProvider{DeployAllowed: cfg.emailAllowed, DBAllowed: cfg.tenantEmailAllowed}).
+		Allowed(ctx, auth.Principal{Email: "member@acme.co.jp"}); !ok {
 		t.Fatal("precondition: an env provider does admit this person")
 	}
 
 	row := seedTenantIdP(t, st, tn.ID, "entra", "sub.co.jp", "active")
-	p, err := buildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s3cret")
+	p, err := auth.BuildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s3cret")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if ok, _ := p.Allowed(ctx, principal{Email: "hanako@sub.co.jp"}); !ok {
+	if ok, _ := p.Allowed(ctx, auth.Principal{Email: "hanako@sub.co.jp"}); !ok {
 		t.Fatal("the subsidiary's own domain must be admitted")
 	}
-	if ok, _ := p.Allowed(ctx, principal{Email: "member@acme.co.jp"}); ok {
+	if ok, _ := p.Allowed(ctx, auth.Principal{Email: "member@acme.co.jp"}); ok {
 		t.Fatal("the deployment allowlist must NOT be a fallback for a tenant-defined provider")
 	}
-	if ok, _ := p.Allowed(ctx, principal{Email: "stranger@other.example"}); ok {
+	if ok, _ := p.Allowed(ctx, auth.Principal{Email: "stranger@other.example"}); ok {
 		t.Fatal("an unlisted domain must be refused")
 	}
 }
@@ -121,15 +123,15 @@ func TestTenantProviderGateDoesNotFallBackToTheDeployment(t *testing.T) {
 func TestBuildTenantProviderRefusesDangerousRows(t *testing.T) {
 	base := store.TenantIdP{
 		Name: "entra", Issuer: "https://login.microsoftonline.com/guid/v2.0",
-		ClientID: "c", Trust: trustIssuer, AllowedDomains: "sub.co.jp",
+		ClientID: "c", Trust: auth.TrustIssuer, AllowedDomains: "sub.co.jp",
 	}
-	if _, err := buildTenantProvider(base, store.TenantRef{Slug: "sub"}, "s"); err != nil {
+	if _, err := auth.BuildTenantProvider(base, store.TenantRef{Slug: "sub"}, "s"); err != nil {
 		t.Fatalf("the valid row must build: %v", err)
 	}
 	bad := map[string]func(*store.TenantIdP){
 		"no domains":    func(r *store.TenantIdP) { r.AllowedDomains = "" },
 		"no trust rule": func(r *store.TenantIdP) { r.Trust = "" },
-		"api trust":     func(r *store.TenantIdP) { r.Trust = trustAPI },
+		"api trust":     func(r *store.TenantIdP) { r.Trust = auth.TrustAPI },
 		"http issuer":   func(r *store.TenantIdP) { r.Issuer = "http://idp.example/" },
 		"multi-tenant issuer": func(r *store.TenantIdP) {
 			r.Issuer = "https://login.microsoftonline.com/common/v2.0"
@@ -139,14 +141,14 @@ func TestBuildTenantProviderRefusesDangerousRows(t *testing.T) {
 	for label, mutate := range bad {
 		row := base
 		mutate(&row)
-		if _, err := buildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s"); err == nil {
+		if _, err := auth.BuildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s"); err == nil {
 			t.Fatalf("%s: must be refused", label)
 		}
 	}
 	// A multi-tenant issuer is allowed once the tenant ids are pinned (決定 7).
 	row := base
 	row.Issuer, row.AllowedTIDs = "https://login.microsoftonline.com/common/v2.0", "guid-a"
-	if _, err := buildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s"); err != nil {
+	if _, err := auth.BuildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s"); err != nil {
 		t.Fatalf("pinned tids must make the multi-tenant issuer acceptable: %v", err)
 	}
 }
@@ -163,22 +165,22 @@ func TestOnlyApprovedTenantProvidersResolve(t *testing.T) {
 	tn, _ := st.CreateTenant(ctx, "sub", "子会社")
 
 	row := seedTenantIdP(t, st, tn.ID, "entra", "sub.co.jp", "pending")
-	id := tenantProviderID("sub", "entra")
-	if mgr.tenantIdP.providerFor(ctx, id) != nil {
+	id := auth.TenantProviderID("sub", "entra")
+	if mgr.tenantIdP.ProviderFor(ctx, id) != nil {
 		t.Fatal("a pending sign-in method must not resolve to a provider")
 	}
 	if err := st.SetTenantIdPStatus(ctx, tn.ID, row.ID, "active", "boss", store.NowTS(), store.NowTS()); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	mgr.tenantIdP.invalidate()
-	if mgr.tenantIdP.providerFor(ctx, id) == nil {
+	mgr.tenantIdP.Invalidate()
+	if mgr.tenantIdP.ProviderFor(ctx, id) == nil {
 		t.Fatal("an approved sign-in method must resolve without a restart")
 	}
 	if err := st.SetTenantIdPStatus(ctx, tn.ID, row.ID, "suspended", "", "", store.NowTS()); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
-	mgr.tenantIdP.invalidate()
-	if mgr.tenantIdP.providerFor(ctx, id) != nil {
+	mgr.tenantIdP.Invalidate()
+	if mgr.tenantIdP.ProviderFor(ctx, id) != nil {
 		t.Fatal("a suspended sign-in method must stop resolving")
 	}
 
@@ -453,7 +455,7 @@ func TestTenantProviderAppearsOnlyOnItsOwnLoginPage(t *testing.T) {
 		cookieSecret:  []byte("0123456789abcdef0123456789abcdef"),
 		mgr:           mgr,
 	}
-	cfg.setProviders([]loginProvider{&oidcProvider{id: "google", labelJA: "Google でサインイン"}})
+	cfg.setProviders([]auth.LoginProvider{&auth.OIDCProvider{ProviderID: "google", LabelJA: "Google でサインイン"}})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login", cfg.handleLogin)
 	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin)

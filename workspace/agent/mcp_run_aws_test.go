@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -43,7 +44,7 @@ func TestAWSMCPArgs(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := awsMCPArgs(&c.conn, nil); !reflect.DeepEqual(got, c.want) {
+			if got := mcpx.AWSMCPArgs(&c.conn, nil); !reflect.DeepEqual(got, c.want) {
 				t.Fatalf("awsMCPArgs = %v, want %v", got, c.want)
 			}
 		})

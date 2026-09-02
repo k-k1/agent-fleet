@@ -60,7 +60,7 @@ const (
 // のような URL がそのまま offer に載って別メンバーへ渡るのを防ぐ。SSH 形式は既存の
 // sshToHTTPS で HTTPS へ寄せてから同じ処理に通す（比較にも表示にも同じ形が要る）。
 func sanitizeRemoteURL(raw string) string {
-	s := sshToHTTPS(strings.TrimSpace(raw))
+	s := gitx.SSHToHTTPS(strings.TrimSpace(raw))
 	u, err := url.Parse(s)
 	if err != nil || u.Host == "" {
 		// パースできない形（ローカルパス等）は host を持たない。資格情報を含み得ないので
@@ -92,9 +92,9 @@ func gitHasUpstream(dir string) bool {
 // buildHandoffContext は dir の状態を 1 つに畳む。dir が git 作業コピーでなければ
 // Vcs を空（または svn）にして、ゲート判定を行わない。
 func buildHandoffContext(dir string) handoffContext {
-	c := handoffContext{Repo: filepath.Base(dir), Dir: dir, WorkingCopyID: workingCopyID(dir)}
+	c := handoffContext{Repo: filepath.Base(dir), Dir: dir, WorkingCopyID: gitx.WorkingCopyID(dir)}
 	switch {
-	case isGitRepo(dir):
+	case gitx.IsGitRepo(dir):
 		c.Vcs = "git"
 	case isSvnRepo(dir):
 		c.Vcs = "svn"
@@ -102,7 +102,7 @@ func buildHandoffContext(dir string) handoffContext {
 	default:
 		return c
 	}
-	st, err := gitStatus(dir)
+	st, err := gitx.GitStatus(dir)
 	if err != nil {
 		// git が答えられないなら「引き継げる」と言ってはいけない。判定不能は止める側へ倒す。
 		c.Blocked = handoffBlockNoUpstream
@@ -110,7 +110,7 @@ func buildHandoffContext(dir string) handoffContext {
 	}
 	c.Branch, c.Dirty, c.Ahead, c.Detached = st.Branch, st.Dirty, st.Ahead, st.Detached
 	c.HeadSha = gitHeadSha(dir)
-	if origin, ok := gitOriginURL(dir); ok {
+	if origin, ok := gitx.GitOriginURL(dir); ok {
 		c.Remote = sanitizeRemoteURL(origin)
 	}
 	c.NoUpstream = !c.Detached && !gitHasUpstream(dir)

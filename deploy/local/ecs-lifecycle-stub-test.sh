@@ -278,6 +278,62 @@ grep -q "^NatEipAllocationId=eipalloc-REAL$" "$CAPFILE" \
 # 引数に無い Output まで写してはいけない（CFN は知らない引数を拒む）
 if grep -q "^VpcId=" "$CAPFILE"; then fail "引数ではない Output まで控えに写している"; fi
 
+echo "== case 3e: preflight の必須パラメータ検査は「書き方」で空振りしない =="
+#
+# 🔥 この検査（控えとテンプレートの突き合わせ）は**空振りしても何も出ない**種類のもので、
+# 実際 2 スペース/4 スペース決め打ちで数えていた。書き方の違うテンプレートを食わせると
+# 必須 0 件になり、**「立てる前に足りないと言う」という趣旨そのものが黙って消える**。
+# #307 で踏んだ「走っていない経路は壊れていても分からない」と同型なので、ここで踏ませる。
+#
+# 走らせるのは 2 通り:
+#   3e-1 深さが違うだけのテンプレート → **必須パラメータの不足を今までどおり言う**
+#   3e-2 節はあるのに 1 件も読めないテンプレート → **空振りしていることを言う**
+: > "$LOG"
+IDCFN="$WORK/cfn-indent"; mkdir -p "$IDCFN"; cp "$ECS"/cfn/*.yaml "$IDCFN"/
+# 4 スペース字下げ。`Fqdn` は Default を持たない＝必須で、控え（VpcCidr だけ）には無い。
+cat > "$IDCFN/00-network.yaml" <<'YEOF'
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 4 スペース字下げで書かれたテンプレート（深さ決め打ちだと 1 件も読めない）
+Parameters:
+    VpcCidr:
+        Type: String
+        Default: 10.20.0.0/16
+    ReindentProbe:
+        Type: String
+        Description: >-
+            Default を持たない＝必須。控えには無いので preflight が言うはず
+Resources:
+    Vpc:
+        Type: AWS::EC2::VPC
+        Properties:
+            CidrBlock: !Ref VpcCidr
+YEOF
+if AF_STANDUP_CFN_DIR="$IDCFN" "$ECS/standup.sh" --profile p --region ap-northeast-1 \
+     --stack t-ingress --yes > "$WORK/out3e1" 2>&1 </dev/null; then
+  fail "字下げの違うテンプレートで必須パラメータの不足を見逃した（検査が空振りしている）"
+fi
+grep -q "必須パラメータ ReindentProbe が無い" "$WORK/out3e1" \
+  || fail "不足の理由が出ていない: $(tail -3 "$WORK/out3e1")"
+# 立て始めていないこと（この検査の値打ちは「00〜20 を作る前に止まる」ところにある）
+hasnt "cloudformation deploy --stack-name t-network"
+
+# 3e-2: 節はあるのに 1 件も読めない（flow スタイル）。**「必須 0 件」で静かに通さない。**
+: > "$LOG"
+cat > "$IDCFN/00-network.yaml" <<'YEOF'
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters: { VpcCidr: { Type: String, Default: 10.20.0.0/16 } }
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+YEOF
+if AF_STANDUP_CFN_DIR="$IDCFN" "$ECS/standup.sh" --profile p --region ap-northeast-1 \
+     --stack t-ingress --yes > "$WORK/out3e2" 2>&1 </dev/null; then
+  fail "Parameters: を 1 件も読めなかったのに preflight が通った（空振りが見えない）"
+fi
+grep -q "Parameters: を 1 件も読めなかった" "$WORK/out3e2" \
+  || fail "空振りの申告が出ていない: $(tail -3 "$WORK/out3e2")"
+hasnt "cloudformation deploy --stack-name t-network"
+
 echo "== case 4: pause stops the control plane LAST =="
 : > "$LOG"
 "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4" </dev/null

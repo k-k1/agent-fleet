@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 type abortFixture struct {
@@ -45,7 +47,7 @@ func newAbortFixture(t *testing.T) *abortFixture {
 
 func setAbortResumePref(t *testing.T, on bool) {
 	t.Helper()
-	p := uiPrefsPath()
+	p := uiprefs.Path()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -122,12 +124,12 @@ func TestAbortResumeCapsThenHandsOver(t *testing.T) {
 	a := retryableAbort(cut)
 
 	now := cut.Add(abortResumeFirstDelay + time.Second)
-	for i := 0; i < maxAutoResumeAttempts; i++ {
+	for i := 0; i < chatx.MaxAutoResumeAttempts; i++ {
 		abortResumeAttempt(m, abState(t, m.Name), a, now)
 		now = now.Add(abortResumeBackoff + time.Second)
 	}
-	if len(f.sent) != maxAutoResumeAttempts {
-		t.Fatalf("再開 = %d 回, want %d", len(f.sent), maxAutoResumeAttempts)
+	if len(f.sent) != chatx.MaxAutoResumeAttempts {
+		t.Fatalf("再開 = %d 回, want %d", len(f.sent), chatx.MaxAutoResumeAttempts)
 	}
 	if abState(t, m.Name).GaveUp != "" {
 		t.Fatal("上限に達する前に打ち切っている")
@@ -138,11 +140,11 @@ func TestAbortResumeCapsThenHandsOver(t *testing.T) {
 	if st.GaveUp != abortGaveUpCapped {
 		t.Fatalf("gaveUp = %q, want %q", st.GaveUp, abortGaveUpCapped)
 	}
-	if len(f.sent) != maxAutoResumeAttempts {
+	if len(f.sent) != chatx.MaxAutoResumeAttempts {
 		t.Errorf("打ち切ったのに送っている: %v", f.sent)
 	}
-	if got := autoResumeAttempts(m.Name); got != maxAutoResumeAttempts {
-		t.Errorf("報告側のカウンタ = %d, want %d（上限文面にならない）", got, maxAutoResumeAttempts)
+	if got := chatx.AutoResumeAttempts(m.Name); got != chatx.MaxAutoResumeAttempts {
+		t.Errorf("報告側のカウンタ = %d, want %d（上限文面にならない）", got, chatx.MaxAutoResumeAttempts)
 	}
 	// 打ち切ったら抑止は外れる — 中断報告が出せる状態に戻る。
 	if abortResumeHolds(m.Name, a, now) {

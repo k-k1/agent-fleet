@@ -22,7 +22,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -153,7 +156,7 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 			finalizeSessionUsage(m) // 使用量台帳へ確定してから忘れる（docs/log/46 §3-b）
 			status.RemoveCarried(session.UUID(m.Dir, name))
 			session.RemoveMeta(name)
-			maybePruneWorktree(m.Dir) // last reference expired → clean up its worktree if clean
+			gitx.MaybePruneWorktree(m.Dir) // last reference expired → clean up its worktree if clean
 			continue
 		}
 		sessions = append(sessions, wireSession(m, false))
@@ -176,7 +179,7 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 	// Enrich rows from their working copy (worktree flag + branch-drift). One git call
 	// per unique dir.
 	annotateSessions(sessions, func(dir string) dirInfo {
-		b, wt := gitDirInfo(dir)
+		b, wt := gitx.GitDirInfo(dir)
 		return dirInfo{branch: b, worktree: wt}
 	})
 	// Stable order: newest first by creation time.
@@ -615,14 +618,14 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			// git holds a branch in one worktree at a time. Refuse BEFORE any directory or
 			// fetch side effect, naming the copy that has it — worktree add would fail
 			// halfway through otherwise, with a message that doesn't say what to do next.
-			if occ := worktreeBranches(parent)[base]; occ != "" {
-				writeBranchInUse(w, base, occ)
+			if occ := gitx.WorktreeBranches(parent)[base]; occ != "" {
+				gitx.WriteBranchInUse(w, base, occ)
 				return
 			}
-			ensureBranchRef(parent, base) // branch pushed since our last fetch => fetch once
-			dir, err = ensureWorktree(parent, base, "", "")
+			gitx.EnsureBranchRef(parent, base) // branch pushed since our last fetch => fetch once
+			dir, err = gitx.EnsureWorktree(parent, base, "", "")
 			if err == nil {
-				fastForwardWorktree(dir) // start at the branch's current tip, not a stale one
+				gitx.FastForwardWorktree(dir) // start at the branch's current tip, not a stale one
 			}
 		} else {
 			// Branch naming is deferred: unless the client sends an explicit name we
@@ -634,7 +637,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				slug := randSlug() // random → skip the collision check
 				nb = "temp/" + slug
 				folderSeg = "wip-" + slug
-			} else if local, remote := branchNameStatus(parent, nb); local {
+			} else if local, remote := gitx.BranchNameStatus(parent, nb); local {
 				// A same-named local branch: -b would fail anyway, but stop with a clear
 				// message rather than git's raw error, and let the user pick another name.
 				httpx.WriteErr(w, http.StatusConflict, "branch_exists",
@@ -648,7 +651,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 					fmt.Sprintf("a remote branch %q already exists; rename it or work on the existing branch", nb))
 				return
 			}
-			dir, err = ensureWorktree(parent, req.Branch, nb, folderSeg)
+			dir, err = gitx.EnsureWorktree(parent, req.Branch, nb, folderSeg)
 			if err == nil {
 				// 起点を origin の先端に合わせる（既存ブランチ経路の fastForwardWorktree と
 				// 同じ狙い）。base 未指定＝親の HEAD が起点なので、その現在ブランチ名で引く。
@@ -656,11 +659,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				if base == "" {
 					// gitCurrentBranch は detached を "(detached)" と答えるので、そのときは
 					// 引ける相手が無い＝何もしない（ブランチ名として投げると紛らわしいログが出る）。
-					if b := gitCurrentBranch(parent); b != "(detached)" {
+					if b := gitx.GitCurrentBranch(parent); b != "(detached)" {
 						base = b
 					}
 				}
-				fastForwardNewWorktreeToOrigin(dir, base)
+				gitx.FastForwardNewWorktreeToOrigin(dir, base)
 			}
 		}
 		if err != nil {
@@ -670,7 +673,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		req.Dir = dir
 	} else if strings.TrimSpace(req.RemoteURL) != "" {
 		// Clone-then-start: ensure the repo exists and use it as the working dir.
-		dir, err := ensureRepo(req.RemoteURL, req.Branch, req.NewBranch, req.RepoName)
+		dir, err := gitx.EnsureRepo(req.RemoteURL, req.Branch, req.NewBranch, req.RepoName)
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "clone_failed", err.Error())
 			return
@@ -737,7 +740,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	meta := session.Meta{
 		Name: name, Dir: req.Dir, Subdir: subdir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
 		SkipPermissions: req.SkipPermissions,
-		Repo:            filepath.Base(req.Dir), Branch: gitCurrentBranch(req.Dir),
+		Repo:            filepath.Base(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 		Origin: origin, OriginConv: originConv,
 	}
@@ -752,7 +755,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// を起こす。初回プロンプトは boot 画面スクレイプ不要でそのまま Send できる
 		// （§10.2-9 — ClientMessageID で冪等）。
 		d, _ := driverOf(meta)
-		h, err := startManagedSession(d, meta)
+		h, err := mcpx.StartManagedSession(d, meta)
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
 			return
@@ -768,7 +771,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// docs/log/51 Phase 2: 指示台帳へ1行追加する（旧 arm の1bit）。managed は
 		// session-status hook を持たないが、完了は notify seam → リコンサイラで拾われる。
 		if req.ReportTo != "" {
-			addInstruction(name, req.ReportTo, injectionSource(req.Source))
+			chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
 			recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)
 		} else if s := scheduleInjectionSource(req.Source); s != "" {
 			// 完了報告 OFF の定時実行が作ったセッション: 台帳は立てない（報告先が無い）が、
@@ -795,7 +798,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// The initial_prompt, when present, is an orchestrated injection (docs/log/30 ② /
 	// docs/log/38) — remember it with its origin so the mirror badges its user turn.
 	if req.ReportTo != "" {
-		addInstruction(name, req.ReportTo, injectionSource(req.Source))
+		chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source))
 	} else if s := scheduleInjectionSource(req.Source); s != "" {
 		recordInjection(name, req.InitialPrompt, s) // 報告 OFF の定時実行（managed 側と同じ）
@@ -917,7 +920,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
 		Repo:      filepath.Base(src.Dir),
-		Branch:    gitCurrentBranch(src.Dir),
+		Branch:    gitx.GitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
 		// 引き継ぎで生えたセッションは出自 handoff（ADR 0029 §6）。元の出自を継ぐと
 		// 「人が開いた数」に紛れ、引き継ぎで増えた消費が見えなくなる。作成元の会話は
@@ -934,7 +937,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 				"managed driver はこの kind ではまだ利用できません")
 			return
 		}
-		if _, err := startManagedSession(d, meta); err != nil {
+		if _, err := mcpx.StartManagedSession(d, meta); err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
 			return
 		}
@@ -998,7 +1001,7 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 	// Stopping forgets the session; if it was the last one in a worktree and that
 	// worktree is clean, auto-remove it so worktrees don't pile up (no-op otherwise).
 	if hadMeta {
-		maybePruneWorktree(meta.Dir)
+		gitx.MaybePruneWorktree(meta.Dir)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stopped": name})
 }
@@ -1029,7 +1032,7 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 	if body.DisarmReport {
 		// Disarm even when the session turns out to be already stopped below: the
 		// operator's intent (cancel the instruction) does not depend on liveness.
-		disarmSessionReport(name)
+		chatx.DisarmSessionReport(name)
 	}
 	if m.DriverKind() == session.DriverManaged {
 		// ★持ち越しは **DropHandle より前**（docs/log/75 P5）。保留中の Interaction は
@@ -1187,7 +1190,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	newMeta := session.Meta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
 		Kind: m.Kind, Driver: m.Driver, SkipPermissions: m.SkipPermissions,
-		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitCurrentBranch(m.Dir),
+		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitx.GitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate は「同じ枠を空で作り直す」なので出自は引き継ぐ（ADR 0029 §6）。
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv,
@@ -1205,7 +1208,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 				"managed driver はこの kind ではまだ利用できません")
 			return
 		}
-		if _, err := startManagedSession(d, newMeta); err != nil {
+		if _, err := mcpx.StartManagedSession(d, newMeta); err != nil {
 			m.Archived = false
 			session.WriteMeta(m)
 			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())

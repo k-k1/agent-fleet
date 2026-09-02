@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -93,12 +94,12 @@ func TestTenantIdPPairwiseSecondRegistrationNeedsLinkClaim(t *testing.T) {
 	// ★ The deployment's OWN provider counts as a door. This is the commonest shape:
 	// the tenant registers its own app for the directory the deployment already uses,
 	// and the DB rows alone would not see it.
-	envAPI := newTenantIdPAPI(mgr, []loginProvider{&oidcProvider{id: "entra-env", issuer: public}})
+	envAPI := newTenantIdPAPI(mgr, []auth.LoginProvider{&auth.OIDCProvider{ProviderID: "entra-env", Issuer: public}})
 	w = post(envAPI, row("okta3", public, ""))
 	if w.Code != http.StatusOK {
 		t.Fatalf("a public issuer stays fine even when env has it: %d %s", w.Code, w.Body.String())
 	}
-	envPairwise := newTenantIdPAPI(mgr, []loginProvider{&oidcProvider{id: "entra-env", issuer: pairwise}})
+	envPairwise := newTenantIdPAPI(mgr, []auth.LoginProvider{&auth.OIDCProvider{ProviderID: "entra-env", Issuer: pairwise}})
 	st2 := p3Store(t) // a store with no rows, so only the env provider can be the "other door"
 	mgr2 := p4Manager(t, st2)
 	if _, err := st2.UpsertIdentity(ctx, "boss@acme.co.jp", "boss-acme-co-jp", "super_admin"); err != nil {
@@ -120,7 +121,7 @@ func TestTenantIdPPairwiseSecondRegistrationNeedsLinkClaim(t *testing.T) {
 	seedTenantIdP(t, st, tn.ID, "ghost", "ghost.example", "active")
 	if err := st.CreateTenantIdP(ctx, store.TenantIdP{
 		ID: store.NewID(), TenantID: tn.ID, Name: "dead1", Issuer: dead, ClientID: "c",
-		SecretEnc: "s", Trust: trustIssuer, AllowedDomains: "sub.co.jp",
+		SecretEnc: "s", Trust: auth.TrustIssuer, AllowedDomains: "sub.co.jp",
 		Status: "active", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -142,7 +143,7 @@ func TestSuspendWarnsWhenItIsSomebodysOnlyMethod(t *testing.T) {
 		t.Fatalf("super admin: %v", err)
 	}
 	row := seedTenantIdP(t, st, tn.ID, "entra", "sub.co.jp", "active")
-	provID := tenantProviderID("sub", "entra")
+	provID := auth.TenantProviderID("sub", "entra")
 
 	// Somebody whose only proven login is this method.
 	only, _ := st.UpsertIdentity(ctx, "only@sub.co.jp", "only-sub-co-jp", "")

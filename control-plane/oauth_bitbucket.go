@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"html"
 	"io"
 	"net/http"
@@ -140,7 +141,7 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
-	t := oauthCallbackText(preferredUILang(r), "Bitbucket") // docs/log/28 P3: Accept-Language で ja/en
+	t := oauthCallbackText(auth.PreferredUILang(r), "Bitbucket") // docs/log/28 P3: Accept-Language で ja/en
 
 	st, ok := bbFlows.take(state)
 	if !ok {

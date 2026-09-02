@@ -18,8 +18,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
@@ -90,14 +92,14 @@ func main() {
 	// Local stdio MCP server: assistant chat tools (docs/log/19 Q1) or the narrowly scoped
 	// interactive-session builtin (docs/log/51 Phase 3 + docs/log/53 §53.8), selected by args.
 	if len(os.Args) > 1 && os.Args[1] == "mcp-stdio" {
-		runMCPStdio(os.Args[2:])
+		mcpx.RunStdio(os.Args[2:])
 		return
 	}
 	// Credential-injecting launcher for external ops MCP servers (docs/log/25): loads
 	// the encrypted store, injects the provider key as env, and execs the real MCP
 	// server (e.g. uvx pagerduty-mcp). Keeps API keys out of any MCP config file.
 	if len(os.Args) > 1 && os.Args[1] == "mcp-run" {
-		runMCPRun(os.Args[2:])
+		mcpx.RunSubcommand(os.Args[2:])
 		return
 	}
 	// claude statusLine capture: claude pipes the session JSON (incl. rate_limits) on
@@ -152,11 +154,11 @@ func main() {
 	// Write the MCP registry into each CLI's own config (docs/log/48 P3) so the servers a
 	// user registered are live from container start — including for a CLI they launch
 	// by hand in a terminal, which never passes through the session launch hook.
-	materializeMCPAll()
+	mcpx.MaterializeAll()
 	// Pull the tenant-distributed MCP set from the CP and keep it fresh (docs/log/48 P4).
 	// Backgrounded and fail-open: boot must not wait on the CP, and an unreachable CP
 	// keeps the cached set rather than stripping everyone's servers.
-	startMCPTenantSync()
+	mcpx.StartTenantSync()
 	// Pull the role-scoped docs when the runtime mounted none (ECS — docs/build/04 §4.9).
 	// Backgrounded: it is a few hundred KB over the network and nothing at boot waits on
 	// it, but the Console's 利用ガイド and every agent's environment answers need it.
@@ -173,8 +175,8 @@ func main() {
 	// 見て拾うので、取りこぼしは報告の消失ではなく遅延に縮退する。
 	// docs/log/51 Phase 2: 旧 arm（1bit）で待っていた指示を台帳の行へ変換してから回す。
 	// リコンサイラより前に走らせること — 変換前の tick は「未報告の指示なし」を見る。
-	migrateReportArms()
-	startReportReconciler()
+	chatx.MigrateReportArms()
+	chatx.StartReportReconciler()
 	// ブラウザ attach ハンドオフの配送台帳（docs/log/53 完了通知節）: 前回起動時に
 	// resolveBrowserHandoff は済んだが deliverBrowserHandoff が完了する前に落ちた
 	// 分を拾い直す。busy/idle の settle 判定を持たないので上のリコンサイラとは
@@ -204,7 +206,7 @@ func main() {
 	// Assistant-conversation slugs (docs/log/38 アシスタント発火): stamp "a…" slugs onto
 	// conversations created before the field existed, so schedules/operator tools can
 	// address every conversation. One-time per store state; cheap when nothing to do.
-	go backfillConvSlugs()
+	go chatx.BackfillConvSlugs()
 
 	addr := envOr("AGENT_ADDR", ":7700")
 

@@ -1,0 +1,35 @@
+/* 引き継ぎ提案カード（.mirror-handoff-*）
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* Session MCP handoff proposal. Kept visually adjacent to plan approval, but it is
+ * not an in-band agent interaction: only its launch button opens the normal user
+ * controlled session launcher. */
+.mirror-handoff {
+  margin: 12px 14px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+}
+.mirror-handoff-head { display: flex; align-items: center; gap: 6px; font-weight: 650; }
+/* 起動済み: the proposal is kept after a session was created from it, so say so. */
+.mirror-handoff-done {
+  margin-left: auto; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  border: 1px solid color-mix(in srgb, var(--ok, var(--accent)) 45%, var(--border));
+  background: color-mix(in srgb, var(--ok, var(--accent)) 12%, transparent);
+  color: color-mix(in srgb, var(--ok, var(--accent)) 75%, var(--fg));
+}
+.mirror-handoff-head span { display: inline-flex; align-items: center; gap: 6px; }
+.mirror-handoff-prompt, .mirror-handoff-edit {
+  box-sizing: border-box; width: 100%; max-height: 240px; overflow: auto;
+  padding: 9px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--input); color: var(--fg); font: inherit; white-space: pre-wrap;
+}
+.mirror-handoff-title, .mirror-handoff-session-title { display: block; width: 100%; margin: 8px 0; }
+.mirror-handoff-title { box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--input); color: var(--fg); }
+.mirror-handoff-edit { min-height: 140px; resize: vertical; }
+.mirror-handoff-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.mirror-handoff-newwt { display: flex; align-items: center; gap: 6px; margin-top: 9px; font-size: 12.5px; color: var(--muted); }

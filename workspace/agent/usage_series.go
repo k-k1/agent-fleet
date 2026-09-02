@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // 集計軸の語彙。by / split / filter のキーはこれだけを受け付ける（未知の軸を通すと
@@ -249,7 +250,7 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 		if !filter.match(s.Key) {
 			continue
 		}
-		isSession := s.Key.Feature == usageFeatureSession
+		isSession := s.Key.Feature == usagex.FeatureSession
 		if (isSession && !inclSession) || (!isSession && !inclAux) {
 			continue
 		}
@@ -288,7 +289,7 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 			m.add(agg)
 			resp.Matrix[k][sv] = m
 		}
-		if s.Key.Measured == usageMeasuredNone {
+		if s.Key.Measured == usagex.MeasuredNone {
 			resp.UnmeasuredCalls += agg.Calls
 		}
 		observeUsageCoverage(resp.Coverage, s.Key)
@@ -425,14 +426,14 @@ func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSamp
 			}
 		}
 	}
-	for _, fileDay := range usageRawDays() {
+	for _, fileDay := range usagex.RawDays() {
 		_, rolled := st.Rolled[fileDay]
 		if bucket == "day" && rolled {
 			continue // rollup が正。raw を読むと二重計上になる
 		}
-		rows := readUsageDay(fileDay)
+		rows := usagex.ReadDay(fileDay)
 		seen := map[string]bool{} // call の重複排除はファイル単位（1呼び出しは1ファイル内）
-		byBucket := map[string][]usageRecord{}
+		byBucket := map[string][]usagex.Record{}
 		for _, r := range rows {
 			ts := usageRowTime(r, fileDay)
 			// **期間で絞る前に**通す。どの行を「最初の1件」とみなすかがクエリ期間で
@@ -462,7 +463,7 @@ func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSamp
 		// 畳んだ後に prune された raw があると、その期間は時間粒度で復元できない。黙って
 		// 短い系列を返すと「その期間は消費が無かった」に見えるので、範囲が重なる時だけ言う。
 		onDisk := map[string]bool{}
-		for _, d := range usageRawDays() {
+		for _, d := range usagex.RawDays() {
 			onDisk[d] = true
 		}
 		for fileDay, mark := range st.Rolled {
@@ -483,14 +484,14 @@ func observeUsageCoverage(cov map[string]usageCoverage, k usageKey) {
 		return
 	}
 	c := cov[k.Kind]
-	c.Tokens = betterOf(c.Tokens, k.Measured, usageMeasuredExact, usageMeasuredPartial, usageMeasuredNone)
-	c.Model = betterOf(c.Model, coverageModelSrc(k.ModelSrc), usageModelReported, usageModelRequest, "none")
+	c.Tokens = betterOf(c.Tokens, k.Measured, usagex.MeasuredExact, usagex.MeasuredPartial, usagex.MeasuredNone)
+	c.Model = betterOf(c.Model, coverageModelSrc(k.ModelSrc), usagex.ModelReported, usagex.ModelRequest, "none")
 	cov[k.Kind] = c
 }
 
 // coverageModelSrc は台帳の model_src を coverage の語彙（reported|requested|none）へ写す。
 func coverageModelSrc(src string) string {
-	if src == usageModelReported || src == usageModelRequest {
+	if src == usagex.ModelReported || src == usagex.ModelRequest {
 		return src
 	}
 	return "none" // default_unknown / 空 = 解決後のモデルが分からない

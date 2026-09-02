@@ -20,10 +20,13 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 const (
@@ -116,7 +119,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), titleSuggestTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureTitleSession, Trigger: usageTriggerAuto, Ref: name})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerAuto, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)
 	if err != nil || title == "" {
 		return // ok stays false -> backoff before the next attempt
@@ -140,7 +143,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 // an English list). Deliberately NOT retroactive: switching the language later leaves
 // existing titles alone (they are the user's data, and re-suggesting is a user action —
 // the rename dialog's 「AIに提案してもらう」 regenerates in the new language on demand).
-func titleLang() string { return uiLocale() }
+func titleLang() string { return uiprefs.Locale() }
 
 // titleSuggestPersona keeps the headless call laser-focused: no preamble, no quoting, a
 // single short line. Third-person topic label, not a sentence: the model is prone to
@@ -183,7 +186,7 @@ func runTitleSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, e
 	// Backend-agnostic one-shot (oneShotHeadless): runs on the first available of
 	// claude → codex → opencode, so claude-less workspaces get suggestions too.
 	lang := titleLang()
-	reply, err := oneShotHeadless(ctx, titleSuggestPersona(lang), titleSuggestPrompt(turns, lang), titleModel())
+	reply, err := chatx.OneShotHeadless(ctx, titleSuggestPersona(lang), titleSuggestPrompt(turns, lang), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
 	}
@@ -578,7 +581,7 @@ func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn)
 	succeeded := false
 	defer func() { titleGenDone(name, succeeded) }()
 
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureTitleSession, Trigger: usageTriggerManual, Ref: name})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerManual, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)
 	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
@@ -615,7 +618,7 @@ func handleSuggestTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	if !autoTitleSuggestEnabled() {
+	if !uiprefs.AutoTitleSuggest() {
 		httpx.WriteErr(w, http.StatusBadRequest, "feature_disabled", "auto title suggestion is turned off")
 		return
 	}
@@ -685,7 +688,7 @@ const branchSuggestPersona = "You name git branches. Read the conversation log a
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
 // invalid ref/folder segment.
 func runBranchSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
-	reply, err := oneShotHeadless(ctx, branchSuggestPersona, branchSuggestPrompt(turns), titleModel())
+	reply, err := chatx.OneShotHeadless(ctx, branchSuggestPersona, branchSuggestPrompt(turns), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("branch suggestion failed: %w", err)
 	}
@@ -730,7 +733,7 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	if !autoTitleSuggestEnabled() {
+	if !uiprefs.AutoTitleSuggest() {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "AI suggestions are disabled (enable title auto-suggestion in agent settings)")
 		return
 	}
@@ -746,7 +749,7 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureBranchSuggest, Trigger: usageTriggerManual, Ref: name})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureBranchSuggest, Trigger: usagex.TriggerManual, Ref: name})
 	branch, err := runBranchSuggestLLM(ctx, turns)
 	if err != nil {
 		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.
@@ -780,11 +783,11 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := m.Dir
-	if !isGitRepo(dir) {
+	if !gitx.IsGitRepo(dir) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "session working copy is not a git repo")
 		return
 	}
-	var req renameBranchReq
+	var req gitx.RenameBranchReq
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
@@ -794,8 +797,8 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_ref", "branch name is required and must not start with '-'")
 		return
 	}
-	if cur, _ := gitStatus(dir); newName != cur.Branch {
-		if local, remote := branchNameStatus(dir, newName); local || remote {
+	if cur, _ := gitx.GitStatus(dir); newName != cur.Branch {
+		if local, remote := gitx.BranchNameStatus(dir, newName); local || remote {
 			where := "ローカル"
 			if !local {
 				where = "リモート"

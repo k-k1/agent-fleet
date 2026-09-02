@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -597,7 +598,7 @@ func handlePutCloudWatchConn(w http.ResponseWriter, r *http.Request) {
 	// Materialize the ops config now (mcp-run also regenerates it per spawn) so
 	// the user can `aws sso login` against it before the first chat turn.
 	if ref.StartURL != "" {
-		if err := writeOpsAWSConfig("cloudwatch", ref); err != nil {
+		if err := mcpx.WriteOpsAWSConfig("cloudwatch", ref); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 			return
 		}
@@ -655,7 +656,7 @@ func awsMCPEndpoint(region string) string {
 			return r
 		}
 	}
-	return awsMCPDefaultEndpoint
+	return mcpx.AWSMCPDefaultEndpoint
 }
 
 // handlePutAWSMCPConn stores the AWS profile + endpoint the AWS MCP proxy should use
@@ -683,7 +684,7 @@ func handlePutAWSMCPConn(w http.ResponseWriter, r *http.Request) {
 		Write:         req.Write,
 	}
 	if ref.StartURL != "" {
-		if err := writeOpsAWSConfig("aws", ref); err != nil {
+		if err := mcpx.WriteOpsAWSConfig("aws", ref); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 			return
 		}
@@ -734,8 +735,8 @@ func bitbucketStatus(s *secrets.Data) map[string]any {
 	if e, ok := s.Git["bitbucket.org"]; ok {
 		m := map[string]any{"connected": true}
 		if (e.Login == "" || e.Email == "") && e.Token != "" {
-			if auth, err := bitbucketAuthHeader(s); err == nil {
-				if h, email, err := bitbucketAccount(auth); err == nil && h != "" {
+			if auth, err := gitx.BitbucketAuthHeader(s); err == nil {
+				if h, email, err := gitx.BitbucketAccount(auth); err == nil && h != "" {
 					e.Login, e.Email = h, email
 					s.Git["bitbucket.org"] = e
 					_ = s.Save()
@@ -756,8 +757,8 @@ func bitbucketStatus(s *secrets.Data) map[string]any {
 	if s.Bitbucket != nil {
 		m := map[string]any{"connected": true}
 		if s.Bitbucket.Account == "" || s.Bitbucket.Email == "" {
-			if auth, err := bitbucketAuthHeader(s); err == nil {
-				if h, email, err := bitbucketAccount(auth); err == nil && h != "" {
+			if auth, err := gitx.BitbucketAuthHeader(s); err == nil {
+				if h, email, err := gitx.BitbucketAccount(auth); err == nil && h != "" {
 					s.Bitbucket.Account, s.Bitbucket.Email = h, email
 					_ = s.Save()
 				}
@@ -786,7 +787,7 @@ func gitConnStatus(s *secrets.Data, host string) map[string]any {
 		return m
 	}
 	if host == "github.com" && (e.Login == "" || e.Email == "") && e.Token != "" {
-		if login, email, err := githubAccount(e.Token); err == nil && login != "" {
+		if login, email, err := gitx.GithubAccount(e.Token); err == nil && login != "" {
 			e.Login, e.Email = login, email
 			s.Git[host] = e
 			_ = s.Save()
@@ -853,13 +854,13 @@ func handlePutGitConn(w http.ResponseWriter, r *http.Request) {
 	// failure. Hard failures block the save; a missing push scope connects with a warning.
 	var warn string
 	if host == "bitbucket.org" {
-		w2, verr := bitbucketConnectCheck(user, token)
+		w2, verr := gitx.BitbucketConnectCheck(user, token)
 		if verr != nil {
 			code := "bb_verify_failed"
 			switch {
-			case errors.Is(verr, errBBScopeless):
+			case errors.Is(verr, gitx.ErrBBScopeless):
 				code = "bb_scopeless"
-			case errors.Is(verr, errBBNoRepoRead):
+			case errors.Is(verr, gitx.ErrBBNoRepoRead):
 				code = "bb_no_repo_read"
 			}
 			httpx.WriteErr(w, http.StatusBadRequest, code, verr.Error())
@@ -892,7 +893,7 @@ func handleDeleteGitConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if host == "bitbucket.org" {
-		removeBitbucketOAuth() // also clear OAuth tokens + the refresh helper
+		gitx.RemoveBitbucketOAuth() // also clear OAuth tokens + the refresh helper
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": host})
 }

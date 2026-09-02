@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -110,7 +111,7 @@ func TestGitOAuthBridgeRejectsAForeignOrAbsentToken(t *testing.T) {
 		{"garbage", "afo_zzz.zzz"},
 		// A token minted with a DIFFERENT sign key: this is what a memo/schedule/MCP
 		// token would look like, and it must not open the refresh bridge.
-		{"other bridge's key", mintMCPToken(mcpSignKey(mgr.tokenSignMaster()), mv.MembershipID)},
+		{"other bridge's key", mcpsrv.MintMCPToken(mcpsrv.MCPSignKey(mgr.tokenSignMaster()), mv.MembershipID)},
 		{"tampered membership", strings.Replace(good, "afo_", "afo_x", 1)},
 	} {
 		if w := bridgeCall(mgr, tc.token, `{"refresh_token":"x"}`); w.Code != http.StatusUnauthorized {

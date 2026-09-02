@@ -18,7 +18,10 @@ import (
 	"log"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // runOperatorTurn runs ONE operator turn over the conversation and returns the assistant
@@ -30,19 +33,19 @@ import (
 // are the same turn but NOT the same consumption to a reader of the usage graph, so the
 // usage tag is the caller's to supply (ADR 0029 §2).
 func runOperatorTurn(conv, text string) (string, error) {
-	return runOperatorTurnAs(conv, text, usageTag{
-		Feature: usageFeatureAssistantBridge, Trigger: usageTriggerBridge, Ref: conv,
+	return runOperatorTurnAs(conv, text, usagex.Tag{
+		Feature: usagex.FeatureAssistantBridge, Trigger: usagex.TriggerBridge, Ref: conv,
 	})
 }
 
 // runOperatorTurnAs is runOperatorTurn with an explicit usage tag.
-func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
+func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
 	en := bridgeAnswerEN()
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return "", errInjectEmpty
 	}
-	unlock := lockConv(conv)
+	unlock := chatx.LockConv(conv)
 	defer unlock()
 
 	// P3 approval gate: mark THIS turn as the Discord-driven (unattended) operator turn so
@@ -52,14 +55,14 @@ func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
 	armOperatorTurn(conv)
 	defer disarmOperatorTurn(conv)
 
-	c, err := loadConv(conv)
+	c, err := chatx.LoadConv(conv)
 	if err != nil {
 		return fb(en, "⚠️ オペレーター会話が見つかりません", "⚠️ Operator conversation not found"), err
 	}
-	prov := chatProviderFor(c)
-	actualAgent := chatProviderKind(c, prov)
+	prov := chatx.ChatProviderFor(c)
+	actualAgent := chatx.ChatProviderKind(c, prov)
 
-	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: text, TS: nowMs()})
+	c.Messages = append(c.Messages, chatx.ChatMessage{Role: "user", Content: text, TS: chatx.NowMs()})
 	// A real user message resets the unattended auto-turn budget (docs/log/30), same as
 	// handleChatSend — subsequent session reports get a fresh follow-up allowance.
 	c.AutoTurns, c.AutoPausedNotified = 0, false
@@ -68,45 +71,45 @@ func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
 	// human approval (bridgeApprovalTimeout), which must fit inside the turn.
 	ctx, cancel := context.WithTimeout(context.Background(), operatorTurnTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, tag)                 // 使用量台帳（ADR 0029 §3）
-	deregister := registerLiveTurn(conv, cancel) // Stop button / in_progress work as usual
+	ctx = usagex.WithTag(ctx, tag)                     // 使用量台帳（ADR 0029 §3）
+	deregister := chatx.RegisterLiveTurn(conv, cancel) // Stop button / in_progress work as usual
 	defer deregister()
 
 	// docs/log/33 第4段: 閾値超過のまま新ターンに入るなら先に予防的自動圧縮。
-	maybeAutoCompact(ctx, c, prov)
+	chatx.MaybeAutoCompact(ctx, c, prov)
 	// docs/log/30: undelivered session reports ride this prompt; docs/log/33: a compaction
 	// summary rides the new session's first prompt, outermost.
-	prompt, pendingReports := injectPendingReports(c, text)
-	prompt, handoff := injectCarryover(c, actualAgent, prompt)
-	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
+	prompt, pendingReports := chatx.InjectPendingReports(c, text)
+	prompt, handoff := chatx.InjectCarryover(c, actualAgent, prompt)
+	prompt = chatx.SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 
-	reply, err := prov.send(ctx, c, prompt)
-	if err != nil && recoverForRetry(ctx, c, prov, err) {
+	reply, err := prov.Send(ctx, c, prompt)
+	if err != nil && chatx.RecoverForRetry(ctx, c, prov, err) {
 		// docs/log/33 第3段: 超過検知 → 要約して畳み新セッションでリトライ。
-		prompt, pendingReports = injectPendingReports(c, text)
-		prompt, handoff = injectCarryover(c, actualAgent, prompt)
-		prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
-		reply, err = prov.send(ctx, c, prompt)
+		prompt, pendingReports = chatx.InjectPendingReports(c, text)
+		prompt, handoff = chatx.InjectCarryover(c, actualAgent, prompt)
+		prompt = chatx.SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
+		reply, err = prov.Send(ctx, c, prompt)
 	}
 	if err != nil {
-		if isContextOverflowErr(err) {
-			noteContextOverflow(c)
+		if chatx.IsContextOverflowErr(err) {
+			chatx.NoteContextOverflow(c)
 		}
-		c.UpdatedAt = nowMs()
-		_ = saveConv(c) // persist the user turn + resume handle so a retry continues
+		c.UpdatedAt = chatx.NowMs()
+		_ = chatx.SaveConv(c) // persist the user turn + resume handle so a retry continues
 		return fb(en, "⚠️ オペレーターの応答に失敗しました。時間をおいて試すか Console で確認してください",
 			"⚠️ The operator turn failed — retry later or check the Console"), err
 	}
-	markReportsDelivered(pendingReports)
+	chatx.MarkReportsDelivered(pendingReports)
 	if handoff {
 		c.PendingHandoff = ""
 	}
-	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.turnModel, TS: nowMs()})
+	c.Messages = append(c.Messages, chatx.ChatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.TurnModel, TS: chatx.NowMs()})
 	c.ActiveAgent = actualAgent
-	markProviderSynced(c, actualAgent, len(c.Messages))
-	noteContextPressure(c)
-	c.UpdatedAt = nowMs()
-	if err := saveConv(c); err != nil {
+	chatx.MarkProviderSynced(c, actualAgent, len(c.Messages))
+	chatx.NoteContextPressure(c)
+	c.UpdatedAt = chatx.NowMs()
+	if err := chatx.SaveConv(c); err != nil {
 		log.Printf("bridge: save operator conv %s: %v", conv, err)
 	}
 	return reply, nil
@@ -116,17 +119,17 @@ func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
 // built-in "operator" assistant — snapshotting its persona/tools/knowledge exactly like
 // handleChatCreate so af_write MCP attaches (a bare conversation would get no tools).
 func createOperatorConversation() (string, error) {
-	a, err := getAssistant("operator")
+	a, err := assistants.Get("operator", assistantDeps())
 	if err != nil {
 		return "", err
 	}
-	now := nowMs()
-	c := &chatConversation{
-		ID: randUUID(), Slug: newConvSlug(), Title: a.Name, CreatedAt: now, UpdatedAt: now, Messages: []chatMessage{},
-		AssistantID: a.ID, Agent: a.Agent, Model: resolveChatModel(a.Agent, a.Model),
+	now := chatx.NowMs()
+	c := &chatx.ChatConversation{
+		ID: chatx.RandUUID(), Slug: chatx.NewConvSlug(), Title: a.Name, CreatedAt: now, UpdatedAt: now, Messages: []chatx.ChatMessage{},
+		AssistantID: a.ID, Agent: a.Agent, Model: chatx.ResolveChatModel(a.Agent, a.Model),
 		Persona: a.Persona, Tools: a.Tools, Knowledge: a.Knowledge, Integrations: a.Integrations,
 	}
-	if err := saveConv(c); err != nil {
+	if err := chatx.SaveConv(c); err != nil {
 		return "", err
 	}
 	return c.ID, nil
@@ -191,7 +194,7 @@ func provisionSlackOperator(botToken, channelID, lang string) {
 }
 
 func operatorConvExists(conv string) bool {
-	_, err := loadConv(conv)
+	_, err := chatx.LoadConv(conv)
 	return err == nil
 }
 

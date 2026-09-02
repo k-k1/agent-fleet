@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -65,11 +66,11 @@ func TestTitleSuggestPromptLanguage(t *testing.T) {
 
 // アシスタントチャットの件名も同じ指示ブロックを共有する（片方だけ英語化しない）。
 func TestChatTitleSuggestPromptLanguage(t *testing.T) {
-	msgs := []chatMessage{{Role: "user", Content: "使用量のグラフを作りたい"}}
-	if got := chatTitleSuggestPrompt(msgs, "en"); !strings.Contains(got, "conversation log") {
+	msgs := []chatx.ChatMessage{{Role: "user", Content: "使用量のグラフを作りたい"}}
+	if got := chatx.ChatTitleSuggestPrompt(msgs, "en"); !strings.Contains(got, "conversation log") {
 		t.Fatalf("チャット件名の英語プロンプトが英語でない:\n%s", got)
 	}
-	if got := chatTitleSuggestPrompt(msgs, "ja"); !strings.Contains(got, "会話ログ") {
+	if got := chatx.ChatTitleSuggestPrompt(msgs, "ja"); !strings.Contains(got, "会話ログ") {
 		t.Fatalf("チャット件名の日本語プロンプトが従来形でない:\n%s", got)
 	}
 }

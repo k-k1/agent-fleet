@@ -1,0 +1,154 @@
+/* ExitPlanMode のプランカードと、doc ペインで付けたレビューコメントの控え
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+.mt-plan {
+  margin: 0.4em 0;
+  border: 1px solid color-mix(in srgb, var(--chat-accent) 40%, var(--border));
+  border-left: 3px solid var(--chat-accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--chat-accent) 6%, var(--bg));
+  padding: 9px 11px;
+}
+.mt-plan-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.mt-plan-title {
+  font-weight: 600;
+}
+.mt-plan-badge {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chat-accent) 22%, transparent);
+}
+.mt-plan-badge.ok {
+  background: color-mix(in srgb, #2fb872 26%, transparent);
+  color: color-mix(in srgb, #2fb872 60%, var(--fg));
+}
+/* 却下 (rejected/keep-planning): a muted red so it reads distinctly from 承認済み. */
+.mt-plan-badge.no {
+  background: color-mix(in srgb, #e5534b 24%, transparent);
+  color: color-mix(in srgb, #e5534b 62%, var(--fg));
+}
+/* A decided (historical) plan sits quieter than a pending one. */
+.mt-plan.decided {
+  border-left-color: color-mix(in srgb, var(--chat-accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
+.mt-plan-summary {
+  margin: 5px 0 8px;
+  font-size: 12px;
+  opacity: 0.8;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mt-plan-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.mt-plan-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.mt-plan-open:hover {
+  border-color: var(--chat-accent);
+}
+.mt-plan-approve {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+}
+.mt-plan-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+}
+/* プランレビューのコメント控え（doc ペインで付けたものをカード側で確認して送る）。 */
+.mt-plan-comments {
+  list-style: none;
+  margin: 6px 0 9px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mt-plan-comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.mt-plan-comment.sent {
+  opacity: 0.55;
+}
+.mt-plan-comment-n {
+  flex: none;
+  min-width: 17px;
+  height: 17px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  background: color-mix(in srgb, var(--chat-accent) 30%, transparent);
+}
+.mt-plan-comment-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* 引用はプラン本文の抜粋 — 1行に潰して出典として添える（主役はコメント本文）。 */
+.mt-plan-comment-quote {
+  opacity: 0.7;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-left: 2px solid color-mix(in srgb, var(--chat-accent) 45%, var(--border));
+  padding-left: 6px;
+}
+/* カード側は確認用なので長文は3行で畳む（全文は doc ペインの控えで開ける）。 */
+.mt-plan-comment-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+.mt-plan-comment-sent {
+  margin-left: auto;
+  font-size: 11px;
+}
+.mt-plan-comment-del {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 4px;
+  border-radius: 5px;
+  opacity: 0.65;
+}
+.mt-plan-comment-del:hover {
+  opacity: 1;
+}

@@ -9,6 +9,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -210,7 +211,7 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 	// an absent marker counts as a turn that ended. Interim states (question/plan/
 	// permission) stay excluded — they are not completions and must not consume the arm.
 	case state == "idle" && (previous == "working" || previous == ""):
-		kind = reportKindAnswerReady
+		kind = chatx.ReportKindAnswerReady
 	// A managed turn that ended in a provider-side error (agents.StateFailed). As an
 	// EVENT it is the same terminal completion as answer-ready — the session is back at
 	// 入力待ち and the instruction's one report must fire and consume the arm — but the
@@ -218,13 +219,13 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 	// opencode Zen balance passed for a finished turn. turnText holds the driver's
 	// one-line reason, so it also rides the full-text bridge body below.
 	case state == agents.StateFailed && (previous == "working" || previous == ""):
-		kind, reason = reportKindAnswerReady, reportReasonTurnFailed
+		kind, reason = chatx.ReportKindAnswerReady, chatx.ReportReasonTurnFailed
 	// A turn CUT OFF before it answered, by something that clears on its own (接続断・
 	// 一時的なレート制限). Same terminal event as above — the session is at 入力待ち and
 	// the instruction's one report must fire — but here re-running the turn is the right
 	// next move, so the report says so instead of "原因を直すまで再送するな" (docs/log/47).
 	case state == agents.StateAborted && (previous == "working" || previous == ""):
-		kind, reason = reportKindAnswerReady, reportReasonTurnAborted
+		kind, reason = chatx.ReportKindAnswerReady, chatx.ReportReasonTurnAborted
 	case state == "question" && previous != "question":
 		kind = "question"
 	case state == "plan" && previous != "plan":
@@ -261,7 +262,7 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 			case "idle", agents.StateFailed:
 				managedAbortSignals.Remove(m.Name)
 				abortResumeStates.Remove(m.Name)
-				resetAutoResume(m.Name)
+				chatx.ResetAutoResume(m.Name)
 			}
 		}
 		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
@@ -270,11 +271,11 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		// answer-ready — interim attention events (question/plan/permission) have
 		// no completed turn body. Capped like the operator report excerpt; the
 		// provider scrubs secrets and chunks before any wire.
-		if kind == reportKindAnswerReady {
+		if kind == chatx.ReportKindAnswerReady {
 			// Head-first and generously capped (docs/log/37 Fix ③): the full-text bridge
 			// stands in for the Console, so the WHOLE answer rides along (chunkMessage
 			// splits it), not a 2000-rune tail like the operator report excerpt.
-			if body := headRunes(turnText, bridgeBodyCap); body != "" {
+			if body := chatx.HeadRunes(turnText, chatx.BridgeBodyCap); body != "" {
 				ev.Payload["body"] = body
 			}
 		}
@@ -298,8 +299,8 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		// docs/log/51 Phase 1: この kick は終端イベントでは「配送」ではなく**起床ヒント**。
 		// 消費してよいかの判定はリコンサイラが状態をレベルで見て決める（この関数は
 		// 「何が起きたか」を伝えるだけで、「もう報告してよいか」は決めない）。
-		if !holdReport && (kind == reportKindAnswerReady || kind == "question" || kind == "plan-approval") && sessionReportPending(m.Name) {
-			kickSessionReport(m.Name, kind, reason)
+		if !holdReport && (kind == chatx.ReportKindAnswerReady || kind == "question" || kind == "plan-approval") && chatx.SessionReportPending(m.Name) {
+			chatx.KickSessionReport(m.Name, kind, reason)
 		}
 		return
 	}

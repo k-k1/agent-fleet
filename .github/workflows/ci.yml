@@ -125,6 +125,13 @@ jobs:
         run: go build ./...
       - name: go test
         run: go test ./...
+      # control-plane に build tag 付きファイルは現在 0 件。引数を渡さない = 「無いはず」の
+      # 宣言で、タグが 1 枚でも増えたらここが赤くなる（増えたことに誰かが気付く）。
+      # ⚠️ 「増えたら足す」にしないのは、**増えたことを誰が気付くのか**がこの段の
+      # 存在理由そのものだから。今はタグ 0 件＝vet のループは 0 回でコストもゼロ。
+      - name: go vet (build tags)
+        working-directory: .
+        run: cd control-plane && ../scripts/vet-build-tags.sh
 
   workspace-agent:
     runs-on: ubuntu-latest
@@ -156,6 +163,12 @@ jobs:
         run: go build ./...
       - name: go test
         run: go test ./...
+      # build tag 付きの面は既定ビルドに入らず、上の gofmt / vet / build / test の
+      # どれも触らない（実測 2026-09-02: 回収 PR #322 の不要 import は全ゲート緑で
+      # `go vet -tags clicontract` だけが赤かった）。理由と検査の中身はスクリプト側に書いた。
+      - name: go vet (build tags)
+        working-directory: .
+        run: cd workspace/agent && ../../scripts/vet-build-tags.sh clicontract drift driftlive tui_contract
       # entrypoint.sh は Go ではないが、壊れたときに死ぬのはこの job が守っている
       # Workspace そのものである。identity 退避ブロックは golden snapshot から作った
       # home で一度**起動不能**を出しているので、その形を回帰で押さえる。

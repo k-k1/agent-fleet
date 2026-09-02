@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"log"
 	"os"
 	"os/exec"
@@ -57,7 +58,7 @@ var lastFetchErr = map[string]string{}
 // fetchAllRepos fetches origin for every base clone under ~/repos, one at a
 // time (the host is shared — no parallel subprocess fan-out).
 func fetchAllRepos() {
-	entries, err := os.ReadDir(reposRoot())
+	entries, err := os.ReadDir(gitx.ReposRoot())
 	if err != nil {
 		return
 	}
@@ -65,11 +66,11 @@ func fetchAllRepos() {
 		if !e.IsDir() {
 			continue
 		}
-		dir := filepath.Join(reposRoot(), e.Name())
-		if !isGitRepo(dir) || isLinkedWorktree(dir) {
+		dir := filepath.Join(gitx.ReposRoot(), e.Name())
+		if !gitx.IsGitRepo(dir) || gitx.IsLinkedWorktree(dir) {
 			continue
 		}
-		if _, ok := gitOriginURL(dir); !ok {
+		if _, ok := gitx.GitOriginURL(dir); !ok {
 			continue // nothing to fetch
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

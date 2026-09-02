@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -86,7 +87,7 @@ func TestGitCurrentBranch(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "app")
 	gitInit(t, dir)
 
-	if got := gitCurrentBranch(dir); got != "main" {
+	if got := gitx.GitCurrentBranch(dir); got != "main" {
 		t.Fatalf("gitCurrentBranch(fresh) = %q, want main", got)
 	}
 
@@ -98,12 +99,12 @@ func TestGitCurrentBranch(t *testing.T) {
 	if out, err := exec.Command("git", "-C", dir, "checkout", strings.TrimSpace(string(sha))).CombinedOutput(); err != nil {
 		t.Fatalf("detach: %v: %s", err, out)
 	}
-	if got := gitCurrentBranch(dir); got != "(detached)" {
+	if got := gitx.GitCurrentBranch(dir); got != "(detached)" {
 		t.Fatalf("gitCurrentBranch(detached) = %q, want (detached)", got)
 	}
 
 	// A path that isn't a git working tree resolves to "".
-	if got := gitCurrentBranch(t.TempDir()); got != "" {
+	if got := gitx.GitCurrentBranch(t.TempDir()); got != "" {
 		t.Fatalf("gitCurrentBranch(non-git) = %q, want empty", got)
 	}
 }
@@ -123,56 +124,56 @@ func TestEnsureWorktree(t *testing.T) {
 	gitInit(t, parent) // repo on "main", plus a "feature" branch
 
 	// New branch off base main → ~/repos/app@feat-x, checked out to feat-x.
-	dir, err := ensureWorktree(parent, "main", "feat-x", "")
+	dir, err := gitx.EnsureWorktree(parent, "main", "feat-x", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree new: %v", err)
 	}
 	if want := filepath.Join(home, "repos", "app@feat-x"); dir != want {
 		t.Fatalf("dir = %q, want %q", dir, want)
 	}
-	if b := gitCurrentBranch(dir); b != "feat-x" {
+	if b := gitx.GitCurrentBranch(dir); b != "feat-x" {
 		t.Fatalf("worktree branch = %q, want feat-x", b)
 	}
 
 	// Idempotent: same call returns the same path without error.
-	if again, err := ensureWorktree(parent, "main", "feat-x", ""); err != nil || again != dir {
+	if again, err := gitx.EnsureWorktree(parent, "main", "feat-x", ""); err != nil || again != dir {
 		t.Fatalf("ensureWorktree reuse = (%q,%v), want (%q,nil)", again, err, dir)
 	}
 
 	// Existing branch, no new branch → ~/repos/app@feature on that branch.
-	fdir, err := ensureWorktree(parent, "feature", "", "")
+	fdir, err := gitx.EnsureWorktree(parent, "feature", "", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree existing: %v", err)
 	}
 	if want := filepath.Join(home, "repos", "app@feature"); fdir != want {
 		t.Fatalf("existing dir = %q, want %q", fdir, want)
 	}
-	if b := gitCurrentBranch(fdir); b != "feature" {
+	if b := gitx.GitCurrentBranch(fdir); b != "feature" {
 		t.Fatalf("existing worktree branch = %q, want feature", b)
 	}
 
 	// A slash in the new branch is sanitized in the folder but kept as the ref.
-	sdir, err := ensureWorktree(parent, "main", "fix/bug-1", "")
+	sdir, err := gitx.EnsureWorktree(parent, "main", "fix/bug-1", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree slash: %v", err)
 	}
 	if want := filepath.Join(home, "repos", "app@fix-bug-1"); sdir != want {
 		t.Fatalf("slash dir = %q, want %q", sdir, want)
 	}
-	if b := gitCurrentBranch(sdir); b != "fix/bug-1" {
+	if b := gitx.GitCurrentBranch(sdir); b != "fix/bug-1" {
 		t.Fatalf("slash worktree branch = %q, want fix/bug-1", b)
 	}
 
 	// folderSeg lets the folder diverge from the branch: branch temp/abc in a wip-abc
 	// folder (the auto-name convention).
-	wdir, err := ensureWorktree(parent, "main", "temp/abc", "wip-abc")
+	wdir, err := gitx.EnsureWorktree(parent, "main", "temp/abc", "wip-abc")
 	if err != nil {
 		t.Fatalf("ensureWorktree folderSeg: %v", err)
 	}
 	if want := filepath.Join(home, "repos", "app@wip-abc"); wdir != want {
 		t.Fatalf("folderSeg dir = %q, want %q", wdir, want)
 	}
-	if b := gitCurrentBranch(wdir); b != "temp/abc" {
+	if b := gitx.GitCurrentBranch(wdir); b != "temp/abc" {
 		t.Fatalf("folderSeg worktree branch = %q, want temp/abc", b)
 	}
 }
@@ -189,24 +190,24 @@ func TestWorktreeDeleteHelpers(t *testing.T) {
 	parent := filepath.Join(home, "repos", "app")
 	gitInit(t, parent)
 
-	wt, err := ensureWorktree(parent, "main", "feat-x", "")
+	wt, err := gitx.EnsureWorktree(parent, "main", "feat-x", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree: %v", err)
 	}
 
-	if !isLinkedWorktree(wt) {
+	if !gitx.IsLinkedWorktree(wt) {
 		t.Errorf("isLinkedWorktree(worktree) = false, want true")
 	}
-	if isLinkedWorktree(parent) {
+	if gitx.IsLinkedWorktree(parent) {
 		t.Errorf("isLinkedWorktree(parent) = true, want false")
 	}
-	if got := worktreeParent(wt); got != parent {
+	if got := gitx.WorktreeParent(wt); got != parent {
 		t.Errorf("worktreeParent = %q, want %q", got, parent)
 	}
 	// `git worktree list` reports the whole set regardless of which worktree it runs
 	// from, so the count is 1 (one linked worktree) whether asked from parent or wt.
 	// The delete handler only calls this on the main working copy, where 1 => refuse.
-	if got := linkedWorktreeCount(parent); got != 1 {
+	if got := gitx.LinkedWorktreeCount(parent); got != 1 {
 		t.Errorf("linkedWorktreeCount(parent) = %d, want 1", got)
 	}
 
@@ -217,7 +218,7 @@ func TestWorktreeDeleteHelpers(t *testing.T) {
 	if _, err := os.Stat(wt); err == nil {
 		t.Errorf("worktree dir still exists after remove")
 	}
-	if got := linkedWorktreeCount(parent); got != 0 {
+	if got := gitx.LinkedWorktreeCount(parent); got != 0 {
 		t.Errorf("linkedWorktreeCount after remove = %d, want 0", got)
 	}
 }
@@ -237,32 +238,32 @@ func TestMaybePruneWorktreeKeeps(t *testing.T) {
 	gitInit(t, parent)
 
 	// Dirty worktree: an uncommitted file must NOT be auto-removed (work would be lost).
-	dirty, err := ensureWorktree(parent, "main", "dirty-x", "")
+	dirty, err := gitx.EnsureWorktree(parent, "main", "dirty-x", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree dirty: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dirty, "wip.txt"), []byte("wip"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	maybePruneWorktree(dirty)
-	if !isGitRepo(dirty) {
+	gitx.MaybePruneWorktree(dirty)
+	if !gitx.IsGitRepo(dirty) {
 		t.Errorf("dirty worktree was auto-removed; should be kept")
 	}
 
 	// Referenced worktree: clean, but a session meta points at it → kept.
-	ref, err := ensureWorktree(parent, "main", "ref-x", "")
+	ref, err := gitx.EnsureWorktree(parent, "main", "ref-x", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree ref: %v", err)
 	}
 	session.WriteMeta(session.Meta{Name: "zz", Dir: ref, Kind: "shell"})
-	maybePruneWorktree(ref)
-	if !isGitRepo(ref) {
+	gitx.MaybePruneWorktree(ref)
+	if !gitx.IsGitRepo(ref) {
 		t.Errorf("referenced worktree was auto-removed; should be kept while a meta points at it")
 	}
 
 	// A non-worktree (the parent) is never touched.
-	maybePruneWorktree(parent)
-	if !isGitRepo(parent) {
+	gitx.MaybePruneWorktree(parent)
+	if !gitx.IsGitRepo(parent) {
 		t.Errorf("parent working copy was removed; maybePruneWorktree must ignore non-worktrees")
 	}
 }
@@ -339,15 +340,15 @@ func TestBranchNameStatus(t *testing.T) {
 	run(base, "clone", remote, work)
 
 	// Local branch (in the source repo).
-	if l, r := branchNameStatus(remote, "feature"); !l || r {
+	if l, r := gitx.BranchNameStatus(remote, "feature"); !l || r {
 		t.Errorf("feature (local): local=%v remote=%v, want local=true remote=false", l, r)
 	}
 	// Remote-only branch (in the clone): the silent-divergence trap.
-	if l, r := branchNameStatus(work, "feature"); l || !r {
+	if l, r := gitx.BranchNameStatus(work, "feature"); l || !r {
 		t.Errorf("feature (remote-only in clone): local=%v remote=%v, want local=false remote=true", l, r)
 	}
 	// Unused name.
-	if l, r := branchNameStatus(work, "brand-new-name"); l || r {
+	if l, r := gitx.BranchNameStatus(work, "brand-new-name"); l || r {
 		t.Errorf("brand-new-name: local=%v remote=%v, want both false", l, r)
 	}
 }

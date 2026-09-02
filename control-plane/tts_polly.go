@@ -22,6 +22,7 @@ import (
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/polly"
 	pollytypes "github.com/aws/aws-sdk-go-v2/service/polly/types"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 )
 
 // pollyAPI は Polly 呼び出しの narrow port（runtime_ecs.go の ecsAPI と同じ流儀）。
@@ -42,7 +43,7 @@ type pollyProvider struct {
 func newPollyProvider() *pollyProvider {
 	return &pollyProvider{
 		region: firstEnv("AF_POLLY_REGION", "AF_ECS_REGION", "AWS_REGION", "AWS_DEFAULT_REGION"),
-		engine: envOr("AF_POLLY_ENGINE", "neural"),
+		engine: envx.Or("AF_POLLY_ENGINE", "neural"),
 	}
 }
 

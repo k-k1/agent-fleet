@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 )
 
 // 除外判定の境界。claude は --model に別名でも完全 id でも渡せるので別名の除外は
@@ -131,7 +132,7 @@ func TestAssistantModelPrefDropsHidden(t *testing.T) {
 	}
 	// 「推奨」番兵は実モデル id ではないので残る。
 	writeUIPrefs(t, `{"hiddenModels":{"claude":["fable"]},"assistantModels":{"claude":"recommended"}}`)
-	if v, ok := assistantChatModelPref("claude"); !ok || v != assistantRecommendedModel {
+	if v, ok := assistantChatModelPref("claude"); !ok || v != chatx.AssistantRecommendedModel {
 		t.Fatalf("assistantChatModelPref = %q, %v; want recommended", v, ok)
 	}
 }

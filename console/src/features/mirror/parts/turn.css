@@ -1,0 +1,362 @@
+/* 1 ターン = 全幅の帯。話者・モデル・注入元バッジ（operator / chat / schedule / peer）・
+サブエージェント・作業過程の畳み込み（.mt-work）・フッタ（時刻 / 消費 / コピー / 分岐）
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* One turn = one full-width band, divided from the next by a hairline. The user's
+   turns get a faint tint so the speaker alternation is readable without boxes. */
+.mirror-turn {
+  padding: 9px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.mirror-turn.user {
+  background: color-mix(in srgb, var(--chat-accent) 6%, var(--bg));
+}
+/* Subagent (Task sidechain) turns: nested-looking left rule + faint tint so they
+   read as "work happening under the main thread", not top-level replies. */
+.mirror-turn.sidechain {
+  border-left: 2px solid color-mix(in srgb, var(--chat-accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
+.mirror-turn.sidechain .mt-who {
+  color: color-mix(in srgb, var(--chat-accent) 65%, var(--fg));
+}
+
+/* Subagent orchestration: one compact, provider-neutral event in the parent timeline.
+   Raw sidechain turns stay out of the normal conversation; prompt/result are opt-in. */
+.mt-delegation {
+  margin: 8px 0;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  font-size: 12px;
+}
+.mt-delegation-head,
+.mt-delegation-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.mt-delegation-head .codicon {
+  color: var(--accent);
+}
+.mt-delegation-title {
+  font-weight: 600;
+}
+.mt-delegation-status {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  white-space: nowrap;
+}
+.mt-delegation-status.running {
+  color: var(--accent);
+}
+.mt-delegation-status.completed {
+  color: var(--success, #4ec97a);
+}
+.mt-delegation-status.failed {
+  /* --danger は未定義（tokens.css に無い）— 危険色は --del に統一。 */
+  color: var(--del);
+}
+.mt-delegation-meta {
+  margin-top: 5px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.mt-delegation-label {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mt-delegation-meta code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+.mt-delegation-detail {
+  margin-top: 6px;
+}
+.mt-delegation-detail summary {
+  width: max-content;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.mt-delegation-section {
+  margin-top: 8px;
+}
+.mt-delegation-section pre {
+  margin: 3px 0 0;
+  padding: 8px;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  font: inherit;
+}
+/* Header carries only the speaker; the timestamp + copy move to a footer row. */
+.mirror-turn-head {
+  font-size: 12px;
+  margin-bottom: 3px;
+}
+.mt-who {
+  font-weight: 600;
+}
+.mirror-turn.user .mt-who {
+  color: var(--chat-accent);
+}
+/* The model that produced the turn, faint beside the speaker. Colour rather than
+   opacity — the .muted variant already carries --muted2, and stacking 0.5 on top of it
+   drove the "質問中" state label to 2:1. */
+.mt-model {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.mt-model.muted {
+  color: var(--muted2);
+}
+/* Optimistic-echo chip: a just-sent prompt shown before claude logs it (queued while
+   busy). A faint pill with a spinner so it reads as "sent, not yet processed". */
+.mt-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1.6;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.16));
+  color: var(--muted);
+}
+/* キュー済み variant: claude confirmed the prompt is in its mid-run queue (the
+   terminal's dimmed queued line). Same pill, accent tint = "accepted, waiting". */
+.mt-queued {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+/* Operator-injected user turn (docs/log/30 ②): the prompt came from the fleet operator
+   assistant, not the user's own keyboard. A distinct pill + a left accent on the bubble
+   so the two are never confused. */
+.mt-op {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1.6;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warn, #e0a45e) 18%, transparent);
+  color: var(--warn, #e0a45e);
+}
+.mirror-turn.user.from-operator {
+  border-left: 2px solid color-mix(in srgb, var(--warn, #e0a45e) 55%, var(--border));
+}
+/* Chat-bridge-injected user turn (docs/log/37 P2a): a reply the user sent from Discord/Slack,
+   not the console keyboard. Same pill shape as the operator badge but a distinct (info)
+   hue so the two origins read apart. */
+.mt-chat {
+  background: color-mix(in srgb, var(--accent, #5e9ce0) 18%, transparent);
+  color: var(--accent, #5e9ce0);
+}
+.mirror-turn.user.from-chat {
+  border-left: 2px solid color-mix(in srgb, var(--accent, #5e9ce0) 55%, var(--border));
+}
+/* Schedule-injected user turn (docs/log/38): the prompt was fired by a schedule — timed
+   ("定時") or a run-now ("手動発火"). Same pill shape, its own (ok/green) hue so the
+   three injected origins (operator / chat / schedule) read apart at a glance. */
+.mt-sched {
+  background: color-mix(in srgb, var(--ok, #5ec07a) 18%, transparent);
+  color: var(--ok, #5ec07a);
+}
+.mirror-turn.user.from-schedule {
+  border-left: 2px solid color-mix(in srgb, var(--ok, #5ec07a) 55%, var(--border));
+}
+/* Peer-injected user turn (docs/log/58 / ADR 0041): ANOTHER SESSION sent this. Its own
+   (purple-ish) hue so the four injected origins (operator / chat / schedule / peer) read
+   apart. This badge is the only visualisation a peer message gets, so it is deliberately
+   as loud as the operator one rather than a faint metadata pill. */
+.mt-peer {
+  background: color-mix(in srgb, var(--peer, #b48ee0) 18%, transparent);
+  color: var(--peer, #b48ee0);
+}
+.mirror-turn.user.from-peer {
+  border-left: 2px solid color-mix(in srgb, var(--peer, #b48ee0) 55%, var(--border));
+}
+/* Message kind (docs/log/58 §58.14): 依頼 / 質問 / 回答 / 共有, read back from the envelope.
+   Same hue as the sender badge but outlined instead of filled — it qualifies that badge
+   rather than competing with it. Worth showing at all because it is what explains why a
+   message did or did not get an answer. */
+.mt-peer-kind {
+  margin-left: 4px;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--peer, #b48ee0) 45%, transparent);
+}
+/* Reasoning effort/variant chip (codex reasoning_effort / opencode variant), shown
+   right after the model. A faint pill so it reads as secondary metadata. */
+.mt-effort {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1.5;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.16));
+  opacity: 0.7;
+  text-transform: lowercase;
+}
+/* The response body is indented a touch past the flush-left speaker label. */
+.mirror-turn-body {
+  padding-left: 15px;
+}
+/* Completed tool-using replies keep the final answer visible and fold everything before
+   the last work boundary into one disclosure. While the session is working the parts stay
+   flat; this row appears only at completion, avoiding a moving boundary during polling. */
+.mt-work {
+  margin: 2px 0 7px;
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.mt-work-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: var(--muted);
+}
+.mt-work-head:hover,
+.mt-work.open .mt-work-head {
+  color: var(--fg);
+}
+.mt-work-head .codicon {
+  font-size: 12px;
+}
+.mt-work-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.mt-work-count {
+  font-size: 11px;
+}
+.mt-work-body {
+  padding: 2px 9px 7px 20px;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 7%, transparent);
+}
+/* Timestamp + copy sit together at the bottom-right of the turn. */
+.mirror-turn-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.mt-time {
+  font-variant-numeric: tabular-nums;
+}
+.mt-tok {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+/* Per-turn spend bar: length = this turn's newly-consumed tokens relative to the
+   heaviest turn; segments split input(uncached)/cache-creation/output. */
+.mt-spend {
+  display: inline-flex;
+  width: 90px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.mt-spend .ts-seg {
+  height: 100%;
+}
+.mt-spend .ts-fresh {
+  background: color-mix(in srgb, var(--fg) 38%, transparent);
+}
+.mt-spend .ts-create {
+  background: color-mix(in srgb, var(--fg) 20%, transparent);
+}
+.mt-spend .ts-out {
+  background: var(--chat-accent);
+}
+/* カラオケ朗読（turnTts, docs/log/24）: いま読んでいる文が属するブロックのハイライト。 */
+.mirror-turn-body .tts-active {
+  background: color-mix(in srgb, var(--chat-accent) 14%, transparent);
+  border-radius: 4px;
+  scroll-margin: 64px; /* scrollIntoView(nearest) がヘッダ等に隠れない余白 */
+}
+.mt-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  font-size: 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  /* フッターの控えめな操作。枠と地の消し込みをこの class 自身に持つ — ホスト側の
+     button globals(上の :where)に頼ると、別の面で描いたときだけ主ボタンのように
+     浮き上がる(共有セッションで実際にそう見えていた)。 */
+  background: transparent;
+  border: 0;
+}
+.mt-copy:hover {
+  color: var(--fg);
+  background: var(--hover-bg);
+}
+/* 「ここから分岐」（docs/log/55）— コピーと同じフッターの控えめな操作。ホバー/フォーカスまで
+   隠すと、そんな機能があること自体に気づけないので、常に出しておいて色だけ落とす。
+   coarse pointer にはホバーが無いという理由でもある（headless の実測メモ参照）。 */
+.mt-fork {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  font-size: 12px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.mt-fork:hover,
+.mt-fork:focus-visible {
+  color: var(--fg);
+  background: var(--hover-bg);
+}
+/* 分岐確認ダイアログ: 分岐点のプレビューと、起こることの箇条書き。 */
+.mirror-fork-preview {
+  margin: 0;
+  padding: 9px 11px;
+  max-height: 180px;
+  overflow: auto;
+  border-left: 3px solid var(--chat-accent);
+  border-radius: 0 5px 5px 0;
+  background: var(--input);
+  color: var(--fg);
+  white-space: pre-wrap;
+}
+.mirror-fork-facts {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}

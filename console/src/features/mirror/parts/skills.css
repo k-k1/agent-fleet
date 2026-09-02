@@ -1,0 +1,149 @@
+/* スキルピッカー: 「/」ボタンと浮く補完リスト（.mirror-skill* / .mirror-skills*）
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* スキルピッカー（docs/log/50）: 「/」ボタンは ＋ と同寸で並び、リストはコンポーサーの
+   すぐ上に浮く（トランスクリプトに重なる）。選択ハイライトは sel-index 駆動
+   （フォーカスは textarea に残る — CommandPalette と同型）。 */
+.mirror-skill-btn {
+  flex: none;
+  align-self: stretch;
+  width: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.mirror-skill-btn:disabled {
+  opacity: 0.4;
+}
+.mirror-skill-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.mirror-skill-glyph {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+}
+.mirror-skills {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 4px);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px; /* 1 項目が 2 行になったので、項目同士の切れ目を隙間で示す */
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.32);
+}
+/* 1 項目 = 2 行（1 行目: 起動文字列＋引数ヒント＋出所バッジ / 2 行目: 説明）。
+   行数は倍でも高さは 25px → 31px に留めてある（headless 実測）— 上下 padding を
+   5px→2px、行間を 1.15 まで詰め、説明を 1 段小さくした分で吸収している。
+   数値はどれも実測の帳尻なので、font-size / line-height を触ったら測り直すこと。 */
+.mirror-skill-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 2px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.mirror-skill-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  line-height: 1.15;
+}
+.mirror-skill-item.sel {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+}
+/* 受動表示（引数入力中）: 引数ヒントを見せるだけの一覧。キーボード選択を持たないので
+   選択ハイライトは出ず、代わりにホバーだけがクリック可能さを示す。 */
+.mirror-skills.passive .mirror-skill-item:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+}
+.mirror-skill-name {
+  flex: none;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-weight: 600;
+}
+/* 引数ヒントが 1 行目の余白を吸う → 出所バッジは右端に寄る（旧レイアウトで説明が
+   担っていた役目）。長い引数ヒントはバッジを押し出さず自分が省略される。 */
+.mirror-skill-hint {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mirror-skill-badges {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto; /* 引数ヒントが無い項目でもバッジは右端 */
+}
+.mirror-skill-badges:empty {
+  display: none; /* 空でも親の gap を食わせない */
+}
+.mirror-skill-desc {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mirror-skill-src {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.15; /* 既定の normal だとバッジが 1 行目の行高を押し上げる */
+}
+.mirror-skill-src .codicon {
+  font-size: 10px;
+}
+/* foreign スキルの出所バッジ: kind 色（tokens.css --kind-* が dark/light 両テーマの 1 ソース）。 */
+.mirror-skill-src.kind-claude {
+  color: var(--kind-claude);
+  border-color: color-mix(in srgb, var(--kind-claude) 55%, var(--border));
+}
+.mirror-skill-src.kind-codex {
+  color: var(--kind-codex);
+  border-color: color-mix(in srgb, var(--kind-codex) 55%, var(--border));
+}
+.mirror-skills-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}

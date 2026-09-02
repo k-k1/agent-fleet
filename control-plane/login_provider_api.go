@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -31,17 +32,17 @@ type loginProviderAPI struct {
 	// copied by value into handlers, so this is a snapshot by construction —
 	// which is correct here: env-defined providers cannot change without a
 	// restart (the runtime half is tenantIdPRegistry, and it is not in this list).
-	provs []loginProvider
+	provs []auth.LoginProvider
 }
 
-func newLoginProviderAPI(m *manager, provs []loginProvider) loginProviderAPI {
+func newLoginProviderAPI(m *manager, provs []auth.LoginProvider) loginProviderAPI {
 	return loginProviderAPI{memberAuth{m}, provs}
 }
 
 // providerIssuer is implemented by the built-in provider types so the admin list
 // can name the identity source without widening the loginProvider interface —
 // which every test fake would then have to grow a method for.
-type providerIssuer interface{ issuerURL() string }
+type providerIssuer interface{ IssuerURL() string }
 
 // list (GET /api/admin/providers) — readable by a super_admin or by ANY tenant's
 // administrator (anyTenantAdminFor); EDITING the rule this list feeds stays
@@ -74,7 +75,7 @@ func (a loginProviderAPI) list(w http.ResponseWriter, r *http.Request, ident sto
 			"label_en": p.Label("en"),
 		}
 		if iss, ok := p.(providerIssuer); ok && withIssuer {
-			row["issuer"] = iss.issuerURL()
+			row["issuer"] = iss.IssuerURL()
 		}
 		out = append(out, row)
 	}
