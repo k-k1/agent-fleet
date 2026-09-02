@@ -34,6 +34,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
@@ -54,9 +55,38 @@ type Supervisor struct {
 	// stopping marks a deliberate teardown (Restart/Shutdown) so the waiter doesn't
 	// record it as a crash or trigger reconciliation.
 	stopping bool
+	// watching: 需要ゼロ監視（agents.WatchIdle、idlestop.go）が 1 本回っている。
+	watching bool
 }
 
 var supervisor = &Supervisor{}
+
+// TUIDependents は「共有 daemon をバックエンドにしている TUI ルートの codex
+// セッション数」を返す継ぎ目。この package はセッション台帳も tmux も持たないので、
+// package main が起動時に差し替える（既定 0＝managed だけを見る）。
+//
+// これを数え損ねると需要ゼロ判定が生きている TUI セッションのバックエンドを
+// 引き抜く — buildProgram が `codex --remote <addr>` を焼き込んでいるので、
+// daemon が消えた TUI は会話ごと止まる。ここは「安全側＝多めに数える」で書くこと。
+var TUIDependents = func() int { return 0 }
+
+// dependents は共有 daemon を必要としているものの総数（managed ハンドル＋TUI）。
+//
+// managed 側は liveHandles ではなく **登録済みハンドル数** で数える: daemon が死ぬと
+// runtimeLost が全ハンドルの alive を落とすので、live で数えると「死んだ直後は需要
+// ゼロ」に見えて、復旧すべき場面で起こし直さなくなる。ハンドルが消えるのは
+// DropHandle（停止・halt・アーカイブ）だけ＝利用者がそのセッションを畳んだとき。
+func dependents() int {
+	handlesMu.Lock()
+	n := len(handles)
+	handlesMu.Unlock()
+	return n + TUIDependents()
+}
+
+// idleGraceEnv / defaultIdleGrace: 需要ゼロがこれだけ続いたら daemon を畳む。
+// 0 で自動停止を無効化。冷起動 217 ms（実測）なので、停止→再開の往復は安い。
+const idleGraceEnv = "AF_CODEX_APP_SERVER_IDLE_SEC"
+const defaultIdleGrace = 2 * time.Minute
 
 // Serve returns the package-wide supervisor instance.
 func Serve() *Supervisor { return supervisor }
@@ -65,9 +95,26 @@ func Serve() *Supervisor { return supervisor }
 // pre-P3 startCodexAppServer honored).
 func (s *Supervisor) Disabled() bool { return os.Getenv("AF_CODEX_APP_SERVER_DISABLE") == "1" }
 
-// Addr returns the app-server ws address (configured or default).
+// operatorAddr は「運用者が env で指定した listen 先」を一度だけ控える。同じ env は
+// Ensure 成功時に『使える daemon がここに居る』印としても書かれる（buildProgram の
+// --remote と観測が読む既存契約）ので、自動停止で印を外したときに運用者の指定まで
+// 失わないよう、印を書く前の値をここに残しておく。
+var (
+	configuredOnce sync.Once
+	configuredAddr string
+)
+
+func operatorAddr() string {
+	configuredOnce.Do(func() { configuredAddr = os.Getenv(appServerAddrEnv) })
+	return configuredAddr
+}
+
+// Addr returns the app-server ws address (live 印 → 運用者指定 → 既定)。
 func (s *Supervisor) Addr() string {
 	if v := os.Getenv(appServerAddrEnv); v != "" {
+		return v
+	}
+	if v := operatorAddr(); v != "" {
 		return v
 	}
 	return defaultAppServerAddr
@@ -100,9 +147,18 @@ func healthy(addr string) bool {
 	return true
 }
 
+// ErrNotLoggedIn: codex 未ログインなので共有 daemon を起こさない。app-server 自体は
+// ログイン状態を見ずに listen できてしまう（約 110 MB 常駐する）が、認証していない
+// ワークスペースでその常駐は丸ごと無駄になる。
+var ErrNotLoggedIn = errors.New("codex にログインしていないため app-server を起動しません")
+
 // Ensure starts (or adopts) the shared daemon and the managed writer connection,
 // idempotently. Returns the writer client and the generation the caller should
 // stamp on its handles.
+//
+// daemon を新しく起こすのは「codex にログイン済み」かつ「誰かが必要としている」
+// ときだけ（起動条件は docs/log/27 §7 の補遺）。起動時に無条件で上げる運用は
+// やめた — 冷起動 217 ms に対して常駐 110 MB は割に合わない。
 func (s *Supervisor) Ensure() (*appClient, int, error) {
 	if s.Disabled() {
 		return nil, 0, errors.New("codex app-server is disabled (AF_CODEX_APP_SERVER_DISABLE=1)")
@@ -117,6 +173,12 @@ func (s *Supervisor) Ensure() (*appClient, int, error) {
 	// socket alone dropped): adopt it with a fresh writer connection. cmd==nil for a
 	// daemon we didn't spawn — exit recording degrades to socket-loss detection.
 	if !healthy(addr) {
+		// 未ログインなら「起こさない」。既に listen している daemon の adopt は
+		// 新たなメモリを食わないので素通しする（認証は codex 自身が turn 実行時に
+		// 弾く — ここは起動コストの門であって認可の門ではない）。
+		if !loggedIn() {
+			return nil, 0, ErrNotLoggedIn
+		}
 		if err := s.startDaemonLocked(addr); err != nil {
 			return nil, 0, err
 		}
@@ -134,9 +196,85 @@ func (s *Supervisor) Ensure() (*appClient, int, error) {
 	go cl.readLoop()
 	// buildProgram（TUI --remote）と main の観測が使う既存契約を維持する。
 	_ = os.Setenv(appServerAddrEnv, addr)
+	s.armIdleWatchLocked()
 	log.Printf("codex app-server: writer connected (gen %d, %s)", gen, addr)
+	// 観測（package main の read-only オブザーバ）に「今つながる」と知らせる。
+	// 自動停止のあと需要で起き直したとき、最大 60 秒の再接続待ちを飛ばすため。
+	go DaemonUp()
 	return cl, gen, nil
 }
+
+// AdoptIfRunning は Agent 起動時の入口: 既に listen している daemon（前の Agent
+// プロセスが起こし、graceful shutdown を経ずに残ったもの）だけを引き取る。
+// 居なければ何もしない — 起動は需要側（managed の Resume / TUI の BuildLaunch）に
+// 任せる。ここで無条件に Ensure すると、codex を一度も使わないワークスペースが
+// 起動しただけで 110 MB を払うことになる。
+func (s *Supervisor) AdoptIfRunning() {
+	if s.Disabled() || !healthy(s.Addr()) {
+		return
+	}
+	if _, _, err := s.Ensure(); err != nil {
+		log.Printf("codex app-server: 稼働中の daemon を引き取れませんでした: %v", err)
+	}
+}
+
+// armIdleWatchLocked starts the "需要ゼロで畳む" watcher, at most one at a time.
+// 呼び出し側は s.mu を保持していること。
+func (s *Supervisor) armIdleWatchLocked() {
+	if s.watching {
+		return
+	}
+	s.watching = true
+	go agents.WatchIdle("codex app-server", dependents, s.stopIfIdle,
+		agents.IdleGrace(idleGraceEnv, defaultIdleGrace))
+}
+
+// stopIfIdle は需要ゼロを **ロック内で再確認してから** daemon を畳む。監視ループの
+// 判定と停止の間に Resume / BuildLaunch が走ると、生きているセッションの backend を
+// 引き抜くことになるので、ここだけは競合を潰す。false = 需要が戻っていた（監視続行）。
+func (s *Supervisor) stopIfIdle() bool {
+	s.mu.Lock()
+	if !s.up && s.cmd == nil {
+		s.watching = false
+		s.mu.Unlock()
+		return true // 既に落ちている（daemon death 等）— 監視は降りる
+	}
+	if dependents() > 0 {
+		s.mu.Unlock()
+		return false
+	}
+	cmd, cl := s.cmd, s.client
+	s.stopping, s.up, s.client, s.watching = true, false, nil, false
+	s.mu.Unlock()
+
+	if cl != nil {
+		cl.close()
+	}
+	if cmd == nil {
+		// adopt した daemon はプロセスハンドルが無く、シグナルを送れない。書き込み
+		// 接続だけ畳んで監視を降りる（次に owned で起こし直したときに効く）。
+		log.Printf("codex app-server: 需要ゼロだが adopt した daemon なので停止できません")
+	} else {
+		// 需要ゼロ＝走っている managed turn は無いので drain は要らない。
+		stopProcess(cmd, s.Addr())
+		log.Printf("codex app-server: 停止しました（需要ゼロ）")
+	}
+	s.mu.Lock()
+	s.cmd = nil
+	s.mu.Unlock()
+	// stopping は戻さない: cl.close() が非同期に呼ぶ writerLost が「意図しない切断」と
+	// 読み違えると、たった今畳んだ daemon を retryEnsure が起こし直してしまう。
+	// 次の Ensure が成功時に false へ戻す（そこが唯一の再開点）。
+	//
+	// TUI は env が在れば --remote を焼き込む。落ちた daemon のアドレスを残すと
+	// 次の起動が死んだ backend を掴むので、印を外して直接起動へ戻す。
+	_ = os.Unsetenv(appServerAddrEnv)
+	return true
+}
+
+// DaemonUp は「daemon が使える状態になった」を知らせる継ぎ目。package main の
+// read-only オブザーバが再接続の待ちを打ち切るために差し替える。
+var DaemonUp = func() {}
 
 // startDaemonLocked spawns the daemon and waits for readiness. Caller holds mu.
 func (s *Supervisor) startDaemonLocked(addr string) error {
@@ -211,9 +349,15 @@ func (s *Supervisor) waitDaemon(cmd *exec.Cmd, gen int) {
 		h.runtimeLost()
 	}
 	// daemon は CLI ルート（TUI --remote）の backend でもある — managed セッションが
-	// 0 でも起こし直す（reconcileAll は managed メタが無いと Ensure に届かない）。
+	// 0 でも、生きている TUI セッションが居るなら起こし直す（reconcileAll は managed
+	// メタが無いと Ensure に届かない）。誰も待っていないなら起こし直さない: 需要ゼロで
+	// 畳む方針（stopIfIdle）と同じ判断で、死んだ瞬間に 110 MB を取り戻す。
 	// 失敗すれば startDaemonLocked が env を落とし、以後の TUI は直接起動へ戻る。
-	go s.retryEnsure("daemon death")
+	if dependents() > 0 {
+		go s.retryEnsure("daemon death")
+	} else {
+		_ = os.Unsetenv(appServerAddrEnv)
+	}
 	go reconcileAll("daemon death")
 }
 
@@ -292,12 +436,14 @@ func (s *Supervisor) Shutdown() {
 	cl := s.client
 	s.stopping = true
 	s.up = false
+	s.watching = false
 	s.mu.Unlock()
 	s.drain()
 	if cl != nil {
 		cl.close()
 	}
 	stopProcess(cmd, s.Addr())
+	_ = os.Unsetenv(appServerAddrEnv)
 }
 
 // drainTimeout bounds how long a drain waits for running managed turns to finish

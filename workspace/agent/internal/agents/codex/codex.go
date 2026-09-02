@@ -7,6 +7,7 @@ package codex
 import (
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -157,6 +158,13 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// Pre-accept codex's per-dir trust gate so a freshly cloned repo doesn't stall at
 	// the "Do you trust this directory?" prompt (the bypass flags don't cover it).
 	ensureFolderTrusted(m.Dir)
+	// 共有 app-server は需要で上がる（起動時常駐をやめた）。TUI ルートもその需要の
+	// ひとつ: ここで起こしておかないと buildProgram が印（env）を見つけられず、
+	// --remote 無しの直接起動になって圧縮検知・ライブ rate limit・reroute 観測
+	// （docs/log/27 P1）が丸ごと落ちる。失敗は致命ではない — 直接起動へ縮退する。
+	if _, _, err := Serve().Ensure(); err != nil {
+		log.Printf("codex app-server unavailable; using direct TUI: %v", err)
+	}
 	// Auth is codex's own ~/.codex/auth.json (codex login, written via the Connections
 	// flow), so no token is injected. State + per-slot resume are wired purely through
 	// codex hooks injected on the command line (-c), keyed by our deterministic slot

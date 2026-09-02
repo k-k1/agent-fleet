@@ -58,7 +58,7 @@ func TestCodexObserverLiveIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go monitorCodexAppServer(conn, addr)
+	go observeCodexAppServer(conn)
 
 	// Second connection plays the TUI: resume the thread and start a compaction.
 	tui, err := connectCodexAppServer(addr)
@@ -292,7 +292,7 @@ func TestCodexObserverAttachesBeforeObservingThreadEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go monitorCodexAppServer(conn, wsURL)
+	go observeCodexAppServer(conn)
 
 	select {
 	case tid := <-resumed:
