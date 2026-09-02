@@ -149,7 +149,7 @@ func main() {
 		}
 	}
 	ctx := context.Background()
-	if err := store.migrate(ctx); err != nil {
+	if err := store.Migrate(ctx); err != nil {
 		log.Fatalf("db migrate: %v", err)
 	}
 	mgr.store = store

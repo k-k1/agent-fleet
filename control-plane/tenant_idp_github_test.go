@@ -254,7 +254,7 @@ func TestFillProviderRealmMakesOldRowsJoinable(t *testing.T) {
 		t.Fatalf("re-fill: %v", err)
 	}
 	var realm string
-	if err := st.db.QueryRowContext(ctx,
+	if err := st.DB().QueryRowContext(ctx,
 		`SELECT realm FROM identity_provider WHERE provider='t:sub:github'`).Scan(&realm); err != nil {
 		t.Fatalf("read back: %v", err)
 	}

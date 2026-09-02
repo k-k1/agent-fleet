@@ -71,7 +71,7 @@ func reaperLifecycleFixture(t *testing.T) (*sqlStore, Workspace, *manager) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)
@@ -312,7 +312,7 @@ func TestWorkspaceActivityCoalescesWithinProtectedLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	var first string
-	if err := st.db.QueryRowContext(ctx, `SELECT updated_at FROM workspace_activity WHERE workspace_id=?`, ws.ID).Scan(&first); err != nil {
+	if err := st.DB().QueryRowContext(ctx, `SELECT updated_at FROM workspace_activity WHERE workspace_id=?`, ws.ID).Scan(&first); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(10 * time.Millisecond)
@@ -320,7 +320,7 @@ func TestWorkspaceActivityCoalescesWithinProtectedLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	var second string
-	if err := st.db.QueryRowContext(ctx, `SELECT updated_at FROM workspace_activity WHERE workspace_id=?`, ws.ID).Scan(&second); err != nil {
+	if err := st.DB().QueryRowContext(ctx, `SELECT updated_at FROM workspace_activity WHERE workspace_id=?`, ws.ID).Scan(&second); err != nil {
 		t.Fatal(err)
 	}
 	if second != first {
@@ -350,7 +350,7 @@ func TestExplicitStartClearsOrphanedIdleStopIntentWhileRunning(t *testing.T) {
 		t.Fatalf("explicit Start reconciliation: %+v", aerr)
 	}
 	var intents int
-	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_stop_intent WHERE workspace_id=?`, ws.ID).Scan(&intents); err != nil {
+	if err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_stop_intent WHERE workspace_id=?`, ws.ID).Scan(&intents); err != nil {
 		t.Fatal(err)
 	}
 	if intents != 0 {
@@ -505,7 +505,7 @@ func (r *plainStub) Name() string                 { return "plain-stub" }
 func setLastActive(t *testing.T, st *sqlStore, wsID string, at time.Time) string {
 	t.Helper()
 	ts := at.UTC().Format(time.RFC3339)
-	if _, err := st.db.Exec(`UPDATE workspace SET last_active_at=? WHERE id=?`, ts, wsID); err != nil {
+	if _, err := st.DB().Exec(`UPDATE workspace SET last_active_at=? WHERE id=?`, ts, wsID); err != nil {
 		t.Fatal(err)
 	}
 	return ts

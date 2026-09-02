@@ -16,7 +16,7 @@ func TestResolveWorkspaceMemBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tn, _ := st.EnsureDefaultTenant(ctx)
@@ -68,7 +68,7 @@ func TestResolveWorkspaceSizeCPUAndDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tn, _ := st.EnsureDefaultTenant(ctx)
