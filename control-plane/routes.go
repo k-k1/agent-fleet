@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -279,7 +280,7 @@ func registerMCPRoutes(mux *http.ServeMux, cfg config) {
 	exemptExact("/mcp")
 	exemptPrefix("/mcp/")
 	if envx.Or("AF_MCP_ENABLED", "") == "true" {
-		mux.HandleFunc("/mcp", newMCPAPI(cfg.mgr).handleMCP)
+		mux.HandleFunc("/mcp", mcpsrv.New(cpDeps{cfg.mgr}).HandleMCP)
 		log.Printf("MCP endpoint enabled at /mcp")
 	}
 }
@@ -583,12 +584,12 @@ func scheduleMember(s scheduleAPI, h func(http.ResponseWriter, *http.Request, st
 // the workspace where the user's own encrypted store lives.
 func registerMCPServerRoutes(mux *http.ServeMux, cfg config) {
 	exemptPrefix("/internal/")
-	m := newMCPServerAPI(cfg.mgr)
-	mux.HandleFunc("GET /api/admin/mcp-servers", m.adminList)
-	mux.HandleFunc("POST /api/admin/mcp-servers", m.adminUpsert)
-	mux.HandleFunc("PUT /api/admin/mcp-servers/{id}", m.adminUpsert)
-	mux.HandleFunc("DELETE /api/admin/mcp-servers/{id}", m.adminDelete)
-	mux.HandleFunc("GET /internal/mcp-servers", m.withMCPToken(m.distribute))
+	m := mcpsrv.NewServerAPI(cpDeps{cfg.mgr})
+	mux.HandleFunc("GET /api/admin/mcp-servers", m.AdminList)
+	mux.HandleFunc("POST /api/admin/mcp-servers", m.AdminUpsert)
+	mux.HandleFunc("PUT /api/admin/mcp-servers/{id}", m.AdminUpsert)
+	mux.HandleFunc("DELETE /api/admin/mcp-servers/{id}", m.AdminDelete)
+	mux.HandleFunc("GET /internal/mcp-servers", m.WithMCPToken(m.Distribute))
 	// Role-scoped docs pull (docs/build/04 §4.9). Same shape as the MCP poll — a
 	// per-membership token, session-exempt via /internal/ — and the only way an ECS
 	// workspace gets its docs at all, since there is no host path to bind-mount there.
