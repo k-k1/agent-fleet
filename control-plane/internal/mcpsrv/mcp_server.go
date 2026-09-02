@@ -53,10 +53,10 @@ const (
 	codeMCPNotFound       = "mcp_not_found"
 )
 
-// maskedValue is what a stored header value is replaced with on the wire. Sending it
+// MaskedValue is what a stored header value is replaced with on the wire. Sending it
 // back unchanged keeps the stored value, so the admin UI can edit a definition without
 // ever handling the real credential (the connections convention, docs/log/48 §5.1).
-const maskedValue = "***"
+const MaskedValue = "***"
 
 // mcpNameRe is the intersection of what the target CLIs accept as a server key — codex
 // writes it as a TOML bare key, the narrowest. Identical to mcpreg.nameRe.
@@ -79,14 +79,16 @@ type mcpServerStore interface {
 	store.AuditStore
 }
 
-// mcpServerAPI serves both faces. It holds the manager (for master32 / custodian /
-// membership resolution) via memberAuth and a narrow store view.
-type mcpServerAPI struct {
-	memberAuth
+// ServerAPI serves both faces. It holds the CP seam (for master32 / custodian /
+// tenant-admin gating) and a narrow store view.
+type ServerAPI struct {
+	cp    CP
 	store mcpServerStore
 }
 
-func newMCPServerAPI(m *manager) mcpServerAPI { return mcpServerAPI{memberAuth{m}, m.store} }
+// NewServerAPI builds both faces over the CP seam. The CP's own wiring is
+// control-plane/alias_mcp.go.
+func NewServerAPI(cp CP) ServerAPI { return ServerAPI{cp, cp.Store()} }
 
 // --- wire shapes -----------------------------------------------------------------
 
@@ -145,7 +147,7 @@ type distDef struct {
 // With no master key (dev / single-node without a configured secret) the map is stored
 // as plaintext JSON with an empty KeyRef, the same way the Agent's secret store degrades
 // rather than refusing to work.
-func (a mcpServerAPI) sealHeaders(ctx context.Context, tenantID string, h map[string]string) (enc, keyRef string, err error) {
+func (a ServerAPI) sealHeaders(ctx context.Context, tenantID string, h map[string]string) (enc, keyRef string, err error) {
 	if len(h) == 0 {
 		return "", "", nil
 	}
@@ -153,10 +155,10 @@ func (a mcpServerAPI) sealHeaders(ctx context.Context, tenantID string, h map[st
 	if err != nil {
 		return "", "", err
 	}
-	if len(a.mgr.master32) == 0 || a.mgr.custodian == nil {
+	if len(a.cp.Master32()) == 0 || a.cp.Custodian() == nil {
 		return string(b), "", nil
 	}
-	ct, err := a.mgr.custodian.Wrap(ctx, tenantID, b)
+	ct, err := a.cp.Custodian().Wrap(ctx, tenantID, b)
 	if err != nil {
 		return "", "", err
 	}
@@ -166,7 +168,7 @@ func (a mcpServerAPI) sealHeaders(ctx context.Context, tenantID string, h map[st
 // openHeaders reverses sealHeaders. An unreadable row is an error, never an empty map:
 // silently distributing a server with NO headers would turn an auth failure into a
 // confusing "the server rejects everything" instead of naming the real cause.
-func (a mcpServerAPI) openHeaders(ctx context.Context, enc, keyRef string) (map[string]string, error) {
+func (a ServerAPI) openHeaders(ctx context.Context, enc, keyRef string) (map[string]string, error) {
 	if enc == "" {
 		return nil, nil
 	}
@@ -176,10 +178,10 @@ func (a mcpServerAPI) openHeaders(ctx context.Context, enc, keyRef string) (map[
 		// (the master key was removed / this is a different deployment). Say so instead of
 		// dereferencing nil — a whole tenant's distribution failing over a key change is
 		// exactly the case an operator needs named.
-		if a.mgr.custodian == nil {
+		if a.cp.Custodian() == nil {
 			return nil, errors.New("row is sealed with a tenant key but no key custodian is configured")
 		}
-		b, err := a.mgr.custodian.Unwrap(ctx, keyRef, enc)
+		b, err := a.cp.Custodian().Unwrap(ctx, keyRef, enc)
 		if err != nil {
 			return nil, err
 		}
@@ -197,41 +199,41 @@ func (a mcpServerAPI) openHeaders(ctx context.Context, enc, keyRef string) (map[
 // validateMCPBody enforces the tenant-distribution rules. transport is pinned to http:
 // ADR0031 決定 2 refuses tenant stdio, and the table has no command columns to hold one,
 // so this is the API half of a constraint the schema also carries.
-func validateMCPBody(b mcpServerBody) *apiError {
+func validateMCPBody(b mcpServerBody) *APIError {
 	name := strings.TrimSpace(b.Name)
 	if !mcpNameRe.MatchString(name) {
-		return &apiError{http.StatusBadRequest, codeMCPNameInvalid,
+		return &APIError{http.StatusBadRequest, codeMCPNameInvalid,
 			"name must be 1-48 chars of [a-zA-Z0-9_-] starting alphanumeric: " + b.Name}
 	}
 	if mcpReservedNames[strings.ToLower(name)] {
-		return &apiError{http.StatusBadRequest, codeMCPNameReserved, name + " is a name reserved by Agent Fleet"}
+		return &APIError{http.StatusBadRequest, codeMCPNameReserved, name + " is a name reserved by Agent Fleet"}
 	}
 	switch strings.TrimSpace(b.Transport) {
 	case "", "http":
 	case "stdio":
-		return &apiError{http.StatusBadRequest, codeMCPTenantStdio,
+		return &APIError{http.StatusBadRequest, codeMCPTenantStdio,
 			"tenant-distributed MCP servers cannot use stdio (remote only)"}
 	default:
-		return &apiError{http.StatusBadRequest, codeMCPTransport, "unsupported transport: " + b.Transport}
+		return &APIError{http.StatusBadRequest, codeMCPTransport, "unsupported transport: " + b.Transport}
 	}
 	if aerr := validateMCPURL(b.URL); aerr != nil {
 		return aerr
 	}
 	for k, v := range b.Headers {
 		if strings.TrimSpace(k) == "" || strings.ContainsAny(k, "\r\n:") {
-			return &apiError{http.StatusBadRequest, codeMCPHeaderName, "invalid header name: " + k}
+			return &APIError{http.StatusBadRequest, codeMCPHeaderName, "invalid header name: " + k}
 		}
 		if strings.ContainsAny(v, "\r\n") {
-			return &apiError{http.StatusBadRequest, codeMCPHeaderValue, "a header value cannot contain a newline"}
+			return &APIError{http.StatusBadRequest, codeMCPHeaderValue, "a header value cannot contain a newline"}
 		}
 	}
 	for _, k := range b.Kinds {
 		if !mcpKnownKinds[k] {
-			return &apiError{http.StatusBadRequest, codeMCPKindUnknown, "unknown agent kind: " + k}
+			return &APIError{http.StatusBadRequest, codeMCPKindUnknown, "unknown agent kind: " + k}
 		}
 	}
 	if b.TimeoutMS != 0 && (b.TimeoutMS < 1000 || b.TimeoutMS > 120000) {
-		return &apiError{http.StatusBadRequest, codeMCPTimeoutRange, "timeout must be between 1000 and 120000 ms"}
+		return &APIError{http.StatusBadRequest, codeMCPTimeoutRange, "timeout must be between 1000 and 120000 ms"}
 	}
 	return nil
 }
@@ -239,23 +241,23 @@ func validateMCPBody(b mcpServerBody) *apiError {
 // validateMCPURL keeps a distributed definition to an absolute http(s) URL with no
 // embedded credentials — those would land in every member's materialized config file in
 // plain sight, where the masking contract cannot reach them.
-func validateMCPURL(raw string) *apiError {
+func validateMCPURL(raw string) *APIError {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return &apiError{http.StatusBadRequest, codeMCPURLRequired, "a remote server needs a URL"}
+		return &APIError{http.StatusBadRequest, codeMCPURLRequired, "a remote server needs a URL"}
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return &apiError{http.StatusBadRequest, codeMCPURLInvalid, "cannot parse URL: " + err.Error()}
+		return &APIError{http.StatusBadRequest, codeMCPURLInvalid, "cannot parse URL: " + err.Error()}
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return &apiError{http.StatusBadRequest, codeMCPURLScheme, "URL must be http / https: " + raw}
+		return &APIError{http.StatusBadRequest, codeMCPURLScheme, "URL must be http / https: " + raw}
 	}
 	if u.Host == "" {
-		return &apiError{http.StatusBadRequest, codeMCPURLHost, "URL has no host: " + raw}
+		return &APIError{http.StatusBadRequest, codeMCPURLHost, "URL has no host: " + raw}
 	}
 	if u.User != nil {
-		return &apiError{http.StatusBadRequest, codeMCPURLCredentials, "do not embed credentials in the URL (use a header)"}
+		return &APIError{http.StatusBadRequest, codeMCPURLCredentials, "do not embed credentials in the URL (use a header)"}
 	}
 	return nil
 }
@@ -297,7 +299,7 @@ func splitKinds(s string) []string {
 }
 
 // mergeHeaders resolves an incoming (masked) header map against the stored one: a value
-// still equal to maskedValue keeps its stored counterpart, anything else is a new
+// still equal to MaskedValue keeps its stored counterpart, anything else is a new
 // secret, and a key absent from the incoming map is a deletion. A masked value with
 // nothing behind it is DROPPED rather than stored — otherwise the literal "***" would be
 // sent to the MCP server as if it were a credential.
@@ -307,7 +309,7 @@ func mergeHeaders(incoming, stored map[string]string) map[string]string {
 	}
 	out := make(map[string]string, len(incoming))
 	for k, v := range incoming {
-		if v == maskedValue {
+		if v == MaskedValue {
 			if old, ok := stored[k]; ok {
 				out[k] = old
 			}
@@ -344,17 +346,17 @@ func maskHeaders(h map[string]string) map[string]string {
 			out[k] = "" // user_secret: no value is stored, so there is nothing to mask
 			continue
 		}
-		out[k] = maskedValue
+		out[k] = MaskedValue
 	}
 	return out
 }
 
 // --- admin face --------------------------------------------------------------------
 
-// adminList (GET /api/admin/mcp-servers?tenant=<slug>) lists a tenant's distributed
+// AdminList (GET /api/admin/mcp-servers?tenant=<slug>) lists a tenant's distributed
 // definitions with every header value masked.
-func (a mcpServerAPI) adminList(w http.ResponseWriter, r *http.Request) {
-	_, t, ok := a.tenantAdminFor(w, r, mcpTenantSlug(r, ""))
+func (a ServerAPI) AdminList(w http.ResponseWriter, r *http.Request) {
+	_, t, ok := a.cp.TenantAdminFor(w, r, a.mcpTenantSlug(r, ""))
 	if !ok {
 		return
 	}
@@ -391,24 +393,24 @@ func rowToBody(row store.MCPServerRow, headers map[string]string) mcpServerBody 
 // body) or the decoded body's tenant_slug (POST / PUT). Falling back to the header-based
 // tenant selection lets the Console omit it entirely when the admin is working in the
 // tenant already selected in the UI.
-func mcpTenantSlug(r *http.Request, fromBody string) string {
+func (a ServerAPI) mcpTenantSlug(r *http.Request, fromBody string) string {
 	if v := strings.TrimSpace(fromBody); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(r.URL.Query().Get("tenant")); v != "" {
 		return v
 	}
-	return tenantSel(r)
+	return a.cp.TenantSel(r)
 }
 
-// adminUpsert handles POST (create) and PUT /{id} (replace).
-func (a mcpServerAPI) adminUpsert(w http.ResponseWriter, r *http.Request) {
+// AdminUpsert handles POST (create) and PUT /{id} (replace).
+func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 	var b mcpServerBody
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<18)).Decode(&b); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_body", "invalid JSON"})
 		return
 	}
-	ident, t, ok := a.tenantAdminFor(w, r, mcpTenantSlug(r, b.TenantSlug))
+	ident, t, ok := a.cp.TenantAdminFor(w, r, a.mcpTenantSlug(r, b.TenantSlug))
 	if !ok {
 		return
 	}
@@ -430,13 +432,13 @@ func (a mcpServerAPI) adminUpsert(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if strings.EqualFold(rows[i].Name, name) {
-			writeAPIErr(w, &apiError{http.StatusConflict, codeMCPNameTaken,
+			writeAPIErr(w, &APIError{http.StatusConflict, codeMCPNameTaken,
 				"a server named " + name + " is already distributed in this tenant"})
 			return
 		}
 	}
 	if id != "" && stored == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, codeMCPNotFound, "unknown MCP server"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, codeMCPNotFound, "unknown MCP server"})
 		return
 	}
 
@@ -448,7 +450,7 @@ func (a mcpServerAPI) adminUpsert(w http.ResponseWriter, r *http.Request) {
 		if storedHeaders, err = a.openHeaders(r.Context(), stored.HeadersEnc, stored.KeyRef); err != nil {
 			// Unreadable stored headers must not silently become the incoming set: say so,
 			// so the admin re-enters the values instead of shipping a half-merged map.
-			writeAPIErr(w, &apiError{http.StatusConflict, "mcp_headers_unreadable",
+			writeAPIErr(w, &APIError{http.StatusConflict, "mcp_headers_unreadable",
 				"the stored headers cannot be decrypted — re-enter every header value"})
 			return
 		}
@@ -490,9 +492,9 @@ func (a mcpServerAPI) adminUpsert(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rowToBody(row, maskHeaders(headers)))
 }
 
-// adminDelete (DELETE /api/admin/mcp-servers/{id}?tenant=<slug>).
-func (a mcpServerAPI) adminDelete(w http.ResponseWriter, r *http.Request) {
-	ident, t, ok := a.tenantAdminFor(w, r, mcpTenantSlug(r, ""))
+// AdminDelete (DELETE /api/admin/mcp-servers/{id}?tenant=<slug>).
+func (a ServerAPI) AdminDelete(w http.ResponseWriter, r *http.Request) {
+	ident, t, ok := a.cp.TenantAdminFor(w, r, a.mcpTenantSlug(r, ""))
 	if !ok {
 		return
 	}
@@ -503,7 +505,7 @@ func (a mcpServerAPI) adminDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !found {
-		writeAPIErr(w, &apiError{http.StatusNotFound, codeMCPNotFound, "unknown MCP server"})
+		writeAPIErr(w, &APIError{http.StatusNotFound, codeMCPNotFound, "unknown MCP server"})
 		return
 	}
 	if err := a.store.DeleteMCPServer(r.Context(), t.ID, id); err != nil {
@@ -523,7 +525,7 @@ func boolStr(b bool) string {
 
 // auditMCP records one admin mutation. Tenant-scoped so a tenant_admin sees their own
 // changes in the audit view. Best-effort: a ledger failure must not fail the edit.
-func (a mcpServerAPI) auditMCP(ctx context.Context, ident store.Identity, tenantID, action, target, detail string) {
+func (a ServerAPI) auditMCP(ctx context.Context, ident store.Identity, tenantID, action, target, detail string) {
 	_ = a.store.InsertAudit(ctx, store.AuditLog{
 		ID: store.NewID(), TenantID: tenantID, ActorKind: "admin", ActorID: ident.ID,
 		Action: action, Target: target, Detail: detail, At: store.NowTS(),
@@ -532,7 +534,7 @@ func (a mcpServerAPI) auditMCP(ctx context.Context, ident store.Identity, tenant
 
 // --- distribution face -------------------------------------------------------------
 
-// distribute (GET /internal/mcp-servers) serves the caller's tenant's ENABLED
+// Distribute (GET /internal/mcp-servers) serves the caller's tenant's ENABLED
 // definitions to their Workspace agent, which caches them (docs/log/48 §6). The tenant comes
 // from the token's membership, never the request, so this can never read another
 // tenant's headers.
@@ -541,7 +543,7 @@ func (a mcpServerAPI) auditMCP(ctx context.Context, ident store.Identity, tenant
 // agent would otherwise materialize a server that authenticates with nothing, and the
 // member would debug the MCP server instead of the key configuration. The count of such
 // rows is reported so the Console can say the set is incomplete.
-func (a mcpServerAPI) distribute(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
+func (a ServerAPI) Distribute(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	rows, err := a.store.ListMCPServers(r.Context(), mv.TenantID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
