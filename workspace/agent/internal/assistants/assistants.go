@@ -32,17 +32,55 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
-// main 側にしか置けないものを受け取るフック（internal/agents の opencode.UsagePref /
-// mcpreg.PeerMessagingEnabled と同じ形）。どちらもリクエスト時にしか呼ばれないので
-// init 順に依存しない。未設定のままでも空文字を返すだけで panic しない。
-var (
-	// KnowledgeDir materializes the embedded builtin knowledge and returns its path
-	// (main の ensureBuiltinKnowledge。embed が main に残るため)。
-	KnowledgeDir = func() string { return "" }
-	// DefaultAgent is the preferred AVAILABLE headless backend for builtins
+// Deps は main 側にしか置けない 2 つを**引数で**受け取る（ADR 0067 決定 3 の
+// 「引数か consumer-defined interface で受け取る」）。
+//
+// 🔥 パッケージ変数のフック（opencode.UsagePref / mcpreg.PeerMessagingEnabled と同じ形）で
+// 始めたが、レビューの変異試験で **init の代入 2 行を消しても main のテストが全部緑**になった。
+// develop ではこれは Builtins() が両関数を直接呼ぶ**コンパイラ強制の依存**で、移送で
+// 「無言で外せる実行時代入」に化けていた（外れると組み込みアシスタントが Agent:"" ＋
+// ナレッジパス空で立つ）。引数にすると**結線し忘れがコンパイルエラーになる**ので、同じ穴が
+// 二度と開かない。
+//
+// 🔥 **フィールドは非公開で、NewDeps でしか組めない。** 公開フィールドの struct にすると
+// `Deps{KnowledgeDir: f}` のように**片方を書き落としてもコンパイルが通ってしまい**、
+// フックだった頃と同じ「無言で外れる」形が残る（実測した）。引数の個数はコンパイラが数えるので、
+// コンストラクタを唯一の入口にして初めて結線が強制される。
+//
+// フィールドが関数なのは呼ぶ回数と順番を移送前と 1 対 1 に保つため（knowledgeDir は
+// ensureBuiltinKnowledge＝毎回 materialize する副作用つき）。nil は panic させる —
+// 無害な既定値は「結線し忘れ」を緑にするので置かない。
+type Deps struct {
+	// knowledgeDir materializes the embedded builtin knowledge and returns its path
+	// (main の ensureBuiltinKnowledge。//go:embed が main に残るため)。
+	knowledgeDirFn func() string
+	// defaultAgent is the preferred AVAILABLE headless backend for builtins
 	// (main の preferredHeadlessAgent。chat 家系にある)。
-	DefaultAgent = func() string { return "" }
-)
+	defaultAgentFn func() string
+}
+
+// NewDeps は Deps を組む唯一の入口。どちらかを渡し忘れると**コンパイルエラー**になる。
+// nil を渡した場合はその場で panic する（ゼロ値の Deps{} も同じく使用時に panic）。
+func NewDeps(knowledgeDir, defaultAgent func() string) Deps {
+	if knowledgeDir == nil || defaultAgent == nil {
+		panic("assistants.NewDeps: nil を渡している（結線し忘れ）")
+	}
+	return Deps{knowledgeDirFn: knowledgeDir, defaultAgentFn: defaultAgent}
+}
+
+func (d Deps) knowledgeDir() string {
+	if d.knowledgeDirFn == nil {
+		panic("assistants: Deps がゼロ値（NewDeps を通していない）")
+	}
+	return d.knowledgeDirFn()
+}
+
+func (d Deps) defaultAgent() string {
+	if d.defaultAgentFn == nil {
+		panic("assistants: Deps がゼロ値（NewDeps を通していない）")
+	}
+	return d.defaultAgentFn()
+}
 
 // validID guards path traversal: ids are randUUID() output (36 桁の hex + '-')。
 // chat_store.go の validConvID と同じ判定を、そちらへ依存せずに持つ（アシスタント id と
@@ -236,33 +274,33 @@ const AFAssistantID = "af"
 // snapshots the value at creation as before.
 // Persona は表示言語で選ぶ（docs/log/28 P6・PersonaFor）。Name / Description は Console 側の
 // カタログ（assistant.<id>.name/.desc・docs/log/28 P3）が表示解決するので、ここは正本言語のまま。
-func Builtins() []Assistant {
-	know := KnowledgeDir()
+func Builtins(d Deps) []Assistant {
+	know := d.knowledgeDir()
 	lang := uiprefs.Locale()
 	return []Assistant{
 		{
 			ID: AFAssistantID, Name: "Agent Fleet アシスタント", Icon: "rocket",
 			Description: "こんにちは。Agent Fleet の使い方を案内します。操作手順や、今のワークスペースの状態（動いているセッションなど）を実際に確認しながらお答えします。",
-			Builtin:     true, Agent: DefaultAgent(), Persona: PersonaFor(afAssistantPersona, afAssistantPersonaEN, lang),
+			Builtin:     true, Agent: d.defaultAgent(), Persona: PersonaFor(afAssistantPersona, afAssistantPersonaEN, lang),
 			Tools: ToolsAFRead, Knowledge: []string{know},
 		},
 		{
 			ID: "operator", Name: "フリート・オペレーター", Icon: "broadcast",
 			Description: "フリートの司令塔です。走っているセッションを俯瞰し、必要ならセッションに指示を出したり新しいセッションを起こして作業を進めます（引き継ぎ・壁打ちからのタスク開始も可）。不要になったセッションの停止・再開もできます。メモキューの確認・追加・一括送信もできます。専門的な判断は他のアシスタントにも相談します。実行前に内容を確認します。",
-			Builtin:     true, Agent: DefaultAgent(), Persona: PersonaFor(OperatorPersona, OperatorPersonaEN, lang),
+			Builtin:     true, Agent: d.defaultAgent(), Persona: PersonaFor(OperatorPersona, OperatorPersonaEN, lang),
 			Tools: ToolsAFWrite, Knowledge: []string{know},
 		},
 		{
 			ID: "sre", Name: "SRE アシスタント", Icon: "pulse",
 			Description: "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty・Grafana・CloudWatch・AWS を接続しておくと、開いているインシデントやメトリクス・ログ、AWS 側の実構成を実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
-			Builtin:     true, Agent: DefaultAgent(), Persona: PersonaFor(srePersona, srePersonaEN, lang),
+			Builtin:     true, Agent: d.defaultAgent(), Persona: PersonaFor(srePersona, srePersonaEN, lang),
 			Tools: ToolsAFRead, Integrations: []string{integrationPagerDuty, integrationGrafana, integrationCloudWatch, integrationAWS}, Knowledge: []string{know},
 		},
 	}
 }
 
-func IsBuiltinID(id string) bool {
-	for _, a := range Builtins() {
+func IsBuiltinID(id string, d Deps) bool {
+	for _, a := range Builtins(d) {
 		if a.ID == id {
 			return true
 		}
@@ -305,7 +343,7 @@ func SaveUser(a *Assistant) error {
 	return os.WriteFile(PathFor(a.ID), append(b, '\n'), 0o600)
 }
 
-func ListUser() []Assistant {
+func ListUser(d Deps) []Assistant {
 	ents, err := os.ReadDir(Dir())
 	if err != nil {
 		return nil
@@ -316,7 +354,7 @@ func ListUser() []Assistant {
 			continue
 		}
 		id := strings.TrimSuffix(e.Name(), ".json")
-		if IsBuiltinID(id) {
+		if IsBuiltinID(id, d) {
 			continue // a stray file must never shadow a builtin
 		}
 		if a, err := LoadUser(id); err == nil {
@@ -328,13 +366,13 @@ func ListUser() []Assistant {
 }
 
 // List merges builtins (first) with user-defined ones.
-func List() []Assistant {
-	return append(Builtins(), ListUser()...)
+func List(d Deps) []Assistant {
+	return append(Builtins(d), ListUser(d)...)
 }
 
 // Get resolves an id to a builtin or a user assistant.
-func Get(id string) (*Assistant, error) {
-	for _, a := range Builtins() {
+func Get(id string, d Deps) (*Assistant, error) {
+	for _, a := range Builtins(d) {
 		if a.ID == id {
 			b := a
 			return &b, nil
@@ -345,11 +383,11 @@ func Get(id string) (*Assistant, error) {
 
 // Resolve finds an assistant by id first, then by exact name — the model-facing
 // ask_assistant tool (docs/log/19) lets an orchestrator name a specialist either way.
-func Resolve(idOrName string) (*Assistant, error) {
-	if a, err := Get(idOrName); err == nil {
+func Resolve(idOrName string, d Deps) (*Assistant, error) {
+	if a, err := Get(idOrName, d); err == nil {
 		return a, nil
 	}
-	for _, a := range List() {
+	for _, a := range List(d) {
 		if a.Name == idOrName {
 			b := a
 			return &b, nil
