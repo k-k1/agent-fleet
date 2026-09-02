@@ -1,4 +1,4 @@
-package main
+package mcpx
 
 import (
 	"fmt"
@@ -21,8 +21,8 @@ import (
 // as plaintext. If no credential is configured, it exits non-zero so claude simply
 // reports the server as unavailable (the assistant just has no PagerDuty tools).
 
-// runMCPRun handles `workspace-agent mcp-run <provider> [extra args...]`.
-func runMCPRun(args []string) {
+// RunSubcommand handles `workspace-agent mcp-run <provider> [extra args...]`.
+func RunSubcommand(args []string) {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "mcp-run: provider required (e.g. pagerduty)")
 		os.Exit(2)
@@ -130,7 +130,7 @@ func runCloudWatchMCP(extra []string) {
 	// (session_ssm.go), so regenerate a durable ops config from the stored SSO
 	// meta and point boto3 at it. Idempotent per spawn — survives clean-home.
 	if s.CloudWatch.StartURL != "" {
-		if err := writeOpsAWSConfig("cloudwatch", s.CloudWatch.AWSProfileRef); err != nil {
+		if err := WriteOpsAWSConfig("cloudwatch", s.CloudWatch.AWSProfileRef); err != nil {
 			fmt.Fprintf(os.Stderr, "mcp-run cloudwatch: write aws config: %v\n", err)
 			os.Exit(1)
 		}
@@ -177,10 +177,10 @@ func opsAWSConfigPath(id string) string {
 	return filepath.Join(homeDir(), ".aws", "af-ops", id+".config")
 }
 
-// writeOpsAWSConfig (re)generates the durable ops aws config from the stored SSO
+// WriteOpsAWSConfig (re)generates the durable ops aws config from the stored SSO
 // meta. Idempotent; called at connect time (connections.go) and at every mcp-run
 // spawn so it self-heals after a clean-home.
-func writeOpsAWSConfig(id string, p secrets.AWSProfileRef) error {
+func WriteOpsAWSConfig(id string, p secrets.AWSProfileRef) error {
 	return writeSSMConfig(opsAWSConfigPath(id), session.SSMMeta{
 		Profile:   p.Profile,
 		StartURL:  p.StartURL,
@@ -199,19 +199,19 @@ func writeOpsAWSConfig(id string, p secrets.AWSProfileRef) error {
 // property of the other builtins for free — there is no credential to write down.
 const (
 	awsMCPPackage         = "mcp-proxy-for-aws"
-	awsMCPDefaultEndpoint = "us-east-1" // the other published region is eu-central-1
+	AWSMCPDefaultEndpoint = "us-east-1" // the other published region is eu-central-1
 )
 
 // awsMCPEndpointURL builds the SigV4 MCP endpoint for a service region. Endpoint
 // region ≠ resource region: this is where the MCP service itself runs.
 func awsMCPEndpointURL(region string) string {
 	if region == "" {
-		region = awsMCPDefaultEndpoint
+		region = AWSMCPDefaultEndpoint
 	}
 	return "https://aws-mcp." + region + ".api.aws/mcp"
 }
 
-// awsMCPArgs builds the proxy's argv tail from the stored connection.
+// AWSMCPArgs builds the proxy's argv tail from the stored connection.
 //
 //   - --read-only unless the member opted into writes. Without it the server offers
 //     call_aws (any of ~15,000 AWS API actions) and run_script (arbitrary code), and
@@ -221,7 +221,7 @@ func awsMCPEndpointURL(region string) string {
 //     server is broken", so let the proxy retry rather than the human.
 //   - --metadata AWS_REGION: the member's RESOURCE region, which the server uses to
 //     scope calls. Distinct from the signing region (env, = the endpoint region).
-func awsMCPArgs(c *secrets.AWSConn, extra []string) []string {
+func AWSMCPArgs(c *secrets.AWSConn, extra []string) []string {
 	args := []string{awsMCPEndpointURL(c.Endpoint), "--retries", "3"}
 	if !c.Write {
 		args = append(args, "--read-only")
@@ -235,7 +235,7 @@ func awsMCPArgs(c *secrets.AWSConn, extra []string) []string {
 // runAWSMCP execs the AWS MCP proxy against the stored profile. Same no-secret story
 // as CloudWatch: SigV4 comes off the credential chain, so an expired SSO login
 // surfaces as per-tool errors and the fix is `aws sso login`. The flags are in
-// awsMCPArgs above.
+// AWSMCPArgs above.
 func runAWSMCP(extra []string) {
 	s, err := secrets.Load()
 	if err != nil {
@@ -251,17 +251,17 @@ func runAWSMCP(extra []string) {
 	// member's resource region — that one rides along as request metadata below.
 	endpoint := s.AWS.Endpoint
 	if endpoint == "" {
-		endpoint = awsMCPDefaultEndpoint
+		endpoint = AWSMCPDefaultEndpoint
 	}
 	env = append(env, "AWS_REGION="+endpoint, "AWS_DEFAULT_REGION="+endpoint)
 	if s.AWS.StartURL != "" {
-		if err := writeOpsAWSConfig("aws", s.AWS.AWSProfileRef); err != nil {
+		if err := WriteOpsAWSConfig("aws", s.AWS.AWSProfileRef); err != nil {
 			fmt.Fprintf(os.Stderr, "mcp-run aws: write aws config: %v\n", err)
 			os.Exit(1)
 		}
 		env = append(env, "AWS_CONFIG_FILE="+opsAWSConfigPath("aws"))
 	}
-	args := awsMCPArgs(s.AWS, extra)
+	args := AWSMCPArgs(s.AWS, extra)
 	// Baked entrypoint first (uv tool install in the image); uvx as the dev / lean
 	// rootfs fallback, pinned to the verified version (docs/log/35 §35.7.2-6).
 	if p, err := exec.LookPath(awsMCPPackage); err == nil {

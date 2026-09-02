@@ -1,4 +1,4 @@
-package main
+package mcpx
 
 // mcpOwningSession の cwd fallback（managed セッションは AF_SESSION_NAME を持てない —
 // 共有 daemon の子として MCP が起動するため）。作業フォルダは複数セッションで共有される

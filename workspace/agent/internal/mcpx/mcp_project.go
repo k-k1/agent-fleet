@@ -1,4 +1,4 @@
-package main
+package mcpx
 
 // docs/log/56 P0: read-only view of one working copy's project-scope MCP servers
 // (internal/mcpproj). This is the "management axis" (docs/log/57 §0) — deliberately
@@ -12,12 +12,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpproj"
 )
 
-// handleRepoMCP serves GET /repos/{name}/mcp — the docs/log/56 §10 snapshot endpoint.
+// HandleRepo serves GET /repos/{name}/mcp — the docs/log/56 §10 snapshot endpoint.
 // It accepts either VCS (git or svn, like the other read-only SCM-adjacent
 // endpoints) since mcpproj's job is only to read files, not to run VCS-specific
 // commands beyond tracked/ignored detection (which itself degrades to "uncertain"
 // off git — docs/log/56 §7.2).
-func handleRepoMCP(w http.ResponseWriter, r *http.Request) {
+func HandleRepo(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	dir, ok := repoAnyDirFromPath(w, r)
 	if !ok {
@@ -40,10 +40,10 @@ type mcpApplyRequest struct {
 	PlanHash string       `json:"planHash"`
 }
 
-// handleRepoMCPPlan serves POST /repos/{name}/mcp/plan (docs/log/56 §5/§10): computes
+// HandleRepoPlan serves POST /repos/{name}/mcp/plan (docs/log/56 §5/§10): computes
 // what the given ops would do WITHOUT writing anything, returning a masked
 // preview, warnings, and a planHash apply must echo back.
-func handleRepoMCPPlan(w http.ResponseWriter, r *http.Request) {
+func HandleRepoPlan(w http.ResponseWriter, r *http.Request) {
 	dir, ok := repoAnyDirFromPath(w, r)
 	if !ok {
 		return
@@ -60,11 +60,11 @@ func handleRepoMCPPlan(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// handleRepoMCPApply serves POST /repos/{name}/mcp/apply: the same ops plus the
+// HandleRepoApply serves POST /repos/{name}/mcp/apply: the same ops plus the
 // planHash from a prior plan call. A 409 means a file the ops would write has
 // changed since that plan was computed (docs/log/56 §5's optimistic lock) — the
 // caller should plan again and let the user re-confirm, never silently retry.
-func handleRepoMCPApply(w http.ResponseWriter, r *http.Request) {
+func HandleRepoApply(w http.ResponseWriter, r *http.Request) {
 	dir, ok := repoAnyDirFromPath(w, r)
 	if !ok {
 		return
