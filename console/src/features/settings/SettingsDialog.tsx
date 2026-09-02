@@ -20,30 +20,30 @@ import { useSettingsUI, rememberSettingsSection } from "./store.ts";
 import { mobileMatches } from "../../lib/device.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { Modal } from "../../ui/Modal.tsx";
-import { DisplayTab } from "./DisplayTab.tsx";
-import { AccountTab } from "./AccountTab.tsx";
-import { KeysTab } from "./KeysTab.tsx";
-import { EnvTab } from "./EnvTab.tsx";
+import { DisplayTab } from "./personal/DisplayTab.tsx";
+import { AccountTab } from "./personal/AccountTab.tsx";
+import { KeysTab } from "./personal/KeysTab.tsx";
+import { EnvTab } from "./workspace/EnvTab.tsx";
 // プレビュー用サブドメイン（docs/log/81）。ツールチェーンの一節だったが、公開範囲を
 // 決める設定が言語のバージョン選択の下にあるのは見つけにくいので独立させた。
 // ★ 発行されるデプロイでしかレールに出さない（usePreviewAvailable）。
-import { PreviewTab, usePreviewAvailable } from "./PreviewTab.tsx";
-import { AgentsTab } from "./AgentsTab.tsx";
-import { AssistantTab } from "./AssistantTab.tsx";
-import { InstructionsTab } from "./InstructionsTab.tsx";
-import { TtsTab } from "./TtsTab.tsx";
-import { GitTab } from "./GitTab.tsx";
-import { SsmTab } from "./SsmTab.tsx";
-import { OpsTab } from "./OpsTab.tsx";
-import { TrackerTab } from "./TrackerTab.tsx";
-import { ChatTab } from "./ChatTab.tsx";
-import { McpTab } from "./McpTab.tsx";
-import { TokensTab } from "./TokensTab.tsx";
-import { DangerTab } from "./DangerTab.tsx";
-import { InternalReposTab } from "./InternalReposTab.tsx";
-import { BackupTab } from "./BackupTab.tsx";
-import { NotificationsTab } from "./NotificationsTab.tsx";
-import { MemoryTab } from "./MemoryTab.tsx";
+import { PreviewTab, usePreviewAvailable } from "./workspace/PreviewTab.tsx";
+import { AgentsTab } from "./agents/AgentsTab.tsx";
+import { AssistantTab } from "./personal/AssistantTab.tsx";
+import { InstructionsTab } from "./personal/InstructionsTab.tsx";
+import { TtsTab } from "./personal/TtsTab.tsx";
+import { GitTab } from "./connect/GitTab.tsx";
+import { SsmTab } from "./workspace/SsmTab.tsx";
+import { OpsTab } from "./connect/OpsTab.tsx";
+import { TrackerTab } from "./connect/TrackerTab.tsx";
+import { ChatTab } from "./chat/ChatTab.tsx";
+import { McpTab } from "./mcp/McpTab.tsx";
+import { TokensTab } from "./connect/TokensTab.tsx";
+import { DangerTab } from "./workspace/DangerTab.tsx";
+import { InternalReposTab } from "./workspace/InternalReposTab.tsx";
+import { BackupTab } from "./workspace/BackupTab.tsx";
+import { NotificationsTab } from "./personal/NotificationsTab.tsx";
+import { MemoryTab } from "./memory/MemoryTab.tsx";
 // 使用量タブは features/usage の View をそのまま差す薄いラッパ（モーダル非依存に
 // 保つ＝将来ペインへ昇格させるときに同じ View を差し替えなしで使える。docs/log/46 §5）。
 import { UsageView } from "../usage/UsageView.tsx";
