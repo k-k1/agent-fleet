@@ -1,0 +1,86 @@
+/* User turns shrink-wrap to their content (left-aligned), so both the bubble and its footer
+   share one column width — the footer's right edge then lands on the bubble's right edge
+   instead of the pane's. Assistant turns keep the default stretch (full pane width). */
+.chat-msg.role-user {
+  align-self: flex-start;
+  max-width: 100%;
+}
+.chat-role {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.chat-msg.role-user .chat-role {
+  color: var(--chat-accent, var(--accent));
+}
+/* The model that produced the reply, faint beside the agent name — same treatment as
+   the mirror's .mt-model so a model reads identically in both views. */
+.chat-model {
+  margin-left: 6px;
+  font-weight: 400;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.chat-body {
+  border-radius: 8px;
+  padding: 8px 11px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  /* Fill the pane width: the bubble follows the pane (widen the pane → wider reply) rather
+     than sitting at a fixed cap that wastes a wide pane. `ch` is the half-width "0" advance
+     and Japanese (full-width) text fits only ~half that per line, so a ch-based cap felt
+     narrow on wide panes; letting it grow to 100% is what users want here. */
+  max-width: 100%;
+}
+.chat-msg.role-user .chat-body {
+  background: color-mix(in srgb, var(--chat-accent, var(--accent)) 12%, var(--panel));
+}
+/* セッション報告カード（docs/log/30）: 送信者はユーザーでもアシスタントでもなく「セッション」。
+   破線ボーダー＋左アクセントで由来の違いを示す。 */
+.chat-msg.role-report .chat-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.chat-report-session {
+  font-weight: 400;
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+}
+.chat-msg.role-report .chat-body {
+  border-style: dashed;
+  border-left: 3px solid var(--chat-accent, var(--accent));
+  background: color-mix(in srgb, var(--chat-accent, var(--accent)) 5%, var(--panel));
+}
+/* システム通知カード（docs/log/30）: 自動応答が上限に達して停止した等、システム由来の告知。
+   ユーザー/アシスタントのバブルと区別し、中央寄せの控えめな帯で表示する。 */
+.chat-msg.role-notice {
+  align-self: stretch;
+  max-width: 100%;
+}
+.chat-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  border: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--warn, var(--accent)) 8%, var(--panel));
+  color: var(--muted);
+  font-size: 13px;
+}
+.chat-notice .codicon {
+  margin-top: 2px;
+  color: var(--warn, var(--accent));
+  flex: 0 0 auto;
+}
+.chat-notice-body {
+  min-width: 0;
+}
+.chat-notice-body :last-child {
+  margin-bottom: 0;
+}

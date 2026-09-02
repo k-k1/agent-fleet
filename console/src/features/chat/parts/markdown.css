@@ -1,0 +1,59 @@
+/* MarkdownView is shared with the file viewer, which centers a max-width column with
+   large padding (margin:0 auto; padding:20px 28px 60px). In a chat bubble / greeting
+   card that reads as "everything is indented with a big bottom gap", so reset it to fill
+   the width, left-aligned, tight — same fix as .mirror-turn .markdown. */
+.chatview .markdown {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  line-height: 1.6;
+}
+.chatview .markdown p,
+.chatview .markdown ul,
+.chatview .markdown ol,
+.chatview .markdown blockquote,
+.chatview .markdown table {
+  margin: 0.6em 0;
+}
+.chatview .markdown > :first-child {
+  margin-top: 0;
+}
+.chatview .markdown > :last-child {
+  margin-bottom: 0;
+}
+
+/* Greeting card: the assistant introduces itself before the chat has started (docs/log/19). */
+.chat-greeting {
+  margin: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel2, var(--panel));
+}
+.chat-greeting-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.chat-greeting-ic {
+  font-size: 18px;
+  opacity: 0.9;
+}
+.chat-greeting-name {
+  font-weight: 600;
+}
+.chat-greeting-body {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.section-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 10px 10px;
+  line-height: 1.5;
+}
+

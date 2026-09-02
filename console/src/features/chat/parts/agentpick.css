@@ -1,0 +1,28 @@
+/* エージェント切替（docs/log/19）: ヘッダの kind チップがそのままピッカーのボタンを兼ねる。
+   見た目は .kind-tag のまま、押せることを caret で示す。 */
+.chat-agent-pick {
+  cursor: pointer;
+}
+.chat-agent-pick:disabled {
+  cursor: default;
+}
+.chat-agent-caret {
+  opacity: 0.7;
+}
+.chat-agent-menu {
+  min-width: 220px;
+  max-width: min(340px, 90vw);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.chat-agent-ic {
+  display: inline-flex;
+}
+.chat-agent-note {
+  padding: 6px 8px 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  border-top: 1px solid var(--border);
+  white-space: normal;
+}
+

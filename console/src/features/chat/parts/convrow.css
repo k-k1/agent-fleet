@@ -1,0 +1,110 @@
+/* Left-rail conversation rows — same one-line language as the session rows:
+   tinted icon square (.chat-kic follows the left-pane accent, since assistants
+   have no agent kind) + title + muted count + icon-only state chip. */
+.chat-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.chat-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  padding: 4px 6px 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.chat-open:hover {
+  background: var(--hover-bg);
+}
+/* 「どのチャットを開いているのか」を左ペインで示す。セッション行（.sess-row）と同じ語彙:
+   .is-open = どこかのペインに出ている（控えめなアクセントバー）、.active = フォーカス中の
+   ペインが開いている会話（＝いま話している相手。バー＋行の塗り）。 */
+.chat-row.is-open {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
+}
+.chat-row.active {
+  background: var(--lp-active-bg, var(--active-bg));
+  box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
+}
+/* フォーカス中の強調は塗り＋アクセントバーだけにする（セッション行 .sess-row.active
+   と同じ強さ）。ここで太字も足すと会話行だけ他より強く目立っていた。 */
+.chat-kic {
+  color: var(--lp-accent, var(--accent));
+  background: color-mix(in srgb, var(--lp-accent, var(--accent)) 14%, transparent);
+}
+.chat-open-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-open-meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+/* Edit/delete overlay the row's right edge (absolute) instead of reserving a
+   trailing column — a resting row spends that width on the title and the count +
+   state chip sit flush right. Revealed on hover; hidden they take no clicks. */
+.chat-actions {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* ⋯ kebab: hover-revealed on pointer devices (mirrors the session row menu). It
+   opens a menu whose delete item is a deliberate second tap — no accidental
+   one-tap delete. */
+.chat-menu-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  pointer-events: none;
+}
+.chat-row:hover .chat-menu-btn,
+.chat-menu-btn:focus-visible,
+.chat-row.active .chat-menu-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+.chat-menu-btn:hover {
+  background: var(--btn);
+  color: var(--fg);
+}
+/* Touch: no hover, so keep the ⋯ button always visible and tappable. Drop the
+   absolute overlay and let it sit in-flow after the count/state chip so the two
+   don't stack on top of each other. */
+@media (hover: none) {
+  .chat-actions {
+    position: static;
+  }
+  .chat-menu-btn {
+    opacity: 1;
+    pointer-events: auto;
+    padding: 4px 6px;
+  }
+}
+/* Hand the right edge over to the action buttons on hover so they don't stack
+   on top of the count / state chip. */
+.chat-row:hover .chat-open-meta,
+.chat-row:hover .chat-open .session-state {
+  opacity: 0;
+}
+
