@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -17,17 +18,32 @@ import (
 
 // useTempUsageDir は台帳を一時ディレクトリへ向け、prune の節流状態も畳んでおく
 // （プロセス内グローバルなので、テスト間で持ち越すと prune が走らない/走りすぎる）。
+//
+// 🔥 **台帳を差し替える前に、走行中の一括折り込みを回収する。** 折り込みは goroutine で
+// 走り、書き込み先（`AF_USAGE_DIR`）を**書く瞬間に env から読む**。env はプロセス全体な
+// ので、前のテストが起動した折り込みが生き残っていると、**このテストの台帳へ書き込む**
+// ——「台帳 = 39 行, want 4」のような、そのテストの中に原因が無い赤になる。
+// 実機では 200 セッションの折り込みが数百 ms〜十数秒かかるので、待たないテストが 1 つでも
+// あると必ず漏れる（CI の HOME は空でセッションが 0 件なので、そこでだけ緑になる）。
+//
+// ここは以前 `usageFoldRunning.Store(false)` で**走行フラグを消していた**。走っている
+// goroutine は止まらないので、これは漏れを直すのではなく**漏れの痕跡を消す**（おまけに
+// 多重起動ガードも外れて 2 本目が走れる）。待つのが正しい。
 func useTempUsageDir(t *testing.T) string {
 	t.Helper()
+	waitUsageFoldIdle(t) // 前のテストが起動した折り込みを、台帳を差し替える前に回収する
 	dir := t.TempDir()
 	t.Setenv("AF_USAGE_DIR", dir)
+	// ⚠️ この Cleanup は t.TempDir() の**後**に積む。Cleanup は LIFO なので、後に積んだ
+	// これが**一時ディレクトリの削除より先**に走る——順序が逆だと、待っている間に書き手が
+	// 消えたディレクトリへ書くことになる（memory: tempdir-cleanup-lifo-detached-writer）。
+	t.Cleanup(func() { waitUsageFoldIdle(t) })
 	usageMu.Lock()
 	usagePrunedAt = time.Time{}
 	usageMu.Unlock()
 	usageFoldGate.Lock()
 	usageFoldedAt = time.Time{}
 	usageFoldGate.Unlock()
-	usageFoldRunning.Store(false)
 	return dir
 }
 
@@ -540,20 +556,28 @@ func TestFoldOnReadDoesNotBlockOnRunningPass(t *testing.T) {
 		t.Fatal("fold-on-read が折り込み本体のロックを待ってブロックした")
 	}
 	// 起動した非同期パスを回収してから抜ける（グローバル状態を次のテストへ持ち越さない）。
-	for i := 0; usageFoldRunning.Load() && i < 200; i++ {
-		time.Sleep(10 * time.Millisecond)
-	}
+	// 🔥 **ここは 2 秒だけ待って、終わっていなくても黙って抜けていた。** 折り込みは書き込み
+	// 先を書く瞬間に env から読むので、抜けた先で次のテストが `AF_USAGE_DIR` を差し替えると
+	// **次のテストの台帳へ書く**。上限を待ち切れないなら黙って進まず落とすこと。
+	waitUsageFoldIdle(t)
 }
 
 // waitUsageFoldIdle は走行中の一括折り込みを回収する。グローバル（走行中フラグ・
-// スロットル時刻）を共有するので、跨いで漏らすと次のテストが理由もなく skip される。
+// スロットル時刻・書き込み先の env）を共有するので、跨いで漏らすと次のテストが理由もなく
+// 落ちる／skip される。**待ち切れなかったら黙って進まず落とす** — 待てなかったことを
+// 黙認すると、漏れた書き手が別のテストの台帳へ書き、そのテストが原因不明で赤くなる。
+//
+// 上限は実機（HOME に数百セッションがある開発機）の一括折り込みが収まる長さに採る。
+// 実測 2026-09-02: 転写 1 本ずつの合成セッション 200 件で 0.58 秒。実転写はこれより
+// 桁が大きい（コード側の実測で 158 セッション ~20 秒）。
 func waitUsageFoldIdle(t *testing.T) {
 	t.Helper()
-	for i := 0; usageFoldRunning.Load() && i < 500; i++ {
+	deadline := time.Now().Add(60 * time.Second)
+	for usageFoldRunning.Load() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if usageFoldRunning.Load() {
-		t.Fatal("一括折り込みが終わらない")
+		t.Fatal("一括折り込みが 60 秒で終わらない（走行中の書き手を残したまま次へ進めない）")
 	}
 }
 
@@ -571,6 +595,101 @@ func resetUsageFold(t *testing.T) {
 		waitUsageFoldIdle(t)
 		clear()
 	})
+}
+
+// seedClaudeSessions は転写を持つ claude セッションを n 件植える（1 セッション = 1 論理
+// ターン）。**折り込みに実際の仕事をさせる**ためのもので、HOME が空の CI では折り込みが
+// 一瞬で終わり「待たない」欠陥が表に出ないことの裏返しでもある。
+func seedClaudeSessions(t *testing.T, n int) {
+	t.Helper()
+	home := os.Getenv("HOME")
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	dir := filepath.Join(home, ".claude", "projects", "-proj")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < n; i++ {
+		m := session.Meta{Name: fmt.Sprintf("slot%03d", i), Dir: t.TempDir(), Kind: session.KindClaude}
+		session.WriteMeta(m)
+		// 末尾のユーザーターンで論理ターンを閉じる（開いたままだと折り込みが拾わない）。
+		body := `{"type":"user","timestamp":"2026-07-26T01:00:00Z","message":{"content":"go"}}` + "\n" +
+			`{"type":"assistant","timestamp":"2026-07-26T01:00:01Z","message":{"model":"claude-haiku-4-5",` +
+			`"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":100,"output_tokens":10}}}` + "\n" +
+			`{"type":"user","timestamp":"2026-07-26T02:00:00Z","message":{"content":"next"}}` + "\n"
+		p := filepath.Join(dir, session.UUID(m.Dir, m.Name)+".jsonl")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// 🔥 前のテストが起動した一括折り込みは、次のテストの台帳へ書いてはならない。
+//
+// 折り込みは goroutine で走り、書き込み先（`AF_USAGE_DIR`）を**書く瞬間に env から読む**。
+// env はプロセス全体なので、走行中のまま次のテストへ進むと、そのテストの中に原因の無い
+// 余分な行が生える（実際に踏んだ症状は「台帳 = 39 行, want 4」＝ 開発機に居たセッションの
+// 数だけ増えていた）。**CI の HOME にはセッションが 1 件も無く折り込みが一瞬で終わる**ので、
+// そこでだけ緑になり、開発機でだけ理由不明に赤くなる。
+//
+// 時間に依存させないため、実機の「200 セッションで数百 ms〜十数秒」はロックで代用する。
+func TestFoldDoesNotWriteIntoTheNextTestsLedger(t *testing.T) {
+	const sessions = 5
+	prev := useIsolatedUsageDir(t)
+	seedClaudeSessions(t, sessions)
+
+	// --- 「前のテスト」: fold-on-read を起動し、走行中のまま終わろうとする。
+	usageFoldMu.Lock() // 折り込み本体はここで止まる
+	if !startFoldSessionUsage(true) {
+		usageFoldMu.Unlock()
+		t.Fatal("fold-on-read が起動しなかった")
+	}
+	go func() {
+		time.Sleep(100 * time.Millisecond) // 次のテストが始まった頃に動き出す
+		usageFoldMu.Unlock()
+	}()
+
+	// --- 「次のテスト」: 自分の台帳へ差し替える。ここで走行中の書き手を回収していないと、
+	// 折り込みは**この新しいディレクトリ**へ書く。
+	next := useTempUsageDir(t)
+
+	// ⚠️ 完了の判定に `usageFoldRunning` を使わない。**この欠陥の直し方を間違えた版では
+	// フラグが消されている**ので、フラグを見ると「もう終わった」と誤読して、書き込みが
+	// 起きる前に検査が通ってしまう（変異試験で実際にすり抜けた）。行が**どちらかの台帳へ**
+	// 現れるまで待ち、そのうえでどちらに現れたかを見る。
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) && countUsageRowsIn(t, prev)+countUsageRowsIn(t, next) < sessions {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := countUsageRowsIn(t, next); n != 0 {
+		t.Fatalf("次のテストの台帳 = %d 行, want 0（前のテストの折り込みが %s へ書いた）", n, next)
+	}
+	// 空振り防止: 折り込みがそもそも書いていないなら、上の 0 行は何も証明していない。
+	if n := countUsageRowsIn(t, prev); n != sessions {
+		t.Fatalf("前のテストの台帳 = %d 行, want %d（折り込みが走っておらず、この検査は空振り）", n, sessions)
+	}
+}
+
+// countUsageRowsIn は台帳ディレクトリの行数を **env を経由せずに**数える（どちらの台帳へ
+// 書かれたかを見るため）。
+func countUsageRowsIn(t *testing.T, dir string) int {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "raw", "*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ln := range strings.Split(string(b), "\n") {
+			if strings.TrimSpace(ln) != "" {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // 「再取得」はスロットルを飛ばせなければならない。飛ばせないと、押した時点で既に終わって

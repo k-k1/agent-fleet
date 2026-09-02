@@ -128,16 +128,46 @@ command -v crane >/dev/null || say_missing "crane が無い（GHCR → ECR を i
 # 始めてから足りないと分かるのが一番高い、というこの preflight の趣旨そのものの穴だった。
 # 控えは配備を撮った日のもので、テンプレートはそれから育つ（実例: 2026-08-23 の控えと
 # 2026-09-02 のテンプレート）。**Default を持たない引数**だけが必須である。
+#
+# ⚠️ **数え方はインデントの深さを固定しない。** 以前は「2 スペース = パラメータ名 /
+# 4 スペース = Default」で読んでいたので、書き方の違うテンプレートを食わせると
+# **1 件も拾えず「必須 0 件」で静かに通った**——検査が空振りしていることが誰にも
+# 見えない形で、#307 の「走っていない経路は壊れていても分からない」と同型である。
+# いまは Parameters: 節に**最初に現れたキーの深さ**をパラメータ名の深さとして採り、
+# それより深いキーを属性として読む。そして **Parameters: 節があるのに 1 件も読めな
+# かったら異常として言う**（全件が Default 持ちの「必須 0 件」とは区別できる）。
 for slug in 00-network 10-data 20-platform 30-ingress 40-ec2-pool; do
   f="$(af_params_file "$slug")"; t="$CFN_DIR/$slug.yaml"
   [ -r "$f" ] && [ -r "$t" ] || continue
-  missing="$(awk '
-    /^[A-Za-z]/        { inp = ($0 ~ /^Parameters:/); name = ""; next }
-    !inp               { next }
-    /^  [A-Za-z0-9]+:/ { name = $1; sub(":", "", name); req[name] = 1; next }
-    /^    Default:/    { if (name != "") delete req[name] }
-    END                { for (k in req) print k }
-  ' "$t" | sort)"
+  missing=""; has_section=0; parsed=0
+  while read -r kind a b; do
+    case "$kind" in
+      req)  missing="$missing $a" ;;
+      stat) has_section="$a"; parsed="$b" ;;
+    esac
+  done < <(awk '
+    # トップレベルのキーで節の出入りを決める（Parameters: 以外は読み飛ばす）。
+    /^[A-Za-z]/          { inp = ($0 ~ /^Parameters:/); if (inp) sect = 1; name = ""; ind = 0; next }
+    !inp                 { next }
+    /^[[:space:]]*(#|$)/ { next }
+    {
+      match($0, /^ */); w = RLENGTH
+      key = substr($0, w + 1)
+      if (key !~ /^[A-Za-z0-9_]+:/) next      # リスト要素・ブロックスカラの本文
+      sub(/:.*$/, "", key)
+      if (!ind) ind = w                       # 最初のキーの深さ = パラメータ名の深さ
+      if (w == ind) { name = key; req[name] = 1; total++ }
+      else if (key == "Default" && name != "") delete req[name]
+    }
+    END {
+      for (k in req) print "req " k
+      print "stat " sect+0 " " total+0
+    }
+  ' "$t")
+  if [ "$has_section" = 1 ] && [ "$parsed" -eq 0 ]; then
+    say_missing "$slug.yaml の Parameters: を 1 件も読めなかった（この検査が空振りしている。テンプレートの書き方が変わったか、この awk が古い）"
+    continue
+  fi
   for k in $missing; do
     grep -q "^$k=" "$f" || say_missing "params/$slug に必須パラメータ $k が無い（テンプレートが控えより新しい）"
   done

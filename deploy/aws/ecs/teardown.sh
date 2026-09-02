@@ -258,8 +258,18 @@ CFN_BUCKET="$(af_stack_output "$AF_STACK_PLATFORM" CfnTemplatesBucket)"
 if [ -n "$CFN_BUCKET" ]; then
   echo "==> 8pre2. emptying s3://$CFN_BUCKET (CFN template staging)"
   # バージョニングは付けていないので `s3 rm --recursive` で足りる。
-  af_run "${AWS[@]}" s3 rm "s3://$CFN_BUCKET" --recursive >/dev/null 2>&1 \
-    || echo "    (skip: 空にできなかった。20-platform の削除が落ちたらここを見る)"
+  #
+  # 🔴 **失敗の理由を捨てない。** 以前はここが `2>&1 || echo "(skip: …)"` で、運用者に
+  # 見えるのは「(skip)」だけだった。「もともと無い」（NoSuchBucket）と「まだ空にできて
+  # いない」（権限・オブジェクトロック）が区別できず、**次に落ちるのは 20-platform の
+  # 削除で、そのときには原因が消えている**。stderr を掴んでそのまま見せる。
+  s3_err=""
+  if ! s3_err="$(af_run "${AWS[@]}" s3 rm "s3://$CFN_BUCKET" --recursive 2>&1 >/dev/null)"; then
+    echo "    ✗ 空にできなかった: ${s3_err:-（AWS CLI は理由を出さなかった）}" >&2
+    echo "      このあと 20-platform の削除が DELETE_FAILED で止まるなら原因はこれ" >&2
+    echo "      （CloudFormation は中身のあるバケットを消せない）。手で:" >&2
+    echo "      aws s3 rm s3://$CFN_BUCKET --recursive --profile $AF_PROFILE --region $AF_REGION" >&2
+  fi
 fi
 
 # --- 8) スタックを逆順に 1 本ずつ -------------------------------------------
