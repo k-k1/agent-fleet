@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -185,7 +186,7 @@ func runTitleSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, e
 	// Backend-agnostic one-shot (oneShotHeadless): runs on the first available of
 	// claude → codex → opencode, so claude-less workspaces get suggestions too.
 	lang := titleLang()
-	reply, err := oneShotHeadless(ctx, titleSuggestPersona(lang), titleSuggestPrompt(turns, lang), titleModel())
+	reply, err := chatx.OneShotHeadless(ctx, titleSuggestPersona(lang), titleSuggestPrompt(turns, lang), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
 	}
@@ -687,7 +688,7 @@ const branchSuggestPersona = "You name git branches. Read the conversation log a
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
 // invalid ref/folder segment.
 func runBranchSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
-	reply, err := oneShotHeadless(ctx, branchSuggestPersona, branchSuggestPrompt(turns), titleModel())
+	reply, err := chatx.OneShotHeadless(ctx, branchSuggestPersona, branchSuggestPrompt(turns), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("branch suggestion failed: %w", err)
 	}
@@ -782,11 +783,11 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := m.Dir
-	if !isGitRepo(dir) {
+	if !gitx.IsGitRepo(dir) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "session working copy is not a git repo")
 		return
 	}
-	var req renameBranchReq
+	var req gitx.RenameBranchReq
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
@@ -796,8 +797,8 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_ref", "branch name is required and must not start with '-'")
 		return
 	}
-	if cur, _ := gitStatus(dir); newName != cur.Branch {
-		if local, remote := branchNameStatus(dir, newName); local || remote {
+	if cur, _ := gitx.GitStatus(dir); newName != cur.Branch {
+		if local, remote := gitx.BranchNameStatus(dir, newName); local || remote {
 			where := "ローカル"
 			if !local {
 				where = "リモート"

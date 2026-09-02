@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -30,12 +31,12 @@ const mcpSealSecret = "Bearer super-secret-tenant-credential"
 
 // upsertMCPServer drives the real admin face (POST /api/admin/mcp-servers), so the
 // row under test travels the same sealHeaders path a deployment uses.
-func upsertMCPServer(t *testing.T, api mcpServerAPI, slug, name string) {
+func upsertMCPServer(t *testing.T, api mcpsrv.ServerAPI, slug, name string) {
 	t.Helper()
 	body := `{"tenant_slug":"` + slug + `","name":"` + name + `","url":"https://wiki.example/mcp",` +
 		`"headers":{"Authorization":"` + mcpSealSecret + `"},"targets":{"session":true},"enabled":true}`
 	rec := httptest.NewRecorder()
-	api.adminUpsert(rec, httptest.NewRequest(http.MethodPost, "/api/admin/mcp-servers", strings.NewReader(body)))
+	api.AdminUpsert(rec, httptest.NewRequest(http.MethodPost, "/api/admin/mcp-servers", strings.NewReader(body)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("upsert %s: %d %s", name, rec.Code, rec.Body.String())
 	}
@@ -61,7 +62,7 @@ func TestMCPServerHeadersAreSealedNotMerelyEncoded(t *testing.T) {
 	m := &manager{store: st, authMode: "dev", devUser: "admin"}
 	m.master32 = master[:]
 	m.custodian = newLocalCustodian(m.master32)
-	api := newMCPServerAPI(m)
+	api := mcpsrv.NewServerAPI(cpDeps{m})
 
 	upsertMCPServer(t, api, "acme", "wiki")
 	rows, err := st.ListMCPServers(ctx, tn.ID)
@@ -105,7 +106,7 @@ func TestMCPServerHeadersAreSealedNotMerelyEncoded(t *testing.T) {
 
 	// ③ それでも往復すること（①②が「壊れているから読めない」で通ってしまわないように）。
 	rec := httptest.NewRecorder()
-	api.distribute(rec, httptest.NewRequest(http.MethodGet, "/internal/mcp-servers", nil),
+	api.Distribute(rec, httptest.NewRequest(http.MethodGet, "/internal/mcp-servers", nil),
 		store.MembershipView{MembershipID: "m1", TenantID: tn.ID})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("distribute: %d %s", rec.Code, rec.Body.String())

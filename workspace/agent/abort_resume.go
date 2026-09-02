@@ -33,6 +33,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -173,12 +174,12 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 		escalateManagedAbort(m, st)
 		return
 	}
-	if st.Attempts >= maxAutoResumeAttempts {
+	if st.Attempts >= chatx.MaxAutoResumeAttempts {
 		// 再送しても中断が続く＝一時的な不調ではない。ここから先はアシスタント／利用者の
 		// 領分なので、報告が「上限に達した」文面（reportKeyTurnAbortedCapped）で出るよう
 		// カウンタを合わせてから抑止を外す。
 		st.GaveUp = abortGaveUpCapped
-		setAutoResumeAttempts(m.Name, st.Attempts)
+		chatx.SetAutoResumeAttempts(m.Name, st.Attempts)
 		log.Printf("abort-resume: %s の自動再開を打ち切る（%d 回連続で中断）", m.Name, st.Attempts)
 		_ = abortResumeStates.Write(m.Name, st)
 		escalateManagedAbort(m, st)
@@ -222,7 +223,7 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 		return
 	}
 	recordInjection(m.Name, prompt, turnSourceAutoResume)
-	log.Printf("abort-resume: %s を自動再開した（%d/%d 回目）", m.Name, st.Attempts, maxAutoResumeAttempts)
+	log.Printf("abort-resume: %s を自動再開した（%d/%d 回目）", m.Name, st.Attempts, chatx.MaxAutoResumeAttempts)
 }
 
 // abortResumeReady reports whether a free-text prompt may be typed into the session right

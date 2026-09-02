@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -214,13 +215,13 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 		sessions = append(sessions, s.Name)
 	}
 	for _, b := range m.Branches {
-		dir, ok := resolveRepoDir(b.Repo)
+		dir, ok := gitx.ResolveRepoDir(b.Repo)
 		if !ok || b.SHA == "" {
 			continue
 		}
 		// Only create if absent; ignore errors (e.g. SHA gone after a GC).
-		if !gitBranchExists(dir, b.Name) {
-			if gitCreateBranch(dir, b.Name, b.SHA) {
+		if !gitx.GitBranchExists(dir, b.Name) {
+			if gitx.GitCreateBranch(dir, b.Name, b.SHA) {
 				branches = append(branches, b.Name)
 			}
 		}

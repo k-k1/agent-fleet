@@ -8,6 +8,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -352,8 +353,8 @@ func TestAbortedTurnReportsAsAnswerReady(t *testing.T) {
 			if len(events) != 1 {
 				t.Fatalf("queued %d notification(s), want 1: %+v", len(events), events)
 			}
-			if events[0].Kind != reportKindAnswerReady {
-				t.Errorf("kind = %q, want %q", events[0].Kind, reportKindAnswerReady)
+			if events[0].Kind != chatx.ReportKindAnswerReady {
+				t.Errorf("kind = %q, want %q", events[0].Kind, chatx.ReportKindAnswerReady)
 			}
 			if body, _ := events[0].Payload["body"].(string); !strings.Contains(body, "Connection closed") {
 				t.Errorf("bridge body lost the error text: %q", body)
@@ -389,7 +390,7 @@ func TestManagedAbortedTurnPersistsResumeSignalAndKeepsNotice(t *testing.T) {
 		t.Fatalf("managed signal = %+v ok=%v", sig, ok)
 	}
 	events := notice.List()
-	if len(events) != 1 || events[0].Kind != reportKindAnswerReady {
+	if len(events) != 1 || events[0].Kind != chatx.ReportKindAnswerReady {
 		t.Fatalf("managed abort notice = %+v", events)
 	}
 }
@@ -465,7 +466,7 @@ func TestStopHookOnUsageLimitReportsFailure(t *testing.T) {
 	runSessionStatusHook([]string{"idle", sid})
 
 	events := notice.List()
-	if len(events) != 1 || events[0].Kind != reportKindAnswerReady {
+	if len(events) != 1 || events[0].Kind != chatx.ReportKindAnswerReady {
 		t.Fatalf("通知 = %+v, want answer-ready 1件", events)
 	}
 	got, _ := events[0].Payload["body"].(string)

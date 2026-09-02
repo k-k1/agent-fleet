@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -70,7 +71,7 @@ func armOperatorTurn(conv string) {
 		return
 	}
 	_ = operatorTurnStore.Write(operatorTurnKey(conv), operatorTurnMarker{
-		Conv: conv, ExpiresAt: nowMs() + operatorTurnTimeout.Milliseconds(),
+		Conv: conv, ExpiresAt: chatx.NowMs() + operatorTurnTimeout.Milliseconds(),
 	})
 }
 
@@ -91,7 +92,7 @@ func operatorTurnArmed(conv string) bool {
 		return false
 	}
 	m, ok := operatorTurnStore.Read(operatorTurnKey(conv))
-	return ok && m.Conv == conv && nowMs() < m.ExpiresAt
+	return ok && m.Conv == conv && chatx.NowMs() < m.ExpiresAt
 }
 
 // --- approval handshake (subprocess writes+polls the record; daemon writes the decision) ---
@@ -133,9 +134,9 @@ func bridgeApprovalGate(op, summary string) error {
 		return nil // attended (Console) or non-operator — no gate; unattended only
 	}
 	sweepStaleApprovals()
-	id := randUUID()
+	id := chatx.RandUUID()
 	if err := bridgeApprovals.Write(id, bridgeApprovalRec{
-		ID: id, Op: op, Summary: summary, Conv: mcpConvID, CreatedAt: nowMs(),
+		ID: id, Op: op, Summary: summary, Conv: mcpConvID, CreatedAt: chatx.NowMs(),
 	}); err != nil {
 		return errApprovalUndeliverable
 	}
@@ -200,7 +201,7 @@ func sweepStaleApprovals() {
 	if err != nil {
 		return
 	}
-	cutoff := nowMs() - bridgeApprovalMaxAge.Milliseconds()
+	cutoff := chatx.NowMs() - bridgeApprovalMaxAge.Milliseconds()
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue

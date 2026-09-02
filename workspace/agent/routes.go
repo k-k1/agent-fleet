@@ -11,6 +11,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 )
 
@@ -136,33 +138,33 @@ func buildMux() *http.ServeMux {
 
 	// Assistant chat — headless-CLI LLM chat/translation, separate from tmux
 	// sessions (docs/log/19). Non-streaming; the CP proxies these verbatim.
-	mux.HandleFunc("GET /chat/conversations", handleChatList)
-	mux.HandleFunc("POST /chat/conversations", handleChatCreate)
-	mux.HandleFunc("GET /chat/conversations/{id}", handleChatGet)
-	mux.HandleFunc("PATCH /chat/conversations/{id}", handleChatPatch) // 改名 / エージェント切替
-	mux.HandleFunc("POST /chat/conversations/{id}/title/suggest", handleChatSuggestTitle)
-	mux.HandleFunc("POST /chat/conversations/{id}/suggest-replies", handleChatSuggestReplies) // LLM 返信サジェスト v2（preview 専用）
-	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
+	mux.HandleFunc("GET /chat/conversations", chatx.HandleChatList)
+	mux.HandleFunc("POST /chat/conversations", chatx.HandleChatCreate)
+	mux.HandleFunc("GET /chat/conversations/{id}", chatx.HandleChatGet)
+	mux.HandleFunc("PATCH /chat/conversations/{id}", chatx.HandleChatPatch) // 改名 / エージェント切替
+	mux.HandleFunc("POST /chat/conversations/{id}/title/suggest", chatx.HandleChatSuggestTitle)
+	mux.HandleFunc("POST /chat/conversations/{id}/suggest-replies", chatx.HandleChatSuggestReplies) // LLM 返信サジェスト v2（preview 専用）
+	mux.HandleFunc("DELETE /chat/conversations/{id}", chatx.HandleChatDelete)
 	mux.HandleFunc("POST /chat/conversations/{id}/lock", handleChatLock) // 削除ロック（docs/log/45）
-	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
-	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream)            // SSE (Phase B)
-	mux.HandleFunc("POST /chat/conversations/{id}/stop", handleChatStop)                // cancel a detached in-flight turn
-	mux.HandleFunc("POST /chat/conversations/{id}/compact", handleChatCompact)          // 要約引き継ぎ（docs/log/33 第2段）
-	mux.HandleFunc("GET /chat/conversations/{id}/plan", handleChatPlanGet)              // 作業計画の取得（docs/log/33 第5段・MCP 用の軽い口）
-	mux.HandleFunc("PUT /chat/conversations/{id}/plan", handleChatPlanSet)              // 作業計画の手編集（docs/log/33 第5段）
-	mux.HandleFunc("POST /chat/conversations/{id}/plan/refresh", handleChatPlanRefresh) // 作業計画の明示更新（同）
+	mux.HandleFunc("POST /chat/conversations/{id}/messages", chatx.HandleChatSend)
+	mux.HandleFunc("POST /chat/conversations/{id}/stream", chatx.HandleChatStream)            // SSE (Phase B)
+	mux.HandleFunc("POST /chat/conversations/{id}/stop", chatx.HandleChatStop)                // cancel a detached in-flight turn
+	mux.HandleFunc("POST /chat/conversations/{id}/compact", chatx.HandleChatCompact)          // 要約引き継ぎ（docs/log/33 第2段）
+	mux.HandleFunc("GET /chat/conversations/{id}/plan", chatx.HandleChatPlanGet)              // 作業計画の取得（docs/log/33 第5段・MCP 用の軽い口）
+	mux.HandleFunc("PUT /chat/conversations/{id}/plan", chatx.HandleChatPlanSet)              // 作業計画の手編集（docs/log/33 第5段）
+	mux.HandleFunc("POST /chat/conversations/{id}/plan/refresh", chatx.HandleChatPlanRefresh) // 作業計画の明示更新（同）
 	mux.HandleFunc("POST /chat/conversations/{id}/paste-image", handleChatPasteImage)
 	mux.HandleFunc("GET /chat/conversations/{id}/pasted/{file}", handleChatPastedImage)
 	// Assistant-to-assistant consult (docs/log/19): af_write orchestrators' ask_assistant tool
 	// hits this via the local stdio MCP. Internal (Agent REST) only — not proxied by the CP.
-	mux.HandleFunc("POST /chat/ask", handleChatAsk)
+	mux.HandleFunc("POST /chat/ask", chatx.HandleChatAsk)
 	// スケジュール発のアシスタント発火（docs/log/38 session_mode=assistant）: CP スケジューラが
 	// 会話（UUID/slug）へ 1 ターンを同期実行する。runOperatorTurn 委譲（assistant_turn.go）。
 	mux.HandleFunc("POST /assistant-turns", handleAssistantTurn)
 	// Session report kick (docs/log/30): the session-status hook / record-exit process posts
 	// here when an operator-armed session reaches an awaiting-input / abnormal-exit
 	// state. Internal (Agent REST) only — not proxied by the CP.
-	mux.HandleFunc("POST /chat/report", handleChatReport)
+	mux.HandleFunc("POST /chat/report", chatx.HandleChatReport)
 
 	// Assistant templates — configurable chat personas (docs/log/19 Q2). Builtins are
 	// code-injected; user-defined ones are stored under ~/.config/agent-fleet/assistants.
@@ -177,24 +179,24 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/proxy/{port}/{rest...}", handlePreview)
 
 	// Repository management — git ops on working copies under ~/repos.
-	mux.HandleFunc("GET /repos", handleListRepos)
-	mux.HandleFunc("POST /repos", handleCloneRepo)
+	mux.HandleFunc("GET /repos", gitx.HandleListRepos)
+	mux.HandleFunc("POST /repos", gitx.HandleCloneRepo)
 	// 取り込み元が無いとき: ~/repos/<name> を作って git init するだけの新規作業コピー。
 	// clone / svn checkout と違い同期（ネットワークを触らないのでジョブにする意味がない）。
-	mux.HandleFunc("POST /repos/init", handleInitRepo)
+	mux.HandleFunc("POST /repos/init", gitx.HandleInitRepo)
 	// リポジトリ取り込みジョブ（docs/log/78）。clone / svn checkout は 202 でここへ移り、
 	// 進捗と結末はこの一覧で観測する。DELETE は走行中なら中止、終端済みなら既読。
 	mux.HandleFunc("GET /repo-jobs", handleListRepoJobs)
 	mux.HandleFunc("DELETE /repo-jobs/{id}", handleDeleteRepoJob)
-	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
+	mux.HandleFunc("DELETE /repos/{name}", gitx.HandleDeleteRepo)
 	mux.HandleFunc("POST /repos/{name}/lock", handleRepoLock) // 削除ロック（docs/log/45）
-	mux.HandleFunc("GET /repos/{name}/status", handleRepoStatus)
-	mux.HandleFunc("GET /repos/{name}/branches", handleRepoBranches)
+	mux.HandleFunc("GET /repos/{name}/status", gitx.HandleRepoStatus)
+	mux.HandleFunc("GET /repos/{name}/branches", gitx.HandleRepoBranches)
 	mux.HandleFunc("DELETE /repos/{name}/branch", handleDeleteBranch) // ?branch=<name> (may contain "/")
-	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
-	mux.HandleFunc("POST /repos/{name}/fetch", handleRepoFetch)
-	mux.HandleFunc("POST /repos/{name}/ff", handleRepoFF)
-	mux.HandleFunc("POST /repos/{name}/parent-ff", handleRepoParentFF)
+	mux.HandleFunc("POST /repos/{name}/checkout", gitx.HandleRepoCheckout)
+	mux.HandleFunc("POST /repos/{name}/fetch", gitx.HandleRepoFetch)
+	mux.HandleFunc("POST /repos/{name}/ff", gitx.HandleRepoFF)
+	mux.HandleFunc("POST /repos/{name}/parent-ff", gitx.HandleRepoParentFF)
 	// Subversion (docs/log/41): checkout a URL (URL + basic auth), update to the latest
 	// revision, and cleanup a wedged working-copy lock. Delete reuses DELETE /repos/{name}.
 	mux.HandleFunc("POST /repos/svn", handleSvnCheckout)
@@ -213,20 +215,20 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /repos/{name}/mcp/plan", mcpx.HandleRepoPlan)
 	mux.HandleFunc("POST /repos/{name}/mcp/apply", mcpx.HandleRepoApply)
 	// Source-control view + light edits (docs/17 P3-5).
-	mux.HandleFunc("GET /repos/{name}/changes", handleRepoChanges)
-	mux.HandleFunc("GET /repos/{name}/diff", handleRepoDiff)
-	mux.HandleFunc("GET /repos/{name}/log", handleRepoLog)
-	mux.HandleFunc("GET /repos/{name}/graph", handleRepoGraph)
-	mux.HandleFunc("GET /repos/{name}/submodules", handleRepoSubmodules)
-	mux.HandleFunc("GET /repos/{name}/show", handleRepoShow)
-	mux.HandleFunc("POST /repos/{name}/stage", handleRepoStage)
-	mux.HandleFunc("POST /repos/{name}/unstage", handleRepoUnstage)
-	mux.HandleFunc("POST /repos/{name}/discard", handleRepoDiscard)
-	mux.HandleFunc("POST /repos/{name}/commit", handleRepoCommit)
-	mux.HandleFunc("GET /repos/{name}/identity", handleRepoIdentityGet)
-	mux.HandleFunc("PUT /repos/{name}/identity", handleRepoIdentityPut)
-	mux.HandleFunc("GET /git/identity", handleGlobalIdentityGet)
-	mux.HandleFunc("PUT /git/identity", handleGlobalIdentityPut)
+	mux.HandleFunc("GET /repos/{name}/changes", gitx.HandleRepoChanges)
+	mux.HandleFunc("GET /repos/{name}/diff", gitx.HandleRepoDiff)
+	mux.HandleFunc("GET /repos/{name}/log", gitx.HandleRepoLog)
+	mux.HandleFunc("GET /repos/{name}/graph", gitx.HandleRepoGraph)
+	mux.HandleFunc("GET /repos/{name}/submodules", gitx.HandleRepoSubmodules)
+	mux.HandleFunc("GET /repos/{name}/show", gitx.HandleRepoShow)
+	mux.HandleFunc("POST /repos/{name}/stage", gitx.HandleRepoStage)
+	mux.HandleFunc("POST /repos/{name}/unstage", gitx.HandleRepoUnstage)
+	mux.HandleFunc("POST /repos/{name}/discard", gitx.HandleRepoDiscard)
+	mux.HandleFunc("POST /repos/{name}/commit", gitx.HandleRepoCommit)
+	mux.HandleFunc("GET /repos/{name}/identity", gitx.HandleRepoIdentityGet)
+	mux.HandleFunc("PUT /repos/{name}/identity", gitx.HandleRepoIdentityPut)
+	mux.HandleFunc("GET /git/identity", gitx.HandleGlobalIdentityGet)
+	mux.HandleFunc("PUT /git/identity", gitx.HandleGlobalIdentityPut)
 	// File browser (docs/17 P3-5 段2 + FILES 改善): read tree/file, download raw,
 	// upload into a dir, git-changes filter + viewer line marks.
 	mux.HandleFunc("GET /fs/tree", handleFSTree)
@@ -315,15 +317,15 @@ func buildMux() *http.ServeMux {
 
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)
-	mux.HandleFunc("GET /connections/git/{host}/repos", handleListRemoteRepos)
-	mux.HandleFunc("GET /connections/git/{host}/branches", handleListRemoteBranches)
+	mux.HandleFunc("GET /connections/git/{host}/repos", gitx.HandleListRemoteRepos)
+	mux.HandleFunc("GET /connections/git/{host}/branches", gitx.HandleListRemoteBranches)
 	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)
-	mux.HandleFunc("PUT /connections/git/{host}/identity", handleGitProviderIdentityPut)
+	mux.HandleFunc("PUT /connections/git/{host}/identity", gitx.HandleGitProviderIdentityPut)
 	mux.HandleFunc("DELETE /connections/git/{host}", handleDeleteGitConn)
 	// ★ No /connections/git/github/oauth/{start,poll} any more: both providers' OAuth
 	// flows run in the Control Plane since docs/log/71, where the app can be read per
 	// tenant. GitHub's token comes back through PUT /connections/git/github.com above.
-	mux.HandleFunc("PUT /connections/git/bitbucket/oauth", handleBitbucketStore)
+	mux.HandleFunc("PUT /connections/git/bitbucket/oauth", gitx.HandleBitbucketStore)
 	// Jira（docs/log/80 P1）: 作業項目の 2 つ目の取得元。site+email+token は保存前に
 	// /rest/api/3/myself で検証する（3 項目あって打ち間違いが起きやすい）。
 	mux.HandleFunc("PUT /connections/jira", handlePutJiraConn)

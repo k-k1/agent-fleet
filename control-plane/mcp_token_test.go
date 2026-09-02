@@ -11,32 +11,36 @@
 
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
+)
 
 func TestMCPTokenRoundTrip(t *testing.T) {
-	key := mcpSignKey([]byte("0123456789abcdef0123456789abcdef"))
-	tok := mintMCPToken(key, "membership-1")
+	key := mcpsrv.MCPSignKey([]byte("0123456789abcdef0123456789abcdef"))
+	tok := mcpsrv.MintMCPToken(key, "membership-1")
 	// Deterministic, so re-injection on every container start is idempotent.
-	if tok != mintMCPToken(key, "membership-1") {
+	if tok != mcpsrv.MintMCPToken(key, "membership-1") {
 		t.Fatal("the token must be deterministic per membership")
 	}
-	mid, ok := verifyMCPToken(key, tok)
+	mid, ok := mcpsrv.VerifyMCPToken(key, tok)
 	if !ok || mid != "membership-1" {
 		t.Fatalf("verify: %q %v", mid, ok)
 	}
 	bad := []string{
 		"", "nope", "afm_", "afm_bad.tag",
-		mintMCPToken(key, "membership-1") + "x",                                                        // tampered tag
+		mcpsrv.MintMCPToken(key, "membership-1") + "x",                                                 // tampered tag
 		mintScheduleToken(scheduleSignKey([]byte("0123456789abcdef0123456789abcdef")), "membership-1"), // wrong credential
 	}
 	for _, b := range bad {
-		if _, ok := verifyMCPToken(key, b); ok {
+		if _, ok := mcpsrv.VerifyMCPToken(key, b); ok {
 			t.Fatalf("must reject %q", b)
 		}
 	}
 	// A different master key must not validate: the MCP token is its own credential, so a
 	// memo/schedule token leak grants nothing here (and vice versa).
-	if _, ok := verifyMCPToken(mcpSignKey([]byte("ffffffffffffffffffffffffffffffff")), tok); ok {
+	if _, ok := mcpsrv.VerifyMCPToken(mcpsrv.MCPSignKey([]byte("ffffffffffffffffffffffffffffffff")), tok); ok {
 		t.Fatal("a token from another deployment key must be rejected")
 	}
 }

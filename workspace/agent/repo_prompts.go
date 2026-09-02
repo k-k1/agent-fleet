@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -37,7 +38,7 @@ const maxPromptItems = 200 // per source; a sanity cap so a huge tree can't ball
 
 func handleRepoPromptTemplates(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	dir, ok := resolveRepoDir(name)
+	dir, ok := gitx.ResolveRepoDir(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_repo", "invalid repo name")
 		return

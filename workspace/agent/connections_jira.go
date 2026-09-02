@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -502,14 +503,14 @@ func jiraRefreshNow(c *secrets.JiraCreds) error {
 			return nil
 		}
 	}
-	b := loadGitOAuthBridge()
+	b := gitx.LoadGitOAuthBridge()
 	if b == nil {
 		return fmt.Errorf("no CP bridge to refresh the Jira token")
 	}
 	if c.RefreshToken == "" {
 		return fmt.Errorf("no refresh token stored (re-connect Jira)")
 	}
-	tok, err := refreshOAuthViaCP(*b, "jira", c.RefreshToken)
+	tok, err := gitx.RefreshOAuthViaCP(*b, "jira", c.RefreshToken)
 	if err != nil {
 		return err
 	}

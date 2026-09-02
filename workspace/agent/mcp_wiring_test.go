@@ -28,6 +28,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -43,8 +45,8 @@ func TestMCPWiringIsLive(t *testing.T) {
 			}
 		},
 		"ReportKindSelfReport": func(t *testing.T) {
-			if w.ReportKindSelfReport != reportKindSelfReport {
-				t.Fatalf("report kind = %q, want %q", w.ReportKindSelfReport, reportKindSelfReport)
+			if w.ReportKindSelfReport != chatx.ReportKindSelfReport {
+				t.Fatalf("report kind = %q, want %q", w.ReportKindSelfReport, chatx.ReportKindSelfReport)
 			}
 		},
 		"PeerIntentNames": func(t *testing.T) {
@@ -63,7 +65,7 @@ func TestMCPWiringIsLive(t *testing.T) {
 		"SessionIsShell":             func(t *testing.T) { sameFunc(t, w.SessionIsShell, sessionIsShell) },
 		"ReadUIPrefs":                func(t *testing.T) { sameFunc(t, w.ReadUIPrefs, uiprefs.Read) },
 		"EnsureClaudeSettingsWiring": func(t *testing.T) { sameFunc(t, w.EnsureClaudeSettingsWiring, ensureClaudeSettingsWiring) },
-		"RepoAnyDirFromPath":         func(t *testing.T) { sameFunc(t, w.RepoAnyDirFromPath, repoAnyDirFromPath) },
+		"RepoAnyDirFromPath":         func(t *testing.T) { sameFunc(t, w.RepoAnyDirFromPath, gitx.RepoAnyDirFromPath) },
 		"ReadBuildPins":              func(t *testing.T) { sameFunc(t, w.ReadBuildPins, readBuildPins) },
 		"AgentFleetShareDir":         func(t *testing.T) { sameFunc(t, w.AgentFleetShareDir, agentFleetShareDir) },
 		"InstallGrafanaMCP":          func(t *testing.T) { sameFunc(t, w.InstallGrafanaMCP, installGrafanaMCP) },

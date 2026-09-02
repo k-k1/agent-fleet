@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -204,7 +205,7 @@ func cleanEditSuggestion(r editSuggestResult, instruction string) (summary, repl
 
 // editSuggestLLM はテストで差し替える生成シーム。
 var editSuggestLLM = func(ctx context.Context, req *editSuggestRequest) (string, error) {
-	return oneShotHeadless(ctx, editSuggestPersona, editSuggestPrompt(req), editSuggestModel())
+	return chatx.OneShotHeadless(ctx, editSuggestPersona, editSuggestPrompt(req), editSuggestModel())
 }
 
 // handleFSSuggestEdit — POST /fs/suggest-edit（docs/log/44 Phase 4）。

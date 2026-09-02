@@ -1,18 +1,9 @@
-// alias_mcp.go — MCP 家系（internal/mcpsrv）の逆向きの継ぎ目、1 枚（ADR 0067 決定 1）。
-//
-// 実体は control-plane/internal/mcpsrv/ に移した。呼び出し側（routes.go /
-// workspace_lifecycle.go / tenant_idp_api.go）は 1 行も変えない。ここが担うのは 3 つ:
-//
-//  1. cpDeps — mcpsrv.CP（deps.go の切断面）を *manager の上に実装するアダプタ。
-//  2. mcpAPI / mcpServerAPI — routes.go が呼ぶ**非公開メソッド**（`m.adminList` など）を
-//     持つ薄いラッパ。🔥 型エイリアス（`type mcpServerAPI = mcpsrv.ServerAPI`）では
-//     済まない: 非公開メソッドはパッケージ境界を越えられないので、遠側で公開名にした
-//     うえで、こちら側で元の綴りに包み直すしかない。
-//  3. 素の別名 3 つ（MCPSignKey / MintMCPToken / MaskedValue）。
-//
-// エイリアス回収はウェーブ境界で別セッションが行う（ここでは何も回収しない）。
-
 package main
+
+// mcp_wiring.go — MCP 家系（`internal/mcpsrv`）の**配線**だけを持つ。
+// ウェーブ C の別名 alias_mcp.go は RECLAIM-C で回収し、呼び出し側は mcpsrv を直接呼ぶ。
+// ここに残るのは別名ではなく、**mcpsrv → main の切断面**（`mcpsrv.CP` の実装 26 本と
+// エラーの詰め替え 1 本）である。mcpsrv は main を import できないので、これが唯一の方法。
 
 import (
 	"context"
@@ -23,15 +14,6 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
-
-// --- 素の別名 -----------------------------------------------------------------------
-
-var (
-	mcpSignKey   = mcpsrv.MCPSignKey
-	mintMCPToken = mcpsrv.MintMCPToken
-)
-
-const maskedValue = mcpsrv.MaskedValue
 
 // --- 切断面のアダプタ ----------------------------------------------------------------
 
@@ -155,33 +137,3 @@ func mcpAPIError(e *apiError) *mcpsrv.APIError {
 	}
 	return &mcpsrv.APIError{Status: e.status, Code: e.code, Message: e.message}
 }
-
-// --- 呼び出し側が握る型（非公開メソッドの包み直し） -------------------------------------
-
-// mcpAPI is the /mcp endpoint as routes.go names it.
-type mcpAPI struct{ inner mcpsrv.API }
-
-func newMCPAPI(m *manager) mcpAPI { return mcpAPI{mcpsrv.New(cpDeps{m})} }
-
-func (a mcpAPI) handleMCP(w http.ResponseWriter, r *http.Request) { a.inner.HandleMCP(w, r) }
-
-// mcpServerAPI is the tenant-distribution feature as routes.go names it.
-type mcpServerAPI struct{ inner mcpsrv.ServerAPI }
-
-func newMCPServerAPI(m *manager) mcpServerAPI { return mcpServerAPI{mcpsrv.NewServerAPI(cpDeps{m})} }
-
-func (a mcpServerAPI) adminList(w http.ResponseWriter, r *http.Request)   { a.inner.AdminList(w, r) }
-func (a mcpServerAPI) adminUpsert(w http.ResponseWriter, r *http.Request) { a.inner.AdminUpsert(w, r) }
-func (a mcpServerAPI) adminDelete(w http.ResponseWriter, r *http.Request) { a.inner.AdminDelete(w, r) }
-
-func (a mcpServerAPI) distribute(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
-	a.inner.Distribute(w, r, mv)
-}
-
-func (a mcpServerAPI) withMCPToken(h func(http.ResponseWriter, *http.Request, store.MembershipView)) http.HandlerFunc {
-	return a.inner.WithMCPToken(h)
-}
-
-// verifyMCPToken is used by control-plane/mcp_token_test.go, which stays in package
-// main so the cross-bridge case can mint a REAL schedule token (see that file).
-var verifyMCPToken = mcpsrv.VerifyMCPToken

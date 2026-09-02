@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -22,11 +24,11 @@ func lockMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
 	mux.HandleFunc("POST /sessions/{name}/archive", handleArchiveSession)
 	mux.HandleFunc("DELETE /sessions/{name}", handleDeleteSession)
-	mux.HandleFunc("GET /repos", handleListRepos)
+	mux.HandleFunc("GET /repos", gitx.HandleListRepos)
 	mux.HandleFunc("POST /repos/{name}/lock", handleRepoLock)
-	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
+	mux.HandleFunc("DELETE /repos/{name}", gitx.HandleDeleteRepo)
 	mux.HandleFunc("POST /chat/conversations/{id}/lock", handleChatLock)
-	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
+	mux.HandleFunc("DELETE /chat/conversations/{id}", chatx.HandleChatDelete)
 	return mux
 }
 
@@ -161,7 +163,7 @@ func TestRepoLockRefusesDelete(t *testing.T) {
 	gitInit(t, dir)
 
 	do(t, srv, "POST", "/repos/app/lock", map[string]any{"locked": true}, http.StatusOK, nil)
-	var list struct{ Repos []Repo }
+	var list struct{ Repos []gitx.Repo }
 	do(t, srv, "GET", "/repos", nil, http.StatusOK, &list)
 	if len(list.Repos) != 1 || !list.Repos[0].Locked {
 		t.Fatalf("repo list = %+v, want locked=true", list.Repos)
@@ -235,7 +237,7 @@ func TestWorktreeLockBlocksAutoPrune(t *testing.T) {
 	if err := setRepoLock(wt, true); err != nil {
 		t.Fatal(err)
 	}
-	maybePruneWorktree(wt)
+	gitx.MaybePruneWorktree(wt)
 	if !session.DirExists(wt) {
 		t.Fatal("locked worktree was auto-pruned")
 	}
@@ -243,7 +245,7 @@ func TestWorktreeLockBlocksAutoPrune(t *testing.T) {
 	if err := setRepoLock(wt, false); err != nil {
 		t.Fatal(err)
 	}
-	maybePruneWorktree(wt)
+	gitx.MaybePruneWorktree(wt)
 	if session.DirExists(wt) {
 		t.Fatal("unlocked clean worktree should have been pruned")
 	}
@@ -257,27 +259,27 @@ func TestChatLockRefusesDelete(t *testing.T) {
 	srv := httptest.NewServer(lockMux())
 	defer srv.Close()
 
-	c := &chatConversation{ID: randUUID(), Title: "残したい会話", CreatedAt: nowMs(), UpdatedAt: nowMs()}
-	if err := saveConv(c); err != nil {
+	c := &chatx.ChatConversation{ID: chatx.RandUUID(), Title: "残したい会話", CreatedAt: chatx.NowMs(), UpdatedAt: chatx.NowMs()}
+	if err := chatx.SaveConv(c); err != nil {
 		t.Fatal(err)
 	}
 
 	do(t, srv, "POST", "/chat/conversations/"+c.ID+"/lock", map[string]any{"locked": true}, http.StatusOK, nil)
-	metas, err := listConvs()
+	metas, err := chatx.ListConvs()
 	if err != nil || len(metas) != 1 || !metas[0].Locked {
 		t.Fatalf("conversation list = %+v (err=%v), want locked=true", metas, err)
 	}
 	if code := httpStatus(t, srv, "DELETE", "/chat/conversations/"+c.ID, nil); code != http.StatusForbidden {
 		t.Fatalf("delete locked conversation = %d, want 403", code)
 	}
-	if _, err := loadConv(c.ID); err != nil {
+	if _, err := chatx.LoadConv(c.ID); err != nil {
 		t.Fatalf("locked conversation was deleted: %v", err)
 	}
 	do(t, srv, "POST", "/chat/conversations/"+c.ID+"/lock", map[string]any{"locked": false}, http.StatusOK, nil)
 	if code := httpStatus(t, srv, "DELETE", "/chat/conversations/"+c.ID, nil); code != http.StatusOK {
 		t.Fatalf("delete after unlock = %d, want 200", code)
 	}
-	if _, err := loadConv(c.ID); err == nil {
+	if _, err := chatx.LoadConv(c.ID); err == nil {
 		t.Fatal("conversation should be gone after unlock+delete")
 	}
 }

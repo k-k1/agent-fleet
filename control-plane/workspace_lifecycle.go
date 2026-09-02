@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -381,7 +382,7 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			// this tenant's distributed MCP definitions. Its own credential, because the
 			// response can carry tenant secrets (a user_secret=0 server's headers) — a leak
 			// must not also grant memo/schedule access, and vice versa.
-			"AF_MCP_TOKEN="+mintMCPToken(mcpSignKey(m.tokenSignMaster()), ws.MembershipID),
+			"AF_MCP_TOKEN="+mcpsrv.MintMCPToken(mcpsrv.MCPSignKey(m.tokenSignMaster()), ws.MembershipID),
 			// Docs bridge (docs/build/04 §4.9): the agent pulls its role-scoped docs subset
 			// when nothing was bind-mounted — i.e. on ECS, where no host path exists to
 			// mount. Its own credential for the same reason as the others; a leak reads

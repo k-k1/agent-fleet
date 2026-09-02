@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -229,7 +230,7 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 	out := make([]usagex.Record, 0, len(fresh))
 	for _, r := range fresh {
 		rec := usagex.Record{
-			TS: r.TS, Call: randUUID(), Feature: usagex.FeatureSession, Trigger: r.Trigger,
+			TS: r.TS, Call: chatx.RandUUID(), Feature: usagex.FeatureSession, Trigger: r.Trigger,
 			Origin: origin, OriginConv: originConv, Kind: m.Kind,
 			Ref: m.Name, Sidechain: r.Sidechain, Idx: r.Idx,
 			In: r.Tokens.In, Out: r.Tokens.Out,

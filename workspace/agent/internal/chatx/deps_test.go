@@ -1,6 +1,6 @@
 package chatx
 
-// chatx 単体テストでの配線（本番は main の alias_chat.go が持つ）。
+// chatx 単体テストでの配線（本番は main の chat_wiring.go が持つ）。
 // internal/mcpx/deps_test.go と同じ形。
 //
 // 🔥 **凍結ワイヤの値（errCode*）は本物の文字列を書く。** Console の

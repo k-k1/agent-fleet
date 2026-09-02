@@ -9,6 +9,8 @@ package main
 //     mcpx は main を import できないので、これが唯一の方法（internal/mcpx/deps.go）。
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -42,7 +44,7 @@ func init() {
 		PeerIntentNames:       peerIntentNames,
 		PeerReachableSessions: peerReachableSessions,
 
-		ReportKindSelfReport: reportKindSelfReport,
+		ReportKindSelfReport: chatx.ReportKindSelfReport,
 
 		ApprovalGate:      bridgeApprovalGate,
 		ApprovalLabel:     approvalLabel,
@@ -53,7 +55,7 @@ func init() {
 		ReadUIPrefs:                uiprefs.Read,
 		EnsureClaudeSettingsWiring: ensureClaudeSettingsWiring,
 
-		RepoAnyDirFromPath: repoAnyDirFromPath,
+		RepoAnyDirFromPath: gitx.RepoAnyDirFromPath,
 
 		ReadBuildPins:      readBuildPins,
 		AgentFleetShareDir: agentFleetShareDir,
