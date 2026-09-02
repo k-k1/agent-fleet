@@ -35,10 +35,13 @@ type (
 	runtimeDocsMounter = runtime.DocsMounter
 	runtimeStartFencer = runtime.StartFencer
 
-	// The EC2 pool's reported shape, and the golden bake's view of a snapshot.
-	ec2PoolStatus  = runtime.EC2PoolStatus
-	goldenBakePool = runtime.GoldenBakePool
-	goldenSnap     = runtime.GoldenSnap
+	// The EC2 pool's reported shape, and the golden bake's view of a snapshot and of
+	// the seed's home volume.
+	ec2PoolStatus     = runtime.EC2PoolStatus
+	goldenBakePool    = runtime.GoldenBakePool
+	goldenSeedRuntime = runtime.GoldenSeedRuntime
+	goldenSnap        = runtime.GoldenSnap
+	goldenHome        = runtime.GoldenHome
 )
 
 // --- constants the CP quotes back ---------------------------------------------------
@@ -51,13 +54,21 @@ const (
 	ec2TagTenant     = runtime.EC2TagTenant
 	ec2TagMembership = runtime.EC2TagMembership
 	ec2TagSlotSize   = runtime.EC2TagSlotSize
+	ec2TagWorkspace  = runtime.EC2TagWorkspace
 	ec2TagBakeReason = runtime.EC2TagBakeReason
+
+	// Tags the cost/audit views quote back when they explain a resource.
+	ec2TagClaim       = runtime.EC2TagClaim
+	ec2TagIdleSince   = runtime.EC2TagIdleSince
+	ec2TagHibernating = runtime.EC2TagHibernating
+	ec2TagBackupAt    = runtime.EC2TagBackupAt
 
 	ec2RoleGolden          = runtime.EC2RoleGolden
 	ec2RoleGoldenCandidate = runtime.EC2RoleGoldenCandidate
 	ec2RoleGoldenRejected  = runtime.EC2RoleGoldenRejected
 
 	ec2ArchX86 = runtime.EC2ArchX86
+	ec2ArchArm = runtime.EC2ArchArm
 
 	// Bake phases the CP's pool-status glue rewrites (workspace_lifecycle.go).
 	ec2BakePhaseIdle    = runtime.EC2BakePhaseIdle

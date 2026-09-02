@@ -614,15 +614,15 @@ func RemoveAllContext(ctx context.Context, path string) error {
 	return os.Remove(path)
 }
 
-// dockerInspectOut runs `docker <args...>` and returns its stdout.
+// DockerInspectOut runs `docker <args...>` and returns its stdout.
 // テスト用シーム（gitBackendServe と同型）。
-var dockerInspectOut = func(args ...string) ([]byte, error) {
+var DockerInspectOut = func(args ...string) ([]byte, error) {
 	return exec.Command("docker", args...).Output()
 }
 
 // DockerPublishedPort returns the host port mapped to the container's 7700/tcp.
 func DockerPublishedPort(name string) string {
-	out, err := dockerInspectOut("inspect", "-f",
+	out, err := DockerInspectOut("inspect", "-f",
 		`{{with index .NetworkSettings.Ports "7700/tcp"}}{{(index . 0).HostPort}}{{end}}`, name)
 	if err != nil {
 		return ""
@@ -632,7 +632,7 @@ func DockerPublishedPort(name string) string {
 
 // DockerEnvValue returns the value of an env var baked into a container's config.
 func DockerEnvValue(name, key string) string {
-	out, err := dockerInspectOut("inspect", "-f",
+	out, err := DockerInspectOut("inspect", "-f",
 		`{{range .Config.Env}}{{println .}}{{end}}`, name)
 	if err != nil {
 		return ""

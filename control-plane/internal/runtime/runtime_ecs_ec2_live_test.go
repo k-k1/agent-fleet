@@ -165,7 +165,7 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	if inst := live.slotOf(u1); inst != slot1 {
 		t.Fatalf("Stop detached the home (now on %q); lazy release means it stays on %s", inst, slot1)
 	}
-	if ec2TagValue(live.volumeOf(u1).Tags, ec2TagIdleSince) == "" {
+	if ec2TagValue(live.volumeOf(u1).Tags, EC2TagIdleSince) == "" {
 		t.Error("Stop did not record when the home went dormant")
 	}
 	t2 := time.Now()
@@ -893,7 +893,7 @@ func TestECSEC2LiveScale(t *testing.T) {
 	if err != nil || vol3 == nil {
 		t.Fatalf("%s home after BeginHibernate: %v", s3.Name(), err)
 	}
-	if ec2TagValue(vol3.Tags, ec2TagHibernating) == "" {
+	if ec2TagValue(vol3.Tags, EC2TagHibernating) == "" {
 		t.Error("BeginHibernate did not stamp the hibernation mark")
 	}
 	if inst := attachedInstance(vol3); inst != "" {

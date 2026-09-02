@@ -170,7 +170,7 @@ const (
 	EC2TagPool       = "af-pool"
 	EC2TagRole       = "af-role"
 	EC2TagMembership = "af-membership"
-	ec2TagWorkspace  = "af-workspace"
+	EC2TagWorkspace  = "af-workspace"
 	EC2TagSlotSize   = "af-slot-size"
 	// EC2TagTenant is the owning tenant's SLUG, and it exists only for the bill
 	// (docs/log/67, ADR 0048 決定 3). Nothing in the pool logic reads it: the CP can already
@@ -183,19 +183,19 @@ const (
 	// allocation tag: a slug names an organisation, af-workspace names a person
 	// (it is built from their email).
 	EC2TagTenant = "af-tenant"
-	// ec2TagClaim marks a home volume as "a slot is being launched for this user".
+	// EC2TagClaim marks a home volume as "a slot is being launched for this user".
 	// It exists for exactly one window: RunInstances returns a PENDING instance, and
 	// AttachVolume only accepts running|stopped, so for those few seconds the volume
 	// is the only place that can say "this workspace is starting". Without it State()
 	// would answer `stopped`, the Console would offer Start again, and the second
 	// Start would create a second slot.
-	ec2TagClaim   = "af-claim"
+	EC2TagClaim   = "af-claim"
 	ec2TagClaimAt = "af-claim-at"
-	// ec2TagIdleSince marks a home that is still ATTACHED to its slot but whose
+	// EC2TagIdleSince marks a home that is still ATTACHED to its slot but whose
 	// workspace is stopped. It is what makes "the same user gets the same slot" work
 	// without the CP remembering anything: the attachment IS the affinity, and this tag
 	// is how long it has been dormant (for the idle-stop and for picking a victim).
-	ec2TagIdleSince = "af-idle-since"
+	EC2TagIdleSince = "af-idle-since"
 	// ec2TagSlotIdleSince is af-idle-since's counterpart for a slot that holds NO home:
 	// the moment the box went back to the free pool. It is on the INSTANCE because there
 	// is nowhere else to put it — a free slot has no volume, and the CP holds no state
@@ -213,7 +213,7 @@ const (
 	// already uses. Cleared when a workspace takes the slot, so a short tenancy does not
 	// leave the box looking free since before it was busy.
 	ec2TagSlotIdleSince = "af-slot-idle-since"
-	// ec2TagHibernating marks a home that has entered hibernation (§64.18.2) and the
+	// EC2TagHibernating marks a home that has entered hibernation (§64.18.2) and the
 	// moment it did. It exists because hibernation spans several sweeps and cannot lean
 	// on af-idle-since: releaseSlot — hibernation's own first step — clears that tag.
 	//
@@ -221,7 +221,7 @@ const (
 	// captures this dormancy" apart from "a snapshot of the same volume taken during an
 	// EARLIER one", and mistaking the second for the first deletes a volume holding work
 	// that was never captured. Only a snapshot started after this mark counts.
-	ec2TagHibernating = "af-hibernating"
+	EC2TagHibernating = "af-hibernating"
 
 	ec2RoleHome = "home"
 	ec2RoleSlot = "slot"
@@ -268,7 +268,7 @@ const (
 	// ec2TagBakeStarted is when the baker began waiting on a step, by the CP's clock.
 	// It is the deadline anchor for "the probe never became healthy" — without it a
 	// crash-looping probe would hold a slot forever, since nothing else about it ever
-	// changes. Same discipline as ec2TagHibernating: the state lives in AWS, so a CP
+	// changes. Same discipline as EC2TagHibernating: the state lives in AWS, so a CP
 	// that restarts mid-bake resumes instead of starting over (ADR 0012).
 	ec2TagBakeStarted = "af-bake-started"
 	// EC2TagBakeReason records why a candidate was rejected, for the operator.
@@ -289,10 +289,10 @@ const (
 	// sweep, and to the golden lookup. Nothing gets to mistake a backup for the copy it
 	// was waiting for.
 	ec2RoleBackup = "backup"
-	// ec2TagBackupAt is when a backup was STARTED, by the CP's clock. EBS reports its own
+	// EC2TagBackupAt is when a backup was STARTED, by the CP's clock. EBS reports its own
 	// StartTime, but the schedule is decided against this: a snapshot's StartTime is what
 	// AWS did, and the question here is when this deployment last asked.
-	ec2TagBackupAt = "af-backup-at"
+	EC2TagBackupAt = "af-backup-at"
 	// ec2TagImage stamps the golden snapshot with the workspace image it was baked from.
 	// A golden that predates an image or CLI-pin bump would start new users on the OLD
 	// tools, silently and only for them — so the CP compares and refuses a stale one
@@ -570,7 +570,7 @@ type ec2Slot struct {
 // value goes straight into RuntimePlatform without a second vocabulary.
 const (
 	EC2ArchX86 = "x86_64"
-	ec2ArchArm = "arm64"
+	EC2ArchArm = "arm64"
 )
 
 // ec2SlotClass is one named ladder: which KIND of machine, as opposed to how big.
@@ -882,8 +882,8 @@ func parseSlotClasses(spec string) []ec2SlotClass {
 		if id == "" {
 			continue
 		}
-		if arch != EC2ArchX86 && arch != ec2ArchArm {
-			log.Printf("ecs-ec2: ignoring slot class %q: arch %q is not %s or %s", id, arch, EC2ArchX86, ec2ArchArm)
+		if arch != EC2ArchX86 && arch != EC2ArchArm {
+			log.Printf("ecs-ec2: ignoring slot class %q: arch %q is not %s or %s", id, arch, EC2ArchX86, EC2ArchArm)
 			continue
 		}
 		slots := parseSlotSizes(parts[3])
@@ -1252,7 +1252,7 @@ func (e *ecsEC2Runtime) Stop(ctx context.Context) error {
 func (e *ecsEC2Runtime) markIdle(ctx context.Context, volumeID string) {
 	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{volumeID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagIdleSince), Value: aws.String(e.now().UTC().Format(time.RFC3339))}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagIdleSince), Value: aws.String(e.now().UTC().Format(time.RFC3339))}},
 	}); err != nil {
 		log.Printf("ecs-ec2: marking %s idle failed (the sweeper will stamp it): %v", volumeID, err)
 	}
@@ -1261,7 +1261,7 @@ func (e *ecsEC2Runtime) markIdle(ctx context.Context, volumeID string) {
 func (e *ecsEC2Runtime) clearIdle(ctx context.Context, volumeID string) {
 	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{volumeID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagIdleSince)}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagIdleSince)}},
 	}); err != nil {
 		log.Printf("ecs-ec2: clearing the idle mark on %s failed: %v", volumeID, err)
 	}
@@ -1279,7 +1279,7 @@ func (e *ecsEC2Runtime) clearIdle(ctx context.Context, volumeID string) {
 func (e *ecsEC2Runtime) clearDormancy(ctx context.Context, volumeID string) {
 	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{volumeID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagIdleSince)}, {Key: aws.String(ec2TagHibernating)}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagIdleSince)}, {Key: aws.String(EC2TagHibernating)}},
 	}); err != nil {
 		log.Printf("ecs-ec2: clearing the dormancy marks on %s failed: %v", volumeID, err)
 	}
@@ -1287,7 +1287,7 @@ func (e *ecsEC2Runtime) clearDormancy(ctx context.Context, volumeID string) {
 
 // idleSince reports how long a home has been dormant, and whether it is dormant at all.
 func idleSince(vol *ec2types.Volume, now time.Time) (time.Duration, bool) {
-	v := ec2TagValue(vol.Tags, ec2TagIdleSince)
+	v := ec2TagValue(vol.Tags, EC2TagIdleSince)
 	if v == "" {
 		return 0, false
 	}
@@ -2074,7 +2074,7 @@ func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2ty
 			Tags: e.ownedTags([]ec2types.Tag{
 				{Key: aws.String(EC2TagMembership), Value: aws.String(e.base.membershipID)},
 				{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleHome)},
-				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
+				{Key: aws.String(EC2TagWorkspace), Value: aws.String(e.base.name)},
 				{Key: aws.String(EC2TagPool), Value: aws.String(e.pool.pool)},
 				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-home")},
 			}),
@@ -2173,12 +2173,12 @@ func (e *ecsEC2Runtime) attachHome(ctx context.Context, volumeID, instanceID str
 }
 
 // claim / unclaim mark the one window where a workspace is starting but has nothing
-// attached yet (see ec2TagClaim).
+// attached yet (see EC2TagClaim).
 func (e *ecsEC2Runtime) claim(ctx context.Context, volumeID, instanceID string) error {
 	_, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{volumeID},
 		Tags: []ec2types.Tag{
-			{Key: aws.String(ec2TagClaim), Value: aws.String(instanceID)},
+			{Key: aws.String(EC2TagClaim), Value: aws.String(instanceID)},
 			{Key: aws.String(ec2TagClaimAt), Value: aws.String(e.now().UTC().Format(time.RFC3339))},
 		},
 	})
@@ -2188,7 +2188,7 @@ func (e *ecsEC2Runtime) claim(ctx context.Context, volumeID, instanceID string) 
 func (e *ecsEC2Runtime) unclaim(ctx context.Context, volumeID string) {
 	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{volumeID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagClaim)}, {Key: aws.String(ec2TagClaimAt)}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagClaim)}, {Key: aws.String(ec2TagClaimAt)}},
 	}); err != nil {
 		log.Printf("ecs-ec2: clearing the claim on %s failed (sweeper will): %v", volumeID, err)
 	}
@@ -2293,7 +2293,7 @@ func (e *ecsEC2Runtime) clearSlotFree(ctx context.Context, instanceID string) {
 // matters: a claim that outlives its failed launch pins the workspace at `starting`
 // forever, and Start returns early on `starting`, so the user could never recover.
 func (e *ecsEC2Runtime) claimLive(vol *ec2types.Volume) bool {
-	if ec2TagValue(vol.Tags, ec2TagClaim) == "" {
+	if ec2TagValue(vol.Tags, EC2TagClaim) == "" {
 		return false
 	}
 	at, err := time.Parse(time.RFC3339, ec2TagValue(vol.Tags, ec2TagClaimAt))
@@ -2410,7 +2410,7 @@ func (e *ecsEC2Runtime) occupiedInstances(ctx context.Context) (map[string]bool,
 		if inst := attachedInstance(&out.Volumes[i]); inst != "" {
 			busy[inst] = true
 		}
-		if inst := ec2TagValue(out.Volumes[i].Tags, ec2TagClaim); inst != "" && e.claimLive(&out.Volumes[i]) {
+		if inst := ec2TagValue(out.Volumes[i].Tags, EC2TagClaim); inst != "" && e.claimLive(&out.Volumes[i]) {
 			busy[inst] = true
 		}
 	}
@@ -2541,7 +2541,7 @@ func (p *ec2PoolConfig) validate() error {
 	}
 	if p.amiArm64 == "" {
 		for _, c := range p.classes {
-			if c.arch == ec2ArchArm {
+			if c.arch == EC2ArchArm {
 				return fmt.Errorf("slot class %q is %s but AF_ECS_EC2_AMI_ARM64 is empty "+
 					"(redeploy cfn/40-ec2-pool.yaml and pass its SlotAmiIdArm64 output)", c.id, c.arch)
 			}
@@ -2561,7 +2561,7 @@ func (p *ec2PoolConfig) validate() error {
 // template's own. An empty arch (a deployment that never declared classes) is x86_64,
 // which is what the template has always pinned.
 func (p ec2PoolConfig) amiFor(arch string) string {
-	if arch == ec2ArchArm {
+	if arch == EC2ArchArm {
 		return p.amiArm64
 	}
 	return ""
@@ -2811,7 +2811,7 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 	for i := range vols.Volumes {
 		v := &vols.Volumes[i]
 		// A box a Start is landing on holds no attachment yet; only the claim says so.
-		if inst := ec2TagValue(v.Tags, ec2TagClaim); inst != "" && e.claimLive(v) {
+		if inst := ec2TagValue(v.Tags, EC2TagClaim); inst != "" && e.claimLive(v) {
 			claimed[inst] = true
 		}
 		if inst := attachedInstance(v); inst != "" {
@@ -2930,7 +2930,7 @@ func (e *ecsEC2Runtime) waitSlotGone(ctx context.Context, instanceID string) err
 // runtime is used exclusively to release that workspace's slot.
 func (e *ecsEC2Runtime) siblingFor(vol *ec2types.Volume) *ecsEC2Runtime {
 	membership := ec2TagValue(vol.Tags, EC2TagMembership)
-	name := ec2TagValue(vol.Tags, ec2TagWorkspace)
+	name := ec2TagValue(vol.Tags, EC2TagWorkspace)
 	if membership == "" || name == "" {
 		return nil
 	}
@@ -3517,7 +3517,7 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 	// field is part of what taskDefFingerprint hashes, so a member moved to another
 	// class provably gets a new revision rather than a reused one.
 	arch := ecstypes.CPUArchitectureX8664
-	if e.arch == ec2ArchArm {
+	if e.arch == EC2ArchArm {
 		arch = ecstypes.CPUArchitectureArm64
 	}
 	in := &ecs.RegisterTaskDefinitionInput{
@@ -3964,7 +3964,7 @@ func (e *ecsEC2Runtime) BeginHibernate(ctx context.Context) error {
 	if err != nil || vol == nil {
 		return err // no home here: already a snapshot, or never created
 	}
-	if at := ec2TagValue(vol.Tags, ec2TagHibernating); at != "" {
+	if at := ec2TagValue(vol.Tags, EC2TagHibernating); at != "" {
 		return nil // under way; the pool sweeper carries it the rest of the way
 	}
 	s, ok, err := e.base.describeService(ctx)
@@ -4051,7 +4051,7 @@ func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 			Tags: e.ownedTags([]ec2types.Tag{
 				{Key: aws.String(EC2TagMembership), Value: aws.String(e.base.membershipID)},
 				{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleHome)},
-				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
+				{Key: aws.String(EC2TagWorkspace), Value: aws.String(e.base.name)},
 				{Key: aws.String(EC2TagPool), Value: aws.String(e.pool.pool)},
 				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-home")},
 			}),
@@ -4073,7 +4073,7 @@ func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 // The "fresh" answer is what lets the caller take it back when the very next step fails:
 // see hibernate.
 func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volume) (time.Time, bool, error) {
-	if v := ec2TagValue(vol.Tags, ec2TagHibernating); v != "" {
+	if v := ec2TagValue(vol.Tags, EC2TagHibernating); v != "" {
 		at, err := time.Parse(time.RFC3339, v)
 		if err == nil {
 			return at, false, nil
@@ -4081,7 +4081,7 @@ func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volum
 		// An unparseable mark is worse than none: every snapshot would compare against a
 		// zero time and be accepted. Re-stamp.
 		log.Printf("ecs-ec2 hibernate: %s has an unreadable %s tag (%q); re-stamping",
-			e.base.name, ec2TagHibernating, v)
+			e.base.name, EC2TagHibernating, v)
 	}
 	// RFC3339Nano, not RFC3339: second granularity would round the mark DOWN, placing it
 	// up to a second before it was actually written — long enough to accept a snapshot
@@ -4089,7 +4089,7 @@ func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volum
 	at := e.now().UTC()
 	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{aws.ToString(vol.VolumeId)},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagHibernating), Value: aws.String(at.Format(time.RFC3339Nano))}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagHibernating), Value: aws.String(at.Format(time.RFC3339Nano))}},
 	}); err != nil {
 		return time.Time{}, false, fmt.Errorf("mark %s as hibernating: %w", aws.ToString(vol.VolumeId), err)
 	}
@@ -4102,7 +4102,7 @@ func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volum
 func (e *ecsEC2Runtime) unmarkHibernating(ctx context.Context, volumeID string) {
 	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{volumeID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagHibernating)}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagHibernating)}},
 	}); err != nil {
 		log.Printf("ecs-ec2 hibernate: could not take the mark back off %s: %v", volumeID, err)
 	}
@@ -4273,7 +4273,7 @@ func (e *ecsEC2Runtime) backupSnapshots(ctx context.Context) ([]ec2types.Snapsho
 // reports. The tag is preferred because the schedule is a statement about this deployment
 // ("when did we last ask"), not about how long AWS took to answer.
 func backupStamp(s ec2types.Snapshot) time.Time {
-	if v := ec2TagValue(s.Tags, ec2TagBackupAt); v != "" {
+	if v := ec2TagValue(s.Tags, EC2TagBackupAt); v != "" {
 		if at, err := time.Parse(time.RFC3339Nano, v); err == nil {
 			return at
 		}
@@ -4313,7 +4313,7 @@ func (e *ecsEC2Runtime) BackupHome(ctx context.Context, every time.Duration) err
 		// backup would add.
 		return err
 	}
-	if ec2TagValue(vol.Tags, ec2TagHibernating) != "" {
+	if ec2TagValue(vol.Tags, EC2TagHibernating) != "" {
 		// A hibernation is capturing this volume and will DELETE it. A second capture of
 		// the same blocks would pay twice for one moment in time.
 		return nil
@@ -4339,9 +4339,9 @@ func (e *ecsEC2Runtime) BackupHome(ctx context.Context, every time.Duration) err
 			Tags: e.ownedTags([]ec2types.Tag{
 				{Key: aws.String(EC2TagMembership), Value: aws.String(e.base.membershipID)},
 				{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleBackup)},
-				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
+				{Key: aws.String(EC2TagWorkspace), Value: aws.String(e.base.name)},
 				{Key: aws.String(EC2TagPool), Value: aws.String(e.pool.pool)},
-				{Key: aws.String(ec2TagBackupAt), Value: aws.String(at.Format(time.RFC3339Nano))},
+				{Key: aws.String(EC2TagBackupAt), Value: aws.String(at.Format(time.RFC3339Nano))},
 				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-backup")},
 			}),
 		}},
@@ -4532,7 +4532,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		return
 	}
 	volumeID := aws.ToString(vol.VolumeId)
-	if ec2TagValue(vol.Tags, ec2TagClaim) != "" && !rt.claimLive(vol) {
+	if ec2TagValue(vol.Tags, EC2TagClaim) != "" && !rt.claimLive(vol) {
 		log.Printf("ecs-ec2 sweep: clearing an expired claim on %s", volumeID)
 		rt.unclaim(ctx, volumeID)
 	}
@@ -4543,7 +4543,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		// cannot be what resumes it). Keep advancing it — nothing else will, and stopping
 		// here leaves BOTH a snapshot and a volume billing. Deliberately not gated on
 		// hibernateAfter: turning the feature off must not strand a home half-way.
-		if ec2TagValue(vol.Tags, ec2TagHibernating) != "" {
+		if ec2TagValue(vol.Tags, EC2TagHibernating) != "" {
 			if err := rt.hibernate(ctx); err != nil {
 				log.Printf("ecs-ec2 sweep: hibernating %s failed: %v", rt.base.name, err)
 			}
@@ -4707,7 +4707,7 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 		}
 		// A slot some other workspace is LAUNCHING onto holds no attachment yet; only the
 		// claim says so. Missing it would stop a box mid-Start.
-		if inst := ec2TagValue(homes[i].Tags, ec2TagClaim); inst != "" && probe.claimLive(&homes[i]) {
+		if inst := ec2TagValue(homes[i].Tags, EC2TagClaim); inst != "" && probe.claimLive(&homes[i]) {
 			busy[inst] = true
 		}
 	}
@@ -4917,7 +4917,7 @@ func (f *ecsEC2Factory) probeRuntime() *ecsEC2Runtime {
 // workspace the CP has not looked at since it restarted.
 func (f *ecsEC2Factory) runtimeForVolume(vol *ec2types.Volume) *ecsEC2Runtime {
 	membership := ec2TagValue(vol.Tags, EC2TagMembership)
-	name := ec2TagValue(vol.Tags, ec2TagWorkspace)
+	name := ec2TagValue(vol.Tags, EC2TagWorkspace)
 	if membership == "" || name == "" {
 		return nil
 	}
@@ -5285,12 +5285,12 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 		idle, _ := idleSince(v, now)
 		h := ec2HomeView{
 			VolumeID:    aws.ToString(v.VolumeId),
-			Workspace:   ec2TagValue(v.Tags, ec2TagWorkspace),
+			Workspace:   ec2TagValue(v.Tags, EC2TagWorkspace),
 			SizeGiB:     aws.ToInt32(v.Size),
 			AZ:          aws.ToString(v.AvailabilityZone),
 			AttachedTo:  attachedInstance(v),
 			IdleMinutes: int(idle.Minutes()),
-			Hibernating: ec2TagValue(v.Tags, ec2TagHibernating) != "",
+			Hibernating: ec2TagValue(v.Tags, EC2TagHibernating) != "",
 			// -1 rather than 0: "no copy at all" and "copied a moment ago" are opposite
 			// answers and must not render as the same number.
 			BackupAgeMinutes: -1,
@@ -5416,7 +5416,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 				g.Attempts++
 			}
 		case ec2RoleBackup:
-			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
+			ws := ec2TagValue(s.Tags, EC2TagWorkspace)
 			for i := range st.Homes {
 				if st.Homes[i].Workspace != ws {
 					continue
@@ -5434,7 +5434,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 				}
 			}
 		case ec2RoleHome:
-			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
+			ws := ec2TagValue(s.Tags, EC2TagWorkspace)
 			for i := range st.Homes {
 				if st.Homes[i].Workspace == ws {
 					st.Homes[i].SnapshotID = aws.ToString(s.SnapshotId)

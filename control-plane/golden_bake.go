@@ -229,7 +229,7 @@ func (b *goldenBaker) bake(ctx context.Context, image, arch string) {
 			return
 		}
 	}
-	seed, ok := seedRes.rt.(runtime.GoldenSeedRuntime)
+	seed, ok := seedRes.rt.(goldenSeedRuntime)
 	if !ok {
 		return // not ecs-ec2 after all; goldenBakerFor should have prevented this
 	}
@@ -328,7 +328,7 @@ func (b *goldenBaker) verify(ctx context.Context, cand goldenSnap, image, arch s
 	// with seedRole cleared. A probe that silently read the published golden — or, with
 	// none published, an empty home — would come up perfectly and prove nothing, which
 	// is the same "looks fine, tested nothing" shape this phase exists to remove.
-	seed, ok := probeRes.rt.(runtime.GoldenSeedRuntime)
+	seed, ok := probeRes.rt.(goldenSeedRuntime)
 	if !ok {
 		return
 	}

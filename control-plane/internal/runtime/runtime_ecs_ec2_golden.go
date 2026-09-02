@@ -640,7 +640,7 @@ func (f *ecsEC2Factory) SweepOrphans(ctx context.Context, workspace string) ([]s
 		Filters: []ec2types.Filter{
 			tagFilter(EC2TagPool, f.pool.pool),
 			tagFilter(EC2TagRole, ec2RoleHome),
-			tagFilter(ec2TagWorkspace, workspace),
+			tagFilter(EC2TagWorkspace, workspace),
 		},
 	})
 	if err != nil {

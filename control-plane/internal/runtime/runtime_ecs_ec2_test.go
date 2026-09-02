@@ -103,7 +103,7 @@ func (f *fakeEC2) addHomeVolume(id, membership, workspace, az string) *ec2types.
 		Tags: []ec2types.Tag{
 			{Key: aws.String(EC2TagMembership), Value: aws.String(membership)},
 			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleHome)},
-			{Key: aws.String(ec2TagWorkspace), Value: aws.String(workspace)},
+			{Key: aws.String(EC2TagWorkspace), Value: aws.String(workspace)},
 			{Key: aws.String(EC2TagPool), Value: aws.String("clu")},
 		},
 	}
@@ -759,7 +759,7 @@ func TestECSEC2StateMapping(t *testing.T) {
 	t.Run("live claim is starting", func(t *testing.T) {
 		h := newEC2Harness(t)
 		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
-		h.ec2.setTag("vol-1", ec2TagClaim, "i-pending")
+		h.ec2.setTag("vol-1", EC2TagClaim, "i-pending")
 		h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339))
 		if got := h.rt.State(ctx); got != "starting" {
 			t.Fatalf("State = %q, want starting", got)
@@ -771,7 +771,7 @@ func TestECSEC2StateMapping(t *testing.T) {
 		// Start returns early on `starting` — the user could never recover.
 		h := newEC2Harness(t)
 		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
-		h.ec2.setTag("vol-1", ec2TagClaim, "i-pending")
+		h.ec2.setTag("vol-1", EC2TagClaim, "i-pending")
 		h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339))
 		if got := h.rt.State(ctx); got != "stopped" {
 			t.Fatalf("State = %q, want stopped", got)
@@ -783,7 +783,7 @@ func TestECSEC2StateMapping(t *testing.T) {
 		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 		h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
 		h.ec2.attach("vol-1", "i-hot", time.Now())
-		h.ec2.setTag("vol-1", ec2TagClaim, "i-hot")
+		h.ec2.setTag("vol-1", EC2TagClaim, "i-hot")
 		h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
 		if got := h.rt.State(ctx); got != "starting" {
 			t.Fatalf("State = %q, want starting", got)
@@ -1244,7 +1244,7 @@ func TestECSEC2LostSlotIsAbandonedAndTheWorkspaceMovesOn(t *testing.T) {
 	}
 	// 6. the claim is gone: the workspace is `running` now, and a claim left behind would
 	//    keep answering `starting`
-	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagClaim) != "" {
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim) != "" {
 		t.Error("the claim outlived the recovery")
 	}
 }
@@ -1322,7 +1322,7 @@ func TestECSEC2LostSlotRecoveryQuarantinesAtMostOneSpare(t *testing.T) {
 	// Giving up must leave the workspace STARTABLE. The claim abandonLostSlot keeps alive
 	// for the hand-off has no replacement coming now, and a claim that outlives its launch
 	// pins State() at `starting` — which Start early-returns on, so nobody could recover.
-	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagClaim) != "" {
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim) != "" {
 		t.Error("the claim was left behind: the workspace is stuck at `starting` until it expires")
 	}
 	if st := h.rt.State(ctx); st != "stopped" {
@@ -1415,7 +1415,7 @@ func TestECSEC2SkipsTakenAndClaimedSlots(t *testing.T) {
 	h.ec2.addSlot("i-free", "ap-northeast-1a", "m7i.large", true, false)
 	other := h.ec2.addHomeVolume("vol-other", "M-2", "af-ws-acme-bob", "ap-northeast-1a")
 	_ = other
-	h.ec2.setTag("vol-other", ec2TagClaim, "i-claimed")
+	h.ec2.setTag("vol-other", EC2TagClaim, "i-claimed")
 	h.ec2.setTag("vol-other", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
 	for _, id := range []string{"i-busy", "i-claimed", "i-free"} {
 		h.ci.registered[id] = true
@@ -1466,7 +1466,7 @@ func TestECSEC2GrowsPoolAndClaims(t *testing.T) {
 	if len(h.deferred) != 1 {
 		t.Fatalf("deferred = %d, want the convergence handed off", len(h.deferred))
 	}
-	if inst := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagClaim); !strings.HasPrefix(inst, "i-new") {
+	if inst := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); !strings.HasPrefix(inst, "i-new") {
 		t.Fatalf("claim tag = %q, want the new slot", inst)
 	}
 	// Run the background half: the new slot comes up, gets registered, and the claim
@@ -1477,7 +1477,7 @@ func TestECSEC2GrowsPoolAndClaims(t *testing.T) {
 	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-new1" {
 		t.Fatalf("attached to %q, want i-new1", inst)
 	}
-	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagClaim); got != "" {
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "" {
 		t.Errorf("claim still set to %q after attach", got)
 	}
 	if got := h.rt.State(ctx); got != "running" {
@@ -1557,7 +1557,7 @@ func TestECSEC2StopKeepsTheHomeAttached(t *testing.T) {
 	if len(h.ssmc.commands) != 0 {
 		t.Errorf("nothing should be unmounted on Stop, got %v", h.ssmc.commands)
 	}
-	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagIdleSince) == "" {
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagIdleSince) == "" {
 		t.Error("Stop must record when the home went dormant (the sweeper reads it)")
 	}
 	// ...and the workspace reads as stopped, not starting: nothing is converging.
@@ -1576,7 +1576,7 @@ func TestECSEC2StartWakesADormantSlot(t *testing.T) {
 	h.ec2.addSlot("i-sleep", "ap-northeast-1a", "m7i.large", false, false) // stopped
 	h.ci.registered["i-sleep"] = true                                      // it re-registers with the cluster as it boots
 	h.ec2.attach("vol-1", "i-sleep", time.Now().Add(-time.Hour))
-	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-1", EC2TagIdleSince, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	if err := h.rt.Start(ctx); err != nil {
@@ -1603,7 +1603,7 @@ func TestECSEC2StartWakesADormantSlot(t *testing.T) {
 	if !started {
 		t.Error("the dormant slot was never started")
 	}
-	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagIdleSince) != "" {
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagIdleSince) != "" {
 		t.Error("the idle mark must be cleared when the owner comes back")
 	}
 }
@@ -1617,7 +1617,7 @@ func TestECSEC2SweeperStopsDormantSlotInsteadOfReleasing(t *testing.T) {
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
 	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
-	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-1", EC2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	f := h.factory()
@@ -1643,7 +1643,7 @@ func TestECSEC2SweeperLeavesFreshlyDormantSlotsAlone(t *testing.T) {
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
 	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
-	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-1", EC2TagIdleSince, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
@@ -1667,11 +1667,11 @@ func TestECSEC2EvictsLongestDormantAtTheCap(t *testing.T) {
 	// bob has been dormant for 2h, carol for 10m; dave wants a slot.
 	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-bob", "ap-northeast-1a")
 	h.ec2.attach("vol-bob", "i-a", time.Now().Add(-3*time.Hour))
-	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-bob", EC2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 	h.ec2.addHomeVolume("vol-carol", "M-CAROL", "af-ws-carol", "ap-northeast-1a")
 	h.ec2.attach("vol-carol", "i-b", time.Now().Add(-3*time.Hour))
-	h.ec2.setTag("vol-carol", ec2TagIdleSince, time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-carol", EC2TagIdleSince, time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-carol"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	h.rt.base.name = "af-ws-dave"
@@ -1714,7 +1714,7 @@ func TestECSEC2NeverEvictsASlotOfTheWrongType(t *testing.T) {
 	h.ci.registered["i-large"] = true
 	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-bob", "ap-northeast-1a")
 	h.ec2.attach("vol-bob", "i-large", time.Now().Add(-3*time.Hour))
-	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-bob", EC2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	// dave asked for more memory, so he is on the xlarge rung.
@@ -1801,7 +1801,7 @@ func TestECSEC2MakesRoomFromAnEmptyBoxFirst(t *testing.T) {
 	h.ec2.setInstanceTag("i-empty", ec2TagSlotIdleSince, time.Now().Add(-5*time.Minute).UTC().Format(time.RFC3339))
 	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-bob", "ap-northeast-1a")
 	h.ec2.attach("vol-bob", "i-bobs", time.Now().Add(-96*time.Hour))
-	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-72*time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-bob", EC2TagIdleSince, time.Now().Add(-72*time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	h.rt.base.name = "af-ws-dave"
@@ -1835,7 +1835,7 @@ func TestECSEC2MakesRoomEvenWithTheTerminateTimerOff(t *testing.T) {
 	h.ci.registered["i-large"] = true
 	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-bob", "ap-northeast-1a")
 	h.ec2.attach("vol-bob", "i-large", time.Now().Add(-3*time.Hour))
-	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-bob", EC2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	h.rt.base.name = "af-ws-dave"
@@ -1860,7 +1860,7 @@ func TestECSEC2MakingRoomNeverTakesAClaimedBox(t *testing.T) {
 	h.ec2.addSlot("i-large", "ap-northeast-1a", "m7i.large", true, false)
 	h.ci.registered["i-large"] = true
 	h.ec2.addHomeVolume("vol-carol", "M-CAROL", "af-ws-carol", "ap-northeast-1a")
-	h.ec2.setTag("vol-carol", ec2TagClaim, "i-large")
+	h.ec2.setTag("vol-carol", EC2TagClaim, "i-large")
 	h.ec2.setTag("vol-carol", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
 
 	h.rt.base.name = "af-ws-dave"
@@ -1890,11 +1890,11 @@ func TestECSEC2StillEvictsASlotOfTheRightType(t *testing.T) {
 	h.ci.registered["i-xl"] = true
 	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-bob", "ap-northeast-1a")
 	h.ec2.attach("vol-bob", "i-large", time.Now().Add(-4*time.Hour))
-	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-3*time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-bob", EC2TagIdleSince, time.Now().Add(-3*time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 	h.ec2.addHomeVolume("vol-carol", "M-CAROL", "af-ws-carol", "ap-northeast-1a")
 	h.ec2.attach("vol-carol", "i-xl", time.Now().Add(-4*time.Hour))
-	h.ec2.setTag("vol-carol", ec2TagIdleSince, time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-carol", EC2TagIdleSince, time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-carol"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	h.rt.base.name = "af-ws-dave"
@@ -1930,7 +1930,7 @@ func TestECSEC2EvictionCrossesTenantsOnPurpose(t *testing.T) {
 	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-other-bob", "ap-northeast-1a")
 	h.ec2.setTag("vol-bob", EC2TagTenant, "other-corp")
 	h.ec2.attach("vol-bob", "i-a", time.Now().Add(-3*time.Hour))
-	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-bob", EC2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-other-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	h.rt.base.name = "af-ws-acme-dave"
@@ -1966,7 +1966,7 @@ func TestECSEC2NeverEvictsALiveWorkspace(t *testing.T) {
 	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-bob", "ap-northeast-1a")
 	h.ec2.attach("vol-bob", "i-a", time.Now().Add(-3*time.Hour))
 	// Marked dormant, but bob's service came back up in the meantime.
-	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-bob", EC2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
 
 	h.rt.base.name = "af-ws-dave"
@@ -2225,7 +2225,7 @@ func TestECSEC2SweeperWaitsForTaskENIsBeforeStopping(t *testing.T) {
 		{Description: aws.String("arn:aws:ecs:ap-northeast-1:1234:attachment/abc")},
 	}
 	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
-	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-1", EC2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	f := h.factory()
@@ -2258,7 +2258,7 @@ func TestECSEC2SweeperLeavesAHomeAloneWhileItsStartIsInFlight(t *testing.T) {
 
 	// The claim is what says "a launch owns this home right now".
 	claim := func(h *ec2Harness, at time.Time) {
-		h.ec2.setTag("vol-1", ec2TagClaim, "i-hot")
+		h.ec2.setTag("vol-1", EC2TagClaim, "i-hot")
 		h.ec2.setTag("vol-1", ec2TagClaimAt, at.UTC().Format(time.RFC3339))
 	}
 
@@ -2273,7 +2273,7 @@ func TestECSEC2SweeperLeavesAHomeAloneWhileItsStartIsInFlight(t *testing.T) {
 
 		h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
 
-		if v := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagIdleSince); v != "" {
+		if v := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagIdleSince); v != "" {
 			t.Errorf("af-idle-since = %q on a home whose Start is in flight; the mark would "+
 				"outlive the launch and make a RUNNING workspace an eviction victim", v)
 		}
@@ -2306,7 +2306,7 @@ func TestECSEC2SweeperLeavesAHomeAloneWhileItsStartIsInFlight(t *testing.T) {
 
 		h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
 
-		if v := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagIdleSince); v == "" {
+		if v := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagIdleSince); v == "" {
 			t.Error("a home whose claim had expired was never stamped; its slot would never sleep")
 		}
 	})
@@ -2479,7 +2479,7 @@ func TestECSEC2SweeperNeverStopsAnOccupiedOrClaimedSlot(t *testing.T) {
 	t.Run("a Start has claimed it", func(t *testing.T) {
 		h := freeSlotHarness(t, 30*time.Minute)
 		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
-		h.ec2.setTag("vol-1", ec2TagClaim, "i-free")
+		h.ec2.setTag("vol-1", EC2TagClaim, "i-free")
 		h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
 
 		if err := h.factory().sweep(ctx); err != nil {
@@ -2530,7 +2530,7 @@ func TestECSEC2SlotSleepZeroKeepsEverySlotRunning(t *testing.T) {
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
 	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
-	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-1", EC2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	if err := h.factory().sweep(ctx); err != nil {
@@ -2568,7 +2568,7 @@ func TestECSEC2SweeperTerminatesALongDormantSlot(t *testing.T) {
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-cold", "ap-northeast-1a", "m7i.large", false, false)
 	h.ec2.attach("vol-1", "i-cold", time.Now().Add(-9*time.Hour))
-	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-5*time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-1", EC2TagIdleSince, time.Now().Add(-5*time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
@@ -2608,7 +2608,7 @@ func TestECSEC2SweeperDeregistersTheBoxItTerminates(t *testing.T) {
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-cold", "ap-northeast-1a", "m7i.large", false, false)
 	h.ec2.attach("vol-1", "i-cold", time.Now().Add(-9*time.Hour))
-	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-5*time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-1", EC2TagIdleSince, time.Now().Add(-5*time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 	h.ci.registered["i-cold"] = true
 
@@ -2628,7 +2628,7 @@ func TestECSEC2SweeperOnlyStopsADormantSlotInsideTheTerminateWindow(t *testing.T
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
 	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
-	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-1", EC2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
@@ -2684,7 +2684,7 @@ func TestECSEC2SweeperNeverTerminatesAnOccupiedOrClaimedSlot(t *testing.T) {
 	// A box a Start is landing on right now: no attachment yet, only the claim says so.
 	h.ec2.addSlot("i-claimed", "ap-northeast-1a", "m7i.large", false, false)
 	h.ec2.addHomeVolume("vol-carol", "M-CAROL", "af-ws-carol", "ap-northeast-1a")
-	h.ec2.setTag("vol-carol", ec2TagClaim, "i-claimed")
+	h.ec2.setTag("vol-carol", EC2TagClaim, "i-claimed")
 	h.ec2.setTag("vol-carol", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
 	h.ec2.setInstanceTag("i-claimed", ec2TagSlotIdleSince, old)
 
@@ -2711,7 +2711,7 @@ func TestECSEC2SlotTerminateZeroNeverTerminatesAnything(t *testing.T) {
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-cold", "ap-northeast-1a", "m7i.large", false, false)
 	h.ec2.attach("vol-1", "i-cold", time.Now().Add(-60*24*time.Hour))
-	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-30*24*time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-1", EC2TagIdleSince, time.Now().Add(-30*24*time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 
 	if err := h.factory().sweep(ctx); err != nil {
@@ -2835,7 +2835,7 @@ func hibernateHarness(t *testing.T, dormantFor time.Duration) *ec2Harness {
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-sleep", "ap-northeast-1a", "m7i.large", false, false)
 	h.ec2.attach("vol-1", "i-sleep", time.Now().Add(-dormantFor))
-	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-dormantFor).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-1", EC2TagIdleSince, time.Now().Add(-dormantFor).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 	return h
 }
@@ -2861,7 +2861,7 @@ func TestECSEC2HibernationAdvancesOneStepPerSweep(t *testing.T) {
 	if _, ok := h.ec2.volumes["vol-1"]; !ok {
 		t.Fatal("the volume was deleted while its snapshot was still pending — that is the home, gone")
 	}
-	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHibernating) == "" {
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagHibernating) == "" {
 		t.Error("no hibernation mark: the next sweep cannot tell this snapshot from an older one")
 	}
 
@@ -2950,7 +2950,7 @@ func TestECSEC2ReturningOwnerCancelsHibernation(t *testing.T) {
 		t.Fatalf("hibernate: %v", err)
 	}
 	h.rt.clearDormancy(ctx, "vol-1") // what every Start path does
-	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHibernating) != "" {
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagHibernating) != "" {
 		t.Fatal("the hibernation mark survived the owner's return")
 	}
 	// That capture completes anyway. It must NOT be mistaken for a new hibernation's.
@@ -3227,7 +3227,7 @@ func TestECSEC2PoolStatus(t *testing.T) {
 	h.ec2.addSlot("i-zzz", "ap-northeast-1a", "m7i.large", false, false)
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.attach("vol-1", "i-hot", time.Now())
-	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-90*time.Minute).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-1", EC2TagIdleSince, time.Now().Add(-90*time.Minute).UTC().Format(time.RFC3339))
 	// Carol's home is already a snapshot: the volume is gone.
 	h.ec2.snapshots["snap-carol"] = &ec2types.Snapshot{
 		SnapshotId: aws.String("snap-carol"), State: ec2types.SnapshotStateCompleted,
@@ -3235,7 +3235,7 @@ func TestECSEC2PoolStatus(t *testing.T) {
 		Tags: []ec2types.Tag{
 			{Key: aws.String(EC2TagPool), Value: aws.String("clu")},
 			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleHome)},
-			{Key: aws.String(ec2TagWorkspace), Value: aws.String("af-ws-acme-carol")},
+			{Key: aws.String(EC2TagWorkspace), Value: aws.String("af-ws-acme-carol")},
 		},
 	}
 	h.ec2.addGolden("snap-golden", "clu", "ecr/af-workspace:0.7.0", ec2types.SnapshotStateCompleted, time.Now())
@@ -3406,10 +3406,10 @@ func TestECSEC2EvictionForANewHomeLooksAtEveryAZ(t *testing.T) {
 	// Both slots are taken. The 1c occupant has been gone far longer.
 	h.ec2.addHomeVolume("vol-a", "M-A", "af-ws-acme-a", "ap-northeast-1a")
 	h.ec2.attach("vol-a", "i-1a", time.Now())
-	h.ec2.setTag("vol-a", ec2TagIdleSince, time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-a", EC2TagIdleSince, time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339))
 	h.ec2.addHomeVolume("vol-c", "M-C", "af-ws-acme-c", "ap-northeast-1c")
 	h.ec2.attach("vol-c", "i-1c", time.Now())
-	h.ec2.setTag("vol-c", ec2TagIdleSince, time.Now().Add(-7*24*time.Hour).UTC().Format(time.RFC3339))
+	h.ec2.setTag("vol-c", EC2TagIdleSince, time.Now().Add(-7*24*time.Hour).UTC().Format(time.RFC3339))
 
 	if err := h.rt.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -3491,7 +3491,7 @@ func TestECSEC2HibernateTakesItsMarkBackWhenTheSlotIsUnreachable(t *testing.T) {
 		t.Fatal("BeginHibernate reported success although the home could not be released")
 	}
 	vol := h.ec2.volumes["vol-1"]
-	if mark := ec2TagValue(vol.Tags, ec2TagHibernating); mark != "" {
+	if mark := ec2TagValue(vol.Tags, EC2TagHibernating); mark != "" {
 		t.Errorf("the hibernation mark %q was left on a home that is still attached", mark)
 	}
 	if attachedInstance(vol) == "" {
@@ -3511,7 +3511,7 @@ func TestECSEC2HibernateTakesItsMarkBackWhenTheSlotIsUnreachable(t *testing.T) {
 		t.Fatalf("snapshots = %d, want 1", len(h.ec2.snapshots))
 	}
 	for _, s := range h.ec2.snapshots {
-		mark, _ := time.Parse(time.RFC3339, ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHibernating))
+		mark, _ := time.Parse(time.RFC3339, ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagHibernating))
 		if s.StartTime != nil && s.StartTime.Before(mark) {
 			t.Error("the capture predates its own mark — it would be dropped as superseded forever")
 		}
@@ -3524,14 +3524,14 @@ func TestECSEC2HibernateKeepsAMarkItDidNotWrite(t *testing.T) {
 	ctx := context.Background()
 	h := hibernateHarness(t, 60*24*time.Hour)
 	earlier := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
-	h.ec2.setTag("vol-1", ec2TagHibernating, earlier)
+	h.ec2.setTag("vol-1", EC2TagHibernating, earlier)
 	h.ec2.instances["i-sleep"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
 	h.ssmc.fail["umount"] = true
 
 	if err := h.rt.hibernate(ctx); err == nil {
 		t.Fatal("hibernate reported success although the slot could not be released")
 	}
-	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHibernating); got != earlier {
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagHibernating); got != earlier {
 		t.Errorf("mark = %q, want the existing %q — a hibernation in flight lost its timestamp", got, earlier)
 	}
 }
@@ -3633,7 +3633,7 @@ func TestECSEC2BacksUpAHomeThatIsInUse(t *testing.T) {
 			t.Errorf("backup tagged af-role=%q; a backup that looks like a home would be "+
 				"restored from, or deleted as a superseded capture", got)
 		}
-		if ec2TagValue(s.Tags, ec2TagBackupAt) == "" {
+		if ec2TagValue(s.Tags, EC2TagBackupAt) == "" {
 			t.Error("no af-backup-at: the next sweep cannot tell whether one is due")
 		}
 	}
@@ -3779,7 +3779,7 @@ func TestECSEC2BackupSkipsWhatItShould(t *testing.T) {
 
 	t.Run("a home that is being hibernated", func(t *testing.T) {
 		h := backupHarness(t)
-		h.ec2.setTag("vol-1", ec2TagHibernating, time.Now().UTC().Format(time.RFC3339Nano))
+		h.ec2.setTag("vol-1", EC2TagHibernating, time.Now().UTC().Format(time.RFC3339Nano))
 		if err := h.rt.BackupHome(ctx, time.Hour); err != nil {
 			t.Fatalf("BackupHome: %v", err)
 		}
@@ -3834,7 +3834,7 @@ func TestECSEC2QuarantinesASlotThatCannotMount(t *testing.T) {
 	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "" {
 		t.Errorf("the home is still attached to %s; it has to be free to go somewhere that works", inst)
 	}
-	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagClaim) != "" {
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim) != "" {
 		t.Error("the claim survived the failure, so the owner would wait out the claim TTL before retrying")
 	}
 }
@@ -4227,7 +4227,7 @@ func TestECSEC2GoldenOfAnotherArchIsNotUsed(t *testing.T) {
 	}
 	// The arm64 one is NEWER — so "newest wins" would pick it, and did.
 	h.ec2.addGoldenArch("snap-x86", "clu", img, EC2RoleGolden, EC2ArchX86, time.Now().Add(-time.Minute))
-	h.ec2.addGoldenArch("snap-arm", "clu", img, EC2RoleGolden, ec2ArchArm, time.Now())
+	h.ec2.addGoldenArch("snap-arm", "clu", img, EC2RoleGolden, EC2ArchArm, time.Now())
 
 	if got := h.rt.goldenSnapshot(ctx); got != "snap-x86" {
 		t.Fatalf("an x86_64 home was seeded from %q — the arm64 golden is not ours", got)
@@ -4235,7 +4235,7 @@ func TestECSEC2GoldenOfAnotherArchIsNotUsed(t *testing.T) {
 
 	// The same has to hold for the probe, or a golden is "proven" by booting another
 	// architecture's snapshot (§64.28.3 checks nothing in that case).
-	h.ec2.addGoldenArch("snap-cand-arm", "clu", img, EC2RoleGoldenCandidate, ec2ArchArm, time.Now())
+	h.ec2.addGoldenArch("snap-cand-arm", "clu", img, EC2RoleGoldenCandidate, EC2ArchArm, time.Now())
 	h.rt.SeedFromCandidate()
 	if got := h.rt.goldenSnapshot(ctx); got != "" {
 		t.Fatalf("the x86_64 probe read the arm64 candidate %q", got)
@@ -4258,7 +4258,7 @@ func TestECSEC2UntaggedGoldenIsX86(t *testing.T) {
 	if got := h.rt.goldenSnapshot(ctx); got != "snap-legacy" {
 		t.Fatalf("the pre-classes golden stopped being found: %q", got)
 	}
-	h.rt.arch = ec2ArchArm
+	h.rt.arch = EC2ArchArm
 	if got := h.rt.goldenSnapshot(ctx); got != "" {
 		t.Fatalf("an arm64 home was seeded from the untagged (=x86_64) golden %q", got)
 	}

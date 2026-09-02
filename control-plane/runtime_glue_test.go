@@ -86,7 +86,14 @@ type fakePoolFactory struct{ st ec2PoolStatus }
 
 func (fakePoolFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
 
-func (f fakePoolFactory) PoolStatus(context.Context) (ec2PoolStatus, error) { return f.st, nil }
+// The reply is rebuilt per call, like the adapter's: manager.poolStatus rewrites
+// Goldens[i].Phase in place, so a fake handing out the same backing array twice would
+// let the first call's rewrite leak into the second.
+func (f fakePoolFactory) PoolStatus(context.Context) (ec2PoolStatus, error) {
+	st := f.st
+	st.Goldens = append([]runtime.EC2GoldenView(nil), f.st.Goldens...)
+	return st, nil
+}
 
 // Nothing else in the product has a pool, and an empty table on a Fargate deployment
 // reads as "my slots all vanished".
