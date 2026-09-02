@@ -1,4 +1,4 @@
-package main
+package usagex
 
 // 使用量台帳（docs/log/46 / ADR0029 P1）。1行 = LLM 呼び出し1回、または折り込んだ
 // セッションの論理ターン1回。
