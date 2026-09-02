@@ -38,7 +38,8 @@ func LoggedIn() bool { return loggedIn() }
 
 // loggedIn reports whether codex has stored credentials, via `codex login
 // status` (prints "Not logged in" when logged out; anything else => connected).
-func loggedIn() bool {
+// var なのは差し替えの継ぎ目のため（共有 daemon の起動ゲートがこれを見る）。
+var loggedIn = func() bool {
 	out, err := exec.Command("codex", "login", "status").CombinedOutput()
 	if err != nil {
 		return false

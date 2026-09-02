@@ -256,6 +256,77 @@ auth 変更・config 変更・daemon アップデート・クラッシュ時に 
 - logout / login は既存の Connections ハンドラ（`internal/agents/codex/auth.go`、`opencode/auth.go`）が
   起点になり、そこから `Supervisor.Restart` を叩く。
 
+### 7.1 起動条件と自動停止（需要駆動の生涯） — 2026-09-02 追補
+
+当初の P1〜P3 は「Agent 起動時に codex app-server を無条件で上げ、以後は落とさない」だった。
+それをやめ、**共有 daemon は需要で起き、需要ゼロが続けば畳む**に変えた。
+
+実測（開発ワークスペース、アイドル時 RSS）:
+
+| デーモン | 変更前にいつ起きていたか | RSS | 冷起動 |
+|---|---|---:|---:|
+| `codex app-server` | Agent 起動時に**無条件**（未ログインでも） | 約 110 MB（native 62＋node シム 48） | **217 ms** |
+| `opencode serve` | 遅延（managed の Resume / OAuth） | 約 305 MB | 数秒 |
+
+冷起動 217 ms に対して常駐 110 MB は割に合わない。まして codex に**ログインすらしていない**
+ワークスペースでは丸ごと無駄になる（app-server も serve も認証を見ずに listen できてしまう）。
+
+**1) 認証ゲート**（新しくプロセスを起こす直前だけ）
+
+- codex: `codex login status` が未ログインなら `ErrNotLoggedIn` を返して起こさない。
+- opencode: `Connected()`（鍵・Console ログイン・無料枠の明示のいずれか）が偽なら `ErrNotConnected`。
+  **例外は OAuth device フローだけ** — あの API 群こそが「未接続を接続に変える」経路なので、
+  未接続を理由に断ると永久にログインできない（`ensure(allowUnauthed)`）。
+- **既に listen している daemon の adopt は素通し**。メモリは既に払われており、断っても戻らない。
+- 無効化フラグ（`AF_*_DISABLE`）は認証判定より前。無効化したワークスペースで
+  `codex login status` を exec しない。
+- ゲートのコストは**冷起動パスにしか乗らない**（`codex login status` が実測 110 ms、
+  daemon が既に健在なら `healthy` の loopback GET だけでゲートに届かない）。
+
+**2) 需要ゼロで自動停止**（既定 2 分、`AF_CODEX_APP_SERVER_IDLE_SEC` /
+`AF_OPENCODE_SERVE_IDLE_SEC` で調整、`0` で無効化）
+
+需要の数え方が唯一の危険箇所で、間違えると**生きているセッションの backend を引き抜く**。
+
+- **codex の需要 = managed ハンドル数 ＋ 生きている TUI ルートの codex セッション数**。
+  app-server は managed 専用ではなく、`codex --remote <addr>`（buildProgram）で TUI の
+  backend も兼ねている。TUI を数え落とすと、managed が 0 になった瞬間に TUI の会話が死ぬ。
+  台帳と tmux を持たない codex package には数えられないので、`codex.TUIDependents` を
+  package main が起動時に差し替える（`tmux list-sessions` 1 発）。
+- **opencode の需要 = managed ハンドル数 ＋ 実行中の OAuth フロー**。TUI ルートの opencode は
+  serve を使わない（自前の SQLite に直接つなぐ）ので TUI は数えない。代わりに device フローの
+  最中（直近の操作から 3 分）は需要として数える — 数えないと、利用者がブラウザで承認している
+  最中に足元の daemon を畳む。
+- **managed は live ではなく「登録済み」ハンドル数で数える**。daemon が死ぬと `runtimeLost` が
+  全ハンドルの alive を落とすので、live で数えると復旧すべき場面が需要ゼロに見え、
+  起こし直しと自動停止の判断が両方とも逆になる。消えるのは `DropHandle`（停止・halt・
+  アーカイブ）＝利用者がそのセッションを畳んだときだけ。
+- 判定と停止の間の競合は `stopIfIdle` が**ロック内で需要を数え直して**潰す。監視ループ側の
+  判定だけを信じない。
+- adopt した daemon（前の Agent プロセスの子）はプロセスハンドルが無く停止できない。監視を
+  降りて次に owned で起こし直したときに効かせる。graceful shutdown が daemon を止めるので、
+  adopt が起きるのは Agent が kill された後だけ。
+
+**3) 起こす側の入口**
+
+- managed: 従来どおり `Driver.Resume` の `Ensure`。
+- codex の TUI: `BuildLaunch` が `Ensure` を呼ぶ。ここで起こさないと `buildProgram` が印
+  （`AF_CODEX_APP_SERVER_ADDR`）を見つけられず `--remote` 無しの直接起動になり、P1 の観測
+  （圧縮検知・ライブ rate limit・model reroute）が丸ごと落ちる。失敗は致命ではなく直接起動へ縮退。
+- Agent 起動時: `AdoptIfRunning`（既に listen しているものだけ引き取る）。
+
+**4) オブザーバ（package main の read-only 接続）は daemon の生涯をまたいで常設**
+
+daemon が居ない時間が**正常な休止状態**になったので、再接続ループは「失敗＝異常」ではなく
+待ちとして扱う。`codex.DaemonUp` で Ensure から起こされ、待ちを打ち切って即座に張り直す
+（さもないと自動停止明けに最大 60 秒、観測が空く）。
+
+**5) 副作用**: `AF_CODEX_APP_SERVER_ADDR` は「運用者の指定」と「使える daemon の印」を
+兼ねていた。自動停止で印を外すと運用者指定まで消えるので、`Supervisor.Addr()` は
+印 → 運用者指定（起動時に一度控える）→ 既定 の順で解決する。
+opencode の OAuth 切断（`DELETE /connections/opencode/oauth`）は probe から起動つきの
+取得に変えた — さもないと「managed を使っていない利用者は切断できない」が常態になる。
+
 ## 8. エージェント別マッピング
 
 | | Codex (managed) | OpenCode (managed) | Claude（現状維持） |

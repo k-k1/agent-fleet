@@ -51,9 +51,38 @@ const (
 
 // oauthDaemon は認証 API を叩く serve daemon を（必要なら起動して）返す。
 // テストが差し替える継ぎ目。
+//
+// ここだけは未接続でも daemon を起こす（ensure の allowUnauthed）: この API 群こそが
+// 「未接続を接続に変える」経路なので、未接続を理由に断ると永久にログインできない。
+// 代わりに oauthTouch で需要として数え、フローが終われば自動停止に回収させる。
 var oauthDaemon = func() (string, error) {
-	addr, _, err := Serve().Ensure()
+	oauthTouch()
+	addr, _, err := Serve().ensure(true)
 	return addr, err
+}
+
+// oauthHoldTTL: 直近の OAuth 操作から見て「まだフローの最中」とみなす窓。Console は
+// device フロー中 attempt を数秒おきに poll するので、この窓は触り続けられる。
+const oauthHoldTTL = 3 * time.Minute
+
+var (
+	oauthTouchMu sync.Mutex
+	oauthTouchAt time.Time
+)
+
+// oauthTouch marks the OAuth flow as active so 需要ゼロ監視がフローの途中で
+// daemon を畳まないようにする。start / poll / cancel / disconnect の入口で呼ぶ。
+func oauthTouch() {
+	oauthTouchMu.Lock()
+	oauthTouchAt = time.Now()
+	oauthTouchMu.Unlock()
+}
+
+// oauthBusy reports whether an OAuth flow touched the daemon recently.
+func oauthBusy() bool {
+	oauthTouchMu.Lock()
+	defer oauthTouchMu.Unlock()
+	return !oauthTouchAt.IsZero() && time.Since(oauthTouchAt) < oauthHoldTTL
 }
 
 // oauthProbe は「今すでに動いている」daemon の URL を返す（起動はしない）。
@@ -321,6 +350,7 @@ func HandleOAuthPoll(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "flow_id が必要です")
 		return
 	}
+	oauthTouch() // フローの最中は需要ゼロ監視に daemon を畳ませない
 	addr, up := oauthProbe()
 	if !up {
 		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable", "opencode serve が停止しました")
@@ -368,10 +398,12 @@ func HandleOAuthCancel(w http.ResponseWriter, r *http.Request) {
 // `opencode auth list` は 0 件と言うのに connections には credential が居る）。
 // 実際、/auth/opencode を叩いても新規プロセスから接続が見え続けた。
 func HandleOAuthDisconnect(w http.ResponseWriter, r *http.Request) {
-	addr, up := oauthProbe()
-	if !up {
+	// probe ではなく起動つきで取りに行く: serve は需要ゼロで自動停止するので、
+	// 「managed セッションを使っていない利用者は切断できない」が常態になってしまう。
+	addr, err := oauthDaemon()
+	if err != nil {
 		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable",
-			"opencode serve が停止しているため切断できませんでした（ワークスペース稼働中に実行してください）")
+			"opencode serve を起動できなかったため切断できませんでした: "+err.Error())
 		return
 	}
 	id, err := credentialID(addr)

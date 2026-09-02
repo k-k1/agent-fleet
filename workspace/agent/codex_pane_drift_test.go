@@ -66,7 +66,12 @@ func TestDriftCodexPaneMode(t *testing.T) {
 	// HOME must be redirected before BuildLaunch: ensureFolderTrusted writes the
 	// directory-trust section into $HOME/.codex/config.toml.
 	t.Setenv("HOME", home)
-	t.Setenv("AF_CODEX_APP_SERVER_ADDR", "") // TUI route, not --remote
+	// TUI route, not --remote. アドレスを空にするだけでは足りない: BuildLaunch は
+	// 共有 app-server を需要で起こす（docs/log/27 §7.1）ので、このコンテナで daemon が
+	// 生きていれば adopt して印を書き、--remote つきの起動になってしまう。
+	// 無効化フラグが「直接起動」の唯一の確実なスイッチ。
+	t.Setenv("AF_CODEX_APP_SERVER_DISABLE", "1")
+	t.Setenv("AF_CODEX_APP_SERVER_ADDR", "")
 
 	m := session.Meta{Name: "drift-pane", Dir: work, Kind: session.KindCodex}
 	plan, err := codex.New().BuildLaunch(m, agents.LaunchOpts{})
