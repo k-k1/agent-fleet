@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"runtime"
+	// ⚠️ 標準ライブラリの runtime。CP 自身の internal/runtime を素の `runtime` で
+	// 綴る（他 41 ファイルと同じ）ために、**衝突する側**へ別名を付けている。
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,7 +34,7 @@ import (
 // --- Host stats (super_admin only) ---
 
 func readHostStats() (load1 float64, ncpu int, memUsed, memTotal uint64) {
-	ncpu = runtime.NumCPU()
+	ncpu = goruntime.NumCPU()
 	if b, err := os.ReadFile("/proc/loadavg"); err == nil {
 		if f := strings.Fields(string(b)); len(f) > 0 {
 			load1, _ = strconv.ParseFloat(f[0], 64)
