@@ -1,0 +1,73 @@
+/* 外部サービスとの接続（connect/）— Git ホスティング・運用監視・課題管理・トークン。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+.pat-issued {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--active-bg);
+}
+
+.pat-issued-head {
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.pat-secret {
+  display: block;
+  word-break: break-all;
+  font-size: 12px;
+  padding: 6px 8px;
+  background: var(--btn);
+  border-radius: 4px;
+}
+
+.pat-issued-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pat-tmpl {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--btn);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-x: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.pat-form {
+  margin: 6px 0 4px;
+}
+
+.pat-revoked {
+  opacity: 0.5;
+}
+
+/* Per-provider (and global) commit identity editor inside a provider card. */
+.git-identity {
+  padding: 4px 13px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.git-identity.solo {
+  border-top: none;
+  padding-top: 8px;
+}
+
+.gi-title {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}

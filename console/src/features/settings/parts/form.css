@@ -1,0 +1,215 @@
+/* フォームの基礎（parts/mcpForm.tsx）— ラベル付きの欄・キー/値エディタ・
+ * チェック行。MCP / SSM / サインイン方式が同じ組み方で使う。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+.gi-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.gi-row .cinput {
+  flex: 1;
+  min-width: 120px;
+}
+
+.ri-edit {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ri-edit .cinput {
+  flex: 1;
+  min-width: 90px;
+}
+
+.egress-mcp-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.egress-mcp-ask .cinput {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.cinput {
+  font-size: 12px;
+  min-width: 160px;
+}
+
+.ssm-meta-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.ssm-meta-row.wide {
+  grid-column: 1 / -1;
+}
+
+.ssm-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ssm-form-grid .cinput {
+  min-width: 0;
+  width: 100%;
+}
+
+.ssm-fld {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ssm-fld.wide {
+  grid-column: 1 / -1;
+}
+
+.ssm-fld label {
+  font-size: 11.5px;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ssm-fld label .req {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+.ssm-fld .cinput {
+  width: 100%;
+  min-width: 0;
+}
+
+.ssm-fld .hint {
+  font-size: 11px;
+  color: var(--faint, var(--muted));
+  line-height: 1.45;
+}
+
+.ssm-fld .hint code {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+.admin-fld {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.admin-fld .af-cap {
+  font-size: 11.5px;
+  color: var(--fg);
+}
+
+.admin-fld input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 接続元制限の CIDR 一覧は 1 行に長い文字列が入るので、格子の 1 列では読めない
+   （docs/log/66）。ssm-fld.wide と同じ扱いで 1 行を丸ごと使う。 */
+.admin-fld.wide {
+  grid-column: 1 / -1;
+}
+
+.mem-jump {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.mem-jump .cinput {
+  width: auto;
+}
+
+.mcp-btn {
+  font-size: 11.5px;
+  padding: 2px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* key/value secret editor (env vars / headers) */
+.mcp-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcp-kv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.mcp-kv-row .cinput {
+  min-width: 0;
+  width: 100%;
+}
+
+/* two = no trailing delete button: the header NAMES are fixed by the tenant, so a
+   user_secret row only edits values (McpTab SecretsForm). */
+.mcp-kv-row.two {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* keyonly = no value column: the admin distributes header NAMES and each member types
+   their own value (AdminTab, user_secret on). */
+.mcp-kv-row.keyonly {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/* Keep the "add" button at its own width — as a lone flex/grid child in a column it
+   would otherwise stretch across the form and read as a centred banner. */
+.mcp-kv-add {
+  display: flex;
+}
+
+.mcp-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.mcp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--fg);
+}
+
+@media (max-width: 560px) {
+  .mcp-kv-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+
+}

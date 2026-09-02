@@ -1,0 +1,139 @@
+/* 管理モーダル（admin/）。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+.settings-rail-group + .settings-rail-group {
+  margin-top: 12px;
+}
+
+.settings-rail-head {
+  padding: 4px 10px;
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  color: var(--dialog-muted);
+}
+
+.settings-current {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* レールがテナントの中に入っている間の頭 —— 出口（‹ すべてのテナント）と、今どの
+   テナントを見ているかの見出し。レール項目と同じ幅・余白に合わせる。 */
+.admin-scope-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.admin-scope-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border2);
+}
+
+.stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stage-head h4 {
+  margin: 0;
+}
+
+/* tenant cards */
+.tenant-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.tenant-card {
+  text-align: left;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tenant-card:hover {
+  border-color: var(--accent);
+  background: var(--hover-bg);
+}
+
+.tc-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.tc-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tc-limits {
+  font-size: 11px;
+}
+
+.new-tenant {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 12px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.egress-allow {
+  flex-shrink: 0;
+  color: #3fb950;
+  font-variant-numeric: tabular-nums;
+}
+
+.egress-block {
+  flex-shrink: 0;
+  color: #f85149;
+  font-variant-numeric: tabular-nums;
+}
+
+.egress-add {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.egress-add input {
+  flex: 1;
+  min-width: 120px;
+}
+
+@media (max-width: 760px) {
+  .tenant-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .new-tenant input,
+  .new-tenant button {
+    width: 100%;
+  }
+
+}

@@ -1,0 +1,300 @@
+/* 接続カード（parts/providerCard.tsx）— エージェント / Git / 運用 / 課題 /
+ * チャットの各タブが同じ見た目で並べる、接続状態・認証フロー・切断のカード。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+/* AgyCard: the always-on 実験枠 label sits right under the card head (the quota
+   meters live in the WS bar's Antigravity usage chip). It is a bare ps-note
+   directly inside the card — unlike its usual .p-settings home (13px padding) —
+   so it needs the card's horizontal inset itself or it hugs the border. */
+.p-card .agy-exp {
+  margin: 2px 13px 6px;
+}
+
+/* ── Connection provider cards (設定 > 接続). Each provider is a card: a colored
+   2-char badge + name + status pill, then a description and its connect/flow UI.
+   Unifies what was a flat .conn-row per provider. Mock: console-connections-mock.html.
+   Badge colors match the session kind badges (codex green / opencode purple) rather
+   than the mock's swap, so a provider reads the same color across the app. */
+.p-card {
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--panel2, var(--panel));
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.p-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+}
+
+.p-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  /* The monogram sits on a per-connection fill whose lightness is NOT uniform, so the
+     label colour is picked per fill below instead of assumed. The near-black default
+     suits the pale/mid fills; dark fills opt into --pb-fg: #fff. */
+  color: var(--pb-fg, #0c0c0c);
+}
+
+.p-badge.pb-claude { background: var(--kind-claude); }
+
+.p-badge.pb-codex { background: var(--kind-codex); }
+
+.p-badge.pb-cursor { background: var(--kind-cursor); }
+
+.p-badge.pb-copilot { background: var(--kind-copilot); }
+
+.p-badge.pb-kiro { background: var(--kind-kiro); }
+
+.p-badge.pb-opencode { background: var(--kind-opencode); }
+
+.p-badge.pb-agy { background: var(--kind-agy); }
+
+.p-badge.pb-github { background: #c9d1d9; }
+
+.p-badge.pb-bitbucket { background: #4a90e2; }
+
+.p-badge.pb-pagerduty { background: #06ac38; }
+
+.p-badge.pb-discord { background: #5865f2; }
+
+.p-badge.pb-slack { background: #4a154b; }
+
+.p-badge.pb-grafana { background: #f46800; }
+
+.p-badge.pb-jira { background: #0052cc; }
+
+/* Atlassian blue — dark in both themes, so it takes the white monogram below (6.8:1 measured) */
+.p-badge.pb-cloudwatch { background: #d1126f; }
+
+/* brand pink, one step down: the stock #e7157b left neither a white nor a black monogram at 4.5:1 */
+.p-badge.pb-aws { background: #ff9900; }
+
+/* AWS orange — light enough that the default near-black monogram clears 4.5:1 in both themes */
+/* Brand fills that are dark in BOTH themes — Slack aubergine, Discord blurple,
+   CloudWatch pink — carried a near-black monogram at 1.4–4.4:1. */
+.p-badge.pb-slack,
+.p-badge.pb-discord,
+.p-badge.pb-cloudwatch,
+.p-badge.pb-jira {
+  --pb-fg: #fff;
+}
+
+/* The agent-kind fills follow --kind-*, which flips with the theme: light hues in the
+   dark theme (near-black label reads), dark hues in the light theme (it did not — the
+   claude/codex/cursor/kiro badges sat at 2.8–3.2:1). */
+[data-theme="light"] .p-badge.pb-claude,
+[data-theme="light"] .p-badge.pb-codex,
+[data-theme="light"] .p-badge.pb-cursor,
+[data-theme="light"] .p-badge.pb-copilot,
+[data-theme="light"] .p-badge.pb-kiro,
+[data-theme="light"] .p-badge.pb-opencode,
+[data-theme="light"] .p-badge.pb-agy {
+  --pb-fg: #fff;
+}
+
+.p-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.p-who {
+  padding: 2px 13px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.p-who .p-em {
+  font-size: 13px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p-who .p-pl {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  flex: none;
+}
+
+/* ログインの期限（docs/log/47 §4-8）。期限切れ／あと数日、のどちらも同じ warn 色で
+   アカウント行に置く — 隣が 再認証 ボタンなので、読んだ流れで直せる。 */
+.p-who .p-exp {
+  font-size: 11px;
+  color: var(--warn);
+  flex: none;
+}
+
+/* アカウント行のアクションは右端へ寄せる。auto マージンを持つのは行内で最初の
+   ボタンだけ — 両方に付けると 再認証 と 切断 が行の左右へ離れてしまう。 */
+.p-who .conn-reauth,
+.p-who .conn-disconnect {
+  margin-left: auto;
+}
+
+.p-who .conn-reauth ~ .conn-disconnect {
+  margin-left: 0;
+}
+
+/* numbered device-flow steps (copy code → open link → wait for approval) */
+.p-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.p-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.p-step-k {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2);
+  font-family: var(--mono);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  margin-top: 1px;
+}
+
+.p-step-c {
+  flex: 1;
+  min-width: 0;
+}
+
+.p-step-lbl {
+  font-size: 12.5px;
+  margin-bottom: 5px;
+}
+
+.p-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--warn);
+  font-size: 12.5px;
+}
+
+/* unified hint block (replaces per-provider .field-help / inline notes) */
+.p-hint {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--muted);
+  border-left: 2px solid var(--border2);
+  padding: 2px 0 2px 10px;
+}
+
+.p-hint-i {
+  color: var(--accent);
+  font-family: var(--mono);
+  margin-top: 1px;
+}
+
+.flow-link {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+/* Standalone "issue a token/key" external link under a token input (IssueLink). */
+.p-issue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.p-issue-ic {
+  font-size: 12px;
+}
+
+/* dependency banner: host add needs a profile first — a CTA, not a disabled form. */
+.ssm-dep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border2));
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+
+.ssm-dep .i {
+  color: var(--warn);
+  flex: none;
+  display: inline-flex;
+}
+
+.ssm-dep .t {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+
+/* The device-flow code is a button: clicking copies it to the clipboard (the glyph
+   flips to a check on success). It still reads as a code, just clickable. */
+.oauth-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #fff;
+  background: #333;
+  padding: 1px 8px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.oauth-code:hover {
+  background: #444;
+}
+
+.oauth-copy-ic {
+  font-size: 11px;
+  letter-spacing: 0;
+  opacity: 0.7;
+}
+
+/* "切断" — the live-connection sever action; danger-red on hover (via .danger). */
+.conn-disconnect {
+  font-size: 12px;
+}
+
+/* "再認証" — sign in again without losing the card's connected framing (providerCard). */
+.conn-reauth {
+  font-size: 12px;
+}

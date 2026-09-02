@@ -1,0 +1,136 @@
+/* 設定の入力部品（parts/controls.tsx）— セグメント選択・ON/OFF・スライダー・
+ * 並べ替えリスト。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+.ds-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.ds-label {
+  width: 120px;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.choice-seg {
+  display: inline-flex;
+  /* 選択肢が多い（話者=6個 等）と狭幅で .seg の overflow:hidden に見切れるため、
+     flex 子として縮められるよう min-width:0 にし、入り切らない分は折り返す（docs/log/24）。 */
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.choice-seg .seg-btn {
+  flex: 0 0 auto;
+  padding: 5px 16px;
+  font-size: 12px;
+}
+
+.ds-row select,
+.ds-row input[type="number"] {
+  font-size: 13px;
+}
+
+/* ds-select: 候補が多い設定（opencode の既定モデル等）はセグメントの代わりに素の
+   <select>。settings-modal の select 見た目を継ぎつつ、行内で広がり過ぎない幅に抑える。 */
+.ds-select {
+  font-size: 13px;
+  min-width: 200px;
+  max-width: min(320px, 60vw);
+  cursor: pointer;
+}
+
+/* 音量スライダー（docs/log/24）: レンジ入力＋現在値のパーセント表示。アクセントで塗る。 */
+.ds-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ds-slider input[type="range"] {
+  width: 160px;
+  max-width: 46vw;
+  /* Top バー（外観）の色に追従。--topbar-accent は applyTheme が概ね常に定義（未選択でも
+     :root 既定へフォールバック）。--accent へ退避するのは念のため。 */
+  accent-color: var(--topbar-accent, var(--accent));
+  cursor: pointer;
+}
+
+.ds-slider-val {
+  min-width: 40px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted, var(--fg));
+}
+
+/* 優先順位の並べ替えリスト（OrderList — アシスタントのエージェント優先順位）。 */
+.ds-orderlist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ds-orderlist-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ds-orderlist-rank {
+  min-width: 16px;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted, var(--fg));
+}
+
+.ds-orderlist-label {
+  min-width: 100px;
+  font-size: 13px;
+}
+
+/* PAT / MCP tokens (docs/0006 P3-6) */
+.ds-row input[type="text"] {
+  font-size: 13px;
+  padding: 4px 8px;
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  border-radius: 5px;
+  color: var(--fg);
+  min-width: 200px;
+}
+
+.ps-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+@media (max-width: 520px) {
+  /* Narrow screens: stack the label above its control so a wide segmented control
+     (e.g. copilot's 7-option effort) wraps across the full width instead of crushing
+     the label / overflowing the row. The control's .choice-seg already flex-wraps. */
+  .ps-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+    }
+
+  .ps-row .choice-seg,
+  .ps-row .ds-select {
+    width: 100%;
+    max-width: none;
+  }
+
+}

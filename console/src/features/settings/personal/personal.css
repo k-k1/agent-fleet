@@ -1,0 +1,439 @@
+/* 個人設定の面（personal/）— 表示・アカウント・キー操作・読み上げ・通知など。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+.font-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stepper button {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.stepper-val {
+  min-width: 44px;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 読み仮名辞書エディタ（docs/log/24）: ラベル＋全幅テキストエリアの縦積みブロック。 */
+.ds-userdict-block {
+  padding: 6px 0;
+}
+
+/* 読み上げ: キャラクター一覧（TtsTab の CharList）。エンジン実カタログ駆動で行数が
+   多くなるのでスクロール枠に収める。行 = チェック＋名前｜スタイル｜速度｜試聴。 */
+.ds-charlist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 4px 0;
+}
+
+.ds-char-use {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.ds-char-play {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ds-char-play:hover {
+  background: var(--hover-bg, var(--btn));
+}
+
+/* アカウント（サインイン方法の紐づけ・docs/log/61 §61.16）。表のすぐ下に「追加」の見出しが
+   来るので段落として離し、方式の数だけ並ぶボタンは折り返す。 */
+.account-methods {
+  margin-bottom: 22px;
+}
+
+.account-add {
+  flex-wrap: wrap;
+}
+
+.icon-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+/* 和文フォントの見本。--mono で描くのは、この設定が効く代表的な面（diff・ビューア・
+   ミラー）が等幅だから。丸数字と漢字を並べて字面の大きさを比べられるようにしている。 */
+.cjk-preview {
+  font-family: var(--mono);
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+.icon-preview-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Keyboard settings (KeysTab, docs/log/29) — rebind rows + the key-capture recorder. */
+.keys-settings .kb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.kb-reset-all {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 見出しの右に複数のボタンを並べる（kb-head の space-between で1つの塊として右端へ寄せる）。
+   日本語のラベルは長いので、幅が足りなければ折り返して右寄せのまま2行にする（横に溢れさせない）。 */
+.keys-settings .kb-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.keys-settings .kb-head-actions button {
+  white-space: nowrap;
+}
+
+.kb-sec {
+  margin-top: 14px;
+}
+
+/* 学習済みクイック返信の一覧（返信サジェスト Layer A の管理）。チップと同じ見た目の丸に、
+   使用回数・📌（常に表示）・×（この候補をもう出さない）を並べる。まとめて見直す場所。 */
+.qr-learned {
+  margin: 8px 0 4px;
+}
+
+.qr-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.qr-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.qr-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.qr-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.qr-del,
+.qr-pin {
+  padding: 0 3px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.qr-del:hover,
+.qr-pin:hover {
+  color: var(--fg);
+}
+
+/* ピン留め済み（常に表示）— チップ側と同じく accent 寄りの枠＋📌 で示す。 */
+.qr-item.pinned {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.qr-item.pinned .qr-pin {
+  color: var(--accent);
+}
+
+.kb-sec-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.kb-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--btn-border);
+}
+
+.kb-label {
+  font-size: 13px;
+}
+
+.kb-chord {
+  justify-self: end;
+  min-width: 92px;
+  text-align: right;
+}
+
+.kb-unbound {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.kb-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.kb-actions button {
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.kb-capture {
+  font-size: 12px;
+  color: var(--accent);
+  border: 1px dashed var(--accent);
+  border-radius: 5px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.kb-conflict {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--del, #e57373);
+}
+
+@media (max-width: 520px) {
+  /* Phone: the 3-column row (label · chord · up-to-3 action buttons) can't fit a
+     narrow modal — the last button ("既定"/"Default") gets clipped off the right
+     edge and the label wraps to 3–4 lines. Below ~520px stack the label on its own
+     line and put the chord + actions on the next, so nothing overflows and the label
+     reads on one line. (Matches the settings dialog's own mobile handling.) */
+  .kb-row {
+      grid-template-columns: auto 1fr;
+      grid-template-areas:
+        "label label"
+        "chord actions"
+        "conflict conflict";
+      row-gap: 4px;
+      column-gap: 8px;
+    }
+
+  .kb-label {
+    grid-area: label;
+  }
+
+  .kb-chord {
+    grid-area: chord;
+    justify-self: start;
+    text-align: left;
+    min-width: 0;
+  }
+
+  .kb-actions {
+    grid-area: actions;
+    justify-self: end;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .kb-conflict {
+    grid-area: conflict;
+  }
+
+}
+/* ── エージェントへの指示（docs/log/60）─────────────────────────────────────
+   本文エディタ + 配り先テーブル。テーブルは「どの kind に・どう配られ・いま効いて
+   いるか」を1行で読ませるのが役目で、未対応の kind も薄く出したままにする
+   （消すと「対応漏れ」に見える）。 */
+.instr-editor-label {
+  display: block;
+  margin: 12px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.instr-editor {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg, var(--bg));
+  color: var(--fg);
+  resize: vertical;
+}
+
+.instr-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.instr-meta .instr-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.instr-over {
+  color: var(--del);
+  font-weight: 600;
+}
+
+.instr-targets {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.instr-targets td {
+  padding: 6px 8px 6px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.instr-targets .instr-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.instr-targets .instr-where {
+  color: var(--muted);
+  min-width: 0;
+}
+
+.instr-where code {
+  display: block;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 26em;
+}
+
+.instr-delivery {
+  display: inline-block;
+  margin-right: 6px;
+}
+
+/* 「書いた」と「効いている」を別に見せるための状態列。 */
+.instr-ok {
+  color: var(--add);
+}
+
+.instr-pending,
+.instr-badge {
+  color: var(--muted);
+}
+
+.instr-fail {
+  color: var(--del);
+}
+
+.instr-unsupported {
+  opacity: 0.7;
+}
+
+.instr-peek {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.instr-peek-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--panel, var(--bg));
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.instr-peek-head code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.instr-peek-head .ui-btn {
+  margin-left: auto;
+}
+
+.instr-peek-body {
+  margin: 0;
+  padding: 8px;
+  max-height: 20em;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
