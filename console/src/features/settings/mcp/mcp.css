@@ -1,0 +1,135 @@
+/* MCP サーバータブ（mcp/）。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+/* Egress allowlist warning + request form on an MCP row / form (docs/log/48 §9). Shares
+   .ps-note so it reads as one of the row's notes rather than a separate alert box. */
+.egress-mcp-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+/* ── MCP サーバー（McpTab・docs/log/48 P1）. The registry list reuses the SSM tab's
+   card/field primitives (.ssm-list / .ssm-item / .ssm-fgrid / .ssm-fld) so both
+   registries read as one system; only what's genuinely new lives here — the origin
+   badge, the key/value secret editor, and the connection-test result block. */
+.mcp-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mcp-empty {
+  margin: 12px 0 0;
+}
+
+.mcp-list {
+  margin-top: 12px;
+}
+
+.mcp-name {
+  font-family: var(--mono);
+}
+
+.mcp-label {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-transport {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--muted2);
+}
+
+.mcp-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* Origin badge — who owns the row, and therefore what may be done to it here.
+   Colors are semantic (tenant = accent "handed to you", built-in = neutral) rather
+   than agent-kind colors, which belong to sessions. */
+.mcp-origin {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  flex: none;
+}
+
+.mcp-origin-tenant {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border2));
+}
+
+.mcp-origin-builtin {
+  color: var(--muted2);
+}
+
+/* Tenant distribution status line (docs/log/48 P4): when the set was last confirmed, plus
+   the explicit refresh. Stale-but-served is the fail-open contract, so the timestamp is
+   the thing that makes it honest rather than silent. */
+.mcp-tenant-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0 2px;
+  font-size: 12px;
+}
+
+.mcp-ta {
+  width: 100%;
+  min-width: 0;
+  font-family: var(--mono);
+  resize: vertical;
+}
+
+.mcp-frm {
+  margin-top: 0;
+}
+
+.mcp-newform {
+  margin-top: 10px;
+}
+
+/* The server's own stderr / body tail, shown verbatim — wrap it instead of letting
+   a long line stretch the modal. */
+.mcp-probe-detail {
+  margin: 4px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 9em;
+  overflow: auto;
+}
+
+@media (max-width: 560px) {
+  .mcp-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+}

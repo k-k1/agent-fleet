@@ -21,8 +21,8 @@ import { mobileMatches } from "../../lib/device.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { useCostProfile } from "../cost/CloudCostView.tsx";
-import { TENANT_SCOPE_SECTIONS, TenantScopeBody, tenantScopeGroups } from "./tenantScope.tsx";
-import type { Member, Tenant } from "./adminShared.ts";
+import { TENANT_SCOPE_SECTIONS, TenantScopeBody, tenantScopeGroups } from "./tenant/tenantScope.tsx";
+import type { Member, Tenant } from "./parts/adminShared.ts";
 
 export function TenantDialog() {
   const tr = useT();

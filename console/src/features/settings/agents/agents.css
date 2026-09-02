@@ -1,0 +1,78 @@
+/* エージェントタブ（agents/）。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+/* 使わないモデル（HiddenModelsRow）: 除外中のモデルをチップで並べ、その下に追加用の
+   select。除外は数個で収まる想定なので折り返しの縦積みで十分（数十件のカタログを
+   そのまま並べる UI ではない — 追加側は select が担う）。 */
+.hidden-models {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hm-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.hm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 4px 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface2, transparent);
+  font-size: 11px;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.hm-chip-x {
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.hm-chip-x:hover {
+  color: var(--danger, #e66);
+}
+
+@media (max-width: 520px) {
+  .hidden-models,
+  .hm-chips {
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+}
+.oc-keys {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.oc-keys li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}

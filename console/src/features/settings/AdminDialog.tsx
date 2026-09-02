@@ -8,7 +8,7 @@
 //
 // 個人設定と分けてあるのは変わらない: 管理の操作が個人の設定に紛れないため。
 import { useSettingsUI } from "./store.ts";
-import { AdminTab } from "./AdminTab.tsx";
+import { AdminTab } from "./admin/AdminTab.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Modal } from "../../ui/Modal.tsx";
 import { useT } from "../../lib/i18n/index.ts";

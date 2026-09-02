@@ -1,0 +1,1033 @@
+/* モーダルの器 — 設定 / テナント設定 / 管理 の 3 つが共有する外枠、左レール、
+ * モバイルのドリルダウン、見出し・注記の基礎。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+/* Settings dialog + tabs — extracted from the old console's styles.css
+   (regions 6903–7352, 2138–2150) for pixel parity (docs/log/22 P7). Trimmed at P8.
+   The old .modal-head/.modal-body hooks are mapped to the ui/Modal classes. */
+
+/* Legacy control styles (old element globals), scoped — the verbatim-ported tabs
+   keep raw <button>/<input>/<select> markup (:where() = old 0-0-1 specificity). */
+:where(.settings-modal) button {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+
+:where(.settings-modal) button:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+
+:where(.settings-modal) button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+:where(.settings-modal) button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 2px 6px;
+}
+
+:where(.settings-modal) button.ghost:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+
+:where(.settings-modal) button.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+:where(.settings-modal) button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, #fff);
+}
+
+:where(.settings-modal) button.danger:hover:not(:disabled) {
+  background: #4a2222;
+  border-color: #6a3030;
+  color: #f3b6b6;
+}
+
+:where(.settings-modal) input,
+:where(.settings-modal) select,
+:where(.settings-modal) textarea {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+}
+
+:where(.settings-modal) input:focus,
+:where(.settings-modal) select:focus,
+:where(.settings-modal) textarea:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+/* settings modal: segmented section selector (like the New Session modal) */
+/* Only the HEAD bar takes the top bar's surface (follows the 外観 top-bar color /
+   theme) as an accent tying it to the same chrome; the body stays neutral (--bg, like
+   any other modal) so a strong custom top-bar color doesn't flood the whole dialog. */
+/* Modal.tsx が付ける実クラスは `ui-modal settings-modal`（`.modal` は付かない）。
+   旧 `.modal.settings-modal` は Console リビルドのクラス改名で空振りしており、
+   primary ボタン／フォーカスリング（var(--accent) 直参照）が Top 色に追従して
+   いなかった。`.settings-modal` に直して retint を復活させる。アクティブタブ／
+   選択セグメントは元々 --sel-*（--sel-accent: --topbar-accent）で追従済みなので変化なし。 */
+.settings-modal {
+  background: var(--bg);
+  /* Retint accents (buttons, active tabs, …) to the top-bar surface, like the admin
+     modal — --topbar-accent is concrete so rebinding --accent here can't cycle. */
+  --accent: var(--topbar-accent);
+  /* The light theme's active seg-tab uses --active-bg (a fixed blue) for its fill, not
+     --accent, so it wouldn't follow the top bar. Retint it to a soft tint of the accent
+     (theme-adaptive via --bg); at the default blue it matches the prior look. */
+  --active-bg: color-mix(in srgb, var(--topbar-accent) 18%, var(--bg));
+}
+
+/* Old .modal sizing: the settings dialog is a fixed large surface (not a
+   content-sized sheet) so the tab bar and content don't reflow per tab. Sized
+   up toward the 管理 (admin) modal's footprint (min(1100px,94vw)×min(900px,92vh))
+   so grouped forms have room to breathe — a touch more modest since the rail +
+   single-column forms are narrower than the admin drill-down. */
+.settings-modal.ui-modal {
+  width: min(1000px, 94vw);
+  max-width: min(1000px, 94vw);
+  height: min(760px, 90vh);
+  max-height: 90vh;
+}
+
+.settings-modal .ui-modal-head {
+  background: var(--topbar-bg);
+}
+
+.settings-modal .ui-modal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Two-pane settings: a grouped left rail (category headers + section items) beside the
+   scrolling content pane. Replaces the old single-row segmented tab bar, which clipped /
+   overflowed once the tab count grew past ~6. On mobile the two panes collapse into a
+   drill-down (rail → content, ‹ returns) via the @media block below. */
+.settings-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.settings-rail {
+  flex: 0 0 auto;
+  width: 176px;
+  overflow-y: auto;
+  padding: 2px 12px 8px 2px;
+  margin-right: 14px;
+  border-right: 1px solid var(--btn-border);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Rail items override the legacy :where(.settings-modal) button reset (bordered pill). */
+.settings-modal .settings-rail-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.settings-modal .settings-rail-item:hover:not(.active) {
+  background: var(--btn);
+}
+
+.settings-rail-item.active {
+  background: var(--active-bg);
+  font-weight: 600;
+}
+
+.settings-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Mobile drill-down header (‹ back control + current-section title): hidden on the
+   desktop two-pane layout (the rail's .active highlight already shows the tab), shown
+   only in the mobile drill-down (see @media). */
+.settings-crumb {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+
+  .settings-rail {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    margin-right: 0;
+    border-right: none;
+    padding: 2px 0 8px;
+  }
+
+  .settings-layout.entered .settings-rail {
+    display: none;
+  }
+
+  .settings-layout:not(.entered) .settings-content {
+    display: none;
+  }
+
+  .settings-modal .settings-layout.entered .settings-crumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 12px;
+  }
+
+  .settings-modal .settings-layout.entered .settings-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--dialog-muted);
+    font-size: 13px;
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+
+}
+/* The secondary/note text in the settings dialog was too faint at plain --muted.
+   Lift it toward --fg so it stays legible while still reading as secondary. color-mix
+   keeps it theme-adaptive (dark / light / custom color themes). Emphasized inline
+   spans (.ds-note span) stay full --fg via their own, equally-specific rule. */
+.settings-content .muted,
+.settings-content .ds-hint,
+.settings-content .pat-tmpl-head {
+  color: var(--dialog-muted);
+}
+
+/* テナント設定モーダル（TenantDialog）。骨格は個人設定と同じ settings-* をそのまま
+   使い、ここでは中身が管理モーダル由来（.admin-*）であることの調整だけを足す。
+   .admin-* 由来の弱い文字は素の --muted では薄すぎるので、この 2 つのモーダルに
+   限ってダイアログ用に持ち上げる（管理モーダルも同じ面を差すので同じ規則）。 */
+:is(.tenant-modal, .admin-modal) .tc-slug,
+:is(.tenant-modal, .admin-modal) .admin-panel h4 .af-note,
+:is(.tenant-modal, .admin-modal) .af-suffix,
+:is(.tenant-modal, .admin-modal) .af-unit,
+:is(.tenant-modal, .admin-modal) .af-val.unset,
+:is(.tenant-modal, .admin-modal) .admin-hint,
+:is(.tenant-modal, .admin-modal) .admin-hint code {
+  color: var(--dialog-muted);
+}
+
+:is(.tenant-modal, .admin-modal) .settings-content .admin-panel + .admin-panel {
+  margin-top: 12px;
+}
+
+/* メンバーの 2 段（一覧 → 詳細）。管理モーダルと同じ実装（tenantScope）を差すので
+   規則も両方に効かせる。settings-modal の button リセット（枠付きピル）を通ると
+   「戻る」がピルになってしまうので、その分だけ戻す。
+   .settings-crumb（スマホのレール↔本文）はモーダル自体の段で、こちらは本文の中の段。
+   両方出ても意味は重ならない。 */
+:is(.tenant-modal, .admin-modal) .tenant-drill {
+  margin: 0 0 12px;
+}
+
+:is(.tenant-modal, .admin-modal) .admin-back {
+  border: none;
+  background: transparent;
+  color: var(--dialog-muted);
+  padding: 4px 6px;
+}
+
+:is(.tenant-modal, .admin-modal) .admin-back:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+
+/* 複数テナントを管理している人向けの切り替え。レールの見出し直下に置くので、
+   レール項目と同じ幅・同じ余白に合わせる。 */
+.tenant-modal .tenant-picker {
+  width: 100%;
+  margin: 2px 0 0;
+}
+
+.font-chip {
+  padding: 5px 12px;
+  font-size: 12px;
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  border-radius: 5px;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.font-chip:hover:not(.active) {
+  background: var(--btn-h);
+}
+
+.font-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--active-bg);
+}
+
+.ds-char {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.ds-char.off .ds-char-name {
+  color: var(--muted);
+}
+
+.ds-char-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-char select {
+  font-size: 12px;
+  max-width: 9em;
+}
+
+.ds-hint {
+  flex-basis: 100%;
+  margin-left: 132px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.pat-tmpl-head {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 14px 0 6px;
+}
+
+.p-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.p-status.on {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.p-status .p-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+/* Internal repo read-only browser modal (P3). */
+.ui-modal.ig-browser {
+  width: min(920px, 94vw);
+  max-width: 94vw;
+}
+
+.ig-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.ig-entry:hover,
+.ig-entry.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.ig-entry .ig-icon {
+  flex: none;
+}
+
+.ig-entry .ig-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ig-entry .ig-size {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* 動作設定 disclosure: the collapsed behavior header inside a provider card. Reuses the
+   .ps-title look (small uppercase mono) but as a full-width clickable row with a caret,
+   overriding the legacy :where(.settings-modal) button reset (border/padding/bg). */
+.settings-modal .ps-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 0;
+  margin: 2px 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  font-size: 10.5px;
+  font-family: var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint, var(--muted));
+}
+
+.settings-modal .ps-disclosure:hover:not(:disabled) {
+  background: transparent;
+  color: var(--fg);
+}
+
+.cdot {
+  font-size: 10px;
+}
+
+.cdot.ok {
+  color: var(--ok);
+}
+
+.cdot.off {
+  color: var(--muted2);
+}
+
+.ssm-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ssm-alias {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.ssm-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 18px;
+  margin-top: 7px;
+}
+
+.ssm-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  padding: 0;
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.6);
+  line-height: 1;
+}
+
+.ssm-swatch.active {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+}
+
+.ssm-meta-k {
+  flex: 0 0 92px;
+  color: var(--muted2);
+}
+
+.ssm-meta-v {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ssm-meta-v.mono {
+  font-family: var(--mono);
+}
+
+@media (max-width: 560px) {
+  .ssm-meta {
+    grid-template-columns: 1fr;
+  }
+
+}
+/* ===== 管理モーダル（AdminDialog）=====
+   器は個人設定・テナント設定と同じ ui/Modal + .settings-modal。以前は独自の全画面
+   サーフェス（.admin-surface）で、ボタン / 入力の配色まで自前に再定義していたが、
+   settings-modal の規則がそのまま効くようになったので撤去した。ここに残るのは
+   「管理は横が要る」という大きさの差だけ（旧サーフェスの 1100×900 を引き継ぐ）。 */
+.admin-modal.ui-modal {
+  width: min(1100px, 94vw);
+  max-width: min(1100px, 94vw);
+  height: min(900px, 92vh);
+  max-height: 92vh;
+}
+
+.admin-modal .ui-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-modal .admin-rail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dialog-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-modal .admin-rail-back:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+
+.admin-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.tc-slug {
+  font-size: 11px;
+  color: var(--muted2);
+}
+
+.tc-run.on {
+  color: var(--ok);
+}
+
+/* panels (tenant detail + member detail sections) */
+.admin-panel {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.admin-panel h4 {
+  margin: 0 0 10px;
+}
+
+.admin-panel h4 .af-note {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.af-suffix {
+  position: absolute;
+  right: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.af-unit {
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 13px;
+}
+
+/* 読み取り専用の値（入力欄の代わりに置くテキスト）。入力欄と同じ .admin-fld の
+   中で、見出し(.af-cap)と補足(.af-unit)の間に入る。未設定は値ではないので弱める。 */
+.af-val {
+  font-size: 12.5px;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.af-val.unset {
+  color: var(--muted);
+}
+
+.admin-hint {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.admin-hint code {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+/* 設定ミス（プロキシ未申告・送信元不明）はヒントではなく警告である —— 気づかない
+   ままだと「絞ったつもりで全員を通す」ので、色で他のヒントと分ける。 */
+.admin-hint.warn {
+  color: var(--warn);
+}
+
+.state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted2);
+}
+
+.state-dot.on {
+  background: var(--ok);
+}
+
+.state-dot.off {
+  background: var(--muted2);
+}
+
+/* Text label beside a state dot (admin member header) so 稼働中/停止中 is unambiguous. */
+.state-word {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.state-word.on {
+  color: var(--ok);
+}
+
+.state-word.off {
+  color: var(--muted2);
+}
+
+/* What a member is sized to, on the roster row. Small and quiet: the row's subject is
+   the person, and these are the facts about them — never the other way round. They sit
+   before .mr-go so the chevron stays pinned to the right edge. */
+.mr-size {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.mr-size.mono {
+  color: var(--fg);
+}
+
+.res-tile {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+
+.res-tile.warn {
+  border-color: var(--warn);
+}
+
+.res-tile.crit {
+  border-color: var(--del);
+}
+
+.rt-fill {
+  height: 100%;
+  background: var(--ok);
+}
+
+.res-tile.warn .rt-fill {
+  background: var(--warn);
+}
+
+.res-tile.crit .rt-fill {
+  background: var(--del);
+}
+
+.as-name {
+  flex-shrink: 0;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.as-repo {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Egress observation rows (docs/log/20 M2): destination host + would-allow/would-block. */
+.adm-egress-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.adm-egress-row .as-name {
+  flex: 1;
+  max-width: none;
+}
+
+.adm-allow-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.adm-allow-row .as-name {
+  flex-shrink: 0;
+  max-width: none;
+}
+
+.adm-allow-row .as-repo {
+  flex: 1;
+}
+
+.btn.xs,
+.ghost.xs {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+/* Tenant-distributed MCP servers (docs/log/48 P4, AdminTab McpAdminView). Row layout
+   follows .adm-allow-row so the admin panels read as one family. */
+.adm-mcp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.adm-mcp-row.off .as-name,
+.adm-mcp-row.off .as-repo {
+  opacity: 0.55;
+}
+
+.adm-mcp-row .as-name {
+  flex-shrink: 0;
+  max-width: none;
+}
+
+.adm-mcp-row .as-repo {
+  flex: 1;
+}
+
+.limit-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.limit-edit .le-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* Fields reuse the shared .admin-fgrid / .admin-fld / .af-* system (one form language). */
+.limit-edit .admin-hint {
+  margin: 0;
+}
+
+.limit-edit .le-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Named sizes fill the three numeric fields above in one click. They are a shortcut,
+   not a separate mode, so they sit next to the fields rather than replacing them. */
+/* ⚠️ The tenant's machine picker is the SAME chip row outside .limit-edit, so every
+   rule below names both. Dropping the `.limit-edit` scope instead would make
+   `.le-presets` a global class, and this stylesheet already learned what two
+   definitions of one global name do to each other (docs/log/70 §70.10 / .view-head). */
+.limit-edit .le-presets,
+.machine-picker .le-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.limit-edit .le-presets .chip,
+.machine-picker .le-presets .chip {
+  min-width: 44px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.limit-edit .le-presets .chip:hover,
+.machine-picker .le-presets .chip:hover {
+  border-color: var(--accent);
+}
+
+.limit-edit .le-presets .chip.on,
+.machine-picker .le-presets .chip.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+}
+
+/* The one-line spec under each machine chip: what the class actually buys. Monospace
+   for the instance types so the ranges line up down the list. */
+.machine-picker .machine-specs {
+  margin: 8px 0 4px;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.machine-picker .machine-specs li {
+  margin: 2px 0;
+}
+
+@media (max-width: 760px) {
+  /* 管理モーダルをスマホで: 1 列・フォームは縦積み・戻るは大きめのタップ領域。
+     .admin* に閉じてあるので global の form-row 等には触れない。 */
+  .admin-modal.ui-modal {
+      /* 個人設定と同じ: 100vw の子を padding 付きの backdrop に押し込まず、
+         backdrop のスマホ用のコンテンツ箱に収める。 */
+      width: 100%;
+      max-width: 100%;
+      height: min(900px, 88dvh);
+      max-height: 88dvh;
+    }
+
+  .admin-back {
+    padding: 8px 14px;
+    font-size: 14px;
+  }
+
+  .as-name {
+    max-width: 100%;
+  }
+
+  .as-repo {
+    flex-basis: 100%;
+    order: 5;
+  }
+
+  .limit-edit .le-actions button {
+    flex: 1 1 0;
+  }
+
+}
+.mem-snap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 6px 8px !important;
+  font-size: 12px;
+}
+
+.mem-snap:hover {
+  background: var(--btn-h) !important;
+}
+
+.mem-snap.active {
+  background: var(--active-bg) !important;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* A disabled row still has to be readable (its definition is what you edit before
+   turning it back on), so dim rather than hide. */
+.mcp-item.off .ssm-alias,
+.mcp-item.off .ssm-meta {
+  opacity: 0.55;
+}
+
+.mcp-item .ssm-item-head {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+/* Wider key column than the SSM cards': these labels ("対象エージェント" / "Environment
+   variables") wrap to two lines at the shared 92px basis. */
+.mcp-item .ssm-meta-k {
+  flex-basis: 118px;
+}
+
+/* The provider id on a sign-in method row (docs/log/61 §61.11.8 → §61.17.5). The display
+   name leads and only the id is mono, because the id is a technical identifier and
+   making it the subject sends the reader elsewhere to ask what "entra" is.
+
+   ★ The selector was `.idp-known code` while these rows lived in their own block
+   under the rules form. P7-0 moved them into the sign-in method list (.admin-panel),
+   and the rule silently stopped matching — the id then picked up the GLOBAL <code>
+   style (a bright highlight in dark) and stopped reading as the same chip. Scope it
+   to the row, which is where it actually lives now.
+
+   ★ 枠は var(--border2) では引けない — ライトでは #e6e8ec が地の #f4f5f7 とほぼ同色で、
+   チップが消えて id が宙に浮いた文字列に見える（実測）。前景を薄く混ぜると、どちらの
+   テーマでも同じ濃さで浮く。 */
+.adm-mcp-row code {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+.idp-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--muted);
+  /* 枠は .idp-state と同じ理由で前景の混色（var(--border2) はライトで地に沈む）。 */
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+label.idp-flag {
+  cursor: pointer;
+}
+
+/* ★ 「効いている」を色で言うのは on だけ。両方を色付きにすると、行の意味（受け入れて
+   いるが出さない）が読めなくなる。 */
+.idp-flag.on {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 30%, var(--border2));
+}
+
+.idp-flag input {
+  width: 11px;
+  height: 11px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* 倒せない行は理由が title に入る（最後の 1 つ・受け入れていない）。薄くするだけで
+   隠さないのは、そこに状態が在ることは読めないといけないため。 */
+.idp-flag:has(input:disabled) {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* connection-test result (docs/log/48 §10) */
+.mcp-probe {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  border: 1px solid var(--border2);
+  min-width: 0;
+}
+
+.mcp-probe > div {
+  min-width: 0;
+}
+
+.mcp-probe.ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--border2));
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+}
+
+.mcp-probe.bad {
+  color: var(--del);
+  border-color: color-mix(in srgb, var(--del) 40%, var(--border2));
+  background: color-mix(in srgb, var(--del) 8%, transparent);
+}
+
+.mcp-probe .muted {
+  color: var(--muted);
+}
+
+.mcp-probe .mono {
+  font-family: var(--mono);
+  word-break: break-all;
+}
+
+.golden-head .state-dot {
+  margin-right: 6px;
+}

@@ -1,0 +1,685 @@
+/* テナント設定モーダル（tenant/）。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+/* nav row: back button + breadcrumb */
+.admin-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* breadcrumb */
+.admin-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.admin-crumbs .crumb {
+  background: none;
+  border: none;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 13px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.admin-crumbs .crumb:hover:not(.here) {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+
+.admin-crumbs .crumb.here {
+  color: var(--fg);
+  font-weight: 600;
+  cursor: default;
+}
+
+.admin-crumbs .crumb-sep {
+  color: var(--muted2);
+  font-size: 14px;
+}
+
+/* Admin form fields — caption above input, responsive grid. Mirrors the settings
+   modal's .ssm-fld / .ssm-fgrid so every admin form reads as one system. */
+.admin-fgroup {
+  margin-bottom: 18px;
+}
+
+.admin-fgroup:last-of-type {
+  margin-bottom: 0;
+}
+
+.admin-fgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+/* Plain numeric fields keep the native spinner — it now follows the theme via
+   color-scheme (tokens.css). Only suffix fields (.af-inputwrap, e.g. "MB") hide it,
+   since the spinner would overlap the unit label; keyboard ↑/↓ + step still work. */
+.af-inputwrap input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.af-inputwrap input[type="number"]::-webkit-outer-spin-button,
+.af-inputwrap input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.af-inputwrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.af-inputwrap input {
+  padding-right: 34px;
+}
+
+.admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.admin-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  cursor: pointer; /* mirror.css の重複定義を畳んだ際にこちらへ引き継いだ */
+}
+
+.admin-check input {
+  flex: none;
+}
+
+.usage-csv {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  text-decoration: none;
+}
+
+.usage-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 28px;
+  margin-bottom: 14px;
+}
+
+.us-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.us-val {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.us-lab {
+  font-size: 11px;
+}
+
+.us-range {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.usage-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.usage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ur-key {
+  flex: 0 0 auto;
+  min-width: 140px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ur-tenant {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+.ur-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel);
+  overflow: hidden;
+  min-width: 40px;
+}
+
+.ur-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+.ur-hrs {
+  flex: 0 0 auto;
+  min-width: 62px;
+  text-align: right;
+  font-size: 13px;
+}
+
+/* all-sessions overview */
+.as-search {
+  flex: 1 1 200px;
+}
+
+.as-count {
+  margin-left: auto;
+  font-size: 12px;
+  align-self: center;
+}
+
+.all-sessions {
+  display: flex;
+  flex-direction: column;
+}
+
+.all-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.all-session:last-child {
+  border-bottom: none;
+}
+
+.asx-user {
+  flex: 0 1 auto;
+  min-width: 90px;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.all-session .session-state {
+  flex: 0 0 auto;
+}
+
+.saved-note {
+  color: var(--ok);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* member rows (tenant detail) */
+.member-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border2);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  color: var(--fg);
+}
+
+.member-row:hover {
+  background: var(--hover-bg);
+}
+
+.mr-key {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mr-star {
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.mr-email {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.mr-role {
+  font-size: 11px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.mr-lim {
+  font-size: 11px;
+}
+
+.mr-go {
+  color: var(--muted2);
+}
+
+.add-member {
+  margin-top: 12px;
+}
+
+.add-member input,
+.add-member select {
+  font-size: 12px;
+}
+
+/* member detail */
+.member-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mh-key {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mh-role {
+  font-size: 11px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.mh-email {
+  font-size: 12px;
+}
+
+/* resource tiles */
+.res-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.rt-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rt-value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.rt-sub {
+  font-size: 11px;
+}
+
+.rt-bar {
+  margin-top: 8px;
+  height: 4px;
+  background: var(--border2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+/* admin session list (read-only) */
+.admin-sessions {
+  display: flex;
+  flex-direction: column;
+}
+
+.adm-session {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap; /* narrow (phone) screens wrap the columns instead of overflowing */
+}
+
+/* Tenant group header in the deployment-wide session overview. */
+.asx-group + .asx-group {
+  margin-top: 10px;
+}
+
+.asx-group-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  padding: 4px 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
+.as-time {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+/* Audit log rows (docs/log/20 M1): one change operation per line, action badge colored
+   by category (fs / git / session / egress). */
+.adm-audit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.audit-action {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.audit-action.cat-fs {
+  color: #4a9eff;
+  border-color: #2b5c8a;
+}
+
+.audit-action.cat-git,
+.audit-action.cat-repo {
+  color: #d08a2e;
+  border-color: #7a5320;
+}
+
+.audit-action.cat-session {
+  color: #3fb950;
+  border-color: #256a30;
+}
+
+.audit-action.cat-egress {
+  color: #f85149;
+  border-color: #8a2b28;
+}
+
+.audit-action.cat-claude {
+  color: #bc8cff;
+  border-color: #5a3a8a;
+}
+
+/* member actions */
+.member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.member-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.role-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--ok);
+}
+
+.role-hint {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted); /* match .field-help / .ds-hint (was inherited fg) */
+}
+
+@media (max-width: 760px) {
+  .admin-crumbs {
+    font-size: 12px;
+  }
+
+  .res-tiles {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* member row: let the email/role wrap under the key instead of overflowing */
+  .member-row {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .mr-email {
+    flex-basis: 100%;
+    order: 5;
+  }
+
+  .mr-go {
+    margin-left: auto;
+  }
+
+  /* session row: wrap to two lines on narrow screens */
+  .adm-session {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .member-actions button {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+}
+/* Tenant-defined sign-in method status (docs/log/61 §61.11). The colours answer one
+   question only — can anybody sign in with this right now — so "approved but
+   unusable" reads as a warning rather than as success. */
+.idp-state {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  /* ★ var(--border2) では引けない。ライトでは #e6e8ec が .admin-panel の地
+     (var(--panel2) = #f4f5f7) とほぼ同色で、枠が消えてチップが宙に浮いた文字列に
+     なる（実測・.adm-mcp-row code の注記と同じ罠）。前景を薄く混ぜると、どちらの
+     テーマでも同じ濃さで浮く。
+     P7-0 まではこの素の見た目が出るのは suspended の行だけで目立たなかったが、
+     「デプロイ共通」バッジが同じ素の状態を全行に出すので、ここで直す。 */
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  color: var(--muted);
+  flex: none;
+}
+
+.idp-state.idp-active {
+  color: var(--ok, #2aa79b);
+  border-color: color-mix(in srgb, var(--ok, #2aa79b) 45%, var(--border2));
+}
+
+.idp-state.idp-pending {
+  color: var(--warn, #d9a441);
+  border-color: color-mix(in srgb, var(--warn, #d9a441) 45%, var(--border2));
+}
+
+/* The two per-row toggles on the sign-in method list (docs/log/61 §61.17.5 ·
+   tenantSignInMethods.tsx TenantSignInMethods): "accept" and "show button". They lead the
+   row because they are the only part of it this tenant decides — the rest (who the
+   issuer is, whether it is approved) is stated, not chosen.
+
+   ★ flex:none + nowrap. The labels are the same two strings on every row, so content
+   width already lines the names up; what this stops is the row's flexible middle
+   (.as-repo holds an issuer URL) squeezing the toggles into two illegible slivers
+   when the modal is narrow. Wrapping the row is the better failure. */
+.idp-flags {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+/* EC2 slot pool (ecs-ec2 only; features/settings/ec2Pool.tsx) */
+.pool-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.pool-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding: 4px 8px 6px;
+  white-space: nowrap;
+}
+
+.pool-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border2);
+  vertical-align: middle;
+}
+
+.pool-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Hibernation is a state of the DATA, not a fault: muted, never the danger colour.
+   The one thing that IS a warning here is a stale golden snapshot, because nothing
+   else will ever tell the operator about it. */
+.pool-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 予約 workspace（種 / probe）の印。人の workspace と同じ見た目で並ぶと、上限に
+   近いプールで「知らない誰かが 2 枠使っている」に読める。 */
+.pool-badge.bake {
+  margin-left: 6px;
+  font-family: var(--sans);
+}
+
+/* golden の焼き込み（docs/log/64 §64.30）。1 アーキ 1 ブロック。 */
+.golden-arch + .golden-arch {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border2);
+}
+
+.golden-arch-name {
+  display: inline-block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.golden-arch p {
+  margin: 4px 0;
+}
+
+/* 進行線。段の名前は「いまどこか」が読めれば十分なので小さく、現在段だけ強調する。
+   ★ 折り返す（アーキ 2 本 × 6 段は狭いペインに収まらない）。 */
+.bake-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  margin: 8px 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.bake-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  font-size: 11px;
+}
+
+.bake-detail:empty {
+  display: none;
+}
+
+/* purge opt-in inside the offboarding dialog: a checkbox, never a preselected one —
+   removing a membership and destroying a home are two different decisions. */
+.purge-opt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+/* 自動停止の見通し（docs/log/75 P4）。名簿の行では控えめだが、**止まらない理由**（.hold）は
+   注意色にする — 「あと 20 分で停止」と「止まらない」は運用者にとって意味が正反対で、
+   同じ静かさで並ぶと、コストが出続けている行を見落とす。 */
+.mr-idle {
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.mr-idle.hold {
+  color: var(--warn);
+}
+
+/* 止めている理由の一覧（メンバー詳細）。運用者はここから次の一手（待つ / ピンを外して
+   もらう / セッションを止める）を決めるので、装飾より読みやすさを優先した素の箇条書き。 */
+.idle-holders {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+}

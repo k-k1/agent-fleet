@@ -1,0 +1,371 @@
+/* ワークスペースの面（workspace/）— ツールチェーン・プレビュー・SSM・内部リポ・
+ * 書き出し / 取り込み・危険な操作。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+/* プレビューの「いまの URL」（docs/log/81 §11）。ポートぶん縦に積み、長いホスト名は
+   折り返さず省略する —— 設定モーダルの幅を URL 1 本で広げない。 */
+.pv-current {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pv-current-url {
+  color: var(--accent);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-current-url:hover {
+  text-decoration: underline;
+}
+
+/* danger zone: a clearly-separated block at the bottom of a settings tab that
+   holds destructive workspace actions (作り直す), kept away from routine controls. */
+.danger-zone {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.danger-zone-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  /* Use the app's danger token (was a hardcoded pale pink that vanished on light
+     theme and didn't match the confirm/toast danger language). */
+  color: var(--del);
+}
+
+.danger-zone-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.danger-zone-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.confirm-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 12px;
+}
+
+.confirm-list li {
+  padding: 2px 0;
+}
+
+.confirm-list .keep {
+  color: var(--ok);
+}
+
+.confirm-list .lose {
+  color: var(--del);
+}
+
+/* Internal git provider: the repo list inside its provider card (P2). */
+.internal-repo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.internal-repo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.internal-repo .ir-name {
+  font-size: 13px;
+  color: var(--fg);
+  font-weight: 500;
+  flex: none;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.internal-repo .ir-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 3px 6px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.internal-repo .ir-url code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.internal-repo .ir-url:hover code {
+  color: var(--fg);
+}
+
+.internal-repo .ir-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ig-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ig-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ig-toolbar select {
+  flex: none;
+}
+
+.ig-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.ig-crumb {
+  background: none;
+  border: none;
+  color: var(--link, var(--accent));
+  cursor: pointer;
+  padding: 1px 3px;
+}
+
+.ig-crumb:hover {
+  text-decoration: underline;
+}
+
+.ig-sep {
+  color: var(--muted);
+}
+
+.ig-panes {
+  display: flex;
+  gap: 12px;
+  min-height: 320px;
+  max-height: 60vh;
+}
+
+.ig-tree {
+  flex: 0 0 38%;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.ig-view {
+  flex: 1 1 auto;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.ig-entries {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+
+.ig-blob {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+}
+
+/* SSM login settings (SsmTab) — SSO sessions + host bookmarks. */
+.ssm-section {
+  margin-bottom: 18px;
+}
+
+/* Per-host terminal color picker (swatches of the vivid hue + a terminal preview). */
+.ssm-host-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.ssm-swatches {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.ssm-swatch-preview {
+  margin-left: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: #ddd;
+}
+
+/* ツールのバージョン（EnvTab）— 実効 / イメージ / ~/.local の read-only 表。 */
+.tool-ver {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin: 4px 0 2px;
+}
+
+.tool-ver th,
+.tool-ver td {
+  text-align: left;
+  padding: 4px 10px 4px 0;
+  border-bottom: 1px solid var(--btn-border);
+  white-space: nowrap;
+}
+
+.tool-ver th {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.tool-ver-name {
+  font-family: var(--mono, monospace);
+}
+
+.tool-ver-badge {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
+/* ピンずれバッジは方向で色分け: behind（ピンより古い＝更新が届いていない）は警告色、
+   ahead（ピンより新しい＝自己更新などの前進・想定内）は情報色。トークンはテーマ両対応。 */
+.tool-ver-pin {
+  margin-left: 4px;
+  font-size: 11.5px;
+}
+
+.tool-ver-pin.is-behind {
+  color: var(--warn);
+}
+
+.tool-ver-pin.is-ahead {
+  color: var(--accent);
+}
+
+/* lean variant: no baked binary, so the image column shows the versions.json pin in
+   parentheses instead of a bare dash. Muted — it's a declared pin, not a live probe. */
+.tool-ver-pin-only {
+  color: var(--muted);
+}
+
+.tool-ver-reload {
+  margin-left: 10px;
+  font-size: 11.5px;
+  padding: 2px 10px;
+}
+
+/* Java 行（EnvTab）: セレクトの右に「インストール」ボタンが出る。未導入の major を
+   選んだときだけ現れるので、常設の幅は取らせない（inline-flex）。 */
+.env-java-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.env-java-pick button {
+  font-size: 11.5px;
+  padding: 2px 10px;
+}
+
+/* 設定の書き出し / 取り込み（docs/log/79）。持ち出す範囲と取り込む範囲は同じ見た目のチェック
+   リストにしてある —— 「何が入っているファイルなのか」を、書き出したときと同じ並びで
+   確かめられる方が、片方だけ凝った表にするより安心して使える。 */
+.backup-tab .backup-picks {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.backup-tab .backup-picks label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.backup-tab .backup-picks input[disabled] + * {
+  opacity: 0.6;
+}
+
+.backup-tab input[type="file"] {
+  font-size: 12px;
+  padding: 3px;
+}
+
+.backup-preview {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+/* 取り込みの結果。件数だけの素の箇条書きにしてある — 入った数より **入らなかった数**を
+   同じ行で読ませたいので、成功を強調する装飾は入れない。 */
+.backup-result {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+}

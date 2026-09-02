@@ -1,0 +1,249 @@
+/* エージェントメモリタブ（memory/）。
+ *
+ * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
+ * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
+ * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
+ * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ *
+ * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ */
+/* === エージェントメモリ（docs/log/39 P2・MemoryTab.tsx） ==========================
+   履歴は「一覧（左）＋差分（右）」の 2 ペイン。差分の中身は SCM と同じ .diff-files を
+   使うので、ここではその器（高さ・枠・スクロール）だけを決める。狭い幅では 1 カラムに
+   落として、一覧の下に差分が続く形にする。 */
+.mem-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mem-section {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.mem-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.mem-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 右端に寄せる操作（スナップショット取得 / 日時指定）。 */
+.mem-head > :last-child {
+  margin-left: auto;
+}
+
+.mem-roots {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mem-root {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+/* 未有効のルート（docs/log/39 P4）。一覧には出すが、有効なものと同じ強さでは見せない。 */
+.mem-root-off .mem-kind {
+  opacity: 0.65;
+}
+
+/* kind 色は tokens.css の --kind-* に一本化（新 kind 追加時はそちらだけ足す）。 */
+.mem-kind {
+  font-weight: 600;
+}
+
+.mem-kind.kind-claude {
+  color: var(--kind-claude);
+}
+
+.mem-kind.kind-codex {
+  color: var(--kind-codex);
+}
+
+.mem-projects {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.mem-chip {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 7px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mem-badge {
+  border-radius: 3px;
+  padding: 0 6px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.mem-badge.busy {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 巻き戻し系の契機は履歴上で目立たせる（普通の自動取得と読み分けられるように）。 */
+.mem-badge.trig-restore,
+.mem-badge.trig-pre-restore {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.mem-body {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.mem-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.mem-snap-when {
+  font-variant-numeric: tabular-nums;
+}
+
+.mem-snap-what {
+  font-size: 11px;
+}
+
+.mem-diff {
+  min-width: 0;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.mem-diff-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.mem-diff-head > :last-child {
+  margin-left: auto;
+}
+
+.mem-scope {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.mem-scope label,
+.mem-picks label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.mem-picks {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.mem-warn {
+  color: var(--del, #e57373);
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+/* 持ち出し / 取り込み（P3）。形式選択とファイル選択は .mem-scope の行組みを流用する。 */
+.mem-transfer + .mem-transfer {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.mem-transfer .mem-scope {
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.mem-transfer input[type="file"] {
+  font-size: 12px;
+  padding: 3px;
+}
+
+.mem-import {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+/* 検出結果の一覧。値そのものは出さない（規則名・場所・マスク済みヒントのみ）。 */
+.mem-secrets {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mem-secrets code {
+  color: var(--del, #e57373);
+}
+
+@media (max-width: 760px) {
+  /* 狭い幅（スマホ・タブレット縦）では 2 ペインが成立しないので縦に積む。 */
+  .mem-body {
+      grid-template-columns: 1fr;
+    }
+
+  .mem-list,
+  .mem-diff {
+    max-height: 240px;
+  }
+
+}
