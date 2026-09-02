@@ -99,6 +99,7 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sites := 0
 	for _, d := range f.Decls {
 		fn, ok := d.(*ast.FuncDecl)
 		if !ok || fn.Body == nil {
@@ -122,10 +123,21 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 			}
 			return true
 		})
+		if uses {
+			sites++
+		}
 		if uses && !falls {
 			t.Errorf("%s: usageModelRows を使っているのに fallbackTotals が無い"+
 				"（modelUsage の来ない停止・異常終了で消費が 0 になる）", fn.Name.Name)
 		}
+	}
+	// 🔥 走査対象が 1 件も見つからないなら、この検査は「何も見ていない」。
+	// usageModelRows が素の識別子でなくなる（例: usagex へ移して usagex.ModelRows になる）と
+	// uses が永久に false になり、**縮退を全部消しても緑のまま通る**。
+	// 守っているのは「modelUsage の来ない停止・異常終了で消費が 0 になる」＝課金の取りこぼし。
+	if sites == 0 {
+		t.Fatal("usageModelRows を呼ぶ関数が 1 つも見つからない＝この検査が無言化している" +
+			"（識別子が変わった / 移送された場合は、この検査の走査条件も一緒に直すこと）")
 	}
 }
 
@@ -192,11 +204,13 @@ func TestUsageRecordHasNoContentFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	banned := []string{"text", "prompt", "reply", "body", "content", "message"}
+	found := false
 	ast.Inspect(f, func(n ast.Node) bool {
 		ts, ok := n.(*ast.TypeSpec)
 		if !ok || ts.Name.Name != "Record" {
 			return true
 		}
+		found = true
 		st, ok := ts.Type.(*ast.StructType)
 		if !ok {
 			return false
@@ -212,4 +226,11 @@ func TestUsageRecordHasNoContentFields(t *testing.T) {
 		}
 		return false
 	})
+	// 🔥 パスの誤りは ParseFile の t.Fatal で捕まるが、**型名の誤りは捕まらない**
+	// （見つからないまま静かに緑になる）。移送で usageRecord → Record になった時に
+	// 気付けたのは検査が赤くなったからで、次に名前が変わったときは同じ幸運を当てにできない。
+	if !found {
+		t.Fatal("台帳の行の型が見つからない＝この検査が無言化している" +
+			"（型名が変わった / 移送された場合は、この検査の走査条件も一緒に直すこと）")
+	}
 }
