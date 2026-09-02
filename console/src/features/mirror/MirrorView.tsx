@@ -41,14 +41,12 @@ import { useSettingsUI } from "../settings/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
-import FileIcon from "../../ui/FileIcon.tsx";
 import { useDraft, writeDraft } from "../../lib/draft.ts";
 import { useDragScroll } from "../../lib/dragScroll.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { prettyModel } from "../../lib/modelName.ts";
-import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import {
   readTurn,
   collectBlocks,
@@ -73,10 +71,24 @@ import { pendingSpeech } from "../chat/ttsText.ts";
 import { askAssistant } from "../chat/api.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
+import { MirrorBanners } from "./parts/MirrorBanners.tsx";
+import { JumpPills } from "./parts/JumpPills.tsx";
+import { AttachChips } from "./parts/AttachChips.tsx";
+import { HistoryNav } from "./parts/HistoryNav.tsx";
+import { SendColumn } from "./parts/SendColumn.tsx";
+import { SkillButton, SkillList } from "./parts/SkillList.tsx";
+import { SuggestRow } from "./parts/SuggestRow.tsx";
+import {
+  DirGoneNotice,
+  ResumeNotice,
+  ResumingNotice,
+  TerminalResumeNotice,
+  TerminalUpdateNotice,
+  WsStoppedNotice,
+} from "./parts/ComposerNotices.tsx";
 import { ContextBar } from "./ContextBar.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { t as tr, useT } from "../../lib/i18n/index.ts";
-import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf } from "../../agents/registry.ts";
 import { takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
@@ -87,7 +99,6 @@ import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts } f
 import { echoLanded, echoNeedsResync } from "./pendingEcho.ts";
 import { echoStore, nextEchoId, type SendEcho } from "./parts/sendEcho.ts";
 import { findDiffPane, findPane, findPlanPane } from "./parts/panes.ts";
-import { SkillOriginBadge } from "./parts/SkillOriginBadge.tsx";
 import { applyMark, captureMark, saveMark, scrollTopForTurn, loadMark, type ScrollMark } from "./scrollMark.ts";
 import { PLAN_APPROVE_KEYS } from "./planDecision.ts";
 import { deliverPlanComments, planKey } from "./planComments.ts";
@@ -108,7 +119,7 @@ import { ForkAtModal } from "./ForkAtModal.tsx";
 import type { ForkAtTarget } from "./ForkAtModal.tsx";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal, useHandoffProposals, type Proposal as HandoffProposalT } from "./HandoffProposal.tsx";
-import { PendingQuestions } from "./PendingQuestions.tsx";
+import { PlanPendingCard, PermissionCard, QuestionCard, TypingRow } from "./parts/pendingCards.tsx";
 import { CarriedBlock } from "./CarriedBlock.tsx";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
 import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
@@ -119,7 +130,7 @@ import { TranscriptView } from "./transcript/TranscriptView.tsx";
 import type { TranscriptCaps } from "./transcript/capabilities.ts";
 import type { Group, Part, Question, TaskItem, Turn, TurnTtsWiring } from "./transcript/types.ts";
 import { coalesceUserActions, groupTurns, isNoise, latestContext, parseCommand, spendOf } from "./transcript/model.ts";
-import { PlanBlock, TaskChecklist, planTitle } from "./transcript/blocks.tsx";
+import { TaskChecklist, planTitle } from "./transcript/blocks.tsx";
 import { useMarksController } from "./transcript/useMarks.ts";
 import { MarkStrip } from "./transcript/MarkStrip.tsx";
 
@@ -2649,77 +2660,20 @@ export function MirrorView({
       {tasks.length > 0 && <TaskChecklist key={"todo-" + session} tasks={tasks} session={session} />}
       <FileChangeStrip key={"files-" + session} session={session} files={files} />
       <MarkStrip key={"marks-" + session} marks={marks} storageKey={session} />
-      {isPlan && (
-        <div className="mirror-planmode">
-          <Icon name="debug-pause" /> {tr("mirror.plan_mode_note")}
-        </div>
-      )}
-      {termState === "resume" && (
-        // The startup resume menu is showing in the terminal (invisible from chat) —
-        // prompt the user to go choose. "2. Resume full session as-is" keeps the full
-        // context; the recommended summary option would drop it.
-        <div className="mirror-attention">
-          <Icon name="warning" />
-          <span className="ma-text">{tr("mirror.resume_choice_note")}</span>
-          <button type="button" className="btn primary ma-btn" onClick={() => onToggleMirror(false)}>
-            <Icon name="terminal" /> {tr("mirror.open_terminal")}
-          </button>
-        </div>
-      )}
-      {termState === "update" && (
-        // codex's startup update menu is showing in the terminal (invisible from chat).
-        // "1. Update now" exits the process and the tmux session dies with it — CLI
-        // updates belong to the image pin — so the offered action is skip. The digit
-        // key alone selects and confirms (verified on 0.144.3), hence a single "2".
-        <div className="mirror-attention">
-          <Icon name="warning" />
-          <span className="ma-text">{tr("mirror.codex_update_note")}</span>
-          <button
-            type="button"
-            className="btn primary ma-btn"
-            onClick={() => {
-              postKeys(["2"]);
-              setTimeout(() => tickRef.current?.(), 500);
-            }}
-          >
-            {tr("mirror.skip_continue")}
-          </button>
-        </div>
-      )}
-      {termState === "compacting" && (
-        <div className="mirror-compacting">
-          <div className="mc-head">
-            <Icon name="loading" spin /> {tr("mirror.compacting")}
-            {compactProg?.elapsed && <span className="mc-elapsed">{compactProg.elapsed}</span>}
-            {compactProg && compactProg.pct >= 0 && <span className="mc-pct">{compactProg.pct}%</span>}
-          </div>
-          {compactProg && compactProg.pct >= 0 && (
-            <div className="mc-track" role="progressbar" aria-valuenow={compactProg.pct} aria-valuemin={0} aria-valuemax={100}>
-              <div className="mc-fill" style={{ width: compactProg.pct + "%" }} />
-            </div>
-          )}
-        </div>
-      )}
-      {suggestedTitle && (
-        <div className="mirror-title-suggest">
-          <Icon name="lightbulb" />
-          <span className="mts-text">
-            <Trans k="mirror.title_suggestion" vars={{ title: suggestedTitle }} components={[<strong />]} />
-          </span>
-          <button type="button" className="btn primary mts-btn" disabled={titleActing} onClick={acceptTitle}>
-            <Icon name={titleActing ? "loading" : "check"} spin={titleActing} /> {tr("mirror.adopt")}
-          </button>
-          <button
-            type="button"
-            className="icon mts-dismiss"
-            disabled={titleActing}
-            onClick={dismissTitle}
-            title={tr("mirror.dismiss_suggestion")}
-          >
-            <Icon name="close" />
-          </button>
-        </div>
-      )}
+      <MirrorBanners
+        isPlan={isPlan}
+        termState={termState}
+        compactProg={compactProg}
+        suggestedTitle={suggestedTitle}
+        titleActing={titleActing}
+        onOpenTerminal={() => onToggleMirror(false)}
+        onSkipUpdate={() => {
+          postKeys(["2"]);
+          setTimeout(() => tickRef.current?.(), 500);
+        }}
+        onAcceptTitle={acceptTitle}
+        onDismissTitle={dismissTitle}
+      />
 
       <div
         className="mirror-body"
@@ -2822,222 +2776,93 @@ export function MirrorView({
           />
         )}
         {pendingPlan && (
-          <div className="mirror-turn assistant">
-            <div className="mirror-turn-head">
-              <span className="mt-who">{agentName}</span>
-              <span className="mt-model muted">{tr("mirror.plan_pending")}</span>
-            </div>
-            <div className="mirror-turn-body">
-              <PlanBlock
-                plan={pendingPlan}
-                session={session}
-                pending
-                sending={sending}
-                onOpen={() => openPlan(pendingPlan)}
-                onSendComments={() => void sendPlanComments(pendingPlan)}
-                sendDisabled={planSendBlocked}
-                onApprove={() => {
-                  // A rejected plan may be refined and re-presented with identical Markdown.
-                  // The optimistic marker is keyed by that Markdown (the pending payload has
-                  // no tool-use id), so it belongs only until the next decision. Clear it
-                  // before approving the new presentation; its real tool_result still keeps
-                  // the older historical card correctly badged 却下.
-                  rejectedPlansRef.current.delete(pendingPlan.trim());
-                  void sendKeys([...PLAN_APPROVE_KEYS]);
-                }}
-                // 却下 = 中断（Escape）で keep-planning に倒す。ExitPlanMode メニューの
-                // 選択肢数/順序は claude 版依存で、位置固定キー（旧 Down×3 で「4. Tell Claude
-                // what to change」を狙う実装）は短いラップするメニューでは先頭の「Yes」行へ
-                // 回り込み、却下したのに承認してしまう（2026-07-22 実障害）。中断はレイアウト
-                // 非依存にモーダルを閉じて plan モードへ戻し、composer を解放する。tool_result は
-                // interrupt になり planDecision.isRejected が拾う。詳細は planDecision.ts。
-                onReject={() => {
-                  rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic 却下 badge（実 outcome で planOutcome が調停）
-                  void sendInterrupt();
-                }}
-              />
-            </div>
-          </div>
+          <PlanPendingCard
+            agentName={agentName}
+            plan={pendingPlan}
+            session={session}
+            sending={sending}
+            sendDisabled={planSendBlocked}
+            onOpen={() => openPlan(pendingPlan)}
+            onSendComments={() => void sendPlanComments(pendingPlan)}
+            onApprove={() => {
+              // A rejected plan may be refined and re-presented with identical Markdown.
+              // The optimistic marker is keyed by that Markdown (the pending payload has
+              // no tool-use id), so it belongs only until the next decision. Clear it
+              // before approving the new presentation; its real tool_result still keeps
+              // the older historical card correctly badged 却下.
+              rejectedPlansRef.current.delete(pendingPlan.trim());
+              void sendKeys([...PLAN_APPROVE_KEYS]);
+            }}
+            // 却下 = 中断（Escape）で keep-planning に倒す。ExitPlanMode メニューの
+            // 選択肢数/順序は claude 版依存で、位置固定キー（旧 Down×3 で「4. Tell Claude
+            // what to change」を狙う実装）は短いラップするメニューでは先頭の「Yes」行へ
+            // 回り込み、却下したのに承認してしまう（2026-07-22 実障害）。中断はレイアウト
+            // 非依存にモーダルを閉じて plan モードへ戻し、composer を解放する。tool_result は
+            // interrupt になり planDecision.isRejected が拾う。詳細は planDecision.ts。
+            onReject={() => {
+              rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic 却下 badge（実 outcome で planOutcome が調停）
+              void sendInterrupt();
+            }}
+          />
         )}
         {pendingPerm && !pending && !pendingPlan && (
           // Defense-in-depth: a question/plan always wins over a generic permission
           // dialog (the server already suppresses the permission in that case). This
           // guards against a poll race ever showing 許可/拒否 over an AskUserQuestion,
           // whose buttons would send keystrokes that mis-answer the question underneath.
-          <div className="mirror-turn assistant">
-            <div className="mirror-turn-head">
-              <span className="mt-who">{agentName}</span>
-              <span className="mt-model muted">{tr("mirror.perm_pending")}</span>
-            </div>
-            <div className="mirror-turn-body">
-              <div className="mt-perm">
-                <div className="mt-perm-head">
-                  <Icon name="shield" /> {tr("mirror.perm_asking")}
-                </div>
-                <div className="mt-perm-msg">{pendingPerm}</div>
-                <div className="mt-perm-actions">
-                  <button
-                    type="button"
-                    className="btn primary mt-perm-btn"
-                    disabled={sending}
-                    onClick={() => sendKeys(["Enter"])}
-                  >
-                    <Icon name="check" /> {tr("mirror.allow")}
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost mt-perm-btn"
-                    disabled={sending}
-                    title={tr("mirror.auto_allow")}
-                    onClick={() => sendKeys(["Down", "Enter"])}
-                  >
-                    {tr("mirror.always_allow")}
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost mt-perm-btn"
-                    disabled={sending}
-                    onClick={() => sendKeys(["Down", "Down", "Enter"])}
-                  >
-                    <Icon name="close" /> {tr("mirror.deny")}
-                  </button>
-                </div>
-                <div className="mt-perm-hint muted">{tr("mirror.perm_hint")}</div>
-              </div>
-            </div>
-          </div>
+          <PermissionCard
+            agentName={agentName}
+            message={pendingPerm}
+            sending={sending}
+            onAllow={() => sendKeys(["Enter"])}
+            onAlwaysAllow={() => sendKeys(["Down", "Enter"])}
+            onDeny={() => sendKeys(["Down", "Down", "Enter"])}
+          />
         )}
         {pending && pending.length > 0 && (
-          <div className="mirror-turn assistant">
-            <div className="mirror-turn-head">
-              <span className="mt-who">{agentName}</span>
-              <span className="mt-model muted">{tr("mirror.questioning")}</span>
-            </div>
-            <div className="mirror-turn-body">
-              {pendingText && <MarkdownView source={pendingText} repo={sessionMeta?.repo ?? null} onOpenFile={openFile} />}
-              <PendingQuestions
-                key={"pq-" + (pending[0]?.question || "")}
-                questions={pending}
-                sending={sending}
-                onSubmitKeys={sendKeys}
-                onSubmitSeq={sendSeq}
-                onRespond={
-                  // managed は id の有無に関わらず semantic 経路に固定する — keys/seq へ
-                  // 落とすと存在しない tmux pane を叩きに行く。id を欠く質問（P2 まで
-                  // の過渡・再同期待ち）はサーバが bad_interaction で却下し、sendRespond
-                  // がトーストで知らせる。
-                  managed ? (answers) => void sendRespond(pending[0]?.id || "", answers) : undefined
-                }
-                // Cancel maps to the same stop primitive as the chat 停止 button: TUI sends
-                // Escape (dismisses the AUQ modal, doesn't mark a turn), managed calls
-                // Interrupt. Either way the pending question clears and the composer is free.
-                onCancel={() => void sendInterrupt()}
-                answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
-                multiPage={sessionMeta?.kind === "codex"}
-                writeIn={sessionMeta?.kind === "agy"}
-              />
-            </div>
-          </div>
+          <QuestionCard
+            agentName={agentName}
+            questions={pending}
+            pendingText={pendingText}
+            repo={sessionMeta?.repo ?? null}
+            sending={sending}
+            answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
+            multiPage={sessionMeta?.kind === "codex"}
+            writeIn={sessionMeta?.kind === "agy"}
+            onOpenFile={openFile}
+            onSubmitKeys={sendKeys}
+            onSubmitSeq={sendSeq}
+            onRespond={
+              // managed は id の有無に関わらず semantic 経路に固定する — keys/seq へ
+              // 落とすと存在しない tmux pane を叩きに行く。id を欠く質問（P2 まで
+              // の過渡・再同期待ち）はサーバが bad_interaction で却下し、sendRespond
+              // がトーストで知らせる。
+              managed ? (answers) => void sendRespond(pending[0]?.id || "", answers) : undefined
+            }
+            onCancel={() => void sendInterrupt()}
+          />
         )}
-        {busy && !pending && (
-          <div className="mirror-typing" aria-label={tr("mirror.typing", { name: agentName })}>
-            <span className="mt-who">{agentName}</span>
-            <span className="typing-dots">
-              <i />
-              <i />
-              <i />
-            </span>
-            {/* Stop the running turn (Escape) — lives with the typing indicator so it shows
-                while working OR while a background run (サブエージェント/Workflow) lingers on an
-                otherwise-idle session, and never shifts the composer. */}
-            <button
-              type="button"
-              className="ghost mirror-stop"
-              disabled={sending}
-              title={tr("mirror.stop_run")}
-              onClick={() => void sendInterrupt()}
-            >
-              <Icon name="debug-stop" /> {tr("chat.stop")}
-            </button>
-          </div>
-        )}
+        {busy && !pending && <TypingRow agentName={agentName} sending={sending} onStop={() => void sendInterrupt()} />}
         </div>
-        {(showJump || showReplyTop) && (
-          // 入力欄のすぐ上に浮くピル。sticky で本文の最後に置く（bottom 指定の sticky は
-          // 「本来の位置より下へ行きそうなときだけ上へ留める」ので、先頭に置くと二度と
-          // 降りてこない — 実測で本文の 42,000px 上に取り残された）。
-          //
-          // ラッパは height:0、ボタンはその中で absolute。in-flow のまま置くと、はみ出した
-          // ボタンぶん（実測 12px）がスクロール可能領域を伸ばし、末尾に貼り付いているのに
-          // 12px の余白が残る。「最新へ」は末尾から離れたときしか出ないので誰も踏まなかったが、
-          // 「返信を頭から」は末尾でも出るので表に出た。bottom:0 の absolute なら、ボタンの箱は
-          // ラッパの上へ伸びる＝末尾より下へはみ出さない。
-          //
-          // 「返信を頭から」は逆向きの導線で、条件も別（最新の回答の先頭が画面より上にある）。
-          // 同じ帯に並べる — 両方出る場面（回答の途中を読んでいて、かつ末尾から離れている）
-          // では、上へ・下への 2 択がそのまま並んで見える。
-          <div className="mirror-jump-wrap">
-            <div className="mirror-jump-row">
-              {showReplyTop && (
-                <button
-                  type="button"
-                  // 見た目は 最新へ と同じピル。クラスを足すのは検証のため — mirror-scroll の
-                  // ハーネスは「最新へ が出ていないこと」で末尾着地を判定しており、素の
-                  // .mirror-jump が 2 種類あると区別が付かない。
-                  className="mirror-jump mirror-jump-top"
-                  onClick={jumpToReplyTop}
-                  title={tr("mirror.jump_reply_top")}
-                  aria-label={tr("mirror.jump_reply_top")}
-                >
-                  <Icon name="arrow-up" /> {tr("mirror.jump_reply_top")}
-                </button>
-              )}
-              {showJump && (
-                <button
-                  type="button"
-                  className="mirror-jump"
-                  onClick={jumpToBottom}
-                  title={tr("mirror.jump_latest")}
-                  aria-label={tr("mirror.jump_latest")}
-                >
-                  <Icon name="arrow-down" /> {tr("mirror.jump_latest")}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+        <JumpPills
+          showJump={showJump}
+          showReplyTop={showReplyTop}
+          onJumpBottom={jumpToBottom}
+          onJumpReplyTop={jumpToReplyTop}
+        />
       </div>
 
       {readOnly ? (
         dirGone ? (
-          // Dir removed: no resume path, so drop the button and just say so — the
-          // history above is fully readable, it simply can't be continued.
-          <div className="mirror-compose mirror-compose-resume">
-            <span className="muted mirror-resume-hint">
-              <Icon name="circle-slash" /> {tr("mirror.folder_missing_history")}
-            </span>
-          </div>
+          <DirGoneNotice />
         ) : (
-          // History (read-only): the session isn't attached, so input is disabled. The
-          // button attaches (resumes) in the background while keeping this chat open —
-          // the composer enables once the session is live (alive from the poll).
-          <div className="mirror-compose mirror-compose-resume">
-            <button
-              type="button"
-              className="btn primary mirror-resume"
-              disabled={!running}
-              title={running ? tr("mirror.resume_session") : tr("mirror.ws_stopped")}
-              onClick={() => {
-                wantResumeFocusRef.current = true;
-                onResume?.();
-              }}
-            >
-              <Icon name="play" /> {tr("mirror.resume_continue")}
-            </button>
-            <span className="muted mirror-resume-hint">
-              {running ? tr("mirror.viewing_history_resume") : tr("mirror.viewing_history_ws_stopped")}
-            </span>
-          </div>
+          <ResumeNotice
+            running={running}
+            onResume={() => {
+              wantResumeFocusRef.current = true;
+              onResume?.();
+            }}
+          />
         )
       ) : !running ? (
         // Workspace stopped (or not yet running): the agent is down, so the composer can't
@@ -3048,100 +2873,44 @@ export function MirrorView({
         // read-only history it now is; Start from the top bar brings it back. (readOnly handles
         // its own stopped case above; a live agent's resume/update menu can't be up with the WS
         // down, so this precedes those checks.)
-        <div className="mirror-compose mirror-compose-resume">
-          <span className="muted mirror-resume-hint">
-            <Icon name="circle-slash" /> {tr("mirror.viewing_history_ws_stopped")}
-          </span>
-        </div>
+        <WsStoppedNotice />
       ) : termState === "resume" ? (
-        // Resume menu is up in the terminal: block the composer (keystrokes would go to
-        // the menu) and send the user there to choose.
-        <div className="mirror-compose mirror-compose-resume">
-          <button type="button" className="btn primary mirror-resume" onClick={() => onToggleMirror(false)}>
-            <Icon name="terminal" /> {tr("mirror.select_in_terminal")}
-          </button>
-          <span className="muted mirror-resume-hint">{tr("mirror.resume_choice_hint")}</span>
-        </div>
+        <TerminalResumeNotice onOpenTerminal={() => onToggleMirror(false)} />
       ) : termState === "update" ? (
-        // codex's update menu is up: block the composer (typed digits would pick menu
-        // entries) and offer the two skip choices directly — each digit key selects and
-        // confirms on its own, so one key dismisses the menu.
-        <div className="mirror-compose mirror-compose-resume">
-          <button
-            type="button"
-            className="btn primary mirror-resume"
-            onClick={() => {
-              postKeys(["2"]);
-              setTimeout(() => tickRef.current?.(), 500);
-            }}
-          >
-            {tr("mirror.skip_continue")}
-          </button>
-          <button
-            type="button"
-            className="btn mirror-resume"
-            onClick={() => {
-              postKeys(["3"]);
-              setTimeout(() => tickRef.current?.(), 500);
-            }}
-          >
-            {tr("mirror.skip_until_next")}
-          </button>
-          <span className="muted mirror-resume-hint">{tr("mirror.update_choice_hint")}</span>
-        </div>
+        <TerminalUpdateNotice
+          onSkip={() => {
+            postKeys(["2"]);
+            setTimeout(() => tickRef.current?.(), 500);
+          }}
+          onSkipUntilNext={() => {
+            postKeys(["3"]);
+            setTimeout(() => tickRef.current?.(), 500);
+          }}
+        />
       ) : !alive ? (
-        // Attached but the session is still coming up (resume in flight).
-        <div className="mirror-compose mirror-compose-resume">
-          <span className="muted mirror-resuming">
-            <Icon name="loading" spin /> {tr("mirror.resuming")}
-          </span>
-        </div>
+        <ResumingNotice />
       ) : (
         <div className="mirror-compose">
           {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨で取得する LLM 候補（v2）。
               クリックで差し込み、⌥で即送信。flex 全幅 (.mirror-suggest) で入力行の上に載る。 */}
           {!composerLocked && (suggestChips.length > 0 || settings.replySuggestEnabled) && (
-            <div className="mirror-suggest" ref={attachSuggestRow}>
-              {settings.replySuggestEnabled && (
-                <button
-                  type="button"
-                  className="mirror-suggest-ai"
-                  title={tr("mirror.suggest_ai")}
-                  disabled={suggesting || !running} // wsDown() はトースト副作用があるのでレンダー中は呼ばない
-                  onClick={fetchLlmSuggestions}
-                  onKeyDown={onSuggestNav} // Enter は既定の click（＝候補取得）に任せる
-                >
-                  <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
-                </button>
-              )}
-              {suggestChips.map((sg) => (
-                // ピン留めした候補は先頭に固定で並び、📌 を付けて「消えない側」だと分かるようにする。
-                // 削除・ピン留めは右クリック / 長タップ / Menu キーのメニュー（SuggestChipMenu）。
-                <button
-                  key={(sg.llm ? "l:" : "a:") + sg.text}
-                  type="button"
-                  className={
-                    "mirror-suggest-chip" +
-                    (sg.llm ? " llm" : "") +
-                    (isQuickReplyPinned(settings.quickRepliesPinned, sg.text) ? " pinned" : "") +
-                    (sg.text === cycledText ? " cycling" : "") // Tab でいま入力欄に入れている候補
-                  }
-                  aria-current={sg.text === cycledText ? "true" : undefined}
-                  title={tr("mirror.suggest_hint")}
-                  onClick={(e) => {
-                    if (chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
-                    applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey);
-                  }}
-                  onKeyDown={(e) => onSuggestKeyDown(e, sg.text, sg.llm)}
-                  {...chipMenu.chipProps(sg.text, sg.llm)}
-                >
-                  {isQuickReplyPinned(settings.quickRepliesPinned, sg.text) && (
-                    <Icon name="pinned" className="mirror-suggest-pin" />
-                  )}
-                  {sg.text}
-                </button>
-              ))}
-            </div>
+            <SuggestRow
+              rowRef={attachSuggestRow}
+              chips={suggestChips}
+              pinned={settings.quickRepliesPinned}
+              cycledText={cycledText}
+              aiEnabled={!!settings.replySuggestEnabled}
+              suggesting={suggesting}
+              running={running}
+              onFetchLlm={fetchLlmSuggestions}
+              onNav={onSuggestNav}
+              onChipKeyDown={onSuggestKeyDown}
+              onChipClick={(e, text) => {
+                if (chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
+                applySuggestion(text, e.ctrlKey || e.altKey || e.metaKey);
+              }}
+              chipProps={chipMenu.chipProps}
+            />
           )}
           {chipMenu.menu && (
             <SuggestChipMenu
@@ -3152,113 +2921,38 @@ export function MirrorView({
               onForget={forgetSuggestion}
             />
           )}
-          {(attachments.length > 0 || pasting) && (
-            <div className="mirror-attach">
-              {attachments.map((a, i) => (
-                <div className={"ma-chip" + (a.image ? "" : " ma-file")} key={a.path}>
-                  {a.image ? (
-                    <img className="ma-thumb" src={a.url} alt="" />
-                  ) : (
-                    <span className="ma-fname" title={a.name}>
-                      <FileIcon name={a.name} />
-                      <span className="ma-fname-text">{a.name}</span>
-                    </span>
-                  )}
-                  <button type="button" className="ma-del" title={tr("chat.remove")} onClick={() => removeAttachment(i)}>
-                    <Icon name="close" />
-                  </button>
-                </div>
-              ))}
-              {pasting && (
-                <span className="ma-loading">
-                  <Icon name="loading" spin /> {tr("chat.uploading")}
-                </span>
-              )}
-            </div>
-          )}
-          {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
-          <div className="mirror-hist">
-            <button
-              type="button"
-              className="ghost mirror-hist-btn"
-              title={tr("mirror.prev_input")}
-              disabled={!history.length}
-              onClick={recallPrev}
-            >
-              <Icon name="chevron-up" />
-            </button>
-            <button
-              type="button"
-              className="ghost mirror-hist-btn"
-              title={tr("mirror.next_input")}
-              disabled={histIdx === null}
-              onClick={recallNext}
-            >
-              <Icon name="chevron-down" />
-            </button>
-          </div>
+          <AttachChips attachments={attachments} pasting={pasting} onRemove={removeAttachment} />
+          <HistoryNav
+            canPrev={history.length > 0}
+            canNext={histIdx !== null}
+            onPrev={recallPrev}
+            onNext={recallNext}
+          />
           {/* スキルピッカー（docs/log/50）: コンポーサー上に浮く補完リスト。マウスは onMouseMove で
               選択追従＋クリック確定（mousedown は preventDefault でフォーカスを奪わない —
               CommandPalette と同型）、タップはそのまま確定、キーボードは onKeyDown が駆動。
               引数入力中（skillArgs）は受動表示 — キーボード選択を持たないので sel も付けず、
               クリックだけ（引数は残したままコマンドを差し替える）が生きる。 */}
           {skillListVisible && (
-            <div
-              className={"mirror-skills" + (skillArgs ? " passive" : "")}
-              ref={skillPopRef}
-              role="listbox"
-              aria-label={tr("mirror.skills_btn")}
-            >
-              {skills === null ? (
-                <div className="mirror-skills-note">
-                  <Icon name="loading" spin /> {tr("mirror.skills_loading")}
-                </div>
-              ) : skillItems.length === 0 ? (
-                // 絞り込みの結果ゼロ（ボタン起点だけがここへ来る — タイプ起点は非表示にする）と
-                // そもそも 1 つも無いのは別の話なので、文言を分ける。
-                <div className="mirror-skills-note">{tr(skillQuery ? "mirror.skills_no_match" : "mirror.skills_empty")}</div>
-              ) : (
-                skillItems.map((s, i) => (
-                  <button
-                    type="button"
-                    key={s.type + ":" + s.source + ":" + s.name}
-                    ref={!skillArgs && i === skillSel ? skillSelRef : undefined}
-                    className={"mirror-skill-item" + (!skillArgs && i === skillSel ? " sel" : "")}
-                    role="option"
-                    aria-selected={!skillArgs && i === skillSel}
-                    title={tr("mirror.skills_item_hint")}
-                    onMouseMove={() => setSkillSel(i)}
-                    onMouseDown={(ev) => ev.preventDefault()}
-                    onClick={() => pickSkill(skillInsertText(s))}
-                  >
-                    {/* 1 行目＝起動文字列＋引数ヒント＋出所バッジ、2 行目＝説明。説明を
-                        独立行にすることで、名前と引数に幅を食われず全幅で読める。 */}
-                    <span className="mirror-skill-head">
-                      <span className="mirror-skill-name">{s.invoke ? s.invoke.trim() : s.name}</span>
-                      {s.argumentHint ? <span className="mirror-skill-hint">{s.argumentHint}</span> : null}
-                      {/* バッジは 1 つの入れ物に — 直接並べて margin-left:auto を各々に付けると、
-                          2 つ出たとき余白が両者に均等配分されて右端に寄らない。 */}
-                      <span className="mirror-skill-badges">
-                        {s.origin ? <SkillOriginBadge origin={s.origin} /> : null}
-                        {s.source === "user" ? <span className="mirror-skill-src">{tr("mirror.skills_src_user")}</span> : null}
-                        {s.source === "cli" ? <span className="mirror-skill-src">{tr("mirror.skills_src_cli")}</span> : null}
-                      </span>
-                    </span>
-                    {s.description ? <span className="mirror-skill-desc">{s.description}</span> : null}
-                  </button>
-                ))
-              )}
-            </div>
+            <SkillList
+              popRef={skillPopRef}
+              selRef={skillSelRef}
+              passive={skillArgs}
+              skills={skills}
+              items={skillItems}
+              sel={skillSel}
+              query={skillQuery}
+              onHover={setSkillSel}
+              onPick={(s) => pickSkill(skillInsertText(s))}
+            />
           )}
-          {/* 「/」ボタン: マウス/タップだけでスキルを呼ぶ入口（キーボード派は素の「/」タイプ）。 */}
           {canSkills && (
-            <button
-              type="button"
-              ref={skillBtnRef}
-              className={"ghost mirror-skill-btn" + (skillListVisible ? " on" : "")}
-              title={tr("mirror.skills_btn")}
+            <SkillButton
+              btnRef={skillBtnRef}
+              open={skillListVisible}
               disabled={composerLocked}
-              onClick={() => {
+              trigger={skillTrigger}
+              onToggle={() => {
                 if (skillListVisible) {
                   closeSkillPicker();
                   return;
@@ -3270,11 +2964,7 @@ export function MirrorView({
                 const el = inputRef.current;
                 setSlashTok(pickerTokenAt(draft, el?.selectionStart ?? draft.length, skillTrigger, true));
               }}
-            >
-              <span className="mirror-skill-glyph" aria-hidden="true">
-                {skillTrigger || "✦"}
-              </span>
-            </button>
+            />
           )}
           {/* ＋ attach: the drag&drop-less path (phones foremost, handy everywhere).
               Any file type; the same addFiles upload the paste/drop paths use. */}
@@ -3338,49 +3028,33 @@ export function MirrorView({
             onKeyDown={onKeyDown}
             onPaste={onPaste}
           />
-          {/* Right column: a small mode chip stacked over the send button. The chip is a
-              rarely-used control, so it rides above send (compact, not competing with the
-              textarea) and only appears for agents with a plan toggle. */}
-          <div className="mirror-send-col">
-            {agent.caps.planMode && agent.planCycleKey && (
-              <button
-                type="button"
-                className={"mirror-mode" + (isPlan ? " on" : "")}
-                disabled={sending || decisionPending}
-                title={tr("mirror.toggle_mode")}
-                onClick={() => {
-                  const toPlan = !isPlan;
-                  // Optimistic label (codex/opencode only report the new mode after a turn);
-                  // the poll reconciles from the terminal via paneMode.
-                  setMode(toPlan ? "Plan" : lastNonPlanMode.current || agent.defaultModeLabel);
-                  // managed のモード切替は ThreadSettings の更新（POST /settings →
-                  // UpdateSettings、docs/log/27 §9.4-3）— 次 turn の agent/mode に効く。
-                  // tui は従来どおりキー駆動（planEnterCmd / planCycleKey）。
-                  if (managed) {
-                    void sessionSettings(session, { mode: toPlan ? "plan" : "normal" });
-                    return;
-                  }
-                  // Low-level sends (no working status / no quick re-poll) so the optimistic
-                  // label holds until the regular poll reads the real mode.
-                  // スラッシュコマンドは turn を始めない（サーバ側 slashCmdRe が
-                  // working を付けない）— op は形式上 start で送る。
-                  if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd, "start");
-                  else postKeys([agent.planCycleKey]);
-                }}
-              >
-                {mode || "…"}
-              </button>
-            )}
-            <button
-              type="button"
-              className="btn primary mirror-send"
-              disabled={(!draft.trim() && !attachments.length) || sending || composerLocked}
-              onClick={() => send()}
-              title={tr("chat.send")}
-            >
-              <Icon name="send" />
-            </button>
-          </div>
+          <SendColumn
+            showMode={!!(agent.caps.planMode && agent.planCycleKey)}
+            isPlan={isPlan}
+            modeLabel={mode}
+            modeDisabled={sending || decisionPending}
+            sendDisabled={(!draft.trim() && !attachments.length) || sending || composerLocked}
+            onToggleMode={() => {
+              const toPlan = !isPlan;
+              // Optimistic label (codex/opencode only report the new mode after a turn);
+              // the poll reconciles from the terminal via paneMode.
+              setMode(toPlan ? "Plan" : lastNonPlanMode.current || agent.defaultModeLabel);
+              // managed のモード切替は ThreadSettings の更新（POST /settings →
+              // UpdateSettings、docs/log/27 §9.4-3）— 次 turn の agent/mode に効く。
+              // tui は従来どおりキー駆動（planEnterCmd / planCycleKey）。
+              if (managed) {
+                void sessionSettings(session, { mode: toPlan ? "plan" : "normal" });
+                return;
+              }
+              // Low-level sends (no working status / no quick re-poll) so the optimistic
+              // label holds until the regular poll reads the real mode.
+              // スラッシュコマンドは turn を始めない（サーバ側 slashCmdRe が
+              // working を付けない）— op は形式上 start で送る。
+              if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd, "start");
+              else postKeys([agent.planCycleKey!]);
+            }}
+            onSend={() => send()}
+          />
         </div>
       )}
       {lightbox &&
