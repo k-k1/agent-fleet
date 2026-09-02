@@ -68,7 +68,7 @@ func (s *SQL) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 // migrate applies embedded numbered migrations idempotently, then runs the
 // identity/membership data migration (docs/14, P3-2).
-func (s *SQL) migrate(ctx context.Context) error {
+func (s *SQL) Migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx,
 		`CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
 		return err
