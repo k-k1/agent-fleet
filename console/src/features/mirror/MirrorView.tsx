@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, ReactNode } from "react";
-import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, sessionSkills, downloadURL } from "../../core/api/client.ts";
-import type { CarriedInteraction, InteractionAnswer, ManagedThreadSettings, SessionSkill, TurnResult } from "../../core/api/client.ts";
+import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, downloadURL } from "../../core/api/client.ts";
+import type { CarriedInteraction, InteractionAnswer, ManagedThreadSettings, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
 import { buildImagePrompt } from "../../lib/pastedImages.ts";
@@ -16,25 +16,8 @@ import {
   effectiveTheme,
   expandThinking,
 } from "../../lib/settings.ts";
-import {
-  rankQuickReplies,
-  recordQuickReply,
-  isQuickReplyCandidate,
-  forgetQuickReply,
-  hideQuickReply,
-  unhideQuickReply,
-  pinQuickReply,
-  unpinQuickReply,
-  isQuickReplyPinned,
-  quickReplyKey,
-} from "../../lib/quickReplies.ts";
-import {
-  stepSuggestCycle,
-  suggestFilterDraft,
-  cycledSuggestion,
-  type SuggestCycle,
-} from "../../lib/suggestCycle.ts";
-import { useChipMenu, SuggestChipMenu } from "./SuggestChipMenu.tsx";
+import { isQuickReplyCandidate, isQuickReplyPinned, recordQuickReply, unhideQuickReply } from "../../lib/quickReplies.ts";
+import { SuggestChipMenu } from "./SuggestChipMenu.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 // 失敗ブロックの再認証導線が 設定 > エージェント を開くのに使う（ErrorBlock）。
 import { useSettingsUI } from "../settings/store.ts";
@@ -42,7 +25,6 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useDraft, writeDraft } from "../../lib/draft.ts";
-import { useDragScroll } from "../../lib/dragScroll.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { useBackClose } from "../../lib/backClose.ts";
@@ -51,6 +33,8 @@ import { useTtsStore } from "../../core/store/tts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
 import { MirrorBanners } from "./parts/MirrorBanners.tsx";
 import { useMirrorTts } from "./parts/useMirrorTts.tsx";
+import { useSkillPicker } from "./parts/useSkillPicker.ts";
+import { useReplySuggest } from "./parts/useReplySuggest.ts";
 import { JumpPills } from "./parts/JumpPills.tsx";
 import { AttachChips } from "./parts/AttachChips.tsx";
 import { HistoryNav } from "./parts/HistoryNav.tsx";
@@ -83,16 +67,6 @@ import { PLAN_APPROVE_KEYS } from "./planDecision.ts";
 import { deliverPlanComments, planKey } from "./planComments.ts";
 import { type InteractionAnswerWire, patchAnswers } from "./interactionAnswers.ts";
 import { coarsePointer } from "../../lib/device.ts";
-import { useDismiss } from "../../lib/useDismiss.ts";
-import {
-  applySkillToDraft,
-  exactSkills,
-  filterSkills,
-  hasTriggerHead,
-  pickerTokenAt,
-  slashTokenAt,
-  type SlashToken,
-} from "./skillPicker.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 import { ForkAtModal } from "./ForkAtModal.tsx";
 import type { ForkAtTarget } from "./ForkAtModal.tsx";
@@ -310,36 +284,6 @@ export function MirrorView({
   // absorbed into nothing), leaving the second optimistic echo with no turn to reconcile
   // against — stuck at 反映待ち forever. Set/read synchronously, before any state commit.
   const sendingRef = useRef(false);
-  // 返信サジェスト v2: ✨ボタンで取得した LLM 文脈候補（Layer A のチップ列にマージ）と取得中フラグ。
-  const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
-  const [suggesting, setSuggesting] = useState(false);
-  // 入力途中の Tab 補完サイクル（lib/suggestCycle）。null = サイクル中でない。
-  const [cycle, setCycle] = useState<SuggestCycle | null>(null);
-  const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
-  // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）。
-  // 返り値をチップ行の ref に渡す — この行は条件付きレンダーで出入りするので、ref オブジェクト
-  // 任せだと戻ってきた要素にリスナーが付かない（dragScroll.ts の注記）。
-  const attachSuggestRow = useDragScroll(suggestRef);
-  // チップの右クリック / 長タップ / Menu キーで開くメニュー（ピン留め・削除）。
-  const chipMenu = useChipMenu();
-  // スキルピッカー（docs/log/50 / ADR0034、v2 クロスエージェント＋§8 クロススキル注入）:
-  // セッションで呼べるスキル/コマンドの補完リスト。ネイティブ起動（invoke — "/name" や
-  // codex "$name"）に加え、他規約の SKILL.md（foreign — path/origin 付き）は「path を
-  // 読んで指示に従え」プロンプトとして差し込む — ただの指示文なので kind/ドライバ不問。
-  // 開き方は 2 系統 — 先頭トリガ文字のタイプ（キーボード派。skillTrigger="" の kind は
-  // ボタンのみ）と専用ボタン（マウス/タップ派）。選択はフォーカスを textarea に残す
-  // sel-index 方式（CommandPalette と同型）。managed 発火未検証の kind（opencode）は
-  // ネイティブ項目だけ slashSkillsManaged=false で落とす — foreign はゲート対象外。
-  const canSkills = agent.caps.slashSkills;
-  const skillTrigger = agent.skillTrigger; // "" = ボタンのみ（タイプでは開かない）
-  const [skills, setSkills] = useState<SessionSkill[] | null>(null); // null = 未取得
-  const [slashTok, setSlashTok] = useState<SlashToken | null>(null); // 入力中の先頭 /トークン
-  const [skillBtnOpen, setSkillBtnOpen] = useState(false); // ボタン起点で開いた（全件表示）
-  const [skillSel, setSkillSel] = useState(0);
-  const skillDismissRef = useRef<string | null>(null); // Esc/外クリックで閉じた時点の token（変わるまで再表示しない）
-  const skillPopRef = useRef<HTMLDivElement>(null);
-  const skillBtnRef = useRef<HTMLButtonElement>(null);
-  const skillSelRef = useRef<HTMLButtonElement>(null);
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string; image: boolean }[]>([]);
@@ -1492,175 +1436,20 @@ export function MirrorView({
     if (!coarsePointer()) inputRef.current?.focus();
   };
 
-  // 返信サジェストのチップ: 通常クリックはコンポーサーへ差し込み（編集してから Enter）、
-  // ⌥/Alt 併用で即送信。差し込み時はキャレットを末尾に置いてフォーカスする。
-  const applySuggestion = (text: string, immediate: boolean) => {
-    if (composerLocked) return;
-    if (immediate) {
-      void send(text);
-      return;
-    }
-    setDraft(text);
-    setHistIdx(null);
-    // スマホ: チップ差し込みで textarea にフォーカスすると GBoard が開いて画面を覆う。タッチ端末では
-    // フォーカスしない（キーボードを出さない）— ユーザーは送信 or タップして編集を選べる。
-    if (coarsePointer()) {
-      inputRef.current?.blur(); // 既に開いていたキーボードも畳む
-      return;
-    }
-    requestAnimationFrame(() => {
-      const el = inputRef.current;
-      if (el) {
-        el.focus();
-        el.setSelectionRange(el.value.length, el.value.length);
-      }
-    });
-  };
 
-  // メニューの「この候補を消す」: 学習を消し、かつ隠しリストへ積む（消すだけではシード/再学習で
-  // 戻ってくる）。ピン留めしていたなら当然そのピンも外す。LLM 候補（✨）は学習物ではないので、
-  // その場の候補列から外すだけでよい。
-  const forgetSuggestion = (text: string, llm: boolean) => {
-    if (llm) {
-      setLlmSuggestions((prev) => prev.filter((s) => s !== text));
-      return;
-    }
-    setSetting("quickReplies", forgetQuickReply(settings.quickReplies || {}, text));
-    setSetting("quickRepliesHidden", hideQuickReply(settings.quickRepliesHidden || [], text));
-    setSetting("quickRepliesPinned", unpinQuickReply(settings.quickRepliesPinned || [], text));
-  };
+  // --- スキルピッカー（docs/log/50） --- 本体は parts/useSkillPicker（composerLocked を
+  // 見るのでここで呼ぶ）。
+  const skillPicker = useSkillPicker({
+    session,
+    agent,
+    managed,
+    draft,
+    setDraft,
+    setHistIdx,
+    inputRef,
+    composerLocked,
+  });
 
-  // メニューの「常に表示（ピン留め）」/「ピン留めを解除」。ピンは隠しより強い意思表示なので、
-  // ピンするときは隠しも外す（以前に消した文をピンし直せる）。✨の候補もそのままピンできる
-  // ——「この一文はこれから常用する」と決めた時点で、学習を待つ理由がない。
-  const togglePin = (text: string) => {
-    const pinned = settings.quickRepliesPinned || [];
-    if (isQuickReplyPinned(pinned, text)) {
-      setSetting("quickRepliesPinned", unpinQuickReply(pinned, text));
-      return;
-    }
-    setSetting("quickRepliesPinned", pinQuickReply(pinned, text));
-    setSetting("quickRepliesHidden", unhideQuickReply(settings.quickRepliesHidden || [], text));
-  };
-
-  // --- スキルピッカー（docs/log/50） ---
-  // slashOpen: 先頭トリガのトークンが生きていて、かつ直前に閉じられていない。
-  // skillListVisible: 実際にリストを描く条件 — タイプ起点は該当ゼロなら出さない
-  // （素の /plan 等の手打ちを覆い隠さない）。ボタン起点は空でも「無い」ことを見せる。
-  // 開く条件はトリガのタイプ（bare トークンでは開かない）、絞り込みはどちらの起点でも
-  // 同じトークンで効かせる — ボタンで開いてからタイプしても候補が絞れる。
-  // skillArgs（受動表示）: コマンドを打ち終えて引数を書いている間。引数ヒントを見ながら書け
-  // るようにリストは出したままにするが、確定した 1 件だけに絞り、キーボードは横取りしない
-  // （Enter は送信のまま — ここで Enter を奪うと引数入力中に送信できなくなる）。
-  const slashOpen = canSkills && !composerLocked && slashTok !== null && !slashTok.bare && skillDismissRef.current !== slashTok.token;
-  const skillArgs = slashOpen && !!slashTok?.args;
-  const skillsOpen = canSkills && !composerLocked && (skillBtnOpen || slashOpen);
-  const skillQuery = slashTok?.token ?? "";
-  const skillItems = (skillArgs ? exactSkills(skills ?? [], skillQuery) : skills ? filterSkills(skills, skillQuery) : [])
-    // managed 発火未検証 kind はネイティブ項目だけ落とす（foreign=注入はただのプロンプト）。
-    .filter((s) => !!s.path || !managed || agent.caps.slashSkillsManaged);
-  // 受動表示は「一致した 1 件があるときだけ」— 読み込み中や不一致で "/" 始まりの文章を書いて
-  // いる間にポップが出入りしないように、ボタン起点/タイプ起点の緩い条件は使わない。
-  const skillListVisible = skillsOpen && (skillArgs ? skillItems.length > 0 : skillBtnOpen || skills === null || skillItems.length > 0);
-  // キーボード（↑↓移動・Enter/Tab 確定）を横取りするのは能動表示のときだけ。
-  const skillNavActive = skillListVisible && !skillArgs;
-  // ネイティブは invoke をそのまま、foreign は「path を読んで指示に従え」プロンプトに組む
-  // （末尾空白 — 続けて引数を打てる）。
-  const skillInsertText = (s: SessionSkill): string =>
-    s.invoke || tr("mirror.skills_use_foreign", { path: s.path ?? "" }) + " ";
-
-  // 開いた時に取得（セッション替えでリセット）。都度取得 — セッション途中で SKILL.md を
-  // 作らせる使い方が普通にあるので、開くたびに新鮮なリストを引く（走査は安い）。
-  useEffect(() => setSkills(null), [session]);
-  useEffect(() => {
-    if (!skillsOpen || !session) return;
-    let live = true;
-    sessionSkills(session)
-      .then((d) => live && setSkills(d.skills || []))
-      .catch(() => live && setSkills((s) => s ?? [])); // 失敗時: 既取得はそのまま、未取得は空扱い
-    return () => {
-      live = false;
-    };
-  }, [skillsOpen, session]);
-
-  // draft が手元の token とずれたら（送信でクリア・履歴呼び出し等の setDraft 直書き）閉じる。
-  // 先頭は全角エイリアス（／・＄ — JP IME）も許すので startsWith でなく hasTriggerHead
-  // （bare トークンはそもそもトリガを持たないので、この確認は非 bare のときだけ）。
-  useEffect(() => {
-    if (!slashTok) return;
-    if ((!slashTok.bare && !hasTriggerHead(draft, skillTrigger)) || !draft.slice(0, slashTok.end).endsWith(slashTok.token))
-      setSlashTok(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft]);
-
-  // 絞り込みが変わったら選択を先頭へ戻し、選択が動いたら見える位置へ追従。
-  useEffect(() => setSkillSel(0), [slashTok?.token, skillBtnOpen]);
-  // ★ ブロック本体で書くこと（式のまま返さない）: Chrome 150 以降 scrollIntoView() は
-  // スクロール完了の Promise を返すので、暗黙 return するとその Promise が effect の
-  // クリーンアップとして保存され、次回実行時に React が関数として呼んで TypeError →
-  // 未捕捉のまま root ごとアンマウント＝画面真っ黒になる（候補件数が変わるたびに再実行
-  // される effect なので、絞り込みが 1→0 件に変わった瞬間に踏む）。
-  useEffect(() => {
-    skillSelRef.current?.scrollIntoView({ block: "nearest" });
-  }, [skillSel, skillItems.length]);
-
-  // 差し込み: 入力中のトークン（無ければ下書き全体の頭）を起動文字列（invoke —
-  // "/name " や "$name "）に置換し、既存の本文は引数として残す。タッチ端末はフォーカス
-  // しない（GBoard が画面を覆う — applySuggestion と同じ規約）。送信はしない —
-  // 引数を足してからユーザーが送る。
-  const pickSkill = (invoke: string) => {
-    const el = inputRef.current;
-    const caret = el ? (el.selectionStart ?? draft.length) : draft.length;
-    const { next, caret: nc } = applySkillToDraft(draft, caret, invoke, skillTrigger, skillBtnOpen);
-    setDraft(next);
-    setHistIdx(null);
-    setSkillBtnOpen(false);
-    skillDismissRef.current = null;
-    // invoke 直後のキャレットは末尾空白の右＝引数位置なので args トークンになる → リストは
-    // 受動表示のまま残り、選んだスキルの引数ヒントを見ながら引数を書ける。
-    setSlashTok(slashTokenAt(next, nc, skillTrigger));
-    if (coarsePointer()) {
-      inputRef.current?.blur();
-      return;
-    }
-    requestAnimationFrame(() => {
-      const el2 = inputRef.current;
-      if (el2) {
-        el2.focus();
-        el2.setSelectionRange(nc, nc);
-      }
-    });
-  };
-
-  // 閉じる（Esc・外クリック・ボタン再押下）。タイプ起点は「いまの token のままなら
-  // 再表示しない」印を残す — 消して打ち直したら（token が変われば）また開く。
-  const closeSkillPicker = () => {
-    setSkillBtnOpen(false);
-    skillDismissRef.current = slashTok?.token ?? null;
-  };
-  // 外クリックで閉じる。textarea 内クリック（キャレット移動）は対象外 — onSelect が
-  // token を追い直してリストが生きるべき操作なので、refs に inputRef も含める。
-  useDismiss([skillPopRef, skillBtnRef, inputRef], skillListVisible, closeSkillPicker);
-
-  // v2: ✨ボタン — 直近の会話ログを一発ヘッドレス LLM に渡し、文脈に沿った返信候補を取得して
-  // チップ列にマージする（session_suggest_reply.go）。押した時だけトークンを使う on-demand。
-  const fetchLlmSuggestions = async () => {
-    if (!session || suggesting || wsDown()) return;
-    setSuggesting(true);
-    try {
-      const j = await apiJSON(`api/sessions/${q(session)}/suggest-replies`, "POST", {});
-      const list = Array.isArray(j?.suggestions) ? (j.suggestions as unknown[]).filter((x): x is string => typeof x === "string") : [];
-      // LLM が同文を重複して返すことがある — チップの React key は本文由来なので畳んでおく。
-      setLlmSuggestions([...new Set(list)]);
-      // 候補ゼロ = バックエンド不在（claude/codex/opencode いずれも無い）か会話が浅い。無反応だと
-      // 壊れて見えるので一言知らせる（Layer A のチップはそのまま残る）。
-      if (!list.length) toast(tr("mirror.suggest_none"));
-    } catch {
-      toast(tr("mirror.suggest_failed")); // 生成失敗（機能OFF含む）— 学習チップはそのまま
-    } finally {
-      setSuggesting(false);
-    }
-  };
 
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
   // The pane carries docSession so it becomes a REVIEW surface (select → comment);
@@ -1853,116 +1642,10 @@ export function MirrorView({
     inputRef.current?.focus();
   };
 
-  // 返信サジェストのフォーカスリング = ✨ボタン＋候補チップ（DOM 順）。✨も候補の一員として
-  // 巡回に含める（Enter はボタン既定の click ＝ LLM 候補取得がそのまま走る）。
-  const suggestRing = (): HTMLButtonElement[] =>
-    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
-
-  // チップ行は1行スクロール（はみ出した候補は画面外）。キー移動のフォーカス先が隠れないよう
-  // 横だけ最小限スクロールして追従させる。focus 既定のスクロールは縦にも効いて本文が飛ぶので
-  // preventScroll で殺し、inline/block:nearest の scrollIntoView で必要分だけ動かす。
-  const focusRingItem = (el: HTMLButtonElement) => {
-    el.focus({ preventScroll: true });
-    el.scrollIntoView({ block: "nearest", inline: "nearest" });
-  };
-
-  // リング内の移動。Tab/Shift+Tab は「候補＋入力欄」を一巡（端まで来たら入力欄へ戻る＝
-  // 入力欄→候補1→候補2→入力欄…のループ）。←/→ は候補内だけで循環。Escape で入力欄へ。
-  // 処理したら true を返し、呼び出し側はそこで打ち切る。
-  const onSuggestNav = (e: RKeyboardEvent<HTMLButtonElement>): boolean => {
-    if (e.nativeEvent.isComposing) return false;
-    if (e.key === "Escape") {
-      e.preventDefault();
-      inputRef.current?.focus();
-      return true;
-    }
-    const ring = suggestRing();
-    const i = ring.indexOf(e.currentTarget);
-    if (i < 0 || !ring.length) return false;
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const next = e.shiftKey ? i - 1 : i + 1;
-      if (next < 0 || next >= ring.length) inputRef.current?.focus(); // 端 → 入力欄へ戻る
-      else focusRingItem(ring[next]);
-      return true;
-    }
-    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-      e.preventDefault();
-      const d = e.key === "ArrowRight" ? 1 : -1;
-      focusRingItem(ring[(i + d + ring.length) % ring.length]); // ←/→ は候補内で循環
-      return true;
-    }
-    return false;
-  };
-
-  // チップ上のキー操作。移動系は onSuggestNav に委ね、Enter/Ctrl(⌘)+Enter の役割はコンポーサーの
-  // 送信キー設定に合わせる: modSend（Ctrl+Enter で送信）なら mod+Enter=送信・素の Enter=差し込み、
-  // enter モード（Enter で送信）なら逆。
-  const onSuggestKeyDown = (e: RKeyboardEvent<HTMLButtonElement>, text: string, llm: boolean) => {
-    if (onSuggestNav(e)) return;
-    if (chipMenu.onKeyDown(e, text, llm)) return; // Menu キー / Shift+F10 → ピン留め・削除メニュー
-    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
-    const mod = e.ctrlKey || e.metaKey;
-    e.preventDefault(); // ボタン既定の click（＝差し込み）と二重発火させない
-    applySuggestion(text, modSend ? mod : !mod);
-  };
 
   const onKeyDown = (e: RKeyboardEvent) => {
-    // スキルピッカーが開いている間は ↑/↓（選択移動）・Enter/Tab（確定）・Esc（閉じる）を
-    // ここで横取りする — 下の履歴呼び出し（↑/↓）・チップ Tab・送信 Enter より先。IME の
-    // 変換中は触らない。Ctrl/⌘+Enter と Shift+Enter は素通し（そのまま送信/改行できる逃げ道）。
-    // 受動表示（引数入力中 = skillArgs）は横取りしない — 引数ヒントを見せているだけなので、
-    // Enter は送信・↑/↓ はキャレット移動のまま。閉じる Esc だけは受け付ける。
-    if (skillListVisible && !e.nativeEvent.isComposing) {
-      if (skillNavActive && (e.key === "ArrowDown" || e.key === "ArrowUp") && skillItems.length) {
-        e.preventDefault();
-        const n = skillItems.length;
-        setSkillSel((s) => (s + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
-        return;
-      }
-      if (skillNavActive && ((e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.shiftKey) || e.key === "Tab") && skillItems[skillSel]) {
-        e.preventDefault();
-        pickSkill(skillInsertText(skillItems[skillSel]));
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeSkillPicker();
-        return;
-      }
-    }
-    // 入力欄が空なら Tab で返信サジェストへ入る（＝入力欄→候補1→候補2→入力欄…のループ）。
-    // 素の Tab は最初の「候補チップ」から始める（先頭の✨は飛ばす／Shift+Tab で戻れる）。
-    // Shift+Tab は逆回りなのでリング末尾から入る。テキストがあるときは従来どおりの Tab。
-    if (e.key === "Tab" && !e.nativeEvent.isComposing && draft === "") {
-      const ring = suggestRing();
-      const target = e.shiftKey
-        ? ring[ring.length - 1]
-        : suggestRef.current?.querySelector<HTMLButtonElement>(".mirror-suggest-chip");
-      if (target) {
-        e.preventDefault();
-        focusRingItem(target);
-        return;
-      }
-    }
-    // 入力途中の Tab は候補の補完サイクル（シェル流）。打った文字に前方一致する候補＝チップ行に
-    // 見えているものを順に入力欄へ入れ、一周したら自分が打った文字へ戻る。Shift+Tab は逆回り。
-    // 補完できる候補が無ければ何もせず、従来どおりの Tab（フォーカス移動）に落とす。
-    if (e.key === "Tab" && !e.nativeEvent.isComposing && draft !== "" && !composerLocked) {
-      const next = stepSuggestCycle(cycle, draft, suggestChips.map((c) => c.text), e.shiftKey);
-      if (next) {
-        e.preventDefault();
-        setCycle(next);
-        setDraft(next.text);
-        setHistIdx(null);
-        // 値の差し替えでキャレットが動く（先頭に残る）ブラウザがあるので末尾に置き直す。
-        requestAnimationFrame(() => {
-          const el = inputRef.current;
-          if (el) el.setSelectionRange(el.value.length, el.value.length);
-        });
-        return;
-      }
-    }
+    if (skillPicker.handleKeyDown(e)) return; // スキルピッカーが開いていれば ↑↓/Enter/Tab/Esc を横取り
+    if (suggest.handleKeyDown(e)) return; // Tab: チップ行への入場 / 補完サイクル
     // Scroll the transcript without leaving the composer: Ctrl/⌘+↑/↓ nudges, PageUp/PageDown
     // (and Ctrl/⌘+[ / ]) page, Ctrl/⌘+End snaps to the newest turn and re-arms auto-follow.
     // Checked before history recall so the modified arrows don't get swallowed by the ↑/↓
@@ -2059,43 +1742,22 @@ export function MirrorView({
   // 「返信を頭から」の対象。レンダ中に ref へ落とすのは、[] で 1 度だけ作られる
   // ResizeObserver / onScroll のクロージャからも今の値を読ませるため（ttsCaptureRef と同型）。
   lastReplyIdxRef.current = replyGroup && replyGroup.role !== "user" ? replyGroup.idx : undefined;
-  // Tab 補完サイクル中は、絞り込みキーを「ユーザーが打った文字」に凍結する（入力欄は補完で
-  // 候補そのものに変わっているので、そのまま渡すとチップ列が1件に痩せてサイクルが崩れる）。
-  const suggestDraft = suggestFilterDraft(cycle, draft);
-  const cycledText = cycledSuggestion(cycle, draft); // いま入力欄に入っている候補（強調用）
-  const learned = settings.quickRepliesEnabled
-    ? rankQuickReplies(settings.quickReplies || {}, {
-        draft: suggestDraft,
-        lastReply: lastReplyText,
-        locale: settings.locale,
-        hidden: settings.quickRepliesHidden || [],
-        pinned: settings.quickRepliesPinned || [],
-        limit: 20, // チップ行は横スクロールなので、画面幅に収まらない分は流して見せる（ピンは別枠）
-      })
-    : [];
-  // v2 の LLM 候補を先頭に、Layer A の学習候補を後ろにマージ（重複は畳む）。llm フラグで見た目を分ける。
-  // 重複判定は学習キーと同じ畳み方（大小・空白に加えて全角半角）で行う。
-  const llmSet = new Set(llmSuggestions.map((s) => quickReplyKey(s)));
-  const suggestChips: { text: string; llm: boolean }[] = [
-    ...llmSuggestions.map((text) => ({ text, llm: true })),
-    ...learned.filter((s) => !llmSet.has(quickReplyKey(s))).map((text) => ({ text, llm: false })),
-  ];
-  // Tab 補完でたどっている候補が、1行スクロールのチップ行からはみ出していたら見える位置へ。
-  // 入力欄のフォーカスは動かさないので scrollIntoView だけ（横方向の最小限）。
-  useEffect(() => {
-    if (!cycledText) return;
-    const el = suggestRef.current?.querySelector<HTMLElement>(".mirror-suggest-chip.cycling");
-    // scrollIntoView は Chrome 150 で Promise を返す — 暗黙 return にすると effect の
-    // クリーンアップ扱いで落ちるので、必ずブロック本体で捨てる（effect-implicit-return）。
-    if (el) {
-      el.scrollIntoView({ block: "nearest", inline: "nearest" });
-    }
-  }, [cycledText]);
-  // 会話が進む（新しい回答が来る）と古い LLM 候補は文脈遅れになるので、直近回答の変化とセッション
-  // 切替で捨てる。lastReplyText 確定後に置くことで依存の TDZ を避ける。
-  useEffect(() => {
-    setLlmSuggestions([]);
-  }, [session, lastReplyText]);
+  // 返信サジェスト（lib/quickReplies ＋ v2 の LLM 候補）。本体は parts/useReplySuggest。
+  // 直近回答の最終テキストが候補の文脈なので、それが確定したここで呼ぶ。
+  const suggest = useReplySuggest({
+    session,
+    settings,
+    draft,
+    setDraft,
+    setHistIdx,
+    inputRef,
+    composerLocked,
+    modSend,
+    lastReplyText,
+    send,
+    toast,
+    wsDown,
+  });
 
   // Hold the "working" indicator across the idle→reply-renders gap (see `finalizing`).
   // finalizingRef is set SYNCHRONOUSLY alongside the state so the poll loop's next-tick
@@ -2511,32 +2173,32 @@ export function MirrorView({
         <div className="mirror-compose">
           {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨で取得する LLM 候補（v2）。
               クリックで差し込み、⌥で即送信。flex 全幅 (.mirror-suggest) で入力行の上に載る。 */}
-          {!composerLocked && (suggestChips.length > 0 || settings.replySuggestEnabled) && (
+          {!composerLocked && (suggest.chips.length > 0 || settings.replySuggestEnabled) && (
             <SuggestRow
-              rowRef={attachSuggestRow}
-              chips={suggestChips}
+              rowRef={suggest.rowRef}
+              chips={suggest.chips}
               pinned={settings.quickRepliesPinned}
-              cycledText={cycledText}
+              cycledText={suggest.cycledText}
               aiEnabled={!!settings.replySuggestEnabled}
-              suggesting={suggesting}
+              suggesting={suggest.suggesting}
               running={running}
-              onFetchLlm={fetchLlmSuggestions}
-              onNav={onSuggestNav}
-              onChipKeyDown={onSuggestKeyDown}
+              onFetchLlm={suggest.fetchLlmSuggestions}
+              onNav={suggest.onNav}
+              onChipKeyDown={suggest.onChipKeyDown}
               onChipClick={(e, text) => {
-                if (chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
-                applySuggestion(text, e.ctrlKey || e.altKey || e.metaKey);
+                if (suggest.chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
+                suggest.applySuggestion(text, e.ctrlKey || e.altKey || e.metaKey);
               }}
-              chipProps={chipMenu.chipProps}
+              chipProps={suggest.chipMenu.chipProps}
             />
           )}
-          {chipMenu.menu && (
+          {suggest.chipMenu.menu && (
             <SuggestChipMenu
-              menu={chipMenu.menu}
-              pinned={isQuickReplyPinned(settings.quickRepliesPinned, chipMenu.menu.text)}
-              onClose={chipMenu.close}
-              onTogglePin={togglePin}
-              onForget={forgetSuggestion}
+              menu={suggest.chipMenu.menu}
+              pinned={isQuickReplyPinned(settings.quickRepliesPinned, suggest.chipMenu.menu.text)}
+              onClose={suggest.chipMenu.close}
+              onTogglePin={suggest.togglePin}
+              onForget={suggest.forgetSuggestion}
             />
           )}
           <AttachChips attachments={attachments} pasting={pasting} onRemove={removeAttachment} />
@@ -2551,37 +2213,26 @@ export function MirrorView({
               CommandPalette と同型）、タップはそのまま確定、キーボードは onKeyDown が駆動。
               引数入力中（skillArgs）は受動表示 — キーボード選択を持たないので sel も付けず、
               クリックだけ（引数は残したままコマンドを差し替える）が生きる。 */}
-          {skillListVisible && (
+          {skillPicker.listVisible && (
             <SkillList
-              popRef={skillPopRef}
-              selRef={skillSelRef}
-              passive={skillArgs}
-              skills={skills}
-              items={skillItems}
-              sel={skillSel}
-              query={skillQuery}
-              onHover={setSkillSel}
-              onPick={(s) => pickSkill(skillInsertText(s))}
+              popRef={skillPicker.popRef}
+              selRef={skillPicker.selRef}
+              passive={skillPicker.passive}
+              skills={skillPicker.skills}
+              items={skillPicker.items}
+              sel={skillPicker.sel}
+              query={skillPicker.query}
+              onHover={skillPicker.setSel}
+              onPick={skillPicker.pick}
             />
           )}
-          {canSkills && (
+          {skillPicker.canSkills && (
             <SkillButton
-              btnRef={skillBtnRef}
-              open={skillListVisible}
+              btnRef={skillPicker.btnRef}
+              open={skillPicker.listVisible}
               disabled={composerLocked}
-              trigger={skillTrigger}
-              onToggle={() => {
-                if (skillListVisible) {
-                  closeSkillPicker();
-                  return;
-                }
-                skillDismissRef.current = null;
-                setSkillBtnOpen(true);
-                // 既に書いてある先頭トークンを即クエリにする（開いた瞬間から絞り込まれた
-                // 状態で出す）。2 語目以降にキャレットがあれば null＝全件のまま。
-                const el = inputRef.current;
-                setSlashTok(pickerTokenAt(draft, el?.selectionStart ?? draft.length, skillTrigger, true));
-              }}
+              trigger={skillPicker.trigger}
+              onToggle={skillPicker.toggleFromButton}
             />
           )}
           {/* ＋ attach: the drag&drop-less path (phones foremost, handy everywhere).
@@ -2630,19 +2281,9 @@ export function MirrorView({
             onChange={(e) => {
               setDraft(e.target.value);
               setHistIdx(null); // typing leaves history-recall mode
-              if (canSkills) {
-                // スキルピッカーのトリガ追跡: 先頭トリガ文字の 1 トークン内にキャレットが
-                // ある間だけ token が立つ。トークンが死んだら Esc 抑止も解除（打ち直しで再表示）。
-                // ボタンで開いている間はトリガ無しの先頭トークンも拾う（＝そのまま絞り込める）。
-                const tok = pickerTokenAt(e.target.value, e.target.selectionStart ?? e.target.value.length, skillTrigger, skillBtnOpen);
-                if (!tok) skillDismissRef.current = null;
-                setSlashTok(tok);
-              }
+              skillPicker.trackTyping(e.target.value, e.target.selectionStart ?? e.target.value.length);
             }}
-            onSelect={(e) => {
-              // キャレット移動（クリック・矢印）でも token の生死を追い直す。
-              if (canSkills) setSlashTok(pickerTokenAt(e.currentTarget.value, e.currentTarget.selectionStart ?? 0, skillTrigger, skillBtnOpen));
-            }}
+            onSelect={(e) => skillPicker.trackCaret(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
           />
