@@ -25,12 +25,12 @@ func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
 	// 1) result が来なかった: スナップショットを partial で採る。
 	stopped := usageCall{Kind: session.KindClaude}
 	snap := claudeUsage{InputTokens: 12, OutputTokens: 34, CacheReadInputTokens: 5600, CacheCreationInputTokens: 78}
-	stopped.fallbackTotals(snap.ledgerTokens(), usageMeasuredPartial)
+	stopped.FallbackTotals(snap.ledgerTokens(), usageMeasuredPartial)
 	if stopped.Totals.In != 12 || stopped.Totals.Out != 34 ||
 		stopped.Totals.CacheRead != 5600 || stopped.Totals.CacheCreate != 78 {
 		t.Fatalf("停止時のトークンを落とした: %+v", stopped.Totals)
 	}
-	if got := stopped.measuredOr(stopped.Totals); got != usageMeasuredPartial {
+	if got := stopped.MeasuredOr(stopped.Totals); got != usageMeasuredPartial {
 		t.Fatalf("measured = %q, want partial（途中のスナップショットは exact ではない）", got)
 	}
 
@@ -38,15 +38,15 @@ func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
 	full := usageCall{Kind: session.KindClaude, Models: usageModelRows(map[string]claudeModelUsage{
 		"claude-haiku-4-5-20251001": {InputTokens: 1, OutputTokens: 2, CanonicalModel: "claude-haiku-4-5"},
 	})}
-	full.fallbackTotals(snap.ledgerTokens(), usageMeasuredPartial)
-	if full.Totals.any() || full.Measured != "" {
+	full.FallbackTotals(snap.ledgerTokens(), usageMeasuredPartial)
+	if full.Totals.Any() || full.Measured != "" {
 		t.Fatalf("modelUsage のある呼び出しを縮退で上書きした: %+v", full)
 	}
 
 	// 3) 何も取れていない呼び出しは none のまま（0 を「消費 0」と偽らない）。
 	empty := usageCall{Kind: session.KindClaude}
-	empty.fallbackTotals(claudeUsage{}.ledgerTokens(), usageMeasuredPartial)
-	if empty.Measured != "" || empty.measuredOr(empty.Totals) != usageMeasuredNone {
+	empty.FallbackTotals(claudeUsage{}.ledgerTokens(), usageMeasuredPartial)
+	if empty.Measured != "" || empty.MeasuredOr(empty.Totals) != usageMeasuredNone {
 		t.Fatalf("トークンが1つも無いのに partial を名乗った: %+v", empty)
 	}
 }

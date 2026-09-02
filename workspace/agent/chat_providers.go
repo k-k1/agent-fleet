@@ -209,7 +209,7 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	// 失敗した result にも usage は乗る（超過エラーは特に高い）ので、OK 判定より先に採る。
 	call.Models, call.CostUSD = usageModelRows(r.ModelUsage), r.TotalCostUSD
 	// modelUsage の無い result（古い CLI・異常終了）でも総量は残す。
-	call.fallbackTotals(r.Usage.ledgerTokens(), "")
+	call.FallbackTotals(r.Usage.ledgerTokens(), "")
 	if r.SessionID != "" {
 		c.ClaudeSessionID = r.SessionID
 	}
@@ -360,7 +360,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 					resultErr = sl.IsError
 					ctxTrack.observeResult(sl.Usage, sl.ModelUsage)
 					call.Models, call.CostUSD = usageModelRows(sl.ModelUsage), sl.TotalCostUSD
-					call.fallbackTotals(sl.Usage.ledgerTokens(), "")
+					call.FallbackTotals(sl.Usage.ledgerTokens(), "")
 				}
 			}
 		}
@@ -373,7 +373,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	// イベントで見た最後のスナップショットを縮退として採る（出力側は途中なので partial）。
 	// 採らないと「トークン 0 / measured=none」の行になり、**止めた回の消費だけが台帳から
 	// 消える** — 止められるのは重いターンほど多いので、そこが欠けると配分の絵が狂う。
-	call.fallbackTotals(ctxTrack.snap.ledgerTokens(), usageMeasuredPartial)
+	call.FallbackTotals(ctxTrack.snap.ledgerTokens(), usageMeasuredPartial)
 	// An error result (e.g. context overflow) rides the stream's `result` event AND makes
 	// claude exit non-zero. Prefer the parsed message so the overflow self-heal can see
 	// "Prompt is too long …" (chat_recover.go); a bare "exit status 1" from waitErr would
@@ -1214,7 +1214,7 @@ func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	if perr != nil {
 		return "", perr
 	}
-	call.setTotals(r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens)
+	call.SetTotals(r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens)
 	if r.SessionID != "" {
 		c.CursorSessionID = r.SessionID // adopt the id cursor echoes back (self-heals a drift)
 	}
@@ -1458,7 +1458,7 @@ func codexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, 
 	tok = usage.ledgerTokens()
 	if err != nil && autoPicked {
 		reply, usage, err = run(ctx, codexOneShotArgsNoModel(args), prompt)
-		tok, modelReq = tok.add(usage.ledgerTokens()), ""
+		tok, modelReq = tok.Add(usage.ledgerTokens()), ""
 	}
 	return reply, tok, modelReq, err
 }
@@ -1583,7 +1583,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		if perr != nil {
 			return "", perr
 		}
-		call.setTotals(r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens)
+		call.SetTotals(r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens)
 		if r.IsError {
 			return "", errors.New(strings.TrimSpace(r.Result))
 		}
@@ -1640,7 +1640,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	// 課金は発生しているので、OK 判定より先に採る。exec エラー（停止・非ゼロ終了）でも
 	// claude は構造化 result を吐いていることがあるので、**エラー return より先に**解析する。
 	call.Models, call.CostUSD = usageModelRows(r.ModelUsage), r.TotalCostUSD
-	call.fallbackTotals(r.Usage.ledgerTokens(), "") // modelUsage の無い応答の縮退
+	call.FallbackTotals(r.Usage.ledgerTokens(), "") // modelUsage の無い応答の縮退
 	if err != nil {
 		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}
