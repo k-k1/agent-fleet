@@ -13,6 +13,13 @@
 # month at a time while develop took 1500+ commits — long enough for a break to be
 # discovered only at release. Bursts are cheap: the concurrency group below cancels a
 # superseded develop run, so a rapid series of merges collapses onto the newest commit.
+#
+# Why pull_request also lists develop (ADR 0067 決定 11): with main alone, a PR aimed at
+# develop got NO checks at all — it went red only after it was merged, on develop's own
+# push trigger. That was survivable while one PR landed at a time; it is not while the
+# parallel refactor keeps ~13 transport PRs in flight, each moving thousands of lines
+# whose only real proof is these gates. A PR branch is not main/develop, so this adds no
+# duplicate run: the push trigger still fires once, after the merge.
 name: ci
 
 # Least privilege for GITHUB_TOKEN. The repo default is already read-only, but this
@@ -25,7 +32,7 @@ on:
   push:
     branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 concurrency:
