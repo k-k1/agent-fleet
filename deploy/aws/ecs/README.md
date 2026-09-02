@@ -519,15 +519,19 @@ Teardown → stand-up had never been done end to end. It has now, on the dev dep
 ⚠️ **Check `/readyz`, not `/healthz`.** `/healthz` answers 200 with a dead database — that is
 how the RDS rotation outage stayed silent for so long. `/readyz` is the one that touches it.
 
-Two rough edges found on the way, still open:
+Two rough edges found on the way, **both since closed**:
 
-- **`standup.sh`'s preflight now compares the capture against the templates** (parameters with
+- **`standup.sh`'s preflight compares the capture against the templates** (parameters with
   no `Default` must be present). It previously checked only that the capture *files existed*,
   so a capture older than the templates would fail **after** 00–20 were already built — the
-  most expensive moment to find out.
-- **`teardown.sh`'s bucket-emptying step discards the reason it failed** (`>/dev/null 2>&1
-  || echo "(skip: …)"`). It worked on this round trip, but if it ever prints `(skip: …)` the
-  next thing to fail is the 20-platform delete, with no clue why.
+  most expensive moment to find out. It no longer counts those parameters by a fixed
+  indentation either: it takes the depth of the first key under `Parameters:`, and **says so
+  when it reads none at all**. A parser that quietly reports "0 required" is the same shape
+  as the wall above — a check that is not running, with nothing to see.
+- **`teardown.sh`'s bucket-emptying step prints why it failed.** It used to swallow stderr
+  (`>/dev/null 2>&1 || echo "(skip: …)"`), so "the bucket was already gone" and "it could
+  not be emptied" looked identical — and the next thing to fail is the 20-platform delete,
+  by which point the reason has been thrown away.
 
 ## Egress IP (the address a customer allow-lists)
 
