@@ -23,7 +23,7 @@ import (
 
 // Wire error codes. The per-rule validation codes live in mcpreg (ValidationError.Code)
 // so the reason survives to the Console; these three are the store-level outcomes.
-// 追加・改名時は console/src/lib/i18n/locales/{ja,en}.ts の "err.<code>" も同時に。
+// 追加・改名時は console/src/lib/i18n/locales/{ja,en}/errors.ts の "err.<code>" も同時に。
 const (
 	errCodeMCPNotFound = "mcp_not_found"
 	errCodeMCPReadOnly = "mcp_read_only"

@@ -68,7 +68,7 @@ var knownKinds = map[string]bool{
 // it through its "err.<code>" catalog and only falls back to Msg (a language-neutral
 // developer string) when a code is unmapped. One code per REASON — reusing a single
 // "invalid" for every rule is what docs/log/23 P0-3 set out to remove. 追加・改名時は
-// console/src/lib/i18n/locales/{ja,en}.ts の "err.<code>" も必ず同時に足すこと。
+// console/src/lib/i18n/locales/{ja,en}/errors.ts の "err.<code>" も必ず同時に足すこと。
 type ValidationError struct {
 	Code string
 	Msg  string

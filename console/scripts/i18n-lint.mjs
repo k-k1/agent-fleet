@@ -32,10 +32,14 @@ const PENDING_FILE = join(HERE, "i18n-lint-pending.json");
 // CJK 文字（ひらがな・カタカナ・漢字）。ASCII のみの文字列は素通し。
 const HAS_LETTER = /[぀-ヿ㐀-鿿]/;
 
+// 丸ごと対象外にするディレクトリ（src/ 起点）。カタログは CJK が中身そのもの。
+// ⚠️ ここは接頭辞一致にしてある: カタログはドメイン別（locales/ja/*.ts, locales/en/*.ts）に
+// 分かれており（ADR 0067 決定 4）、ファイル名を 1 つずつ列挙すると**新しいドメインを足した
+// 瞬間に lint がそのファイルを裸和文まみれと報告する**。
+const ALLOW_DIRS = ["lib/i18n/locales/"];
+
 // 丸ごと対象外にするファイル（src/ 起点）。翻訳ではなくロジック/データのもの。
 const ALLOW_FILES = new Set([
-  "lib/i18n/locales/ja.ts", // カタログ正本（CJK が中身）
-  "lib/i18n/locales/en.ts", // 英カタログ（型網羅対象）
   "features/chat/ttsText.ts", // TTS 読み変換の内部（発音辞書ロジック・docs/log/28 §4）
   "features/chat/ttsDict.ts", // 読み辞書データ
   "features/chat/tts.ts", // VOICEVOX 話者名・感情スタイル名（§6.4 未翻訳）＋読み上げロジック
@@ -86,7 +90,7 @@ const pending = loadPending();
 const findings = [];
 for (const abs of walkFiles(SRC)) {
   const rel = relative(SRC, abs).split("\\").join("/");
-  if (isTest(rel) || ALLOW_FILES.has(rel)) continue;
+  if (isTest(rel) || ALLOW_FILES.has(rel) || ALLOW_DIRS.some((d) => rel.startsWith(d))) continue;
 
   const text = readFileSync(abs, "utf8");
   if (text.includes("i18n-exempt-file")) continue;

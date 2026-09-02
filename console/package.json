@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "i18n:lint": "node scripts/i18n-lint.mjs",
+    "css:dup": "node scripts/css-dup.mjs",
     "shots": "node scripts/shots/capture.mjs",
     "panes:heads": "node scripts/pane-heads/check.mjs",
     "mirror:scroll": "node scripts/mirror-scroll/check.mjs",

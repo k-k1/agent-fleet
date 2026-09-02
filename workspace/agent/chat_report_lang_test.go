@@ -8,8 +8,6 @@ package main
 //  3. P6 より前に書かれた報告（ReportKind 無し）は Content をそのまま使う。
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -145,14 +143,10 @@ func TestReportKeysExistInConsoleCatalogs(t *testing.T) {
 		"chat.report.exit_reason.oom", "chat.report.exit_reason.crashed", "chat.report.exit_reason.killed",
 	}
 	for _, locale := range []string{"ja", "en"} {
-		path := filepath.Join("..", "..", "console", "src", "lib", "i18n", "locales", locale+".ts")
-		b, err := os.ReadFile(path)
-		if err != nil {
-			t.Skipf("catalog not available (%v)", err)
-		}
+		catalog := consoleCatalog(t, locale)
 		for _, key := range keys {
-			if !strings.Contains(string(b), `"`+key+`"`) {
-				t.Errorf("%s.ts is missing %q", locale, key)
+			if !consoleCatalogHasKey(catalog, key) {
+				t.Errorf("%s catalog is missing %q", locale, key)
 			}
 		}
 	}
