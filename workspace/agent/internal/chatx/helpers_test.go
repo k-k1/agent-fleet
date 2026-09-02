@@ -79,9 +79,16 @@ func stubChatProvider(t *testing.T, kind string, p ChatProvider) {
 // こちらは workspace/agent/internal/chatx から `../../../../console/...`。
 // 深さを直し忘れると `os.ReadDir` が外れて **t.Skipf で黙って飛ぶ＝検査が消える**
 // （移送で検査が無言化する典型）。TestConsoleCatalogIsReachable がそれを踏ませない。
+// consoleLocalesDir は**この 2 本が見るのと同じ 1 つのパス式**。
+// 深さを直し忘れたときに「カタログが無い」と「見る場所が違う」を切り分けられるよう、
+// 経路を 1 本にしてある。
+func consoleLocalesDir(locale string) string {
+	return filepath.Join("..", "..", "..", "..", "console", "src", "lib", "i18n", "locales", locale)
+}
+
 func consoleCatalog(t *testing.T, locale string) string {
 	t.Helper()
-	dir := filepath.Join("..", "..", "..", "..", "console", "src", "lib", "i18n", "locales", locale)
+	dir := consoleLocalesDir(locale)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Skipf("catalog not available (%v)", err)
@@ -110,13 +117,29 @@ func consoleCatalogHasKey(catalog, key string) bool {
 	return strings.Contains(catalog, `"`+key+`"`)
 }
 
-// TestConsoleCatalogIsReachable は **consoleCatalog が Skip に落ちていない**ことだけを見る。
-// 相対パスの深さを間違えると上の 2 本は「カタログが無い」で飛び、キーの検査が
-// 静かに消える —— それを赤で捕まえるための 1 本（RECLAIM-B の「見つからなければ
-// 何も検査しない」対策と同じ形）。
+// TestConsoleCatalogIsReachable は **consoleCatalog が Skip に落ちていない**ことを見る。
+// 相対パスの深さを間違えると、カタログのキー検査 2 本が「カタログが無い」で飛んで
+// 静かに消える —— それを赤で捕まえるための 1 本。
+//
+// 🔥 **`consoleCatalog` を経由してはいけない。** 経由すると、深さが違うときに
+// `t.Skipf` が**この検査ごと飛ばす**ので、守ろうとした穴がそのまま開く
+// （最初にそう書いてレビューで指摘された。SKIP は 5 本→8 本に増えるのに `go test` は緑）。
+// ここは `os.ReadDir` の結果を自分で見て `t.Fatalf` する。
 func TestConsoleCatalogIsReachable(t *testing.T) {
-	if got := consoleCatalog(t, "ja"); len(got) < 1000 {
-		t.Fatalf("カタログが %d バイトしか読めていない（相対パスの深さを疑う）", len(got))
+	dir := consoleLocalesDir("ja")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("カタログの置き場が読めない: %s: %v（相対パスの深さを疑う。"+
+			"ここが読めないと NoticeKeys / ReportKeys の 2 本が黙って skip される）", dir, err)
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".ts") {
+			n++
+		}
+	}
+	if n == 0 {
+		t.Fatalf("%s に .ts が 1 つも無い（カタログの置き場所が変わった？）", dir)
 	}
 }
 

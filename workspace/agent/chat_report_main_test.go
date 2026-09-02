@@ -82,7 +82,7 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	session.WriteMeta(m)
 	sid := session.UUID(m.Dir, m.Name)
 
-	addInstruction(m.Name, conv.ID, "operator") // create_session / send_to_session with report_to
+	addInstruction(m.Name, conv.ID, turnSourceOperator) // create_session / send_to_session with report_to
 
 	status.Persist(sid, "working") // the operator's instruction starts a turn
 	// A real turn leaves a FRESH main transcript behind (the answer was just written).
@@ -166,7 +166,7 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	addInstruction(m.Name, conv.ID, "operator")
+	addInstruction(m.Name, conv.ID, turnSourceOperator)
 	status.Persist(sid, "working")
 	runSessionStatusHook([]string{"idle", sid}) // Stop right after the BG launch → kick
 
@@ -274,7 +274,7 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	}
 	writeMainAt(t, time.Now()) // freshly appended (the turn is still running)
 
-	addInstruction(m.Name, conv.ID, "operator")
+	addInstruction(m.Name, conv.ID, turnSourceOperator)
 	status.Persist(sid, "working")
 	runSessionStatusHook([]string{"idle", sid}) // early Stop → kick → deferred (BG busy)
 
@@ -362,7 +362,7 @@ func TestHaltDisarmsReportOnlyWhenFlagged(t *testing.T) {
 
 	for _, name := range []string{"slot11", "slot12"} {
 		session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
-		addInstruction(name, conv.ID, "operator")
+		addInstruction(name, conv.ID, turnSourceOperator)
 	}
 
 	halt("slot11", `{"disarm_report":true}`)

@@ -9,6 +9,9 @@ package chatx
 // Configure が panic で落とす）。
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -200,5 +203,63 @@ func TestConfigureRejectsEveryMissingField(t *testing.T) {
 			}()
 			Configure(d)
 		})
+	}
+}
+
+// TestInstallReconcilerForTestHasNoProductionCaller は、**テスト専用に公開した据え付け口が
+// 本番コードから呼ばれていない**ことを固定する（レビュー参考 3）。
+//
+// `InstallReconcilerForTest` は `TestSessionReport*` 3 本の end-to-end が「本物の
+// reconciler が回っていること」を前提にしているために公開している（`reportRec` は var で、
+// 別名で受けると写しになり据え替えが届かない）。**本番から呼べる形なのは事実**なので、
+// 呼ばれ始めたら赤で気付けるようにしておく。
+//
+// 🔥 **テキスト検索ではなく AST で「呼び出し」だけを見る。** 素の文字列一致だと
+// **宣言している当のファイルと doc コメント**を拾って常に赤になる（最初にそう書いた）。
+// 🔥 **走査した本数を必ず確かめる**（#320 の「1 件も見つからなければ何も検査しない」対策）。
+// パスの前提が崩れて 0 ファイルしか読まなければ、この検査は「呼び出し 0 件」を無条件に
+// 報告する＝存在しないのと同じになる。
+func TestInstallReconcilerForTestHasNoProductionCaller(t *testing.T) {
+	roots := []string{".", "../.."} // internal/chatx と workspace/agent（package main）
+	scanned := 0
+	for _, root := range roots {
+		ents, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatalf("走査できない %s: %v", root, err)
+		}
+		for _, e := range ents {
+			n := e.Name()
+			if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+				continue
+			}
+			path := filepath.Join(root, n)
+			f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+			if err != nil {
+				t.Fatalf("parse %s: %v", path, err)
+			}
+			scanned++
+			ast.Inspect(f, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				name := ""
+				switch fn := call.Fun.(type) {
+				case *ast.Ident:
+					name = fn.Name
+				case *ast.SelectorExpr:
+					name = fn.Sel.Name
+				}
+				if name == "InstallReconcilerForTest" {
+					t.Errorf("%s が InstallReconcilerForTest を呼んでいる"+
+						"（テスト専用の据え付け口。本番から回すなら設計を見直すこと）", path)
+				}
+				return true
+			})
+		}
+	}
+	if scanned < 50 {
+		t.Fatalf("非テストの .go を %d 本しか読めていない＝この検査が無言化している"+
+			"（置き場が変わった？ roots=%v）", scanned, roots)
 	}
 }
