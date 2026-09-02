@@ -1,4 +1,4 @@
-package main
+package gitx
 
 import (
 	"os"
@@ -28,7 +28,7 @@ func TestSSHToHTTPS(t *testing.T) {
 		{"../relative/submodule", "../relative/submodule"},
 	}
 	for _, c := range cases {
-		if got := sshToHTTPS(c.in); got != c.want {
+		if got := SSHToHTTPS(c.in); got != c.want {
 			t.Errorf("sshToHTTPS(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}

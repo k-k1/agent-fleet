@@ -1,4 +1,4 @@
-package main
+package gitx
 
 import (
 	"net/http"
@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -24,11 +23,11 @@ const identitySourceKey = "af.identitySource"
 // remoteHost returns the lowercased host of a repo's origin remote ("github.com",
 // "bitbucket.org", …), or "" when there's no origin / it can't be parsed.
 func remoteHost(dir string) string {
-	origin, ok := gitOriginURL(dir)
+	origin, ok := GitOriginURL(dir)
 	if !ok {
 		return ""
 	}
-	p, err := url.Parse(sshToHTTPS(origin))
+	p, err := url.Parse(SSHToHTTPS(origin))
 	if err != nil {
 		return ""
 	}
@@ -36,7 +35,7 @@ func remoteHost(dir string) string {
 }
 
 func gitConfigLocalGet(dir, key string) string {
-	out, err := gitx.Run(dir, "config", "--local", "--get", key)
+	out, err := Run(dir, "config", "--local", "--get", key)
 	if err != nil {
 		return ""
 	}
@@ -44,15 +43,15 @@ func gitConfigLocalGet(dir, key string) string {
 }
 
 func gitConfigLocalSet(dir, key, val string) {
-	_ = gitx.Cmd(dir, "config", "--local", key, val).Run()
+	_ = Cmd(dir, "config", "--local", key, val).Run()
 }
 
 func gitConfigLocalUnset(dir, key string) {
-	_ = gitx.Cmd(dir, "config", "--local", "--unset", key).Run()
+	_ = Cmd(dir, "config", "--local", "--unset", key).Run()
 }
 
 func gitConfigGlobalGet(key string) string {
-	out, err := gitx.Run("", "config", "--global", "--get", key)
+	out, err := Run("", "config", "--global", "--get", key)
 	if err != nil {
 		return ""
 	}
@@ -93,7 +92,7 @@ func providerIdentity(host string) (name, email string) {
 // the repo carries a manual override (then it's left untouched). With no provider
 // identity it clears the local keys so git falls back to the global default.
 func applyGitIdentity(dir string) {
-	if !isGitRepo(dir) {
+	if !IsGitRepo(dir) {
 		return
 	}
 	if gitConfigLocalGet(dir, identitySourceKey) == "manual" {
@@ -118,7 +117,7 @@ func applyGitIdentity(dir string) {
 // reapplyProviderIdentity refreshes every cloned repo of the given host that isn't
 // manually overridden — called when the provider's identity changes.
 func reapplyProviderIdentity(host string) {
-	ents, err := os.ReadDir(reposRoot())
+	ents, err := os.ReadDir(ReposRoot())
 	if err != nil {
 		return
 	}
@@ -126,8 +125,8 @@ func reapplyProviderIdentity(host string) {
 		if !e.IsDir() {
 			continue
 		}
-		dir := filepath.Join(reposRoot(), e.Name())
-		if isGitRepo(dir) && remoteHost(dir) == host {
+		dir := filepath.Join(ReposRoot(), e.Name())
+		if IsGitRepo(dir) && remoteHost(dir) == host {
 			applyGitIdentity(dir)
 		}
 	}
@@ -140,10 +139,10 @@ type identityReq struct {
 	Email string `json:"email"`
 }
 
-// handleGitProviderIdentityPut sets a provider's explicit commit identity (PUT
+// HandleGitProviderIdentityPut sets a provider's explicit commit identity (PUT
 // /api/connections/git/{host}/identity) and reapplies it to that host's repos. Empty
 // fields clear the override (reverting to the auto-seeded account identity).
-func handleGitProviderIdentityPut(w http.ResponseWriter, r *http.Request) {
+func HandleGitProviderIdentityPut(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	if _, ok := gitHosts[host]; !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
@@ -171,15 +170,15 @@ func handleGitProviderIdentityPut(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"host": host, "name": name, "email": email})
 }
 
-// handleGlobalIdentityGet / Put read and write the global default identity (~/.gitconfig).
-func handleGlobalIdentityGet(w http.ResponseWriter, r *http.Request) {
+// HandleGlobalIdentityGet / Put read and write the global default identity (~/.gitconfig).
+func HandleGlobalIdentityGet(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"name":  gitConfigGlobalGet("user.name"),
 		"email": gitConfigGlobalGet("user.email"),
 	})
 }
 
-func handleGlobalIdentityPut(w http.ResponseWriter, r *http.Request) {
+func HandleGlobalIdentityPut(w http.ResponseWriter, r *http.Request) {
 	var req identityReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -187,14 +186,14 @@ func handleGlobalIdentityPut(w http.ResponseWriter, r *http.Request) {
 	if n := strings.TrimSpace(req.Name); n != "" {
 		_ = gitConfigGlobal("user.name", n)
 	} else {
-		_ = gitx.Cmd("", "config", "--global", "--unset", "user.name").Run()
+		_ = Cmd("", "config", "--global", "--unset", "user.name").Run()
 	}
 	if e := strings.TrimSpace(req.Email); e != "" {
 		_ = gitConfigGlobal("user.email", e)
 	} else {
-		_ = gitx.Cmd("", "config", "--global", "--unset", "user.email").Run()
+		_ = Cmd("", "config", "--global", "--unset", "user.email").Run()
 	}
-	handleGlobalIdentityGet(w, r)
+	HandleGlobalIdentityGet(w, r)
 }
 
 // repoIdentityInfo describes a repo's effective identity + where it comes from.
@@ -219,19 +218,19 @@ func repoIdentityInfo(dir string) map[string]any {
 	}
 }
 
-func handleRepoIdentityGet(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoIdentityGet(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, repoIdentityInfo(dir))
 }
 
-// handleRepoIdentityPut sets or clears a repo's manual override. A non-empty name or
+// HandleRepoIdentityPut sets or clears a repo's manual override. A non-empty name or
 // email pins the repo (af.identitySource=manual); both empty clears it and reverts to
 // the provider / global default.
-func handleRepoIdentityPut(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+func HandleRepoIdentityPut(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}

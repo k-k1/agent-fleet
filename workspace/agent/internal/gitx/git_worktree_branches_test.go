@@ -1,12 +1,10 @@
-package main
+package gitx
 
 import (
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 )
 
 // git run helper scoped to this file's worktree-occupancy tests.
@@ -38,7 +36,7 @@ func TestWorktreeBranches(t *testing.T) {
 	gitAt(t, main, "worktree", "add", wt, "feature")
 
 	// From the main copy: feature is occupied by wt, main itself is not listed.
-	got := worktreeBranches(main)
+	got := WorktreeBranches(main)
 	if got["feature"] == "" {
 		t.Fatalf("feature not reported as occupied: %v", got)
 	}
@@ -50,19 +48,19 @@ func TestWorktreeBranches(t *testing.T) {
 	}
 
 	// Symmetric: from the worktree, main is the occupied one.
-	if got := worktreeBranches(wt); realPath(got["main"]) != realPath(main) {
+	if got := WorktreeBranches(wt); realPath(got["main"]) != realPath(main) {
 		t.Errorf("from worktree: main occupied by %q, want %q", got["main"], main)
 	}
 
 	// A detached worktree holds no branch ref, so it occupies nothing.
 	det := filepath.Join(root, "det")
 	gitAt(t, main, "worktree", "add", "--detach", det, "main")
-	if got := worktreeBranches(main); len(got) != 1 || got["feature"] == "" {
+	if got := WorktreeBranches(main); len(got) != 1 || got["feature"] == "" {
 		t.Errorf("detached worktree changed occupancy: %v", got)
 	}
 
 	// The branch list carries the same fact, and keeps Current separate from it.
-	var feature, mainInfo *branchInfo
+	var feature, mainInfo *BranchInfo
 	infos := gitBranchInfos(main, "main")
 	for i := range infos {
 		switch infos[i].Name {
@@ -97,10 +95,10 @@ func TestGitRefusesSameBranchTwice(t *testing.T) {
 	wt := filepath.Join(root, "wt")
 	gitAt(t, main, "worktree", "add", wt, "feature")
 
-	if out, err := gitx.Combined(main, "checkout", "feature"); err == nil {
+	if out, err := Combined(main, "checkout", "feature"); err == nil {
 		t.Errorf("checkout of a branch live in another worktree succeeded: %s", out)
 	}
-	if out, err := gitx.Combined(main, "worktree", "add", filepath.Join(root, "wt2"), "feature"); err == nil {
+	if out, err := Combined(main, "worktree", "add", filepath.Join(root, "wt2"), "feature"); err == nil {
 		t.Errorf("worktree add of a branch live in another worktree succeeded: %s", out)
 	}
 }
