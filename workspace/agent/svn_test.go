@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -52,16 +53,16 @@ func TestSvnBuildURL(t *testing.T) {
 func TestResolveRepoDirUnicode(t *testing.T) {
 	ok := []string{"日本語プロジェクト", "repo", "repo-2", "my.repo", "x@feat-1", "数字123", "café"}
 	for _, name := range ok {
-		if dir, valid := resolveRepoDir(name); !valid {
-			t.Errorf("resolveRepoDir(%q) rejected a valid name", name)
+		if dir, valid := gitx.ResolveRepoDir(name); !valid {
+			t.Errorf("gitx.ResolveRepoDir(%q) rejected a valid name", name)
 		} else if filepath.Base(dir) != name {
-			t.Errorf("resolveRepoDir(%q) mapped to %q", name, dir)
+			t.Errorf("gitx.ResolveRepoDir(%q) mapped to %q", name, dir)
 		}
 	}
 	bad := []string{"", "..", "../evil", "a/b", ".hidden", "-flag", "@at", "a b", "sub\x00null"}
 	for _, name := range bad {
-		if _, valid := resolveRepoDir(name); valid {
-			t.Errorf("resolveRepoDir(%q) accepted an unsafe name", name)
+		if _, valid := gitx.ResolveRepoDir(name); valid {
+			t.Errorf("gitx.ResolveRepoDir(%q) accepted an unsafe name", name)
 		}
 	}
 }
@@ -238,7 +239,7 @@ func TestSvnCheckoutIsAsync(t *testing.T) {
 	if done.State != repoJobDone {
 		t.Fatalf("state = %q, want %q (err=%q)", done.State, repoJobDone, done.Error)
 	}
-	wc := filepath.Join(reposRoot(), "docs")
+	wc := filepath.Join(gitx.ReposRoot(), "docs")
 	if !isSvnRepo(wc) {
 		t.Fatal("no working copy after the job finished")
 	}
@@ -282,7 +283,7 @@ func TestSvnCheckoutFailureKeepsResumableCopy(t *testing.T) {
 	if done.Kept {
 		t.Error("Kept = true だが作業コピーは出来ていない")
 	}
-	if _, err := os.Stat(filepath.Join(reposRoot(), "ghost")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(gitx.ReposRoot(), "ghost")); !os.IsNotExist(err) {
 		t.Error("作業コピーになっていない残骸は掃除されるべき")
 	}
 }

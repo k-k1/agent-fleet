@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,13 +13,13 @@ import (
 )
 
 // postInitRepo drives the real POST /repos/init handler.
-func postInitRepo(t *testing.T, name string) (int, Repo, string) {
+func postInitRepo(t *testing.T, name string) (int, gitx.Repo, string) {
 	t.Helper()
 	body := strings.NewReader(`{"name":` + strconv.Quote(name) + `}`)
 	rec := httptest.NewRecorder()
-	handleInitRepo(rec, httptest.NewRequest("POST", "/repos/init", body))
+	gitx.HandleInitRepo(rec, httptest.NewRequest("POST", "/repos/init", body))
 	var env struct {
-		Repo  Repo `json:"repo"`
+		Repo  gitx.Repo `json:"repo"`
 		Error struct {
 			Code string `json:"code"`
 		} `json:"error"`
@@ -40,11 +41,11 @@ func TestInitRepoCreatesListedWorkingCopy(t *testing.T) {
 	if code != http.StatusCreated {
 		t.Fatalf("status = %d (%s), want %d", code, errCode, http.StatusCreated)
 	}
-	dir := filepath.Join(reposRoot(), "new-project")
+	dir := filepath.Join(gitx.ReposRoot(), "new-project")
 	if repo.Path != dir {
 		t.Errorf("path = %q, want %q", repo.Path, dir)
 	}
-	if !isGitRepo(dir) {
+	if !gitx.IsGitRepo(dir) {
 		t.Fatalf("%s is not a git repository after init", dir)
 	}
 	// コミットが無い＝unborn。worktree はここでは作れないので、UI がその選択肢を
@@ -57,9 +58,9 @@ func TestInitRepoCreatesListedWorkingCopy(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	handleListRepos(rec, httptest.NewRequest("GET", "/repos", nil))
+	gitx.HandleListRepos(rec, httptest.NewRequest("GET", "/repos", nil))
 	var env struct {
-		Repos []Repo `json:"repos"`
+		Repos []gitx.Repo `json:"repos"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode repos: %v", err)
@@ -68,7 +69,7 @@ func TestInitRepoCreatesListedWorkingCopy(t *testing.T) {
 		t.Fatalf("GET /repos = %+v, want the new working copy", env.Repos)
 	}
 	if !env.Repos[0].Unborn {
-		t.Error("GET /repos reported unborn = false; gitStatus must read # branch.oid (initial)")
+		t.Error("GET /repos reported unborn = false; gitx.GitStatus must read # branch.oid (initial)")
 	}
 	if env.Repos[0].Branch != repo.Branch {
 		t.Errorf("branch drifted between init (%q) and list (%q)", repo.Branch, env.Repos[0].Branch)
@@ -88,7 +89,7 @@ func TestRepoLogOnUnbornRepoIsEmptyNotError(t *testing.T) {
 	req := httptest.NewRequest("GET", "/repos/fresh/log", nil)
 	req.SetPathValue("name", "fresh")
 	rec := httptest.NewRecorder()
-	handleRepoLog(rec, req)
+	gitx.HandleRepoLog(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -107,7 +108,7 @@ func TestRepoLogOnUnbornRepoIsEmptyNotError(t *testing.T) {
 func TestInitRepoRefusesExistingFolder(t *testing.T) {
 	resetRepoJobs(t)
 	t.Setenv("HOME", t.TempDir())
-	dir := filepath.Join(reposRoot(), "taken")
+	dir := filepath.Join(gitx.ReposRoot(), "taken")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +124,7 @@ func TestInitRepoRefusesExistingFolder(t *testing.T) {
 	if b, err := os.ReadFile(marker); err != nil || string(b) != "existing work" {
 		t.Fatalf("the existing folder was touched: %v / %q", err, b)
 	}
-	if isGitRepo(dir) {
+	if gitx.IsGitRepo(dir) {
 		t.Error("git init ran inside the existing folder")
 	}
 }
@@ -141,7 +142,7 @@ func TestInitRepoRejectsBadName(t *testing.T) {
 		}
 	}
 	// 何も作られていないこと（reposRoot ごと存在しないのが正常）。
-	if entries, err := os.ReadDir(reposRoot()); err == nil && len(entries) > 0 {
+	if entries, err := os.ReadDir(gitx.ReposRoot()); err == nil && len(entries) > 0 {
 		t.Errorf("a rejected name still created %d entries under ~/repos", len(entries))
 	}
 }

@@ -735,8 +735,8 @@ func bitbucketStatus(s *secrets.Data) map[string]any {
 	if e, ok := s.Git["bitbucket.org"]; ok {
 		m := map[string]any{"connected": true}
 		if (e.Login == "" || e.Email == "") && e.Token != "" {
-			if auth, err := bitbucketAuthHeader(s); err == nil {
-				if h, email, err := bitbucketAccount(auth); err == nil && h != "" {
+			if auth, err := gitx.BitbucketAuthHeader(s); err == nil {
+				if h, email, err := gitx.BitbucketAccount(auth); err == nil && h != "" {
 					e.Login, e.Email = h, email
 					s.Git["bitbucket.org"] = e
 					_ = s.Save()
@@ -757,8 +757,8 @@ func bitbucketStatus(s *secrets.Data) map[string]any {
 	if s.Bitbucket != nil {
 		m := map[string]any{"connected": true}
 		if s.Bitbucket.Account == "" || s.Bitbucket.Email == "" {
-			if auth, err := bitbucketAuthHeader(s); err == nil {
-				if h, email, err := bitbucketAccount(auth); err == nil && h != "" {
+			if auth, err := gitx.BitbucketAuthHeader(s); err == nil {
+				if h, email, err := gitx.BitbucketAccount(auth); err == nil && h != "" {
 					s.Bitbucket.Account, s.Bitbucket.Email = h, email
 					_ = s.Save()
 				}
@@ -787,7 +787,7 @@ func gitConnStatus(s *secrets.Data, host string) map[string]any {
 		return m
 	}
 	if host == "github.com" && (e.Login == "" || e.Email == "") && e.Token != "" {
-		if login, email, err := githubAccount(e.Token); err == nil && login != "" {
+		if login, email, err := gitx.GithubAccount(e.Token); err == nil && login != "" {
 			e.Login, e.Email = login, email
 			s.Git[host] = e
 			_ = s.Save()
@@ -854,13 +854,13 @@ func handlePutGitConn(w http.ResponseWriter, r *http.Request) {
 	// failure. Hard failures block the save; a missing push scope connects with a warning.
 	var warn string
 	if host == "bitbucket.org" {
-		w2, verr := bitbucketConnectCheck(user, token)
+		w2, verr := gitx.BitbucketConnectCheck(user, token)
 		if verr != nil {
 			code := "bb_verify_failed"
 			switch {
-			case errors.Is(verr, errBBScopeless):
+			case errors.Is(verr, gitx.ErrBBScopeless):
 				code = "bb_scopeless"
-			case errors.Is(verr, errBBNoRepoRead):
+			case errors.Is(verr, gitx.ErrBBNoRepoRead):
 				code = "bb_no_repo_read"
 			}
 			httpx.WriteErr(w, http.StatusBadRequest, code, verr.Error())
@@ -893,7 +893,7 @@ func handleDeleteGitConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if host == "bitbucket.org" {
-		removeBitbucketOAuth() // also clear OAuth tokens + the refresh helper
+		gitx.RemoveBitbucketOAuth() // also clear OAuth tokens + the refresh helper
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": host})
 }

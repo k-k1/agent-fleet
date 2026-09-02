@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -231,7 +232,7 @@ func chatPastedDir(convID string) string { return pastedDir("chat-" + convID) }
 // models (big-pickle, live-verified), and the chat can't know the model sees images.
 func handleChatPasteImage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	c, err := loadConv(id)
+	c, err := chatx.LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "no_conversation", "conversation not found: "+id)
 		return

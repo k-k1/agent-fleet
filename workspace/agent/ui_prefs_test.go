@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"net/http"
@@ -70,10 +71,10 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 	if uiprefs.ChatQuietCompletion() {
 		t.Fatal("quiet completion must default OFF")
 	}
-	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokens {
+	if got := chatx.ChatAutoCompactTokenThreshold(); got != chatx.ChatCtxAutoCompactTokens {
 		t.Fatalf("compact tokens default = %d", got)
 	}
-	if got := chatAutoTurnDelay(); got != chatAutoTurnDelayDefault {
+	if got := chatx.ChatAutoTurnDelay(); got != chatx.ChatAutoTurnDelayDefault {
 		t.Fatalf("auto-turn delay default = %v", got)
 	}
 	if got := mcpx.SessionOutputTail(); got != mcpx.SessionOutputTailBytes {
@@ -89,10 +90,10 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 	if !uiprefs.ChatQuietCompletion() {
 		t.Fatal("quiet completion should be ON")
 	}
-	if got := chatAutoCompactTokenThreshold(); got != 80000 {
+	if got := chatx.ChatAutoCompactTokenThreshold(); got != 80000 {
 		t.Fatalf("compact tokens = %d", got)
 	}
-	if got := chatAutoTurnDelay(); got != 120*time.Second {
+	if got := chatx.ChatAutoTurnDelay(); got != 120*time.Second {
 		t.Fatalf("auto-turn delay = %v", got)
 	}
 	if got := mcpx.SessionOutputTail(); got != 64<<10 {
@@ -102,19 +103,19 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 	// 設定は env（デプロイ/E2E 用）より優先。
 	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "999999")
 	t.Setenv("AF_CHAT_AUTOTURN_DELAY", "1")
-	if got := chatAutoCompactTokenThreshold(); got != 80000 {
+	if got := chatx.ChatAutoCompactTokenThreshold(); got != 80000 {
 		t.Fatalf("pref should beat env: %d", got)
 	}
-	if got := chatAutoTurnDelay(); got != 120*time.Second {
+	if got := chatx.ChatAutoTurnDelay(); got != 120*time.Second {
 		t.Fatalf("pref should beat env: %v", got)
 	}
 
 	// クランプ: 圧縮閾値の下限・束ね時間の上限・出力上限の上下限。
 	writeUIPrefs(t, `{"assistantAutoCompactTokens":5000,"assistantAutoTurnDelay":100000,"assistantOutputTailKiB":100000}`)
-	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokensMin {
+	if got := chatx.ChatAutoCompactTokenThreshold(); got != chatx.ChatCtxAutoCompactTokensMin {
 		t.Fatalf("compact tokens floor = %d", got)
 	}
-	if got := chatAutoTurnDelay(); got != chatAutoTurnDelayMax {
+	if got := chatx.ChatAutoTurnDelay(); got != chatx.ChatAutoTurnDelayMax {
 		t.Fatalf("auto-turn delay cap = %v", got)
 	}
 	if got := mcpx.SessionOutputTail(); got != 1<<20 {

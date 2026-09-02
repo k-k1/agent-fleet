@@ -50,15 +50,15 @@ func TestFastForwardNewWorktreeToOrigin(t *testing.T) {
 		t.Fatal("fixture is wrong: origin did not advance past the parent's local main")
 	}
 
-	wt, err := ensureWorktree(parent, "main", "temp/fresh", "wip-fresh")
+	wt, err := gitx.EnsureWorktree(parent, "main", "temp/fresh", "wip-fresh")
 	if err != nil {
-		t.Fatalf("ensureWorktree: %v", err)
+		t.Fatalf("gitx.EnsureWorktree: %v", err)
 	}
 	if got := gitRev(t, wt, "HEAD"); got != stale {
 		t.Fatalf("worktree started at %s, want the parent's local main %s (fixture)", got, stale)
 	}
 
-	fastForwardNewWorktreeToOrigin(wt, "main")
+	gitx.FastForwardNewWorktreeToOrigin(wt, "main")
 
 	if got := gitRev(t, wt, "HEAD"); got != tip {
 		t.Errorf("worktree HEAD = %s, want origin's tip %s", got, tip)
@@ -106,11 +106,11 @@ func TestFastForwardNewWorktreeKeepsDivergedLocalBase(t *testing.T) {
 	commitIntegrationFile(t, parent, "local-only") // 親のローカルにだけある仕事
 	local := gitRev(t, parent, "main")
 
-	wt, err := ensureWorktree(parent, "main", "temp/diverged", "wip-diverged")
+	wt, err := gitx.EnsureWorktree(parent, "main", "temp/diverged", "wip-diverged")
 	if err != nil {
-		t.Fatalf("ensureWorktree: %v", err)
+		t.Fatalf("gitx.EnsureWorktree: %v", err)
 	}
-	fastForwardNewWorktreeToOrigin(wt, "main")
+	gitx.FastForwardNewWorktreeToOrigin(wt, "main")
 
 	if got := gitRev(t, wt, "HEAD"); got != local {
 		t.Errorf("worktree HEAD = %s, want the local base %s (a diverged base must not be replaced)", got, local)
@@ -127,14 +127,14 @@ func TestFastForwardNewWorktreeWithoutOrigin(t *testing.T) {
 	t.Setenv("HOME", home)
 	parent := filepath.Join(home, "repos", "app")
 	gitInit(t, parent) // remote 無し
-	wt, err := ensureWorktree(parent, "main", "temp/local", "wip-local")
+	wt, err := gitx.EnsureWorktree(parent, "main", "temp/local", "wip-local")
 	if err != nil {
-		t.Fatalf("ensureWorktree: %v", err)
+		t.Fatalf("gitx.EnsureWorktree: %v", err)
 	}
 	before := gitRev(t, wt, "HEAD")
-	fastForwardNewWorktreeToOrigin(wt, "main")
-	fastForwardNewWorktreeToOrigin(wt, "")                // base 不明
-	fastForwardNewWorktreeToOrigin(wt, "--upload-pack=x") // 引数に化ける名前
+	gitx.FastForwardNewWorktreeToOrigin(wt, "main")
+	gitx.FastForwardNewWorktreeToOrigin(wt, "")                // base 不明
+	gitx.FastForwardNewWorktreeToOrigin(wt, "--upload-pack=x") // 引数に化ける名前
 	if got := gitRev(t, wt, "HEAD"); got != before {
 		t.Errorf("HEAD moved to %s without an origin; want %s", got, before)
 	}

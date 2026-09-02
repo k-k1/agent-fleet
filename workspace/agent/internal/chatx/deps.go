@@ -28,7 +28,7 @@ import (
 )
 
 // ReplyMsg は返信サジェストの窓を組むための「1 発言」。main の replyMsg と同じ形で、
-// 変換は alias_chat.go のアダプタが行う（main の型を chatx から名指しできないため）。
+// 変換は chat_wiring.go のアダプタが行う（main の型を chatx から名指しできないため）。
 type ReplyMsg struct {
 	Role string
 	Text string
@@ -103,7 +103,7 @@ type Deps struct {
 
 var deps Deps
 
-// Configure は起動時に 1 回だけ呼ぶ（main の alias_chat.go / chatx のテストの init）。
+// Configure は起動時に 1 回だけ呼ぶ（main の chat_wiring.go / chatx のテストの init）。
 // **ゼロ値のフィールドが 1 つでもあれば panic** する。
 func Configure(d Deps) {
 	v := reflect.ValueOf(d)

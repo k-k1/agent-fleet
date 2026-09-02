@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -98,7 +99,7 @@ var repoJobs = struct {
 
 // repoJobMarkerDir は中断検出用の marker 置き場。~/repos の下に置くのは意図的で、
 // 「作業コピーと同じ寿命」だから（コンテナ作り直しで ~/repos ごと消え、marker も消える）。
-func repoJobMarkerDir() string { return filepath.Join(reposRoot(), ".af-repo-jobs") }
+func repoJobMarkerDir() string { return filepath.Join(gitx.ReposRoot(), ".af-repo-jobs") }
 
 func repoJobMarkerPath(name string) string {
 	return filepath.Join(repoJobMarkerDir(), name+".json")
@@ -154,11 +155,11 @@ func sweepRepoJobMarkers() {
 		if json.Unmarshal(b, &m) != nil || m.Name == "" {
 			continue
 		}
-		dir, ok := resolveRepoDir(m.Name)
+		dir, ok := gitx.ResolveRepoDir(m.Name)
 		if !ok {
 			continue
 		}
-		kept := isGitRepo(dir) || isSvnRepo(dir)
+		kept := gitx.IsGitRepo(dir) || isSvnRepo(dir)
 		if _, err := os.Stat(dir); err != nil {
 			// フォルダごと消えている（利用者が消した／取り込みが始まる前に落ちた）。
 			// 報告する相手のいない中断なので marker だけ片付ける。
@@ -344,7 +345,7 @@ func finishRepoJob(id string, err error) {
 		e.job.Error = err.Error()
 	}
 	if e.job.State != repoJobDone {
-		e.job.Kept = isGitRepo(dir) || isSvnRepo(dir)
+		e.job.Kept = gitx.IsGitRepo(dir) || isSvnRepo(dir)
 	}
 	repoJobs.mu.Unlock()
 	removeRepoJobMarker(name)

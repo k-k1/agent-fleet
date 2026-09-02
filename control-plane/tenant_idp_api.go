@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -223,7 +224,7 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 	// point, does not tempt anyone to paste it into a form again (§61.11.4).
 	enc, keyRef := "", ""
 	switch s := strings.TrimSpace(b.ClientSecret); {
-	case s != "" && s != maskedValue:
+	case s != "" && s != mcpsrv.MaskedValue:
 		if enc, keyRef, err = a.mgr.sealTenantSecret(r.Context(), t.ID, s); err != nil {
 			writeAPIErr(w, internalErr(err))
 			return

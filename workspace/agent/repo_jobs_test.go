@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -47,7 +48,7 @@ func TestRepoJobHidesWorkingCopyWhileRunning(t *testing.T) {
 	resetRepoJobs(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	dir := filepath.Join(reposRoot(), "importing")
+	dir := filepath.Join(gitx.ReposRoot(), "importing")
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -86,12 +87,12 @@ func TestRepoJobHidesWorkingCopyWhileRunning(t *testing.T) {
 func listedRepoNames(t *testing.T) []string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	handleListRepos(rec, httptest.NewRequest("GET", "/repos", nil))
-	var repos []Repo
+	gitx.HandleListRepos(rec, httptest.NewRequest("GET", "/repos", nil))
+	var repos []gitx.Repo
 	if err := json.Unmarshal(rec.Body.Bytes(), &repos); err != nil {
 		// The handler may wrap; fall back to an envelope shape.
 		var env struct {
-			Repos []Repo `json:"repos"`
+			Repos []gitx.Repo `json:"repos"`
 		}
 		if err2 := json.Unmarshal(rec.Body.Bytes(), &env); err2 != nil {
 			t.Fatalf("decode repos: %v / %v: %s", err, err2, rec.Body.String())
@@ -109,7 +110,7 @@ func TestRepoJobCancelAndDismiss(t *testing.T) {
 	resetRepoJobs(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	dir := filepath.Join(reposRoot(), "slow")
+	dir := filepath.Join(gitx.ReposRoot(), "slow")
 
 	job := startRepoJob("svn", "slow", dir, "https://example.invalid/svn",
 		func(ctx context.Context, sink *repoJobSink) error {
@@ -151,7 +152,7 @@ func TestRepoJobMarkerSurvivesRestart(t *testing.T) {
 	resetRepoJobs(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	dir := filepath.Join(reposRoot(), "halfway")
+	dir := filepath.Join(gitx.ReposRoot(), "halfway")
 	if err := os.MkdirAll(filepath.Join(dir, ".svn"), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -20,10 +21,10 @@ func TestUsageLedgerLive(t *testing.T) {
 	ctx = usagex.WithTag(ctx, usagex.Tag{
 		Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerManual, Ref: "slot99",
 	})
-	if _, err := oneShotHeadless(ctx, oneShotShort, titleSuggestPersona("ja"),
+	if _, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, titleSuggestPersona("ja"),
 		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します",
 		titleModel()); err != nil {
-		t.Fatalf("oneShotHeadless: %v", err)
+		t.Fatalf("chatx.OneShotHeadless: %v", err)
 	}
 	rows := usagex.ReadRows()
 	if len(rows) == 0 {
@@ -62,9 +63,9 @@ func TestBranchSuggestLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	reply, err := oneShotHeadless(ctx, oneShotShort, branchSuggestPersona, branchSuggestPrompt(oneShotLiveTurns()), titleModel())
+	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, branchSuggestPersona, branchSuggestPrompt(oneShotLiveTurns()), titleModel())
 	if err != nil {
-		t.Fatalf("oneShotHeadless: %v", err)
+		t.Fatalf("chatx.OneShotHeadless: %v", err)
 	}
 	name := cleanBranchName(reply)
 	if name == "" {
@@ -80,9 +81,9 @@ func TestReplySuggestLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	reply, err := oneShotHeadless(ctx, oneShotShort, replySuggestPersona("ja"), replySuggestPrompt(oneShotLiveTurns(), "ja"), replySuggestModel())
+	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, replySuggestPersona("ja"), replySuggestPrompt(oneShotLiveTurns(), "ja"), replySuggestModel())
 	if err != nil {
-		t.Fatalf("oneShotHeadless: %v", err)
+		t.Fatalf("chatx.OneShotHeadless: %v", err)
 	}
 	list := cleanSuggestedReplies(reply)
 	if len(list) == 0 {

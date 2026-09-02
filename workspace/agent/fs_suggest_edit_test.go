@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -186,7 +187,7 @@ func TestFSSuggestEditRouteRegistered(t *testing.T) {
 // chat と同じ deny ポリシーを載せることを固定する。
 func TestOpencodeOneShotConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	p := opencodeOneShotConfig()
+	p := chatx.OpencodeOneShotConfig()
 	if p == "" {
 		t.Fatal("config path empty")
 	}

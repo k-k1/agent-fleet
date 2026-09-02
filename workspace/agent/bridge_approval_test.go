@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -68,7 +69,7 @@ func TestOperatorTurnMarker(t *testing.T) {
 	disarmOperatorTurn("c2")
 
 	// An expired marker (process died without disarming) is treated as not armed.
-	_ = operatorTurnStore.Write(operatorTurnKey("c1"), operatorTurnMarker{Conv: "c1", ExpiresAt: nowMs() - 1})
+	_ = operatorTurnStore.Write(operatorTurnKey("c1"), operatorTurnMarker{Conv: "c1", ExpiresAt: chatx.NowMs() - 1})
 	if operatorTurnArmed("c1") {
 		t.Fatal("expired marker must not arm")
 	}
@@ -108,8 +109,8 @@ func TestWaitApprovalDecision(t *testing.T) {
 	shrinkApprovalTunables(t)
 
 	t.Run("approve", func(t *testing.T) {
-		id := randUUID()
-		_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: nowMs()})
+		id := chatx.RandUUID()
+		_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
 		go func() {
 			time.Sleep(10 * time.Millisecond)
 			rec, _ := bridgeApprovals.Read(id)
@@ -125,8 +126,8 @@ func TestWaitApprovalDecision(t *testing.T) {
 	})
 
 	t.Run("reject", func(t *testing.T) {
-		id := randUUID()
-		_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: nowMs()})
+		id := chatx.RandUUID()
+		_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
 		go func() {
 			time.Sleep(10 * time.Millisecond)
 			rec, _ := bridgeApprovals.Read(id)
@@ -139,8 +140,8 @@ func TestWaitApprovalDecision(t *testing.T) {
 	})
 
 	t.Run("timeout", func(t *testing.T) {
-		id := randUUID()
-		_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: nowMs()})
+		id := chatx.RandUUID()
+		_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
 		if err := waitApprovalDecision(id); !errors.Is(err, errApprovalTimeout) {
 			t.Fatalf("timeout → %v", err)
 		}
@@ -160,8 +161,8 @@ func TestBridgeApprovalDecision(t *testing.T) {
 		t.Fatalf("missing record: msg=%q err=%v", msg, err)
 	}
 
-	id := randUUID()
-	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: nowMs()})
+	id := chatx.RandUUID()
+	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
 	msg, err := bridgeApprovalDecision(id, "approve", false)
 	if err != nil || msg == "" {
 		t.Fatalf("first decision: msg=%q err=%v", msg, err)
@@ -184,8 +185,8 @@ func TestBridgeApprovalRoundTrip(t *testing.T) {
 	withTempHome(t)
 	shrinkApprovalTunables(t)
 
-	id := randUUID()
-	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: nowMs()})
+	id := chatx.RandUUID()
+	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
 	done := make(chan error, 1)
 	go func() { done <- waitApprovalDecision(id) }() // the subprocess side
 
@@ -226,10 +227,10 @@ func TestSweepStaleApprovals(t *testing.T) {
 	t.Cleanup(func() { bridgeApprovalMaxAge = old })
 	bridgeApprovalMaxAge = time.Hour
 
-	stale := randUUID()
-	fresh := randUUID()
-	_ = bridgeApprovals.Write(stale, bridgeApprovalRec{ID: stale, CreatedAt: nowMs() - 2*time.Hour.Milliseconds()})
-	_ = bridgeApprovals.Write(fresh, bridgeApprovalRec{ID: fresh, CreatedAt: nowMs()})
+	stale := chatx.RandUUID()
+	fresh := chatx.RandUUID()
+	_ = bridgeApprovals.Write(stale, bridgeApprovalRec{ID: stale, CreatedAt: chatx.NowMs() - 2*time.Hour.Milliseconds()})
+	_ = bridgeApprovals.Write(fresh, bridgeApprovalRec{ID: fresh, CreatedAt: chatx.NowMs()})
 
 	sweepStaleApprovals()
 

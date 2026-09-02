@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -25,7 +26,7 @@ import (
 func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
 	// 1) result が来なかった: スナップショットを partial で採る。
 	stopped := usagex.Call{Kind: session.KindClaude}
-	snap := claudeUsage{InputTokens: 12, OutputTokens: 34, CacheReadInputTokens: 5600, CacheCreationInputTokens: 78}
+	snap := chatx.ClaudeUsage{InputTokens: 12, OutputTokens: 34, CacheReadInputTokens: 5600, CacheCreationInputTokens: 78}
 	stopped.FallbackTotals(snap.LedgerTokens(), usagex.MeasuredPartial)
 	if stopped.Totals.In != 12 || stopped.Totals.Out != 34 ||
 		stopped.Totals.CacheRead != 5600 || stopped.Totals.CacheCreate != 78 {
@@ -36,7 +37,7 @@ func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
 	}
 
 	// 2) modelUsage が来た呼び出しは触らない（モデル別の内訳の方が正）。
-	full := usagex.Call{Kind: session.KindClaude, Models: usageModelRows(map[string]claudeModelUsage{
+	full := usagex.Call{Kind: session.KindClaude, Models: chatx.UsageModelRows(map[string]chatx.ClaudeModelUsage{
 		"claude-haiku-4-5-20251001": {InputTokens: 1, OutputTokens: 2, CanonicalModel: "claude-haiku-4-5"},
 	})}
 	full.FallbackTotals(snap.LedgerTokens(), usagex.MeasuredPartial)
@@ -46,7 +47,7 @@ func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
 
 	// 3) 何も取れていない呼び出しは none のまま（0 を「消費 0」と偽らない）。
 	empty := usagex.Call{Kind: session.KindClaude}
-	empty.FallbackTotals(claudeUsage{}.LedgerTokens(), usagex.MeasuredPartial)
+	empty.FallbackTotals(chatx.ClaudeUsage{}.LedgerTokens(), usagex.MeasuredPartial)
 	if empty.Measured != "" || empty.MeasuredOr(empty.Totals) != usagex.MeasuredNone {
 		t.Fatalf("トークンが1つも無いのに partial を名乗った: %+v", empty)
 	}
@@ -67,11 +68,11 @@ func TestClaudeStreamRecordsTokensWhenKilledBeforeResult(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	c := &chatConversation{ID: "conv1", Model: "haiku"}
+	c := &chatx.ChatConversation{ID: "conv1", Model: "haiku"}
 	ctx := usagex.WithTag(context.Background(), usagex.Tag{
 		Feature: usagex.FeatureAssistantChat, Trigger: usagex.TriggerUser, Ref: c.ID,
 	})
-	if _, _, err := (claudeChat{}).SendStream(ctx, c, "hi", func(chatStreamEvent) {}); err == nil {
+	if _, _, err := (chatx.ClaudeChat{}).SendStream(ctx, c, "hi", func(chatx.ChatStreamEvent) {}); err == nil {
 		t.Fatal("result 前に死んだのに成功扱いになった")
 	}
 
@@ -128,7 +129,7 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 			sites++
 		}
 		if uses && !falls {
-			t.Errorf("%s: usageModelRows を使っているのに fallbackTotals が無い"+
+			t.Errorf("%s: chatx.UsageModelRows を使っているのに fallbackTotals が無い"+
 				"（modelUsage の来ない停止・異常終了で消費が 0 になる）", fn.Name.Name)
 		}
 	}
@@ -137,7 +138,7 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 	// uses が永久に false になり、**縮退を全部消しても緑のまま通る**。
 	// 守っているのは「modelUsage の来ない停止・異常終了で消費が 0 になる」＝課金の取りこぼし。
 	if sites == 0 {
-		t.Fatal("usageModelRows を呼ぶ関数が 1 つも見つからない＝この検査が無言化している" +
+		t.Fatal("chatx.UsageModelRows を呼ぶ関数が 1 つも見つからない＝この検査が無言化している" +
 			"（識別子が変わった / 移送された場合は、この検査の走査条件も一緒に直すこと）")
 	}
 }
@@ -146,15 +147,15 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 // 上書きしていた頃は「最も高くつく経路」が1回分に見えていた。
 func TestCodexOneShotRetryAccumulatesTokens(t *testing.T) {
 	calls := 0
-	run := func(_ context.Context, args []string, _ string) (string, codexUsage, error) {
+	run := func(_ context.Context, args []string, _ string) (string, chatx.CodexUsage, error) {
 		calls++
 		if calls == 1 {
 			// 1回目: 撃って（＝課金されて）から失敗した。
-			return "", codexUsage{InputTokens: 100, OutputTokens: 10}, errors.New("model not available")
+			return "", chatx.CodexUsage{InputTokens: 100, OutputTokens: 10}, errors.New("model not available")
 		}
-		return "ok", codexUsage{InputTokens: 300, OutputTokens: 30}, nil
+		return "ok", chatx.CodexUsage{InputTokens: 300, OutputTokens: 30}, nil
 	}
-	reply, tok, modelReq, err := codexOneShotWithRetry(context.Background(),
+	reply, tok, modelReq, err := chatx.CodexOneShotWithRetry(context.Background(),
 		[]string{"exec", "-m", "gpt-5.4-mini", "-"}, true, "p", run)
 	if err != nil || reply != "ok" || calls != 2 {
 		t.Fatalf("reply=%q calls=%d err=%v", reply, calls, err)
@@ -169,7 +170,7 @@ func TestCodexOneShotRetryAccumulatesTokens(t *testing.T) {
 
 	// 自前ピクでない（利用者が明示した）失敗は撃ち直さない — 1回分だけ残る。
 	calls = 0
-	_, tok, modelReq, err = codexOneShotWithRetry(context.Background(),
+	_, tok, modelReq, err = chatx.CodexOneShotWithRetry(context.Background(),
 		[]string{"exec", "-m", "gpt-5.4-mini", "-"}, false, "p", run)
 	if err == nil || calls != 1 || tok.In != 100 {
 		t.Fatalf("明示モデルの失敗で撃ち直した: calls=%d tok=%+v err=%v", calls, tok, err)
@@ -182,9 +183,9 @@ func TestCodexOneShotRetryAccumulatesTokens(t *testing.T) {
 // ledgerTokens は「この呼び出しで課金された量」を採る（コンテキスト占有＝iterations 末尾の
 // スナップショットとは別の量）。
 func TestClaudeLedgerTokensUsesCallTotals(t *testing.T) {
-	u := claudeUsage{
+	u := chatx.ClaudeUsage{
 		InputTokens: 9, OutputTokens: 533, CacheCreationInputTokens: 10015, CacheReadInputTokens: 6002,
-		Iterations: []claudeUsage{{InputTokens: 1}, {InputTokens: 2}},
+		Iterations: []chatx.ClaudeUsage{{InputTokens: 1}, {InputTokens: 2}},
 	}
 	got := u.LedgerTokens()
 	if got.In != 9 || got.Out != 533 || got.CacheCreate != 10015 || got.CacheRead != 6002 {

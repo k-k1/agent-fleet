@@ -28,6 +28,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/resources"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -52,8 +53,8 @@ func wireGoldenTypes() []struct {
 		{"session.Session", reflect.TypeOf(session.Session{})},
 		// GET /repos, GET /repos/{name}/status —— CP は素通しプロキシなので
 		// リポジトリのワイヤを持っているのはここだけ。
-		{"Repo", reflect.TypeOf(Repo{})},
-		{"RepoStatus", reflect.TypeOf(RepoStatus{})},
+		{"Repo", reflect.TypeOf(gitx.Repo{})},
+		{"RepoStatus", reflect.TypeOf(gitx.RepoStatus{})},
 		// GET /workspace/stats —— WS バーのリソースチップ（ECS ではここが唯一の出どころ）。
 		{"resources.Stats", reflect.TypeOf(resources.Stats{})},
 		// GET /notifications —— 通知センターの 1 件。

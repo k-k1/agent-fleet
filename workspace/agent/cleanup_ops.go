@@ -148,7 +148,7 @@ func archiveSessionForDelete(m session.Meta) (string, error) {
 // refused (git branch -d fails; we never -D) — the commits would be orphaned. The
 // branch is a query param, not a path segment, because branch names contain "/".
 func handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+	dir, ok := gitx.RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
@@ -157,11 +157,11 @@ func handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_branch", "invalid branch name")
 		return
 	}
-	if !gitBranchExists(dir, branch) {
+	if !gitx.GitBranchExists(dir, branch) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such branch: "+branch)
 		return
 	}
-	sha := gitBranchSHA(dir, branch)
+	sha := gitx.GitBranchSHA(dir, branch)
 	man := cleanupManifest{
 		ID: newCleanupID(nowUTC(), idSlug(branch)), At: nowUTC().Format(time.RFC3339),
 		Reason:   "delete_branch",

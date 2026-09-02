@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -40,13 +41,13 @@ func managedReportFixture(t *testing.T) (session.Meta, string, string) {
 	// 「起床ヒント＋レベルの証拠」として同じ経路を通る。
 	withTestReconciler(t, 20*time.Millisecond)
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /chat/report", handleChatReport)
+	mux.HandleFunc("POST /chat/report", chatx.HandleChatReport)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	t.Setenv("AGENT_ADDR", strings.TrimPrefix(srv.URL, "http://"))
 
-	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
-	if err := saveConv(conv); err != nil {
+	conv := &chatx.ChatConversation{ID: chatx.RandUUID(), Agent: "claude", Messages: []chatx.ChatMessage{}}
+	if err := chatx.SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 	m := session.Meta{
@@ -59,18 +60,18 @@ func managedReportFixture(t *testing.T) (session.Meta, string, string) {
 	agents.SetStateNotifier(recordSessionNotification)
 	t.Cleanup(func() { agents.SetStateNotifier(nil) })
 
-	addInstruction(m.Name, conv.ID, turnSourceOperator) // create_session / send_to_session with report_to
+	chatx.AddInstruction(m.Name, conv.ID, turnSourceOperator) // create_session / send_to_session with report_to
 	return m, session.UUID(m.Dir, m.Name), conv.ID
 }
 
 // awaitReportCard polls for the report message. deliverSessionReport finishes in a
 // goroutine off the handler, and saveConv is a plain os.WriteFile — so read under the
 // conversation lock like every real reader does (an unlocked poll catches mid-truncate).
-func awaitReportCard(t *testing.T, convID string) *chatMessage {
+func awaitReportCard(t *testing.T, convID string) *chatx.ChatMessage {
 	t.Helper()
 	for i := 0; i < 100; i++ {
-		unlock := lockConv(convID)
-		c, err := loadConv(convID)
+		unlock := chatx.LockConv(convID)
+		c, err := chatx.LoadConv(convID)
 		unlock()
 		if err == nil {
 			for j := range c.Messages {
@@ -120,8 +121,8 @@ func TestManagedRuntimeLossDoesNotReport(t *testing.T) {
 	agents.MarkTurnEnd(sid, agents.TurnUnknown)
 
 	time.Sleep(200 * time.Millisecond) // 報告が飛ばないことの確認なので猶予を置く
-	unlock := lockConv(convID)
-	c, err := loadConv(convID)
+	unlock := chatx.LockConv(convID)
+	c, err := chatx.LoadConv(convID)
 	unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +132,7 @@ func TestManagedRuntimeLossDoesNotReport(t *testing.T) {
 			t.Fatalf("runtime 喪失を完了として報告した: %+v", msg)
 		}
 	}
-	if !sessionReportPending(m.Name) {
+	if !chatx.SessionReportPending(m.Name) {
 		t.Fatal("arm must survive an unknown outcome — 本当の完了が報告されなくなる")
 	}
 	if st, _ := status.Read(sid); st.State != "idle" {

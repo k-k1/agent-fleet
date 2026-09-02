@@ -33,8 +33,8 @@ func TestWorktreeExistingBranchGuard(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /sessions", handleCreateSession)
-	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
-	mux.HandleFunc("GET /repos/{name}/branches", handleRepoBranches)
+	mux.HandleFunc("POST /repos/{name}/checkout", gitx.HandleRepoCheckout)
+	mux.HandleFunc("GET /repos/{name}/branches", gitx.HandleRepoBranches)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -57,7 +57,7 @@ func TestWorktreeExistingBranchGuard(t *testing.T) {
 	// The branch list now reports feature as occupied by that worktree (and main, the
 	// parent's own branch, as free — "current" is not "occupied").
 	var list struct {
-		Branches []branchInfo `json:"branches"`
+		Branches []gitx.BranchInfo `json:"branches"`
 	}
 	do(t, srv, "GET", "/repos/app/branches", nil, http.StatusOK, &list)
 	for _, b := range list.Branches {
@@ -136,16 +136,16 @@ func TestWorktreeExistingBranchSync(t *testing.T) {
 	gitAt(t, other, "push", "-u", "origin", "hot")
 
 	// Our copy has never heard of it — that is exactly the "invalid reference" case.
-	if local, remote := branchNameStatus(parent, "hot"); local || remote {
+	if local, remote := gitx.BranchNameStatus(parent, "hot"); local || remote {
 		t.Fatalf("precondition: hot already known to the parent (local=%v remote=%v)", local, remote)
 	}
-	ensureBranchRef(parent, "hot")
-	if _, remote := branchNameStatus(parent, "hot"); !remote {
-		t.Fatal("ensureBranchRef did not fetch the newly pushed branch")
+	gitx.EnsureBranchRef(parent, "hot")
+	if _, remote := gitx.BranchNameStatus(parent, "hot"); !remote {
+		t.Fatal("gitx.EnsureBranchRef did not fetch the newly pushed branch")
 	}
-	wt, err := ensureWorktree(parent, "hot", "", "")
+	wt, err := gitx.EnsureWorktree(parent, "hot", "", "")
 	if err != nil {
-		t.Fatalf("ensureWorktree on a remote-only branch: %v", err)
+		t.Fatalf("gitx.EnsureWorktree on a remote-only branch: %v", err)
 	}
 	if br, _ := gitx.Run(wt, "rev-parse", "--abbrev-ref", "HEAD"); br != "hot" {
 		t.Fatalf("worktree is on %q, want hot", br)
@@ -159,7 +159,7 @@ func TestWorktreeExistingBranchSync(t *testing.T) {
 	gitAt(t, other, "push")
 	tip, _ := gitx.Run(other, "rev-parse", "HEAD")
 
-	fastForwardWorktree(wt)
+	gitx.FastForwardWorktree(wt)
 	if got, _ := gitx.Run(wt, "rev-parse", "HEAD"); got != tip {
 		t.Errorf("worktree HEAD = %s, want the upstream tip %s", got, tip)
 	}
@@ -176,7 +176,7 @@ func TestWorktreeExistingBranchSync(t *testing.T) {
 	}
 	gitAt(t, wt, "commit", "-am", "hot v3 local")
 	local, _ := gitx.Run(wt, "rev-parse", "HEAD")
-	fastForwardWorktree(wt) // must not panic, must not destroy the local commit
+	gitx.FastForwardWorktree(wt) // must not panic, must not destroy the local commit
 	if got, _ := gitx.Run(wt, "rev-parse", "HEAD"); got != local {
 		t.Errorf("diverged worktree HEAD = %s, want it left alone at %s", got, local)
 	}

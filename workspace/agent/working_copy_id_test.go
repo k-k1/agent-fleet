@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,14 +12,14 @@ func TestWorkingCopyIDStableAndDoesNotResurrectAfterRecreate(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	first := workingCopyID(dir)
-	if first == "" || first != workingCopyID(dir) {
+	first := gitx.WorkingCopyID(dir)
+	if first == "" || first != gitx.WorkingCopyID(dir) {
 		t.Fatalf("working copy id is not stable: %q", first)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "new-file"), []byte("change directory ctime"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := workingCopyID(dir); got != first {
+	if got := gitx.WorkingCopyID(dir); got != first {
 		t.Fatalf("id changed after ordinary work: %q -> %q", first, got)
 	}
 	if err := os.RemoveAll(dir); err != nil {
@@ -27,7 +28,7 @@ func TestWorkingCopyIDStableAndDoesNotResurrectAfterRecreate(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if second := workingCopyID(dir); second == "" || second == first {
+	if second := gitx.WorkingCopyID(dir); second == "" || second == first {
 		t.Fatalf("recreated working copy reused id: first=%q second=%q", first, second)
 	}
 }
@@ -45,11 +46,11 @@ func TestWorkingCopyIDUsesLinkedWorktreeGitDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	id := workingCopyID(dir)
+	id := gitx.WorkingCopyID(dir)
 	if id == "" {
 		t.Fatal("empty id")
 	}
-	if got := readWorkingCopyID(filepath.Join(gitDir, "agent-fleet-working-copy-id")); got != id {
+	if got := gitx.ReadWorkingCopyID(filepath.Join(gitDir, "agent-fleet-working-copy-id")); got != id {
 		t.Fatalf("gitdir marker=%q want %q", got, id)
 	}
 }
@@ -64,7 +65,7 @@ func TestWorkingCopyIDFailsClosedWhenMarkerCannotBePersisted(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("not-a-gitdir\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := workingCopyID(dir); got != "" {
+	if got := gitx.WorkingCopyID(dir); got != "" {
 		t.Fatalf("unsafe fallback id=%q", got)
 	}
 }

@@ -4,23 +4,24 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func TestTurnModelRecordedPerMessage(t *testing.T) {
 	withTempHome(t)
 	stubChatProvider(t, session.KindClaude, mainStubProvider{reply: "了解", model: "claude-sonnet-5-20260501"})
-	conv := &chatConversation{
-		ID: randUUID(), Agent: session.KindClaude, Model: "sonnet",
+	conv := &chatx.ChatConversation{
+		ID: chatx.RandUUID(), Agent: session.KindClaude, Model: "sonnet",
 		Tools: assistants.ToolsAFWrite, AssistantID: "operator",
 	}
-	if err := saveConv(conv); err != nil {
+	if err := chatx.SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runOperatorTurn(conv.ID, "状況は?"); err != nil {
 		t.Fatal(err)
 	}
-	c, err := loadConv(conv.ID)
+	c, err := chatx.LoadConv(conv.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,17 +37,17 @@ func TestTurnModelRecordedPerMessage(t *testing.T) {
 func TestTurnModelBlankWhenUnknown(t *testing.T) {
 	withTempHome(t)
 	stubChatProvider(t, session.KindClaude, mainStubProvider{reply: "了解"})
-	conv := &chatConversation{
-		ID: randUUID(), Agent: session.KindClaude, Model: "sonnet",
+	conv := &chatx.ChatConversation{
+		ID: chatx.RandUUID(), Agent: session.KindClaude, Model: "sonnet",
 		Tools: assistants.ToolsAFWrite, AssistantID: "operator",
 	}
-	if err := saveConv(conv); err != nil {
+	if err := chatx.SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runOperatorTurn(conv.ID, "状況は?"); err != nil {
 		t.Fatal(err)
 	}
-	c, err := loadConv(conv.ID)
+	c, err := chatx.LoadConv(conv.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

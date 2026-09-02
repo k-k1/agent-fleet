@@ -20,6 +20,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -547,7 +548,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// あれは「利用者が Console で打った入力」をスレッドへ反映するためのもので、
 		// peer はどちらでもない。
 	case body.ReportTo != "":
-		addInstruction(name, body.ReportTo, injectionSource(body.Source))
+		chatx.AddInstruction(name, body.ReportTo, injectionSource(body.Source))
 	case scheduleInjectionSource(body.Source) != "":
 		// 完了報告 OFF のスケジュール投入（report_to が空なので上の枝に入らない）。台帳へは
 		// 載せない — 報告先そのものが無い。由来だけを覚えるのは peer と同じ扱いで、これも
@@ -629,7 +630,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	case peerFrom != "":
 		// 台帳には載せない（ADR 0041 決定4）。由来は上で記録済み。
 	case reportTo != "":
-		addInstruction(meta.Name, reportTo, injectionSource(source))
+		chatx.AddInstruction(meta.Name, reportTo, injectionSource(source))
 	case scheduleInjectionSource(source) != "":
 		// 報告 OFF の定時実行（TUI 側と同じ）— 台帳も Discord も無し。
 	default:
