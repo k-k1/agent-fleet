@@ -21,7 +21,7 @@ func TestPostgresDeleteCascade(t *testing.T) {
 		t.Skip("set AF_TEST_DATABASE_URL to run the Postgres cascade test")
 	}
 	ctx := context.Background()
-	st, err := openPostgres(url)
+	st, err := OpenPostgres(url)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

@@ -21,7 +21,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Skip("set AF_TEST_DATABASE_URL to run the Postgres conformance test")
 	}
 	ctx := context.Background()
-	st, err := openPostgres(url)
+	st, err := OpenPostgres(url)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -79,8 +79,8 @@ func TestPostgresStore(t *testing.T) {
 	}
 
 	// workspace + state + wrapped dek upsert
-	ws := Workspace{ID: newID(), TenantID: tn.ID, MembershipID: m1.ID, ContainerName: "af-ws-k1",
-		Network: "n", DataDir: "/d", AgentPort: "7700", AgentToken: "tok", State: "stopped", CreatedAt: nowTS()}
+	ws := Workspace{ID: NewID(), TenantID: tn.ID, MembershipID: m1.ID, ContainerName: "af-ws-k1",
+		Network: "n", DataDir: "/d", AgentPort: "7700", AgentToken: "tok", State: "stopped", CreatedAt: NowTS()}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatalf("create ws: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestPostgresStore(t *testing.T) {
 
 	// session mirror
 	if err := st.ReplaceSessions(ctx, ws.ID, []SessionRow{{WorkspaceID: ws.ID, Name: "s1", Kind: "shell",
-		State: "running", CreatedAt: nowTS(), LastSeen: nowTS()}}); err != nil {
+		State: "running", CreatedAt: NowTS(), LastSeen: NowTS()}}); err != nil {
 		t.Fatalf("replace sess: %v", err)
 	}
 	if rows, err := st.ListSessions(ctx, ws.ID); err != nil || len(rows) != 1 || rows[0].Name != "s1" {
@@ -169,7 +169,7 @@ func TestPostgresStore(t *testing.T) {
 	}
 
 	// pat
-	pat := PAT{ID: newID(), IdentityID: i2.ID, MembershipID: m1.ID, Scope: "read", Name: "cli", CreatedAt: nowTS()}
+	pat := PAT{ID: NewID(), IdentityID: i2.ID, MembershipID: m1.ID, Scope: "read", Name: "cli", CreatedAt: NowTS()}
 	if err := st.CreatePAT(ctx, pat, "hash1"); err != nil {
 		t.Fatalf("create pat: %v", err)
 	}
@@ -178,8 +178,8 @@ func TestPostgresStore(t *testing.T) {
 	}
 
 	// audit
-	if err := st.InsertAudit(ctx, AuditLog{ID: newID(), TenantID: tn.ID, ActorKind: "user",
-		ActorID: i2.ID, Action: "start", Target: "ws", At: nowTS()}); err != nil {
+	if err := st.InsertAudit(ctx, AuditLog{ID: NewID(), TenantID: tn.ID, ActorKind: "user",
+		ActorID: i2.ID, Action: "start", Target: "ws", At: NowTS()}); err != nil {
 		t.Fatalf("audit: %v", err)
 	}
 	if al, err := st.ListAuditByTenant(ctx, tn.ID, 10); err != nil || len(al) != 1 {
@@ -198,7 +198,7 @@ func TestPostgresStore(t *testing.T) {
 	}
 
 	// ssm profile
-	if err := st.CreateSSMProfile(ctx, SSMProfile{ID: newID(), MembershipID: m1.ID, Label: "p", CreatedAt: nowTS()}); err != nil {
+	if err := st.CreateSSMProfile(ctx, SSMProfile{ID: NewID(), MembershipID: m1.ID, Label: "p", CreatedAt: NowTS()}); err != nil {
 		t.Fatalf("ssm profile: %v", err)
 	}
 
@@ -208,7 +208,7 @@ func TestPostgresStore(t *testing.T) {
 	// folds a non-array answer into an empty list — simply showed no categories. The
 	// round trip below is what "the feature works here" means; TestSchemaDialectParity
 	// next door is what stops the two series diverging again.
-	cat := MemoCategory{ID: newID(), MembershipID: m1.ID, Repo: "app", Name: "後で", Position: 0, CreatedAt: nowTS()}
+	cat := MemoCategory{ID: NewID(), MembershipID: m1.ID, Repo: "app", Name: "後で", Position: 0, CreatedAt: NowTS()}
 	if err := st.CreateCategory(ctx, cat); err != nil {
 		t.Fatalf("create memo category: %v", err)
 	}
@@ -221,8 +221,8 @@ func TestPostgresStore(t *testing.T) {
 	}
 	// The rename cascades onto the memos that carry the name (memo.category is the
 	// grouping key; this table holds the order and the empty ones).
-	if err := st.CreateMemo(ctx, Memo{ID: newID(), MembershipID: m1.ID, Repo: "app",
-		Category: "後で", Kind: "text", Body: "b", CreatedAt: nowTS()}); err != nil {
+	if err := st.CreateMemo(ctx, Memo{ID: NewID(), MembershipID: m1.ID, Repo: "app",
+		Category: "後で", Kind: "text", Body: "b", CreatedAt: NowTS()}); err != nil {
 		t.Fatalf("create memo: %v", err)
 	}
 	if err := st.ReassignMemoCategory(ctx, m1.ID, "app", "後で", "あとで"); err != nil {
@@ -265,7 +265,7 @@ func TestPostgresStore(t *testing.T) {
 	if eg[1].Host != "evil.example" || eg[1].Allowed != 0 || eg[1].Blocked != 1 {
 		t.Fatalf("list egress blocked row: %+v", eg)
 	}
-	if err := st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: "github.com", State: "active", AddedAt: nowTS()}); err != nil {
+	if err := st.AddAllowlist(ctx, AllowlistEntry{ID: NewID(), Entry: "github.com", State: "active", AddedAt: NowTS()}); err != nil {
 		t.Fatalf("allowlist: %v", err)
 	}
 	if al, err := st.EffectiveAllowlist(ctx); err != nil || len(al) == 0 {
@@ -399,10 +399,10 @@ func TestPostgresStore(t *testing.T) {
 	// by this migration, the deployment-wide read JOINs tenant, and the approval path
 	// is a second UPDATE — all of it had only ever run on SQLite.
 	idpRow := TenantIdP{
-		ID: newID(), TenantID: t2.ID, Name: "entra",
+		ID: NewID(), TenantID: t2.ID, Name: "entra",
 		Issuer: "https://login.microsoftonline.com/guid-pg/v2.0", ClientID: "c",
 		SecretEnc: "sealed", KeyRef: t2.ID, Trust: trustIssuer,
-		AllowedDomains: "sub.example", Status: "pending", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		AllowedDomains: "sub.example", Status: "pending", CreatedAt: NowTS(), UpdatedAt: NowTS(),
 	}
 	if err := st.CreateTenantIdP(ctx, idpRow); err != nil {
 		t.Fatalf("create tenant_idp: %v", err)
@@ -414,7 +414,7 @@ func TestPostgresStore(t *testing.T) {
 	if act, _, err := st.ListActiveTenantIdPs(ctx); err != nil || len(act) != 0 {
 		t.Fatalf("pending row must not be active: %+v %v", act, err)
 	}
-	if err := st.SetTenantIdPStatus(ctx, t2.ID, idpRow.ID, "active", "boss", nowTS(), nowTS()); err != nil {
+	if err := st.SetTenantIdPStatus(ctx, t2.ID, idpRow.ID, "active", "boss", NowTS(), NowTS()); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	// ★ The display name travels with the slug: it is what the generated button label

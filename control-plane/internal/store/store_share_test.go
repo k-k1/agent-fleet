@@ -19,7 +19,7 @@ func testShareLeaseUntil() string {
 
 func TestSessionShareStoreRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,14 +32,14 @@ func TestSessionShareStoreRoundTrip(t *testing.T) {
 	recipientID, _ := st.UpsertIdentity(ctx, "recipient@example.com", "recipient", "")
 	owner, _ := st.EnsureMembership(ctx, ownerID.ID, tn.ID, "member")
 	recipient, _ := st.EnsureMembership(ctx, recipientID.ID, tn.ID, "member")
-	ws := Workspace{ID: newID(), TenantID: tn.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: nowTS()}
+	ws := Workspace{ID: NewID(), TenantID: tn.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: NowTS()}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
 
-	share := SessionShare{ID: newID(), TenantID: tn.ID, OwnerMembershipID: owner.ID,
+	share := SessionShare{ID: NewID(), TenantID: tn.ID, OwnerMembershipID: owner.ID,
 		RecipientMembershipID: recipient.ID, ScopeType: "worktree", ScopeKey: "wc_1",
-		Permission: "ro", CreatedAt: nowTS(), UpdatedAt: nowTS()}
+		Permission: "ro", CreatedAt: NowTS(), UpdatedAt: NowTS()}
 	if err := st.PutSessionShare(ctx, share); err != nil {
 		t.Fatal(err)
 	}
@@ -52,9 +52,9 @@ func TestSessionShareStoreRoundTrip(t *testing.T) {
 		t.Fatalf("share=%+v ok=%v err=%v", got, ok, err)
 	}
 
-	cat := SharedSessionCatalog{ID: newID(), WorkspaceID: ws.ID, OwnerMembershipID: owner.ID,
+	cat := SharedSessionCatalog{ID: NewID(), WorkspaceID: ws.ID, OwnerMembershipID: owner.ID,
 		Name: "s1", Kind: "codex", Dir: "/repos/app@wt", Repo: "app@wt", WorkingCopyID: "wc_1",
-		Title: "Review", CreatedAt: nowTS(), State: "stopped", Archived: true, LastSeen: nowTS()}
+		Title: "Review", CreatedAt: NowTS(), State: "stopped", Archived: true, LastSeen: NowTS()}
 	if err := st.ReplaceSharedSessionCatalog(ctx, ws.ID, owner.ID, []SharedSessionCatalog{cat}); err != nil {
 		t.Fatal(err)
 	}
@@ -63,16 +63,16 @@ func TestSessionShareStoreRoundTrip(t *testing.T) {
 		t.Fatalf("catalog=%+v err=%v", rows, err)
 	}
 
-	p := SessionShareProposal{ID: newID(), TenantID: tn.ID, CatalogID: rows[0].ID,
+	p := SessionShareProposal{ID: NewID(), TenantID: tn.ID, CatalogID: rows[0].ID,
 		OwnerMembershipID: owner.ID, ProposerMembershipID: recipient.ID, Action: "turn",
-		Ciphertext: "opaque", Status: "pending", CreatedAt: nowTS(), ExpiresAt: nowTS()}
+		Ciphertext: "opaque", Status: "pending", CreatedAt: NowTS(), ExpiresAt: NowTS()}
 	if err := st.CreateSessionShareProposal(ctx, p); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := st.CountPendingSessionShareProposals(ctx, rows[0].ID); err != nil || n != 1 {
 		t.Fatalf("pending=%d err=%v", n, err)
 	}
-	if changed, err := st.TransitionSessionShareProposal(ctx, p.ID, "pending", "approved", ownerID.ID, nowTS(), true); err != nil || !changed {
+	if changed, err := st.TransitionSessionShareProposal(ctx, p.ID, "pending", "approved", ownerID.ID, NowTS(), true); err != nil || !changed {
 		t.Fatalf("decide changed=%v err=%v", changed, err)
 	}
 	decided, ok, err := st.GetSessionShareProposal(ctx, p.ID)
@@ -80,14 +80,14 @@ func TestSessionShareStoreRoundTrip(t *testing.T) {
 		t.Fatalf("proposal=%+v ok=%v err=%v", decided, ok, err)
 	}
 	expired := p
-	expired.ID = newID()
+	expired.ID = NewID()
 	expired.Status = "pending"
 	expired.Ciphertext = "opaque"
 	expired.ExpiresAt = "2000-01-01T00:00:00Z"
 	if err := st.CreateSessionShareProposal(ctx, expired); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.ExpireSessionShareProposals(ctx, owner.ID, nowTS()); err != nil {
+	if err := st.ExpireSessionShareProposals(ctx, owner.ID, NowTS()); err != nil {
 		t.Fatal(err)
 	}
 	gotExpired, ok, err := st.GetSessionShareProposal(ctx, expired.ID)
@@ -95,13 +95,13 @@ func TestSessionShareStoreRoundTrip(t *testing.T) {
 		t.Fatalf("expired proposal=%+v ok=%v err=%v", gotExpired, ok, err)
 	}
 	processing := expired
-	processing.ID = newID()
+	processing.ID = NewID()
 	processing.Status = "processing"
 	processing.Ciphertext = "possibly-applied"
 	if err := st.CreateSessionShareProposal(ctx, processing); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.ExpireSessionShareProposals(ctx, owner.ID, nowTS()); err != nil {
+	if err := st.ExpireSessionShareProposals(ctx, owner.ID, NowTS()); err != nil {
 		t.Fatal(err)
 	}
 	gotProcessing, ok, err := st.GetSessionShareProposal(ctx, processing.ID)
@@ -112,7 +112,7 @@ func TestSessionShareStoreRoundTrip(t *testing.T) {
 
 func TestSessionShareClaimRechecksRWAndNeverRepeatsUnknown(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,19 +125,19 @@ func TestSessionShareClaimRechecksRWAndNeverRepeatsUnknown(t *testing.T) {
 	recipientIdentity, _ := st.UpsertIdentity(ctx, "recipient@example.com", "claim-recipient", "")
 	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
 	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
-	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	workspace := Workspace{ID: NewID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
-	catalog := SharedSessionCatalog{ID: newID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "s1", Kind: "codex", WorkingCopyID: "wc-1", LastSeen: nowTS()}
+	catalog := SharedSessionCatalog{ID: NewID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "s1", Kind: "codex", WorkingCopyID: "wc-1", LastSeen: NowTS()}
 	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []SharedSessionCatalog{catalog}); err != nil {
 		t.Fatal(err)
 	}
-	share := SessionShare{ID: newID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID, RecipientMembershipID: recipient.ID, ScopeType: "worktree", ScopeKey: "wc-1", Permission: "rw", CreatedAt: nowTS(), UpdatedAt: nowTS()}
+	share := SessionShare{ID: NewID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID, RecipientMembershipID: recipient.ID, ScopeType: "worktree", ScopeKey: "wc-1", Permission: "rw", CreatedAt: NowTS(), UpdatedAt: NowTS()}
 	if err := st.PutSessionShare(ctx, share); err != nil {
 		t.Fatal(err)
 	}
-	proposal := SessionShareProposal{ID: newID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: owner.ID, ProposerMembershipID: recipient.ID, Action: "turn", Ciphertext: "opaque", Status: "pending", CreatedAt: nowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
+	proposal := SessionShareProposal{ID: NewID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: owner.ID, ProposerMembershipID: recipient.ID, Action: "turn", Ciphertext: "opaque", Status: "pending", CreatedAt: NowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
 	if err := st.CreateSessionShareProposal(ctx, proposal); err != nil {
 		t.Fatal(err)
 	}
@@ -149,23 +149,23 @@ func TestSessionShareClaimRechecksRWAndNeverRepeatsUnknown(t *testing.T) {
 	if claimErr != nil || state != "claimed" {
 		t.Fatalf("first state=%q err=%v", state, claimErr)
 	}
-	_, _, state, claimErr = st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS(), testShareLeaseUntil())
+	_, _, state, claimErr = st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, NowTS(), testShareLeaseUntil())
 	if claimErr != nil || state != "processing" {
 		t.Fatalf("retry state=%q err=%v", state, claimErr)
 	}
 
 	second := proposal
-	second.ID = newID()
+	second.ID = NewID()
 	if err := st.CreateSessionShareProposal(ctx, second); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.ReleaseSessionShareOwnerLease(ctx, owner.ID, proposal.ID); err != nil {
 		t.Fatal(err)
 	}
-	if changed, err := st.UpdateSessionSharePermission(ctx, share.ID, owner.ID, "ro", nowTS()); err != nil || !changed {
+	if changed, err := st.UpdateSessionSharePermission(ctx, share.ID, owner.ID, "ro", NowTS()); err != nil || !changed {
 		t.Fatalf("downgrade changed=%v err=%v", changed, err)
 	}
-	_, _, state, claimErr = st.ClaimSessionShareProposal(ctx, second.ID, owner.ID, ownerIdentity.ID, nowTS(), testShareLeaseUntil())
+	_, _, state, claimErr = st.ClaimSessionShareProposal(ctx, second.ID, owner.ID, ownerIdentity.ID, NowTS(), testShareLeaseUntil())
 	if claimErr != nil || state != "expired" {
 		t.Fatalf("downgraded state=%q err=%v", state, claimErr)
 	}
@@ -177,7 +177,7 @@ func TestSessionShareClaimRechecksRWAndNeverRepeatsUnknown(t *testing.T) {
 
 func TestSessionShareClaimReleasesDBBeforeAgentIO(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,24 +190,24 @@ func TestSessionShareClaimReleasesDBBeforeAgentIO(t *testing.T) {
 	recipientIdentity, _ := st.UpsertIdentity(ctx, "recipient2@example.com", "race-recipient", "")
 	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
 	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
-	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	workspace := Workspace{ID: NewID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
-	catalog := SharedSessionCatalog{ID: newID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "s1", Kind: "codex", WorkingCopyID: "wc-race", LastSeen: nowTS()}
+	catalog := SharedSessionCatalog{ID: NewID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "s1", Kind: "codex", WorkingCopyID: "wc-race", LastSeen: NowTS()}
 	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []SharedSessionCatalog{catalog}); err != nil {
 		t.Fatal(err)
 	}
-	share := SessionShare{ID: newID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID, RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: "s1", Permission: "rw", CreatedAt: nowTS(), UpdatedAt: nowTS()}
+	share := SessionShare{ID: NewID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID, RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: "s1", Permission: "rw", CreatedAt: NowTS(), UpdatedAt: NowTS()}
 	if err := st.PutSessionShare(ctx, share); err != nil {
 		t.Fatal(err)
 	}
-	proposal := SessionShareProposal{ID: newID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: owner.ID, ProposerMembershipID: recipient.ID, Action: "turn", Ciphertext: "opaque", Status: "pending", CreatedAt: nowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
+	proposal := SessionShareProposal{ID: NewID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: owner.ID, ProposerMembershipID: recipient.ID, Action: "turn", Ciphertext: "opaque", Status: "pending", CreatedAt: NowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
 	if err := st.CreateSessionShareProposal(ctx, proposal); err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, state, err := st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS(), testShareLeaseUntil())
+	_, _, state, err := st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, NowTS(), testShareLeaseUntil())
 	if err != nil || state != "claimed" {
 		t.Fatalf("claim state=%q err=%v", state, err)
 	}
@@ -215,7 +215,7 @@ func TestSessionShareClaimReleasesDBBeforeAgentIO(t *testing.T) {
 	// wait for that external I/O window on SQLite's global write lock.
 	writeDone := make(chan error, 1)
 	go func() {
-		writeDone <- st.InsertAudit(ctx, AuditLog{ID: newID(), TenantID: tenant.ID, ActorKind: "system", ActorID: "test", Action: "share.claim.concurrent-write", At: nowTS()})
+		writeDone <- st.InsertAudit(ctx, AuditLog{ID: NewID(), TenantID: tenant.ID, ActorKind: "system", ActorID: "test", Action: "share.claim.concurrent-write", At: NowTS()})
 	}()
 	select {
 	case err := <-writeDone:
@@ -225,7 +225,7 @@ func TestSessionShareClaimReleasesDBBeforeAgentIO(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("unrelated DB write remained blocked after proposal claim")
 	}
-	changed, err := st.FinalizeSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS())
+	changed, err := st.FinalizeSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, NowTS())
 	if err != nil || !changed {
 		t.Fatalf("finalize changed=%v err=%v", changed, err)
 	}
@@ -237,7 +237,7 @@ func TestSessionShareClaimReleasesDBBeforeAgentIO(t *testing.T) {
 
 func TestSessionShareExpiryPreservesLeasedProcessingAtDeadline(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,20 +250,20 @@ func TestSessionShareExpiryPreservesLeasedProcessingAtDeadline(t *testing.T) {
 	recipientIdentity, _ := st.UpsertIdentity(ctx, "deadline-recipient@example.com", "deadline-recipient", "")
 	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
 	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
-	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	workspace := Workspace{ID: NewID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
-	catalog := SharedSessionCatalog{ID: newID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "deadline", Kind: "codex", WorkingCopyID: "wc-deadline", LastSeen: nowTS()}
+	catalog := SharedSessionCatalog{ID: NewID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "deadline", Kind: "codex", WorkingCopyID: "wc-deadline", LastSeen: NowTS()}
 	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []SharedSessionCatalog{catalog}); err != nil {
 		t.Fatal(err)
 	}
-	share := SessionShare{ID: newID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID, RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: catalog.Name, Permission: "rw", CreatedAt: nowTS(), UpdatedAt: nowTS()}
+	share := SessionShare{ID: NewID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID, RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: catalog.Name, Permission: "rw", CreatedAt: NowTS(), UpdatedAt: NowTS()}
 	if err := st.PutSessionShare(ctx, share); err != nil {
 		t.Fatal(err)
 	}
 	claimAt := time.Now().UTC().Truncate(time.Second)
-	proposal := SessionShareProposal{ID: newID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: owner.ID, ProposerMembershipID: recipient.ID, Action: "turn", Ciphertext: "opaque", Status: "pending", CreatedAt: claimAt.Format(time.RFC3339), ExpiresAt: claimAt.Add(time.Second).Format(time.RFC3339)}
+	proposal := SessionShareProposal{ID: NewID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: owner.ID, ProposerMembershipID: recipient.ID, Action: "turn", Ciphertext: "opaque", Status: "pending", CreatedAt: claimAt.Format(time.RFC3339), ExpiresAt: claimAt.Add(time.Second).Format(time.RFC3339)}
 	if err := st.CreateSessionShareProposal(ctx, proposal); err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func TestSessionShareExpiryPreservesLeasedProcessingAtDeadline(t *testing.T) {
 
 func TestSessionShareProposalLimitIsAtomic(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,11 +301,11 @@ func TestSessionShareProposalLimitIsAtomic(t *testing.T) {
 	recipientIdentity, _ := st.UpsertIdentity(ctx, "limit-recipient@example.com", "limit-recipient", "")
 	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
 	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
-	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	workspace := Workspace{ID: NewID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
-	catalog := SharedSessionCatalog{ID: newID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "s1", Kind: "codex", LastSeen: nowTS()}
+	catalog := SharedSessionCatalog{ID: NewID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "s1", Kind: "codex", LastSeen: NowTS()}
 	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []SharedSessionCatalog{catalog}); err != nil {
 		t.Fatal(err)
 	}
@@ -317,9 +317,9 @@ func TestSessionShareProposalLimitIsAtomic(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			p := SessionShareProposal{ID: newID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: owner.ID,
+			p := SessionShareProposal{ID: NewID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: owner.ID,
 				ProposerMembershipID: recipient.ID, Action: "turn", Ciphertext: "opaque", Status: "pending",
-				CreatedAt: nowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
+				CreatedAt: NowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
 			ok, err := st.CreateSessionShareProposalLimited(ctx, p, limit)
 			if err != nil {
 				errs <- err
@@ -341,7 +341,7 @@ func TestSessionShareProposalLimitIsAtomic(t *testing.T) {
 
 func TestSessionShareProposalListIsNoStoreThroughETagMiddleware(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,18 +353,18 @@ func TestSessionShareProposalListIsNoStoreThroughETagMiddleware(t *testing.T) {
 	identity, _ := st.UpsertIdentity(ctx, "nostore@example.com", "nostore-owner", "")
 	membership, _ := st.EnsureMembership(ctx, identity.ID, tenant.ID, "member")
 	views, _ := st.ListMemberships(ctx, identity.ID)
-	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: nowTS()}
+	workspace := Workspace{ID: NewID(), TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: NowTS()}
 	if err := st.CreateWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
-	catalog := SharedSessionCatalog{ID: newID(), WorkspaceID: workspace.ID, OwnerMembershipID: membership.ID, Name: "s1", Kind: "codex", LastSeen: nowTS()}
+	catalog := SharedSessionCatalog{ID: NewID(), WorkspaceID: workspace.ID, OwnerMembershipID: membership.ID, Name: "s1", Kind: "codex", LastSeen: NowTS()}
 	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, membership.ID, []SharedSessionCatalog{catalog}); err != nil {
 		t.Fatal(err)
 	}
 	secretPayload := `{"op":"start","prompt":"decrypted proposal text"}`
-	proposal := SessionShareProposal{ID: newID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: membership.ID,
+	proposal := SessionShareProposal{ID: NewID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: membership.ID,
 		ProposerMembershipID: membership.ID, Action: "turn", Ciphertext: base64.StdEncoding.EncodeToString([]byte(secretPayload)),
-		Status: "pending", CreatedAt: nowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
+		Status: "pending", CreatedAt: NowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
 	if err := st.CreateSessionShareProposal(ctx, proposal); err != nil {
 		t.Fatal(err)
 	}

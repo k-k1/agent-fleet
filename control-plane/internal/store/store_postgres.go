@@ -19,12 +19,12 @@ import (
 //go:embed migrations-pg/*.sql
 var pgMigrationFS embed.FS
 
-// pgURLFromEnv returns the Postgres DSN for the metadata store, or "" to fall back
+// PGURLFromEnv returns the Postgres DSN for the metadata store, or "" to fall back
 // to SQLite. AF_DATABASE_URL wins (on-prem passes a full URL). Otherwise, when
 // AF_DB_HOST is set (the ECS/RDS path), the URL is composed from parts so the
 // password can arrive separately as an SSM/Secrets-Manager-injected env var rather
 // than being baked into a plaintext URL.
-func pgURLFromEnv() string {
+func PGURLFromEnv() string {
 	if u := os.Getenv("AF_DATABASE_URL"); u != "" {
 		return u
 	}
@@ -40,11 +40,11 @@ func pgURLFromEnv() string {
 		envOr("AF_DB_SSLMODE", "require"))
 }
 
-// openPostgres opens the Postgres MetadataStore (P3-7 段3a; the RDS backend for a
+// OpenPostgres opens the Postgres MetadataStore (P3-7 段3a; the RDS backend for a
 // redeployable ECS Control Plane whose state must survive task replacement). It
-// reuses the shared sqlStore with ?→$n rebinding and the consolidated pg schema.
+// reuses the shared SQL with ?→$n rebinding and the consolidated pg schema.
 // No legacy hook: fresh Postgres deployments start at the post-P3-2 schema.
-func openPostgres(url string) (*sqlStore, error) {
+func OpenPostgres(url string) (*SQL, error) {
 	// LookupEnv, not envOr: AF_DB_PASSWORD_SECRET_KEY="" is a meaningful value — it
 	// says the secret string IS the password, rather than JSON to pick a field out of.
 	// envOr cannot express that, since it treats empty and unset alike.
@@ -55,9 +55,9 @@ func openPostgres(url string) (*sqlStore, error) {
 	return openPostgresWith(url, newDBPasswordSource(os.Getenv("AF_DB_PASSWORD_SECRET_ARN"), key))
 }
 
-// openPostgresWith is openPostgres with the password source injected, so the
+// openPostgresWith is OpenPostgres with the password source injected, so the
 // rotation behaviour can be driven from a test.
-func openPostgresWith(dsn string, src *dbPasswordSource) (*sqlStore, error) {
+func openPostgresWith(dsn string, src *dbPasswordSource) (*SQL, error) {
 	cc, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func openPostgresWith(dsn string, src *dbPasswordSource) (*sqlStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
-	return &sqlStore{db: &sqlDB{DB: db, rb: rebindDollar}, dialect: "postgres", mfs: pgMigrationFS, mdir: "migrations-pg"}, nil
+	return &SQL{db: &sqlDB{DB: db, rb: rebindDollar}, dialect: "postgres", mfs: pgMigrationFS, mdir: "migrations-pg"}, nil
 }
 
 // refreshingConnector turns "the password rotated under us" from an outage into a

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-var errSessionShareOwnerBusy = errors.New("session share owner has an Agent operation in progress")
+var ErrSessionShareOwnerBusy = errors.New("session share owner has an Agent operation in progress")
 
 func ownerLeaseNowTS() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
@@ -25,12 +25,12 @@ func ensureSessionShareOwnerIdle(ctx context.Context, q sqlExecQuery, owner, now
 		return err
 	}
 	if active != 0 {
-		return errSessionShareOwnerBusy
+		return ErrSessionShareOwnerBusy
 	}
 	return nil
 }
 
-func (s *sqlStore) AcquireSessionShareOwnerLease(ctx context.Context, owner, operationID, now, leaseUntil string) (bool, error) {
+func (s *SQL) AcquireSessionShareOwnerLease(ctx context.Context, owner, operationID, now, leaseUntil string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -39,7 +39,7 @@ func (s *sqlStore) AcquireSessionShareOwnerLease(ctx context.Context, owner, ope
 	if err = lockSessionShareOwner(ctx, tx, owner); err != nil {
 		return false, err
 	}
-	if err = ensureSessionShareOwnerIdle(ctx, tx, owner, now); errors.Is(err, errSessionShareOwnerBusy) {
+	if err = ensureSessionShareOwnerIdle(ctx, tx, owner, now); errors.Is(err, ErrSessionShareOwnerBusy) {
 		return false, nil
 	} else if err != nil {
 		return false, err
@@ -56,7 +56,7 @@ func (s *sqlStore) AcquireSessionShareOwnerLease(ctx context.Context, owner, ope
 	return true, nil
 }
 
-func (s *sqlStore) ReleaseSessionShareOwnerLease(ctx context.Context, owner, operationID string) error {
+func (s *SQL) ReleaseSessionShareOwnerLease(ctx context.Context, owner, operationID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -72,7 +72,7 @@ func (s *sqlStore) ReleaseSessionShareOwnerLease(ctx context.Context, owner, ope
 	return tx.Commit()
 }
 
-func (s *sqlStore) RenewSessionShareOwnerLease(ctx context.Context, owner, operationID, now, leaseUntil string) (bool, error) {
+func (s *SQL) RenewSessionShareOwnerLease(ctx context.Context, owner, operationID, now, leaseUntil string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -94,7 +94,7 @@ func (s *sqlStore) RenewSessionShareOwnerLease(ctx context.Context, owner, opera
 	return n == 1, err
 }
 
-func (s *sqlStore) PutSessionShare(ctx context.Context, r SessionShare) error {
+func (s *SQL) PutSessionShare(ctx context.Context, r SessionShare) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -131,13 +131,13 @@ func scanSessionShare(row interface{ Scan(...any) error }) (SessionShare, bool, 
 	return r, err == nil, err
 }
 
-func (s *sqlStore) GetSessionShare(ctx context.Context, id string) (SessionShare, bool, error) {
+func (s *SQL) GetSessionShare(ctx context.Context, id string) (SessionShare, bool, error) {
 	return scanSessionShare(s.db.QueryRowContext(ctx, `SELECT id,tenant_id,owner_membership_id,
 		recipient_membership_id,scope_type,scope_key,permission,created_at,updated_at
 		FROM session_share WHERE id=?`, id))
 }
 
-func (s *sqlStore) listSessionShares(ctx context.Context, col, id string) ([]SessionShare, error) {
+func (s *SQL) listSessionShares(ctx context.Context, col, id string) ([]SessionShare, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,tenant_id,owner_membership_id,
 		recipient_membership_id,scope_type,scope_key,permission,created_at,updated_at
 		FROM session_share WHERE `+col+`=? ORDER BY created_at DESC`, id)
@@ -156,13 +156,13 @@ func (s *sqlStore) listSessionShares(ctx context.Context, col, id string) ([]Ses
 	return out, rows.Err()
 }
 
-func (s *sqlStore) ListSessionSharesByOwner(ctx context.Context, id string) ([]SessionShare, error) {
+func (s *SQL) ListSessionSharesByOwner(ctx context.Context, id string) ([]SessionShare, error) {
 	return s.listSessionShares(ctx, "owner_membership_id", id)
 }
-func (s *sqlStore) ListSessionSharesByRecipient(ctx context.Context, id string) ([]SessionShare, error) {
+func (s *SQL) ListSessionSharesByRecipient(ctx context.Context, id string) ([]SessionShare, error) {
 	return s.listSessionShares(ctx, "recipient_membership_id", id)
 }
-func (s *sqlStore) DeleteSessionShare(ctx context.Context, id, owner string) error {
+func (s *SQL) DeleteSessionShare(ctx context.Context, id, owner string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -177,12 +177,12 @@ func (s *sqlStore) DeleteSessionShare(ctx context.Context, id, owner string) err
 	if _, err = tx.ExecContext(ctx, `DELETE FROM session_share WHERE id=? AND owner_membership_id=?`, id, owner); err != nil {
 		return err
 	}
-	if err = invalidateUnauthorizedShareDerivatives(ctx, tx, owner, nowTS()); err != nil {
+	if err = invalidateUnauthorizedShareDerivatives(ctx, tx, owner, NowTS()); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
-func (s *sqlStore) DeleteSessionSharesByScope(ctx context.Context, owner, scopeType, scopeKey string) error {
+func (s *SQL) DeleteSessionSharesByScope(ctx context.Context, owner, scopeType, scopeKey string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -197,7 +197,7 @@ func (s *sqlStore) DeleteSessionSharesByScope(ctx context.Context, owner, scopeT
 	if _, err = tx.ExecContext(ctx, `DELETE FROM session_share WHERE owner_membership_id=? AND scope_type=? AND scope_key=?`, owner, scopeType, scopeKey); err != nil {
 		return err
 	}
-	if err = invalidateUnauthorizedShareDerivatives(ctx, tx, owner, nowTS()); err != nil {
+	if err = invalidateUnauthorizedShareDerivatives(ctx, tx, owner, NowTS()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -244,7 +244,7 @@ func invalidateUnauthorizedShareDerivatives(ctx context.Context, q sqlExecQuery,
 	return err
 }
 
-func (s *sqlStore) UpdateSessionSharePermission(ctx context.Context, id, owner, permission, updatedAt string) (bool, error) {
+func (s *SQL) UpdateSessionSharePermission(ctx context.Context, id, owner, permission, updatedAt string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -270,7 +270,7 @@ func (s *sqlStore) UpdateSessionSharePermission(ctx context.Context, id, owner, 
 	return n == 1, err
 }
 
-func (s *sqlStore) ReplaceSharedSessionCatalog(ctx context.Context, workspaceID, owner string, in []SharedSessionCatalog) error {
+func (s *SQL) ReplaceSharedSessionCatalog(ctx context.Context, workspaceID, owner string, in []SharedSessionCatalog) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -351,11 +351,11 @@ func scanCatalog(row interface{ Scan(...any) error }) (SharedSessionCatalog, boo
 	r.Worktree = worktree != 0
 	return r, err == nil, err
 }
-func (s *sqlStore) GetSharedSessionCatalog(ctx context.Context, id string) (SharedSessionCatalog, bool, error) {
+func (s *SQL) GetSharedSessionCatalog(ctx context.Context, id string) (SharedSessionCatalog, bool, error) {
 	return scanCatalog(s.db.QueryRowContext(ctx, `SELECT id,workspace_id,owner_membership_id,name,kind,dir,repo,
 		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id,branch,activity FROM shared_session_catalog WHERE id=?`, id))
 }
-func (s *sqlStore) ListSharedSessionCatalogByOwner(ctx context.Context, owner string) ([]SharedSessionCatalog, error) {
+func (s *SQL) ListSharedSessionCatalogByOwner(ctx context.Context, owner string) ([]SharedSessionCatalog, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,workspace_id,owner_membership_id,name,kind,dir,repo,
 		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id,branch,activity FROM shared_session_catalog
 		WHERE owner_membership_id=? ORDER BY created_at DESC`, owner)
@@ -374,14 +374,14 @@ func (s *sqlStore) ListSharedSessionCatalogByOwner(ctx context.Context, owner st
 	return out, rows.Err()
 }
 
-func (s *sqlStore) CreateSessionShareProposal(ctx context.Context, r SessionShareProposal) error {
+func (s *SQL) CreateSessionShareProposal(ctx context.Context, r SessionShareProposal) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO session_share_proposal
 		(id,tenant_id,catalog_id,owner_membership_id,proposer_membership_id,action,ciphertext,key_ref,status,created_at,expires_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.TenantID, r.CatalogID, r.OwnerMembershipID, r.ProposerMembershipID,
 		r.Action, r.Ciphertext, r.KeyRef, r.Status, r.CreatedAt, r.ExpiresAt)
 	return err
 }
-func (s *sqlStore) CreateSessionShareProposalLimited(ctx context.Context, r SessionShareProposal, maxPending int) (bool, error) {
+func (s *SQL) CreateSessionShareProposalLimited(ctx context.Context, r SessionShareProposal, maxPending int) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -422,11 +422,11 @@ func scanProposal(row interface{ Scan(...any) error }) (SessionShareProposal, bo
 	}
 	return r, err == nil, err
 }
-func (s *sqlStore) GetSessionShareProposal(ctx context.Context, id string) (SessionShareProposal, bool, error) {
+func (s *SQL) GetSessionShareProposal(ctx context.Context, id string) (SessionShareProposal, bool, error) {
 	return scanProposal(s.db.QueryRowContext(ctx, `SELECT id,tenant_id,catalog_id,owner_membership_id,proposer_membership_id,
 		action,ciphertext,key_ref,status,created_at,expires_at,decided_at,decided_by FROM session_share_proposal WHERE id=?`, id))
 }
-func (s *sqlStore) ListSessionShareProposalsByOwner(ctx context.Context, owner string) ([]SessionShareProposal, error) {
+func (s *SQL) ListSessionShareProposalsByOwner(ctx context.Context, owner string) ([]SessionShareProposal, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,tenant_id,catalog_id,owner_membership_id,proposer_membership_id,
 		action,ciphertext,key_ref,status,created_at,expires_at,decided_at,decided_by FROM session_share_proposal
 		WHERE owner_membership_id=? ORDER BY created_at DESC`, owner)
@@ -444,13 +444,13 @@ func (s *sqlStore) ListSessionShareProposalsByOwner(ctx context.Context, owner s
 	}
 	return out, rows.Err()
 }
-func (s *sqlStore) CountPendingSessionShareProposals(ctx context.Context, catalogID string) (int, error) {
+func (s *SQL) CountPendingSessionShareProposals(ctx context.Context, catalogID string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM session_share_proposal WHERE catalog_id=? AND status='pending'`, catalogID).Scan(&n)
 	return n, err
 }
-func (s *sqlStore) ExpireSessionShareProposals(ctx context.Context, owner, now string) error {
+func (s *SQL) ExpireSessionShareProposals(ctx context.Context, owner, now string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -476,7 +476,7 @@ func (s *sqlStore) ExpireSessionShareProposals(ctx context.Context, owner, now s
 // ACL/catalog mutations, then commits processing before any Agent HTTP I/O. The
 // proposal id is the durable Agent operation id, so a lost response is reconciled
 // without repeating the side effect.
-func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by, now, leaseUntil string) (SessionShareProposal, SharedSessionCatalog, string, error) {
+func (s *SQL) ClaimSessionShareProposal(ctx context.Context, id, owner, by, now, leaseUntil string) (SessionShareProposal, SharedSessionCatalog, string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return SessionShareProposal{}, SharedSessionCatalog{}, "", err
@@ -513,7 +513,7 @@ func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by,
 	if !ok {
 		return p, c, "not_found", nil
 	}
-	if err = ensureSessionShareOwnerIdle(ctx, tx, owner, ownerLeaseNowTS()); errors.Is(err, errSessionShareOwnerBusy) {
+	if err = ensureSessionShareOwnerIdle(ctx, tx, owner, ownerLeaseNowTS()); errors.Is(err, ErrSessionShareOwnerBusy) {
 		return p, c, "busy", nil
 	} else if err != nil {
 		return p, c, "", err
@@ -572,7 +572,7 @@ func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by,
 	return p, c, "claimed", nil
 }
 
-func (s *sqlStore) FinalizeSessionShareProposal(ctx context.Context, id, owner, by, at string) (bool, error) {
+func (s *SQL) FinalizeSessionShareProposal(ctx context.Context, id, owner, by, at string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -597,7 +597,7 @@ func (s *sqlStore) FinalizeSessionShareProposal(ctx context.Context, id, owner, 
 	n, err := res.RowsAffected()
 	return n == 1, err
 }
-func (s *sqlStore) TransitionSessionShareProposal(ctx context.Context, id, from, to, by, at string, clearBody bool) (bool, error) {
+func (s *SQL) TransitionSessionShareProposal(ctx context.Context, id, from, to, by, at string, clearBody bool) (bool, error) {
 	body := "ciphertext"
 	if clearBody {
 		body = "''"

@@ -31,7 +31,7 @@ func TestSchemaDialectParity(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	lite, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	lite, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestSchemaDialectParity(t *testing.T) {
 	if err := lite.migrate(ctx); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
-	pg, err := openPostgres(url)
+	pg, err := OpenPostgres(url)
 	if err != nil {
 		t.Fatalf("open postgres: %v", err)
 	}
@@ -86,7 +86,7 @@ func missing(have, want map[string]map[string]bool, absentFrom string) []string 
 	return out
 }
 
-func sqliteSchema(t *testing.T, ctx context.Context, s *sqlStore) map[string]map[string]bool {
+func sqliteSchema(t *testing.T, ctx context.Context, s *SQL) map[string]map[string]bool {
 	t.Helper()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT m.name, p.name FROM sqlite_master m JOIN pragma_table_info(m.name) p
@@ -97,7 +97,7 @@ func sqliteSchema(t *testing.T, ctx context.Context, s *sqlStore) map[string]map
 	return scanSchema(t, rows)
 }
 
-func postgresSchema(t *testing.T, ctx context.Context, s *sqlStore) map[string]map[string]bool {
+func postgresSchema(t *testing.T, ctx context.Context, s *SQL) map[string]map[string]bool {
 	t.Helper()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT table_name, column_name FROM information_schema.columns WHERE table_schema='public'`)

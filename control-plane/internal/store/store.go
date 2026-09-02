@@ -475,7 +475,7 @@ type LFSLock struct {
 }
 
 // Store is the MetadataStore port — the union of the feature-scoped sub-
-// interfaces below (docs/log/23 P2-W3). 実装は単一の sqlStore（sqlite/postgres 共用）
+// interfaces below (docs/log/23 P2-W3). 実装は単一の SQL（sqlite/postgres 共用）
 // のまま。利用側は原則 Store を持つが、独立コンポーネントは必要最小のサブ
 // インターフェース（narrow view）に依存できる（例: git_gc.go）。メソッドの
 // 追加は該当サブインターフェースへ。
@@ -765,7 +765,7 @@ type IdentityStore interface {
 	//     role, the same reason roleHint is suppressed for tenant-defined providers);
 	//   - it REFUSES rather than re-points when the pair (or the same IdP account
 	//     reached through another button — rule 1.5) already belongs to somebody:
-	//     errLinkTaken. Joining two accounts that both have a login history is a
+	//     ErrLinkTaken. Joining two accounts that both have a login history is a
 	//     merge, and a merge cannot be undone (§61.5).
 	AttachProvider(ctx context.Context, identityID string, link IdentityLink) error
 	// DetachProvider removes one sign-in method from a person's account (docs/log/61
@@ -773,12 +773,12 @@ type IdentityStore interface {
 	// no caller can reach somebody else's row even with a (provider, subject) it
 	// guessed.
 	//
-	// ★ It REFUSES to remove the last one (errLastLoginMethod). An account with no
+	// ★ It REFUSES to remove the last one (ErrLastLoginMethod). An account with no
 	// method left cannot be signed into at all, and there is no recovery path from
 	// the Console — this deployment has no password and no SMTP (決定 28). The count
 	// is taken in SQL, in the same statement, because the caller's check and the
 	// delete are otherwise two moments with a browser tab in between.
-	// errNoSuchLoginMethod means the pair is not this person's (or not there at all);
+	// ErrNoSuchLoginMethod means the pair is not this person's (or not there at all);
 	// the two are separate so the API can answer 409 and 404 rather than one 400.
 	DetachProvider(ctx context.Context, identityID, provider, subject string) error
 	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
@@ -1192,8 +1192,8 @@ type MCPServerStore interface {
 	DeleteMCPServer(ctx context.Context, tenantID, id string) error
 }
 
-// newID mints an opaque record id (not a strict UUID; sufficient for keys).
+// NewID mints an opaque record id (not a strict UUID; sufficient for keys).
 // randHex is defined in oauth_bitbucket.go.
-func newID() string { return randHex(16) }
+func NewID() string { return randHex(16) }
 
-func nowTS() string { return time.Now().UTC().Format(time.RFC3339) }
+func NowTS() string { return time.Now().UTC().Format(time.RFC3339) }

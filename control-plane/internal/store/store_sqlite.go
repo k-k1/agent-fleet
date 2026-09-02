@@ -22,12 +22,12 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-// sqlStore is the shared database/sql MetadataStore adapter. Both the SQLite
+// SQL is the shared database/sql MetadataStore adapter. Both the SQLite
 // (default self-host) and Postgres (P3-7 段3a / RDS) backends use it: the SQL is
 // dialect-neutral except placeholders, so the only per-dialect state is the db
 // wrapper's rebind (?→$n for Postgres), the embedded migrations, and a SQLite-only
-// legacy data hook. See openSQLite / openPostgres.
-type sqlStore struct {
+// legacy data hook. See OpenSQLite / OpenPostgres.
+type SQL struct {
 	db         *sqlDB
 	dialect    string
 	mfs        embed.FS                    // embedded numbered migrations
@@ -35,10 +35,10 @@ type sqlStore struct {
 	legacyHook func(context.Context) error // sqlite-only post-migration data move; nil for pg
 }
 
-// openSQLite opens the DB with the server-app pragmas (WAL + busy_timeout +
+// OpenSQLite opens the DB with the server-app pragmas (WAL + busy_timeout +
 // foreign keys). MaxOpenConns(1) serializes access — simplest correct choice at
 // this scale and avoids "database is locked".
-func openSQLite(path string) (*sqlStore, error) {
+func OpenSQLite(path string) (*SQL, error) {
 	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)" +
 		"&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
@@ -50,12 +50,12 @@ func openSQLite(path string) (*sqlStore, error) {
 		db.Close()
 		return nil, err
 	}
-	s := &sqlStore{db: &sqlDB{DB: db, rb: rebindNoop}, dialect: "sqlite", mfs: migrationFS, mdir: "migrations"}
+	s := &SQL{db: &sqlDB{DB: db, rb: rebindNoop}, dialect: "sqlite", mfs: migrationFS, mdir: "migrations"}
 	s.legacyHook = s.migrateMemberships
 	return s, nil
 }
 
-func (s *sqlStore) Close() error { return s.db.Close() }
+func (s *SQL) Close() error { return s.db.Close() }
 
 // Ping opens (or reuses) a connection and asks the database if it is there. It
 // backs GET /readyz — the endpoint that exists because /healthz answers "ok"
@@ -64,11 +64,11 @@ func (s *sqlStore) Close() error { return s.db.Close() }
 //
 // Deliberately not a query: a stale password fails at CONNECT, so PingContext —
 // which has to hand out a connection — is exactly the check that catches it.
-func (s *sqlStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+func (s *SQL) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 // migrate applies embedded numbered migrations idempotently, then runs the
 // identity/membership data migration (docs/14, P3-2).
-func (s *sqlStore) migrate(ctx context.Context) error {
+func (s *SQL) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx,
 		`CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
 		return err
@@ -134,7 +134,7 @@ func (s *sqlStore) migrate(ctx context.Context) error {
 			}
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, version, nowTS()); err != nil {
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, version, NowTS()); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -166,7 +166,7 @@ func (s *sqlStore) migrate(ctx context.Context) error {
 //
 // 直し方は「入れ替えの後で、足りない列を足し直す」。PRAGMA で現物を見てから足すので
 // 冪等で、既に壊れている DB も次の起動で自己修復する。
-func (s *sqlStore) repairWorkspaceColumns(ctx context.Context) error {
+func (s *SQL) repairWorkspaceColumns(ctx context.Context) error {
 	if s.dialect != "sqlite" {
 		return nil
 	}
@@ -218,7 +218,7 @@ func (s *sqlStore) repairWorkspaceColumns(ctx context.Context) error {
 // identity/membership/workspace(membership_id) shape (docs/14). It runs once,
 // gated on the presence of the transient `workspace_new` table created by 0002.
 // Idempotent and safe on a fresh DB (no app_user rows to copy).
-func (s *sqlStore) migrateMemberships(ctx context.Context) error {
+func (s *SQL) migrateMemberships(ctx context.Context) error {
 	var name string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_new'`).Scan(&name)
@@ -283,7 +283,7 @@ func (s *sqlStore) migrateMemberships(ctx context.Context) error {
 	identityByKey := map[string]string{}
 	for _, a := range aus {
 		if identityByKey[a.key] == "" {
-			id := newID()
+			id := NewID()
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO identity(id, email, user_key, role, status, last_login_at)
 				 VALUES(?, ?, ?, 'user', 'active', ?) ON CONFLICT(user_key) DO NOTHING`,
@@ -300,7 +300,7 @@ func (s *sqlStore) migrateMemberships(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at)
 			 VALUES(?, ?, ?, ?, 'active', ?) ON CONFLICT(identity_id, tenant_id) DO NOTHING`,
-			newID(), identityByKey[a.key], a.tenant, a.role, nowTS()); err != nil {
+			NewID(), identityByKey[a.key], a.tenant, a.role, NowTS()); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -335,27 +335,27 @@ func (s *sqlStore) migrateMemberships(ctx context.Context) error {
 	return tx.Commit()
 }
 
-func (s *sqlStore) EnsureDefaultTenant(ctx context.Context) (Tenant, error) {
+func (s *SQL) EnsureDefaultTenant(ctx context.Context) (Tenant, error) {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant(id, slug, name, status, limits, isolation, created_at)
 		 VALUES('default','default','Default','active','{}','shared',?)
-		 ON CONFLICT(id) DO NOTHING`, nowTS()); err != nil {
+		 ON CONFLICT(id) DO NOTHING`, NowTS()); err != nil {
 		return Tenant{}, err
 	}
 	return s.getTenant(ctx, "default")
 }
 
-func (s *sqlStore) CreateTenant(ctx context.Context, slug, name string) (Tenant, error) {
-	id := newID()
+func (s *SQL) CreateTenant(ctx context.Context, slug, name string) (Tenant, error) {
+	id := NewID()
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant(id, slug, name, status, limits, isolation, created_at)
-		 VALUES(?, ?, ?, 'active', '{}', 'shared', ?)`, id, slug, name, nowTS()); err != nil {
+		 VALUES(?, ?, ?, 'active', '{}', 'shared', ?)`, id, slug, name, NowTS()); err != nil {
 		return Tenant{}, err
 	}
 	return s.getTenant(ctx, id)
 }
 
-func (s *sqlStore) GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error) {
+func (s *SQL) GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM tenant WHERE slug=?`, slug).Scan(&id)
 	if err == sql.ErrNoRows {
@@ -368,16 +368,16 @@ func (s *sqlStore) GetTenantBySlug(ctx context.Context, slug string) (Tenant, bo
 	return t, err == nil, err
 }
 
-func (s *sqlStore) GetTenant(ctx context.Context, id string) (Tenant, error) {
+func (s *SQL) GetTenant(ctx context.Context, id string) (Tenant, error) {
 	return s.getTenant(ctx, id)
 }
 
-func (s *sqlStore) SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error {
+func (s *SQL) SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE tenant SET limits=? WHERE id=?`, limitsJSON, tenantID)
 	return err
 }
 
-func (s *sqlStore) getTenant(ctx context.Context, id string) (Tenant, error) {
+func (s *SQL) getTenant(ctx context.Context, id string) (Tenant, error) {
 	var t Tenant
 	var keyRef sql.NullString
 	err := s.db.QueryRowContext(ctx,
@@ -391,7 +391,7 @@ func (s *sqlStore) getTenant(ctx context.Context, id string) (Tenant, error) {
 }
 
 // SetTenantLogin writes the per-tenant login rules (docs/log/61 §61.9.7).
-func (s *sqlStore) SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains, hiddenProviders string) error {
+func (s *SQL) SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains, hiddenProviders string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE tenant SET allowed_providers=?, auto_join_domains=?, allowed_domains=?, hidden_providers=? WHERE id=?`,
 		allowedProviders, autoJoinDomains, allowedDomains, hiddenProviders, tenantID)
@@ -402,14 +402,14 @@ func (s *sqlStore) SetTenantLogin(ctx context.Context, tenantID, allowedProvider
 // Separate from SetTenantLogin on purpose: that one is super_admin-only because its
 // three fields reach outside the tenant, while this one is the tenant_admin's
 // (ADR 0047 決定 6). Empty = no restriction.
-func (s *sqlStore) SetTenantAllowedCIDRs(ctx context.Context, tenantID, cidrs string) error {
+func (s *SQL) SetTenantAllowedCIDRs(ctx context.Context, tenantID, cidrs string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE tenant SET allowed_cidrs=? WHERE id=?`, cidrs, tenantID)
 	return err
 }
 
 // GetTenantAllowedCIDRs reads it back for the editing screen (the request path reads
 // it through the cache instead).
-func (s *sqlStore) GetTenantAllowedCIDRs(ctx context.Context, tenantID string) (string, error) {
+func (s *SQL) GetTenantAllowedCIDRs(ctx context.Context, tenantID string) (string, error) {
 	var cidrs string
 	err := s.db.QueryRowContext(ctx, `SELECT allowed_cidrs FROM tenant WHERE id=?`, tenantID).Scan(&cidrs)
 	return cidrs, err
@@ -417,7 +417,7 @@ func (s *sqlStore) GetTenantAllowedCIDRs(ctx context.Context, tenantID string) (
 
 // ListTenantLoginRules loads every tenant's rules in one query, already split into
 // slices — the shape the entry-gate cache and the auto-join resolution want.
-func (s *sqlStore) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error) {
+func (s *SQL) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, slug, name, allowed_providers, auto_join_domains, allowed_domains, hidden_providers, allowed_cidrs
 		 FROM tenant WHERE status='active' ORDER BY slug`)
@@ -442,7 +442,7 @@ func (s *sqlStore) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules
 	return out, rows.Err()
 }
 
-func (s *sqlStore) UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error) {
+func (s *SQL) UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error) {
 	key, derr := s.disambiguateUserKey(ctx, email, key)
 	if derr != nil {
 		return Identity{}, derr
@@ -453,7 +453,7 @@ func (s *sqlStore) UpsertIdentity(ctx context.Context, email, key, roleHint stri
 		 ON CONFLICT(user_key) DO UPDATE SET
 		   last_login_at = excluded.last_login_at,
 		   email = CASE WHEN excluded.email <> '' THEN excluded.email ELSE identity.email END`,
-		newID(), email, key, nowTS()); err != nil {
+		NewID(), email, key, NowTS()); err != nil {
 		return Identity{}, err
 	}
 	// Upgrade (never downgrade) the deployment role.
@@ -482,7 +482,7 @@ func (s *sqlStore) UpsertIdentity(ctx context.Context, email, key, roleHint stri
 //
 // The candidate set is read first rather than expressed as a NOT IN (…) so the
 // caller can log exactly whose role was revoked; the set is a handful of rows.
-func (s *sqlStore) DemoteSuperAdmins(ctx context.Context, keep []string) ([]string, error) {
+func (s *SQL) DemoteSuperAdmins(ctx context.Context, keep []string) ([]string, error) {
 	keepSet := make(map[string]bool, len(keep))
 	for _, e := range keep {
 		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
@@ -555,13 +555,13 @@ func (s *sqlStore) DemoteSuperAdmins(ctx context.Context, keep []string) ([]stri
 // address is not proof of being that person. Rule 2 becomes rule 2' — CLAIM an
 // identity nobody has ever signed in as (the placeholder an invite leaves behind,
 // which is how a subsidiary's first login is supposed to work), and refuse with
-// errIdentityClaimed when the address belongs to an account that has a login
+// ErrIdentityClaimed when the address belongs to an account that has a login
 // history. Falling through to rule 3 instead would NOT be fail-closed: user_key is
 // sanitizeUser(email), so UpsertIdentity's ON CONFLICT(user_key) would land right
 // back on the very identity rule 2 was refusing to join (and identity.email is
 // UNIQUE, so a genuinely separate row cannot exist either). Refusing is the only
 // answer that is actually a refusal.
-func (s *sqlStore) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bool, error) {
+func (s *SQL) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bool, error) {
 	provider, subject, email := link.Provider, link.Subject, link.Email
 	if provider == "" || subject == "" { // no subject to key on: legacy/pre-P0 session
 		ident, err := s.UpsertIdentity(ctx, email, link.FallbackKey, link.RoleHint)
@@ -598,7 +598,7 @@ func (s *sqlStore) LinkIdentity(ctx context.Context, link IdentityLink) (Identit
 				return Identity{}, false, err
 			}
 			if claimed {
-				return Identity{}, false, errIdentityClaimed
+				return Identity{}, false, ErrIdentityClaimed
 			}
 			identityID = ident.ID
 		default: // rule 3
@@ -615,7 +615,7 @@ func (s *sqlStore) LinkIdentity(ctx context.Context, link IdentityLink) (Identit
 	// ★ realm is refreshed on every login, not only on insert: rows written before
 	// 0041 (and by the resolver path, which has no provider object to ask) carry an
 	// empty one, and rule 1.5 can only see what has been recorded.
-	now := nowTS()
+	now := NowTS()
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO identity_provider(provider, subject, identity_id, email, realm,
 		                               realm_claim, realm_subject, created_at, last_login_at)
@@ -643,15 +643,15 @@ func (s *sqlStore) LinkIdentity(ctx context.Context, link IdentityLink) (Identit
 	return ident, isNew, nil
 }
 
-// errIdentityClaimed is returned when a tenant-defined provider asserts an address
+// ErrIdentityClaimed is returned when a tenant-defined provider asserts an address
 // that already belongs to somebody who has signed in here. The login is refused
 // rather than joined or duplicated — see LinkIdentity.
-var errIdentityClaimed = errors.New("this email address already belongs to an account on this deployment")
+var ErrIdentityClaimed = errors.New("this email address already belongs to an account on this deployment")
 
 // identityHasProvider reports whether anybody has ever completed an IdP login as
 // this identity. An identity with no such row is either an invite placeholder or a
 // pre-P1 account; that is the line rule 2' draws.
-func (s *sqlStore) identityHasProvider(ctx context.Context, identityID string) (bool, error) {
+func (s *SQL) identityHasProvider(ctx context.Context, identityID string) (bool, error) {
 	var one int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT 1 FROM identity_provider WHERE identity_id=? LIMIT 1`, identityID).Scan(&one)
@@ -663,7 +663,7 @@ func (s *sqlStore) identityHasProvider(ctx context.Context, identityID string) (
 
 // identityIDForProvider returns the identity a (provider, subject) is bound to,
 // or "" when the pair has never signed in here.
-func (s *sqlStore) identityIDForProvider(ctx context.Context, provider, subject string) (string, error) {
+func (s *SQL) identityIDForProvider(ctx context.Context, provider, subject string) (string, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT identity_id FROM identity_provider WHERE provider=? AND subject=?`, provider, subject).Scan(&id)
@@ -685,7 +685,7 @@ func (s *sqlStore) identityIDForProvider(ctx context.Context, provider, subject 
 // one, and matching them would join everyone whose subject happens to collide
 // across two unrelated IdPs. ORDER BY provider only makes the answer deterministic
 // when several rows exist, which by construction all point at one identity.
-func (s *sqlStore) identityIDForRealm(ctx context.Context, realm, subject string) (string, error) {
+func (s *SQL) identityIDForRealm(ctx context.Context, realm, subject string) (string, error) {
 	if realm == "" || subject == "" {
 		return "", nil
 	}
@@ -711,7 +711,7 @@ func (s *sqlStore) identityIDForRealm(ctx context.Context, realm, subject string
 // name records which question was asked. And an empty claim or value matches
 // nothing, so every row written before the column, and every provider that names no
 // claim, simply does not take part.
-func (s *sqlStore) identityIDForRealmClaim(ctx context.Context, realm, claim, subject string) (string, error) {
+func (s *SQL) identityIDForRealmClaim(ctx context.Context, realm, claim, subject string) (string, error) {
 	if realm == "" || claim == "" || subject == "" {
 		return "", nil
 	}
@@ -735,7 +735,7 @@ func (s *sqlStore) identityIDForRealmClaim(ctx context.Context, realm, claim, su
 // deployment that named an OIDC provider `github` (oauth_oidc.go warns about that
 // but still builds it). Only empty realms are written, so a person whose row was
 // filled by a login keeps that value, and re-running is a no-op.
-func (s *sqlStore) FillProviderRealm(ctx context.Context, provider, realm string) error {
+func (s *SQL) FillProviderRealm(ctx context.Context, provider, realm string) error {
 	if provider == "" || realm == "" {
 		return nil
 	}
@@ -744,14 +744,14 @@ func (s *sqlStore) FillProviderRealm(ctx context.Context, provider, realm string
 	return err
 }
 
-// errLinkTaken is returned by AttachProvider when the IdP account being linked
+// ErrLinkTaken is returned by AttachProvider when the IdP account being linked
 // already belongs to somebody on this deployment — the pair itself is recorded, or
 // rule 1.5 finds the same account under another button. Linking it would either
 // re-point an existing mapping or merge two accounts, and both are irreversible.
-var errLinkTaken = errors.New("that sign-in method already belongs to an account on this deployment")
+var ErrLinkTaken = errors.New("that sign-in method already belongs to an account on this deployment")
 
 // ListLinkedProviders — see the Store interface (docs/log/61 §61.16).
-func (s *sqlStore) ListLinkedProviders(ctx context.Context, identityID string) ([]LinkedProvider, error) {
+func (s *SQL) ListLinkedProviders(ctx context.Context, identityID string) ([]LinkedProvider, error) {
 	if identityID == "" {
 		return nil, nil
 	}
@@ -783,7 +783,7 @@ func (s *sqlStore) ListLinkedProviders(ctx context.Context, identityID string) (
 // because it does not know which of several rules the deployment settled on; what
 // it does know is that a row must never move to another identity and that two
 // accounts must never become one.
-func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link IdentityLink) error {
+func (s *SQL) AttachProvider(ctx context.Context, identityID string, link IdentityLink) error {
 	if identityID == "" || link.Provider == "" || link.Subject == "" {
 		return fmt.Errorf("attach provider: identity, provider and subject are required")
 	}
@@ -794,7 +794,7 @@ func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link I
 		return err
 	}
 	if owner != "" && owner != identityID {
-		return errLinkTaken
+		return ErrLinkTaken
 	}
 	// 2. rule 1.5: the same IdP account reached through a different button already
 	//    belongs to somebody else. Signing in with it would land there, so linking it
@@ -805,7 +805,7 @@ func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link I
 			return err
 		}
 		if byRealm != "" && byRealm != identityID {
-			return errLinkTaken
+			return ErrLinkTaken
 		}
 		// ★ …and through rule 1.5's second key (docs/log/61 §61.15.10). Without this the
 		// pairwise-`sub` case slips past: two subjects, one Entra account, so the pair
@@ -815,7 +815,7 @@ func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link I
 			return err
 		}
 		if byClaim != "" && byClaim != identityID {
-			return errLinkTaken
+			return ErrLinkTaken
 		}
 	}
 	// 3. the address the IdP asserted belongs to a different person. Even with the
@@ -825,9 +825,9 @@ func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link I
 	if ident, ok, err := s.identityByEmail(ctx, link.Email); err != nil {
 		return err
 	} else if ok && ident.ID != identityID {
-		return errLinkTaken
+		return ErrLinkTaken
 	}
-	now := nowTS()
+	now := NowTS()
 	// The insert deliberately does NOT set last_login_at to "now": linking is not a
 	// login with this method, and the account panel orders by it. ON CONFLICT keeps
 	// the same shape as LinkIdentity — identity_id is never in the update list.
@@ -845,19 +845,19 @@ func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link I
 	return err
 }
 
-// errLastLoginMethod / errNoSuchLoginMethod are DetachProvider's two refusals.
+// ErrLastLoginMethod / ErrNoSuchLoginMethod are DetachProvider's two refusals.
 //
 // ★ The first one is a lockout guard, not a formality: with the last method gone
 // there is no way back into the account — no password, no SMTP to mail a link from
 // (決定 28) — and the person doing it is the account's own owner, mid-cleanup, who
 // is exactly the one who cannot ask anybody to undo it.
 var (
-	errLastLoginMethod   = errors.New("this is the only sign-in method left on the account, and removing it would lock you out")
-	errNoSuchLoginMethod = errors.New("that sign-in method is not linked to this account")
+	ErrLastLoginMethod   = errors.New("this is the only sign-in method left on the account, and removing it would lock you out")
+	ErrNoSuchLoginMethod = errors.New("that sign-in method is not linked to this account")
 )
 
 // DetachProvider — see the Store interface (docs/log/61 §61.16.4).
-func (s *sqlStore) DetachProvider(ctx context.Context, identityID, provider, subject string) error {
+func (s *SQL) DetachProvider(ctx context.Context, identityID, provider, subject string) error {
 	if identityID == "" || provider == "" || subject == "" {
 		return fmt.Errorf("detach provider: identity, provider and subject are required")
 	}
@@ -868,7 +868,7 @@ func (s *sqlStore) DetachProvider(ctx context.Context, identityID, provider, sub
 		return err
 	}
 	if owner != identityID {
-		return errNoSuchLoginMethod
+		return ErrNoSuchLoginMethod
 	}
 	// ★ The count lives INSIDE the delete. Reading it first and deleting after would
 	// let two tabs each see "2 left" and remove one, ending at zero.
@@ -887,7 +887,7 @@ func (s *sqlStore) DetachProvider(ctx context.Context, identityID, provider, sub
 	if n == 0 {
 		// The ownership check above already passed, so the only remaining reason the
 		// statement matched nothing is the count guard.
-		return errLastLoginMethod
+		return ErrLastLoginMethod
 	}
 	return nil
 }
@@ -896,7 +896,7 @@ func (s *sqlStore) DetachProvider(ctx context.Context, identityID, provider, sub
 // emails are UNIQUE (idx_identity_email), so at most one row matches; the empty
 // email never does (those rows are invite-by-user_key placeholders, claimed through
 // UpsertIdentity's key path instead).
-func (s *sqlStore) identityByEmail(ctx context.Context, email string) (Identity, bool, error) {
+func (s *SQL) identityByEmail(ctx context.Context, email string) (Identity, bool, error) {
 	if strings.TrimSpace(email) == "" {
 		return Identity{}, false, nil
 	}
@@ -925,7 +925,7 @@ func (s *sqlStore) identityByEmail(ctx context.Context, email string) (Identity,
 // admin who pre-created the person by user_key (invite) leaves a row with an
 // empty email waiting to be claimed — claiming it is not a new account, so it
 // must not raise the "this is a new account" notice.
-func (s *sqlStore) createIdentityForLogin(ctx context.Context, email, key, roleHint string) (Identity, bool, error) {
+func (s *SQL) createIdentityForLogin(ctx context.Context, email, key, roleHint string) (Identity, bool, error) {
 	finalKey, err := s.disambiguateUserKey(ctx, email, key)
 	if err != nil {
 		return Identity{}, false, err
@@ -943,14 +943,14 @@ func (s *sqlStore) createIdentityForLogin(ctx context.Context, email, key, roleH
 // that one re-derives the key from the email and would divert a renamed person to
 // a fresh user_key (disambiguateUserKey), which is exactly what §61.5 forbids.
 // Role still upgrades only (never downgrades), same as UpsertIdentity.
-func (s *sqlStore) touchIdentity(ctx context.Context, identityID, email, roleHint string) error {
+func (s *SQL) touchIdentity(ctx context.Context, identityID, email, roleHint string) error {
 	// Two shapes rather than one with NULLIF/CASE: both dialects parse these
 	// without having to infer a placeholder's type from a bare '' literal.
 	var err error
 	if email == "" {
-		_, err = s.db.ExecContext(ctx, `UPDATE identity SET last_login_at=? WHERE id=?`, nowTS(), identityID)
+		_, err = s.db.ExecContext(ctx, `UPDATE identity SET last_login_at=? WHERE id=?`, NowTS(), identityID)
 	} else {
-		_, err = s.db.ExecContext(ctx, `UPDATE identity SET last_login_at=?, email=? WHERE id=?`, nowTS(), email, identityID)
+		_, err = s.db.ExecContext(ctx, `UPDATE identity SET last_login_at=?, email=? WHERE id=?`, NowTS(), email, identityID)
 	}
 	if err != nil {
 		return err
@@ -969,7 +969,7 @@ func (s *sqlStore) touchIdentity(ctx context.Context, identityID, email, roleHin
 // the key's row already belongs to a DIFFERENT email, the newcomer is diverted to
 // a deterministic distinct key (sanitized + short hash of the full email).
 // Existing keys never change, so no data migration is needed.
-func (s *sqlStore) disambiguateUserKey(ctx context.Context, email, key string) (string, error) {
+func (s *SQL) disambiguateUserKey(ctx context.Context, email, key string) (string, error) {
 	if email == "" || key == "" {
 		return key, nil
 	}
@@ -988,7 +988,7 @@ func (s *sqlStore) disambiguateUserKey(ctx context.Context, email, key string) (
 	return key + "-" + hex.EncodeToString(sum[:4]), nil
 }
 
-func (s *sqlStore) GetIdentityByUserKey(ctx context.Context, key string) (Identity, bool, error) {
+func (s *SQL) GetIdentityByUserKey(ctx context.Context, key string) (Identity, bool, error) {
 	var idn Identity
 	var last sql.NullString
 	err := s.db.QueryRowContext(ctx,
@@ -1004,7 +1004,7 @@ func (s *sqlStore) GetIdentityByUserKey(ctx context.Context, key string) (Identi
 	return idn, true, nil
 }
 
-func (s *sqlStore) GetIdentityByID(ctx context.Context, id string) (Identity, bool, error) {
+func (s *SQL) GetIdentityByID(ctx context.Context, id string) (Identity, bool, error) {
 	var idn Identity
 	var last sql.NullString
 	err := s.db.QueryRowContext(ctx,
@@ -1020,7 +1020,7 @@ func (s *sqlStore) GetIdentityByID(ctx context.Context, id string) (Identity, bo
 	return idn, true, nil
 }
 
-func (s *sqlStore) ListTenants(ctx context.Context) ([]Tenant, error) {
+func (s *SQL) ListTenants(ctx context.Context) ([]Tenant, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at,
 		        allowed_providers, auto_join_domains, allowed_domains, hidden_providers
@@ -1041,16 +1041,16 @@ func (s *sqlStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 	return out, rows.Err()
 }
 
-func (s *sqlStore) ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error) {
+func (s *SQL) ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error) {
 	return s.listMembersByStatus(ctx, tenantID, "active")
 }
 
 // ListRemovedMembersByTenant is the offboarded half — see the interface comment.
-func (s *sqlStore) ListRemovedMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error) {
+func (s *SQL) ListRemovedMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error) {
 	return s.listMembersByStatus(ctx, tenantID, "inactive")
 }
 
-func (s *sqlStore) listMembersByStatus(ctx context.Context, tenantID, status string) ([]MemberInfo, error) {
+func (s *SQL) listMembersByStatus(ctx context.Context, tenantID, status string) ([]MemberInfo, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT m.id, i.user_key, i.email, i.role, m.role
 		 FROM membership m JOIN identity i ON i.id = m.identity_id
@@ -1070,7 +1070,7 @@ func (s *sqlStore) listMembersByStatus(ctx context.Context, tenantID, status str
 	return out, rows.Err()
 }
 
-func (s *sqlStore) ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error) {
+func (s *SQL) ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT m.id, m.tenant_id, t.slug, t.name, m.role
 		 FROM membership m JOIN tenant t ON t.id = m.tenant_id
@@ -1091,7 +1091,7 @@ func (s *sqlStore) ListMemberships(ctx context.Context, identityID string) ([]Me
 	return out, rows.Err()
 }
 
-func (s *sqlStore) GetMembershipByID(ctx context.Context, membershipID string) (MembershipView, bool, error) {
+func (s *SQL) GetMembershipByID(ctx context.Context, membershipID string) (MembershipView, bool, error) {
 	var v MembershipView
 	err := s.db.QueryRowContext(ctx,
 		`SELECT m.id, m.tenant_id, t.slug, t.name, m.role
@@ -1107,7 +1107,7 @@ func (s *sqlStore) GetMembershipByID(ctx context.Context, membershipID string) (
 	return v, true, nil
 }
 
-func (s *sqlStore) IdentityIDForMembership(ctx context.Context, membershipID string) (string, bool, error) {
+func (s *SQL) IdentityIDForMembership(ctx context.Context, membershipID string) (string, bool, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT identity_id FROM membership WHERE id=? AND status='active'`, membershipID).Scan(&id)
@@ -1130,11 +1130,11 @@ func (s *sqlStore) IdentityIDForMembership(ctx context.Context, membershipID str
 // precisely the offboarding docs/log/61 §61.10.6 exists to make work. Coming back onto
 // a roster is an explicit act — the invite API reactivates deliberately
 // (adminAPI.addMembership).
-func (s *sqlStore) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
+func (s *SQL) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at)
 		 VALUES(?, ?, ?, ?, 'active', ?) ON CONFLICT(identity_id, tenant_id) DO NOTHING`,
-		newID(), identityID, tenantID, role, nowTS()); err != nil {
+		NewID(), identityID, tenantID, role, NowTS()); err != nil {
 		return Membership{}, err
 	}
 	var m Membership
@@ -1145,7 +1145,7 @@ func (s *sqlStore) EnsureMembership(ctx context.Context, identityID, tenantID, r
 	return m, err
 }
 
-func (s *sqlStore) GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error) {
+func (s *SQL) GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error) {
 	var m Membership
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, identity_id, tenant_id, role, status, created_at FROM membership
@@ -1160,13 +1160,13 @@ func (s *sqlStore) GetMembership(ctx context.Context, identityID, tenantID strin
 	return m, true, nil
 }
 
-func (s *sqlStore) SetMembershipRole(ctx context.Context, membershipID, role string) error {
+func (s *SQL) SetMembershipRole(ctx context.Context, membershipID, role string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE membership SET role=? WHERE id=?`, role, membershipID)
 	return err
 }
 
-func (s *sqlStore) SetMembershipStatus(ctx context.Context, membershipID, status string) error {
+func (s *SQL) SetMembershipStatus(ctx context.Context, membershipID, status string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE membership SET status=? WHERE id=?`, status, membershipID)
 	return err
@@ -1243,7 +1243,7 @@ func membershipCascade(membershipID string) []struct {
 // DeleteMembership removes a membership row and everything keyed to it. Irreversible,
 // and only ever reached from the explicit admin operation, which has already established
 // that the membership is inactive and its workspace destroyed (docs/log/61 §61.18).
-func (s *sqlStore) DeleteMembership(ctx context.Context, membershipID string) error {
+func (s *SQL) DeleteMembership(ctx context.Context, membershipID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1257,7 +1257,7 @@ func (s *sqlStore) DeleteMembership(ctx context.Context, membershipID string) er
 
 // deleteMembershipTx is the body above, inside somebody else's transaction — the tenant
 // delete runs it once per remaining membership so the whole tenant goes in one commit.
-func (s *sqlStore) deleteMembershipTx(ctx context.Context, tx *sqlTx, membershipID string) error {
+func (s *SQL) deleteMembershipTx(ctx context.Context, tx *sqlTx, membershipID string) error {
 	for _, stmt := range membershipCascade(membershipID) {
 		if _, err := tx.ExecContext(ctx, stmt.sql, stmt.args...); err != nil {
 			return fmt.Errorf("%s: %w", stmt.sql, err)
@@ -1276,7 +1276,7 @@ func (s *sqlStore) deleteMembershipTx(ctx context.Context, tx *sqlTx, membership
 //
 // The tenant's history — audit_log, usage_daily, cloud_cost_daily — is deliberately kept,
 // exactly as for a membership.
-func (s *sqlStore) DeleteTenant(ctx context.Context, tenantID string) error {
+func (s *SQL) DeleteTenant(ctx context.Context, tenantID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1323,7 +1323,7 @@ func (s *sqlStore) DeleteTenant(ctx context.Context, tenantID string) error {
 // LOWER() is applied to the COLUMN, not to the placeholder: Postgres cannot infer a
 // type for LOWER($1) and errors, which is the same reason identityByEmail lowercases
 // in Go.
-func (s *sqlStore) EmailHasActiveMembership(ctx context.Context, email string) (bool, error) {
+func (s *SQL) EmailHasActiveMembership(ctx context.Context, email string) (bool, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
 		return false, nil
@@ -1343,7 +1343,7 @@ func (s *sqlStore) EmailHasActiveMembership(ctx context.Context, email string) (
 // tenant — the entry-gate term a tenant-defined provider is allowed to use
 // (docs/log/61 §61.11.3-3). Being on ANOTHER tenant's roster says nothing about this
 // subsidiary's IdP.
-func (s *sqlStore) EmailHasActiveMembershipInTenant(ctx context.Context, email, tenantID string) (bool, error) {
+func (s *SQL) EmailHasActiveMembershipInTenant(ctx context.Context, email, tenantID string) (bool, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" || tenantID == "" {
 		return false, nil
@@ -1359,7 +1359,7 @@ func (s *sqlStore) EmailHasActiveMembershipInTenant(ctx context.Context, email, 
 	return err == nil, err
 }
 
-func (s *sqlStore) AnyActiveMembership(ctx context.Context) (bool, error) {
+func (s *SQL) AnyActiveMembership(ctx context.Context) (bool, error) {
 	var one int
 	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM membership WHERE status='active' LIMIT 1`).Scan(&one)
 	if err == sql.ErrNoRows {
@@ -1368,7 +1368,7 @@ func (s *sqlStore) AnyActiveMembership(ctx context.Context) (bool, error) {
 	return err == nil, err
 }
 
-func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
+func (s *SQL) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
 	var u UserLimit
 	err := s.db.QueryRowContext(ctx,
 		`SELECT membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at FROM user_limit WHERE membership_id=?`, membershipID).
@@ -1382,17 +1382,17 @@ func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserL
 	return u, true, nil
 }
 
-func (s *sqlStore) PutUserLimit(ctx context.Context, membershipID string, q UserQuota) error {
+func (s *SQL) PutUserLimit(ctx context.Context, membershipID string, q UserQuota) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(membership_id) DO UPDATE SET max_sessions=excluded.max_sessions, disk_gb=excluded.disk_gb,
 		   mem_limit=excluded.mem_limit, cpu_limit=excluded.cpu_limit, slot_class=excluded.slot_class`,
-		membershipID, q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass, nowTS())
+		membershipID, q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass, NowTS())
 	return err
 }
 
-func (s *sqlStore) SetWorkspaceState(ctx context.Context, workspaceID, state string) error {
+func (s *SQL) SetWorkspaceState(ctx context.Context, workspaceID, state string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1401,7 +1401,7 @@ func (s *sqlStore) SetWorkspaceState(ctx context.Context, workspaceID, state str
 	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE workspace SET state=?, last_active_at=? WHERE id=?`, state, nowTS(), workspaceID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE workspace SET state=?, last_active_at=? WHERE id=?`, state, NowTS(), workspaceID); err != nil {
 		return err
 	}
 	// ★ 「走っていない Workspace はプレビュー用 slug を持たない」を、状態遷移そのものに
@@ -1428,7 +1428,7 @@ func lockWorkspace(ctx context.Context, q sqlExecQuery, workspaceID string) erro
 	return err
 }
 
-func (s *sqlStore) RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error) {
+func (s *SQL) RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -1460,7 +1460,7 @@ func (s *sqlStore) RecordWorkspaceActivity(ctx context.Context, workspaceID, las
 	return true, nil
 }
 
-func (s *sqlStore) WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error) {
+func (s *SQL) WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error) {
 	var one int
 	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM workspace_activity
 		WHERE workspace_id=? AND (last_seen_at > ? OR connected_until > ?)`, workspaceID, cutoff, now).Scan(&one)
@@ -1470,7 +1470,7 @@ func (s *sqlStore) WorkspaceHasRecentActivity(ctx context.Context, workspaceID, 
 	return err == nil, err
 }
 
-func (s *sqlStore) ClaimWorkspaceIdleStop(ctx context.Context, workspaceID, owner, operationID, cutoff, now string) (bool, error) {
+func (s *SQL) ClaimWorkspaceIdleStop(ctx context.Context, workspaceID, owner, operationID, cutoff, now string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -1507,7 +1507,7 @@ func (s *sqlStore) ClaimWorkspaceIdleStop(ctx context.Context, workspaceID, owne
 	return true, nil
 }
 
-func (s *sqlStore) ReleaseWorkspaceIdleStop(ctx context.Context, workspaceID, operationID string) error {
+func (s *SQL) ReleaseWorkspaceIdleStop(ctx context.Context, workspaceID, operationID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM workspace_stop_intent WHERE workspace_id=? AND operation_id=?`, workspaceID, operationID)
 	return err
 }
@@ -1515,7 +1515,7 @@ func (s *sqlStore) ReleaseWorkspaceIdleStop(ctx context.Context, workspaceID, op
 // ClearWorkspaceIdleStop is the explicit lifecycle reconciliation path. Callers
 // must already own the distributed lifecycle lease (and adapter host fence), so
 // an intent orphaned by a crashed reaper can be safely superseded.
-func (s *sqlStore) ClearWorkspaceIdleStop(ctx context.Context, workspaceID string) error {
+func (s *SQL) ClearWorkspaceIdleStop(ctx context.Context, workspaceID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1539,7 +1539,7 @@ func (s *sqlStore) ClearWorkspaceIdleStop(ctx context.Context, workspaceID strin
 // detail is the kind of thing that shows up as a foreign-key error in production and
 // nowhere in tests. session_share_proposal does cascade off shared_session_catalog on
 // both dialects, so it is the one dependent left implicit.
-func (s *sqlStore) DeleteWorkspace(ctx context.Context, workspaceID string) error {
+func (s *SQL) DeleteWorkspace(ctx context.Context, workspaceID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1567,7 +1567,7 @@ func (s *sqlStore) DeleteWorkspace(ctx context.Context, workspaceID string) erro
 // external Runtime I/O. Unlike a time-based lease it remains held while a CP is
 // paused and is released automatically if the process/connection dies. SQLite is
 // the single-CP local profile; native additionally supplies its kernel flock.
-func (s *sqlStore) AcquireWorkspaceOperationFence(ctx context.Context, workspaceID string) (func(), error) {
+func (s *SQL) AcquireWorkspaceOperationFence(ctx context.Context, workspaceID string) (func(), error) {
 	if s.dialect != "postgres" {
 		return func() {}, nil
 	}
@@ -1618,7 +1618,7 @@ func discardSQLConn(conn *sql.Conn) {
 	_ = conn.Close()
 }
 
-func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {
+func (s *SQL) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {
 	ws, err := scanWorkspace(s.db.QueryRowContext(ctx, workspaceCols+` WHERE w.membership_id=?`, membershipID))
 	if err == sql.ErrNoRows {
 		return Workspace{}, false, nil
@@ -1629,7 +1629,7 @@ func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID st
 	return ws, true, nil
 }
 
-func (s *sqlStore) CreateWorkspace(ctx context.Context, ws Workspace) error {
+func (s *SQL) CreateWorkspace(ctx context.Context, ws Workspace) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO workspace(id, tenant_id, membership_id, container_name, network, data_dir,
 		   agent_port, agent_token, state, created_at)
@@ -1639,7 +1639,7 @@ func (s *sqlStore) CreateWorkspace(ctx context.Context, ws Workspace) error {
 	return err
 }
 
-func (s *sqlStore) GetWorkspaceSettings(ctx context.Context, workspaceID string) (string, error) {
+func (s *SQL) GetWorkspaceSettings(ctx context.Context, workspaceID string) (string, error) {
 	var v string
 	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(settings,'') FROM workspace WHERE id=?`, workspaceID).Scan(&v)
 	if err == sql.ErrNoRows {
@@ -1648,7 +1648,7 @@ func (s *sqlStore) GetWorkspaceSettings(ctx context.Context, workspaceID string)
 	return v, err
 }
 
-func (s *sqlStore) SetWorkspaceSettings(ctx context.Context, workspaceID, settingsJSON string) error {
+func (s *SQL) SetWorkspaceSettings(ctx context.Context, workspaceID, settingsJSON string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE workspace SET settings=? WHERE id=?`, settingsJSON, workspaceID)
 	return err
 }
@@ -1656,7 +1656,7 @@ func (s *sqlStore) SetWorkspaceSettings(ctx context.Context, workspaceID, settin
 // SetWorkspacePreviewSlug records the slug this container start is reachable under
 // (docs/log/81 §4); "" clears it, which is what a stop does. The unique index is partial
 // (non-empty only), so every stopped workspace can hold "" at once.
-func (s *sqlStore) SetWorkspacePreviewSlug(ctx context.Context, workspaceID, slug string) error {
+func (s *SQL) SetWorkspacePreviewSlug(ctx context.Context, workspaceID, slug string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE workspace SET preview_slug=? WHERE id=?`, slug, workspaceID)
 	return err
 }
@@ -1665,7 +1665,7 @@ func (s *sqlStore) SetWorkspacePreviewSlug(ctx context.Context, workspaceID, slu
 // workspace. An empty slug never matches: that is the value every STOPPED workspace
 // carries, and a lookup that matched it would hand a stranger the first stopped
 // workspace in the table.
-func (s *sqlStore) GetWorkspaceByPreviewSlug(ctx context.Context, slug string) (Workspace, bool, error) {
+func (s *SQL) GetWorkspaceByPreviewSlug(ctx context.Context, slug string) (Workspace, bool, error) {
 	if slug == "" {
 		return Workspace{}, false, nil
 	}
@@ -1679,14 +1679,14 @@ func (s *sqlStore) GetWorkspaceByPreviewSlug(ctx context.Context, slug string) (
 	return ws, true, nil
 }
 
-func (s *sqlStore) MaxAgentPort(ctx context.Context) (int, error) {
+func (s *SQL) MaxAgentPort(ctx context.Context) (int, error) {
 	var max int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(CAST(agent_port AS INTEGER)), 0) FROM workspace`).Scan(&max)
 	return max, err
 }
 
-func (s *sqlStore) ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error) {
+func (s *SQL) ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error) {
 	rows, err := s.db.QueryContext(ctx, workspaceCols+` WHERE w.tenant_id=? ORDER BY w.created_at`, tenantID)
 	if err != nil {
 		return nil, err
@@ -1703,7 +1703,7 @@ func (s *sqlStore) ListWorkspaces(ctx context.Context, tenantID string) ([]Works
 	return out, rows.Err()
 }
 
-func (s *sqlStore) GetWrappedDEK(ctx context.Context, workspaceID string) (string, string, bool, error) {
+func (s *SQL) GetWrappedDEK(ctx context.Context, workspaceID string) (string, string, bool, error) {
 	var ct, kr string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT ciphertext, key_ref FROM wrapped_dek WHERE workspace_id=?`, workspaceID).Scan(&ct, &kr)
@@ -1716,16 +1716,16 @@ func (s *sqlStore) GetWrappedDEK(ctx context.Context, workspaceID string) (strin
 	return ct, kr, true, nil
 }
 
-func (s *sqlStore) PutWrappedDEK(ctx context.Context, workspaceID, ciphertext, keyRef string) error {
+func (s *SQL) PutWrappedDEK(ctx context.Context, workspaceID, ciphertext, keyRef string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO wrapped_dek(workspace_id, ciphertext, key_ref, key_version, created_at)
 		 VALUES(?, ?, ?, 1, ?)
 		 ON CONFLICT(workspace_id) DO UPDATE SET ciphertext=excluded.ciphertext, key_ref=excluded.key_ref`,
-		workspaceID, ciphertext, keyRef, nowTS())
+		workspaceID, ciphertext, keyRef, NowTS())
 	return err
 }
 
-func (s *sqlStore) ReplaceSessions(ctx context.Context, workspaceID string, rows []SessionRow) error {
+func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []SessionRow) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1738,14 +1738,14 @@ func (s *sqlStore) ReplaceSessions(ctx context.Context, workspaceID string, rows
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried)
 			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, nowTS(), r.Carried); err != nil {
+			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-func (s *sqlStore) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
+func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried
 		 FROM session WHERE workspace_id=? ORDER BY created_at DESC`, workspaceID)
@@ -1766,7 +1766,7 @@ func (s *sqlStore) ListSessions(ctx context.Context, workspaceID string) ([]Sess
 
 // --- Personal Access Tokens (docs/decisions/0006, P3-6) ---
 
-func (s *sqlStore) CreatePAT(ctx context.Context, p PAT, tokenHash string) error {
+func (s *SQL) CreatePAT(ctx context.Context, p PAT, tokenHash string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO pat(id, identity_id, membership_id, token_hash, scope, name, created_at, expires_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1774,7 +1774,7 @@ func (s *sqlStore) CreatePAT(ctx context.Context, p PAT, tokenHash string) error
 	return err
 }
 
-func (s *sqlStore) GetPATByHash(ctx context.Context, tokenHash string) (PAT, bool, error) {
+func (s *SQL) GetPATByHash(ctx context.Context, tokenHash string) (PAT, bool, error) {
 	var p PAT
 	var mid, exp, rev, last sql.NullString
 	err := s.db.QueryRowContext(ctx,
@@ -1791,7 +1791,7 @@ func (s *sqlStore) GetPATByHash(ctx context.Context, tokenHash string) (PAT, boo
 	return p, true, nil
 }
 
-func (s *sqlStore) ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error) {
+func (s *SQL) ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, identity_id, COALESCE(membership_id,''), scope, name, created_at,
 		        COALESCE(expires_at,''), COALESCE(revoked_at,''), COALESCE(last_used_at,'')
@@ -1814,21 +1814,21 @@ func (s *sqlStore) ListPATsByIdentity(ctx context.Context, identityID string) ([
 
 // RevokePAT marks a token revoked, scoped to its owner so a user can only revoke
 // their own tokens.
-func (s *sqlStore) RevokePAT(ctx context.Context, id, identityID string) error {
+func (s *SQL) RevokePAT(ctx context.Context, id, identityID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE pat SET revoked_at=? WHERE id=? AND identity_id=? AND revoked_at IS NULL`,
-		nowTS(), id, identityID)
+		NowTS(), id, identityID)
 	return err
 }
 
-func (s *sqlStore) TouchPAT(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE pat SET last_used_at=? WHERE id=?`, nowTS(), id)
+func (s *SQL) TouchPAT(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE pat SET last_used_at=? WHERE id=?`, NowTS(), id)
 	return err
 }
 
 // --- Internal git repositories (docs/reference/internal-git-provider) ---
 
-func (s *sqlStore) CreateGitRepo(ctx context.Context, g GitRepo) error {
+func (s *SQL) CreateGitRepo(ctx context.Context, g GitRepo) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO git_repo(id, tenant_id, name, default_branch, created_by, created_at)
 		 VALUES(?, ?, ?, ?, ?, ?)`,
@@ -1836,7 +1836,7 @@ func (s *sqlStore) CreateGitRepo(ctx context.Context, g GitRepo) error {
 	return err
 }
 
-func (s *sqlStore) ListGitReposByTenant(ctx context.Context, tenantID string) ([]GitRepo, error) {
+func (s *SQL) ListGitReposByTenant(ctx context.Context, tenantID string) ([]GitRepo, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, tenant_id, name, default_branch, COALESCE(created_by,''), created_at
 		 FROM git_repo WHERE tenant_id=? ORDER BY name`, tenantID)
@@ -1855,7 +1855,7 @@ func (s *sqlStore) ListGitReposByTenant(ctx context.Context, tenantID string) ([
 	return out, rows.Err()
 }
 
-func (s *sqlStore) GetGitRepo(ctx context.Context, tenantID, name string) (GitRepo, bool, error) {
+func (s *SQL) GetGitRepo(ctx context.Context, tenantID, name string) (GitRepo, bool, error) {
 	var g GitRepo
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, tenant_id, name, default_branch, COALESCE(created_by,''), created_at
@@ -1870,7 +1870,7 @@ func (s *sqlStore) GetGitRepo(ctx context.Context, tenantID, name string) (GitRe
 	return g, true, nil
 }
 
-func (s *sqlStore) CountGitReposByTenant(ctx context.Context, tenantID string) (int, error) {
+func (s *SQL) CountGitReposByTenant(ctx context.Context, tenantID string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_repo WHERE tenant_id=?`, tenantID).Scan(&n)
 	return n, err
@@ -1879,48 +1879,48 @@ func (s *sqlStore) CountGitReposByTenant(ctx context.Context, tenantID string) (
 // RenameGitRepo renames one repo within a tenant. The (tenant_id, name) UNIQUE
 // constraint makes a collision with an existing name an error (surfaced as a 409
 // by the caller after a pre-check).
-func (s *sqlStore) RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error {
+func (s *SQL) RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE git_repo SET name=? WHERE tenant_id=? AND name=?`, newName, tenantID, oldName)
 	return err
 }
 
-func (s *sqlStore) DeleteGitRepo(ctx context.Context, tenantID, name string) error {
+func (s *SQL) DeleteGitRepo(ctx context.Context, tenantID, name string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM git_repo WHERE tenant_id=? AND name=?`, tenantID, name)
 	return err
 }
 
 // --- Git LFS object ledger (docs/reference/internal-git-provider, P3) ---
 
-func (s *sqlStore) PutLFSObject(ctx context.Context, tenantID, repo, oid string, size int64) error {
+func (s *SQL) PutLFSObject(ctx context.Context, tenantID, repo, oid string, size int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO lfs_object(tenant_id, repo_name, oid, size, created_at)
 		 VALUES(?, ?, ?, ?, ?)
 		 ON CONFLICT(tenant_id, repo_name, oid) DO NOTHING`,
-		tenantID, repo, oid, size, nowTS())
+		tenantID, repo, oid, size, NowTS())
 	return err
 }
 
-func (s *sqlStore) TenantLFSBytes(ctx context.Context, tenantID string) (int64, error) {
+func (s *SQL) TenantLFSBytes(ctx context.Context, tenantID string) (int64, error) {
 	var n int64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(size), 0) FROM lfs_object WHERE tenant_id=?`, tenantID).Scan(&n)
 	return n, err
 }
 
-func (s *sqlStore) DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error {
+func (s *SQL) DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
 	return err
 }
 
-func (s *sqlStore) RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
+func (s *SQL) RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE lfs_object SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
 	return err
 }
 
-func (s *sqlStore) DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error {
+func (s *SQL) DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=? AND oid=?`, tenantID, repo, oid)
 	return err
@@ -1936,7 +1936,7 @@ func scanLFSLock(row interface{ Scan(...any) error }) (LFSLock, error) {
 	return l, err
 }
 
-func (s *sqlStore) CreateLFSLock(ctx context.Context, l LFSLock) error {
+func (s *SQL) CreateLFSLock(ctx context.Context, l LFSLock) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO lfs_lock(id, tenant_id, repo_name, path, ref_name, owner_id, owner_name, locked_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1944,7 +1944,7 @@ func (s *sqlStore) CreateLFSLock(ctx context.Context, l LFSLock) error {
 	return err
 }
 
-func (s *sqlStore) GetLFSLockByPath(ctx context.Context, tenantID, repo, path string) (LFSLock, bool, error) {
+func (s *SQL) GetLFSLockByPath(ctx context.Context, tenantID, repo, path string) (LFSLock, bool, error) {
 	l, err := scanLFSLock(s.db.QueryRowContext(ctx,
 		lfsLockCols+` WHERE tenant_id=? AND repo_name=? AND path=?`, tenantID, repo, path))
 	if err == sql.ErrNoRows {
@@ -1956,7 +1956,7 @@ func (s *sqlStore) GetLFSLockByPath(ctx context.Context, tenantID, repo, path st
 	return l, true, nil
 }
 
-func (s *sqlStore) GetLFSLock(ctx context.Context, tenantID, repo, id string) (LFSLock, bool, error) {
+func (s *SQL) GetLFSLock(ctx context.Context, tenantID, repo, id string) (LFSLock, bool, error) {
 	l, err := scanLFSLock(s.db.QueryRowContext(ctx,
 		lfsLockCols+` WHERE tenant_id=? AND repo_name=? AND id=?`, tenantID, repo, id))
 	if err == sql.ErrNoRows {
@@ -1971,7 +1971,7 @@ func (s *sqlStore) GetLFSLock(ctx context.Context, tenantID, repo, id string) (L
 // ListLFSLocks returns locks ordered oldest-first, paginated by an opaque cursor
 // (a row offset). It fetches limit+1 to know whether a next page exists; the
 // returned cursor is "" when the page is the last.
-func (s *sqlStore) ListLFSLocks(ctx context.Context, tenantID, repo, filterPath, filterID string, limit int, cursor string) ([]LFSLock, string, error) {
+func (s *SQL) ListLFSLocks(ctx context.Context, tenantID, repo, filterPath, filterID string, limit int, cursor string) ([]LFSLock, string, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
@@ -2017,25 +2017,25 @@ func (s *sqlStore) ListLFSLocks(ctx context.Context, tenantID, repo, filterPath,
 	return out, next, nil
 }
 
-func (s *sqlStore) DeleteLFSLock(ctx context.Context, tenantID, repo, id string) error {
+func (s *SQL) DeleteLFSLock(ctx context.Context, tenantID, repo, id string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM lfs_lock WHERE tenant_id=? AND repo_name=? AND id=?`, tenantID, repo, id)
 	return err
 }
 
-func (s *sqlStore) DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error {
+func (s *SQL) DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM lfs_lock WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
 	return err
 }
 
-func (s *sqlStore) RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
+func (s *SQL) RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE lfs_lock SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
 	return err
 }
 
-func (s *sqlStore) MembershipOwnerName(ctx context.Context, membershipID string) (string, error) {
+func (s *SQL) MembershipOwnerName(ctx context.Context, membershipID string) (string, error) {
 	var email, key string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(i.email,''), i.user_key FROM membership m JOIN identity i ON i.id = m.identity_id
@@ -2052,7 +2052,7 @@ func (s *sqlStore) MembershipOwnerName(ctx context.Context, membershipID string)
 	return key, nil
 }
 
-func (s *sqlStore) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error) {
+func (s *SQL) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT oid FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
 	if err != nil {
@@ -2070,7 +2070,7 @@ func (s *sqlStore) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string)
 	return out, rows.Err()
 }
 
-func (s *sqlStore) InsertAudit(ctx context.Context, a AuditLog) error {
+func (s *SQL) InsertAudit(ctx context.Context, a AuditLog) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at, http_status)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -2078,7 +2078,7 @@ func (s *sqlStore) InsertAudit(ctx context.Context, a AuditLog) error {
 	return err
 }
 
-func (s *sqlStore) ListAuditByTenant(ctx context.Context, tenantID string, limit int) ([]AuditLog, error) {
+func (s *SQL) ListAuditByTenant(ctx context.Context, tenantID string, limit int) ([]AuditLog, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -2111,7 +2111,7 @@ func (s *sqlStore) ListAuditByTenant(ctx context.Context, tenantID string, limit
 
 // RecordEgress accumulates egress hits into the (day, host, allowed) bucket
 // (docs/log/20 M2). Upsert += so repeated batches add up.
-func (s *sqlStore) RecordEgress(ctx context.Context, day, host string, allowed bool, count int) error {
+func (s *SQL) RecordEgress(ctx context.Context, day, host string, allowed bool, count int) error {
 	a := 0
 	if allowed {
 		a = 1
@@ -2132,7 +2132,7 @@ func (s *sqlStore) RecordEgress(ctx context.Context, day, host string, allowed b
 // ORDER BY (allowed+blocked) failed there with 42703 (allowed is a real column,
 // blocked is only an alias) while SQLite accepted it. SUM(count) is the same
 // ordering key and is legal in both dialects.
-func (s *sqlStore) ListEgress(ctx context.Context, sinceDay string, limit int) ([]EgressStat, error) {
+func (s *SQL) ListEgress(ctx context.Context, sinceDay string, limit int) ([]EgressStat, error) {
 	if limit <= 0 {
 		limit = 200
 	}
@@ -2159,7 +2159,7 @@ func (s *sqlStore) ListEgress(ctx context.Context, sinceDay string, limit int) (
 
 // --- egress allowlist + deployment settings (docs/log/20 M3) --------------------
 
-func (s *sqlStore) ListAllowlist(ctx context.Context, state string, limit int) ([]AllowlistEntry, error) {
+func (s *SQL) ListAllowlist(ctx context.Context, state string, limit int) ([]AllowlistEntry, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -2187,7 +2187,7 @@ func (s *sqlStore) ListAllowlist(ctx context.Context, state string, limit int) (
 	return out, rows.Err()
 }
 
-func (s *sqlStore) AddAllowlist(ctx context.Context, e AllowlistEntry) error {
+func (s *SQL) AddAllowlist(ctx context.Context, e AllowlistEntry) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO egress_allowlist(id, tenant_id, entry, state, reason, added_by, added_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
@@ -2195,12 +2195,12 @@ func (s *sqlStore) AddAllowlist(ctx context.Context, e AllowlistEntry) error {
 	return err
 }
 
-func (s *sqlStore) SetAllowlistState(ctx context.Context, id, state string) error {
+func (s *SQL) SetAllowlistState(ctx context.Context, id, state string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE egress_allowlist SET state=? WHERE id=?`, state, id)
 	return err
 }
 
-func (s *sqlStore) EffectiveAllowlist(ctx context.Context) ([]string, error) {
+func (s *SQL) EffectiveAllowlist(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT entry FROM egress_allowlist WHERE state='active'`)
 	if err != nil {
 		return nil, err
@@ -2217,7 +2217,7 @@ func (s *sqlStore) EffectiveAllowlist(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
-func (s *sqlStore) GetSetting(ctx context.Context, key string) (string, error) {
+func (s *SQL) GetSetting(ctx context.Context, key string) (string, error) {
 	var v string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM deployment_setting WHERE key=?`, key).Scan(&v)
 	if err == sql.ErrNoRows {
@@ -2226,7 +2226,7 @@ func (s *sqlStore) GetSetting(ctx context.Context, key string) (string, error) {
 	return v, err
 }
 
-func (s *sqlStore) SetSetting(ctx context.Context, key, value string) error {
+func (s *SQL) SetSetting(ctx context.Context, key, value string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO deployment_setting(key, value) VALUES(?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
@@ -2236,7 +2236,7 @@ func (s *sqlStore) SetSetting(ctx context.Context, key, value string) error {
 // ListSettingKeys returns keys starting with prefix. LIKE narrows the scan but
 // `_` in the prefix is a LIKE wildcard, so the literal-prefix check in Go is
 // what actually decides membership.
-func (s *sqlStore) ListSettingKeys(ctx context.Context, prefix string) ([]string, error) {
+func (s *SQL) ListSettingKeys(ctx context.Context, prefix string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT key FROM deployment_setting WHERE key LIKE ? ORDER BY key`, prefix+"%")
 	if err != nil {
@@ -2256,14 +2256,14 @@ func (s *sqlStore) ListSettingKeys(ctx context.Context, prefix string) ([]string
 	return out, rows.Err()
 }
 
-func (s *sqlStore) DeleteSetting(ctx context.Context, key string) error {
+func (s *SQL) DeleteSetting(ctx context.Context, key string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM deployment_setting WHERE key=?`, key)
 	return err
 }
 
 // AddUsage accumulates workspace running-seconds into the (membership, day)
 // showback bucket (docs/roadmap.md P3-9). Upsert += so repeated samples add up.
-func (s *sqlStore) AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error {
+func (s *SQL) AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO usage_daily(membership_id, tenant_id, day, running_secs)
 		 VALUES(?, ?, ?, ?)
@@ -2276,7 +2276,7 @@ func (s *sqlStore) AddUsage(ctx context.Context, membershipID, tenantID, day str
 // enriched with tenant slug + member key/email via LEFT JOINs (a row survives
 // even if its membership/identity was later removed). tenantID=="" spans all
 // tenants (super_admin); otherwise it is scoped to that tenant.
-func (s *sqlStore) ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([]UsageRow, error) {
+func (s *SQL) ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([]UsageRow, error) {
 	q := `SELECT u.tenant_id, COALESCE(t.slug,''), u.membership_id,
 	             COALESCE(i.user_key,''), COALESCE(i.email,''), u.day, u.running_secs
 	      FROM usage_daily u
@@ -2312,7 +2312,7 @@ func (s *sqlStore) ListUsage(ctx context.Context, tenantID, fromDay, toDay strin
 // ⚠️ Sums accumulate, peaks do not. max_sessions/max_busy take a CASE-based maximum
 // rather than SQLite's MAX(a,b) or Postgres's GREATEST(a,b): those are different
 // spellings in the two dialects, and this store writes one SQL string for both.
-func (s *sqlStore) AddUsageHour(ctx context.Context, membershipID, tenantID, hour string, d UsageHourCounters) error {
+func (s *SQL) AddUsageHour(ctx context.Context, membershipID, tenantID, hour string, d UsageHourCounters) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO usage_hourly(membership_id, tenant_id, hour, samples, running_secs,
 		                          measured_secs, session_secs, busy_secs, max_sessions, max_busy)
@@ -2341,7 +2341,7 @@ func (s *sqlStore) AddUsageHour(ctx context.Context, membershipID, tenantID, hou
 // sampler heartbeats (tenant_id is empty on them by construction), and they are what
 // tells the UI that an empty hour was observed rather than unrecorded. Filtering them
 // out with the tenant would make every tenant-scoped heatmap blank.
-func (s *sqlStore) ListUsageHourly(ctx context.Context, tenantID, fromHour, toHour string) ([]UsageHourRow, error) {
+func (s *SQL) ListUsageHourly(ctx context.Context, tenantID, fromHour, toHour string) ([]UsageHourRow, error) {
 	q := `SELECT u.tenant_id, COALESCE(t.slug,''), u.membership_id,
 	             COALESCE(i.user_key,''), COALESCE(i.email,''), u.hour,
 	             u.samples, u.running_secs, u.measured_secs, u.session_secs, u.busy_secs,
@@ -2376,7 +2376,7 @@ func (s *sqlStore) ListUsageHourly(ctx context.Context, tenantID, fromHour, toHo
 	return out, rows.Err()
 }
 
-func (s *sqlStore) PruneUsageHourly(ctx context.Context, beforeHour string) error {
+func (s *SQL) PruneUsageHourly(ctx context.Context, beforeHour string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM usage_hourly WHERE hour < ?`, beforeHour)
 	return err
 }
@@ -2419,7 +2419,7 @@ func scanSSMProfile(row scanner) (SSMProfile, error) {
 	return p, err
 }
 
-func (s *sqlStore) ListSSMProfiles(ctx context.Context, membershipID string) ([]SSMProfile, error) {
+func (s *SQL) ListSSMProfiles(ctx context.Context, membershipID string) ([]SSMProfile, error) {
 	rows, err := s.db.QueryContext(ctx, ssmProfileCols+` WHERE membership_id=? ORDER BY label`, membershipID)
 	if err != nil {
 		return nil, err
@@ -2436,7 +2436,7 @@ func (s *sqlStore) ListSSMProfiles(ctx context.Context, membershipID string) ([]
 	return out, rows.Err()
 }
 
-func (s *sqlStore) GetSSMProfile(ctx context.Context, id string) (SSMProfile, bool, error) {
+func (s *SQL) GetSSMProfile(ctx context.Context, id string) (SSMProfile, bool, error) {
 	p, err := scanSSMProfile(s.db.QueryRowContext(ctx, ssmProfileCols+` WHERE id=?`, id))
 	if err == sql.ErrNoRows {
 		return SSMProfile{}, false, nil
@@ -2444,7 +2444,7 @@ func (s *sqlStore) GetSSMProfile(ctx context.Context, id string) (SSMProfile, bo
 	return p, err == nil, err
 }
 
-func (s *sqlStore) CreateSSMProfile(ctx context.Context, p SSMProfile) error {
+func (s *SQL) CreateSSMProfile(ctx context.Context, p SSMProfile) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO ssm_profile(id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at)
 		 VALUES(?,?,?,?,?,?,?,?,?)`,
@@ -2452,7 +2452,7 @@ func (s *sqlStore) CreateSSMProfile(ctx context.Context, p SSMProfile) error {
 	return err
 }
 
-func (s *sqlStore) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
+func (s *SQL) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
 	// membership_id in the WHERE so a member can only update their own row.
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE ssm_profile SET label=?, start_url=?, sso_region=?, account_id=?, role_name=?, region=?
@@ -2461,7 +2461,7 @@ func (s *sqlStore) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
 	return err
 }
 
-func (s *sqlStore) DeleteSSMProfile(ctx context.Context, id, membershipID string) error {
+func (s *SQL) DeleteSSMProfile(ctx context.Context, id, membershipID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM ssm_profile WHERE id=? AND membership_id=?`, id, membershipID)
 	return err
@@ -2476,7 +2476,7 @@ func scanSSMHost(row scanner) (SSMHost, error) {
 	return h, err
 }
 
-func (s *sqlStore) ListSSMHosts(ctx context.Context, membershipID string) ([]SSMHost, error) {
+func (s *SQL) ListSSMHosts(ctx context.Context, membershipID string) ([]SSMHost, error) {
 	rows, err := s.db.QueryContext(ctx, ssmHostCols+` WHERE membership_id=? ORDER BY alias`, membershipID)
 	if err != nil {
 		return nil, err
@@ -2493,7 +2493,7 @@ func (s *sqlStore) ListSSMHosts(ctx context.Context, membershipID string) ([]SSM
 	return out, rows.Err()
 }
 
-func (s *sqlStore) GetSSMHost(ctx context.Context, id string) (SSMHost, bool, error) {
+func (s *SQL) GetSSMHost(ctx context.Context, id string) (SSMHost, bool, error) {
 	h, err := scanSSMHost(s.db.QueryRowContext(ctx, ssmHostCols+` WHERE id=?`, id))
 	if err == sql.ErrNoRows {
 		return SSMHost{}, false, nil
@@ -2501,7 +2501,7 @@ func (s *sqlStore) GetSSMHost(ctx context.Context, id string) (SSMHost, bool, er
 	return h, err == nil, err
 }
 
-func (s *sqlStore) CreateSSMHost(ctx context.Context, h SSMHost) error {
+func (s *SQL) CreateSSMHost(ctx context.Context, h SSMHost) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO ssm_host(id, membership_id, alias, profile_id, region, instance_id, document_name, created_at)
 		 VALUES(?,?,?,?,?,?,?,?)`,
@@ -2509,7 +2509,7 @@ func (s *sqlStore) CreateSSMHost(ctx context.Context, h SSMHost) error {
 	return err
 }
 
-func (s *sqlStore) UpdateSSMHost(ctx context.Context, h SSMHost) error {
+func (s *SQL) UpdateSSMHost(ctx context.Context, h SSMHost) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE ssm_host SET alias=?, profile_id=?, region=?, instance_id=?, document_name=?
 		   WHERE id=? AND membership_id=?`,
@@ -2517,7 +2517,7 @@ func (s *sqlStore) UpdateSSMHost(ctx context.Context, h SSMHost) error {
 	return err
 }
 
-func (s *sqlStore) DeleteSSMHost(ctx context.Context, id, membershipID string) error {
+func (s *SQL) DeleteSSMHost(ctx context.Context, id, membershipID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM ssm_host WHERE id=? AND membership_id=?`, id, membershipID)
 	return err
@@ -2537,7 +2537,7 @@ func scanMemo(row scanner) (Memo, error) {
 // ListMemos returns unsent memos plus sent ones still inside the retention window
 // (sent_at empty, or sent_at at/after retainBefore). retainBefore is an RFC3339
 // cutoff; RFC3339 strings sort chronologically so the lexical compare is correct.
-func (s *sqlStore) ListMemos(ctx context.Context, membershipID, retainBefore string) ([]Memo, error) {
+func (s *SQL) ListMemos(ctx context.Context, membershipID, retainBefore string) ([]Memo, error) {
 	rows, err := s.db.QueryContext(ctx,
 		memoCols+` WHERE membership_id=? AND (sent_at='' OR sent_at>=?)
 		           ORDER BY repo, category, position, created_at`, membershipID, retainBefore)
@@ -2556,7 +2556,7 @@ func (s *sqlStore) ListMemos(ctx context.Context, membershipID, retainBefore str
 	return out, rows.Err()
 }
 
-func (s *sqlStore) GetMemo(ctx context.Context, id string) (Memo, bool, error) {
+func (s *SQL) GetMemo(ctx context.Context, id string) (Memo, bool, error) {
 	m, err := scanMemo(s.db.QueryRowContext(ctx, memoCols+` WHERE id=?`, id))
 	if err == sql.ErrNoRows {
 		return Memo{}, false, nil
@@ -2564,7 +2564,7 @@ func (s *sqlStore) GetMemo(ctx context.Context, id string) (Memo, bool, error) {
 	return m, err == nil, err
 }
 
-func (s *sqlStore) CreateMemo(ctx context.Context, m Memo) error {
+func (s *SQL) CreateMemo(ctx context.Context, m Memo) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO memo(id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at)
 		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
@@ -2572,7 +2572,7 @@ func (s *sqlStore) CreateMemo(ctx context.Context, m Memo) error {
 	return err
 }
 
-func (s *sqlStore) UpdateMemo(ctx context.Context, m Memo) error {
+func (s *SQL) UpdateMemo(ctx context.Context, m Memo) error {
 	// membership_id in the WHERE so a member can only update their own row.
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, attachments=?, position=?
@@ -2581,7 +2581,7 @@ func (s *sqlStore) UpdateMemo(ctx context.Context, m Memo) error {
 	return err
 }
 
-func (s *sqlStore) DeleteMemo(ctx context.Context, id, membershipID string) error {
+func (s *SQL) DeleteMemo(ctx context.Context, id, membershipID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM memo WHERE id=? AND membership_id=?`, id, membershipID)
 	return err
@@ -2589,7 +2589,7 @@ func (s *sqlStore) DeleteMemo(ctx context.Context, id, membershipID string) erro
 
 // MarkMemosSent stamps sent_at on the caller's memos in ids (ownership enforced by
 // membership_id in the WHERE, so foreign ids are silently ignored).
-func (s *sqlStore) MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error {
+func (s *SQL) MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -2607,7 +2607,7 @@ func (s *sqlStore) MarkMemosSent(ctx context.Context, membershipID string, ids [
 }
 
 // SweepSentMemos deletes sent memos whose sent_at is before the retention cutoff.
-func (s *sqlStore) SweepSentMemos(ctx context.Context, retainBefore string) error {
+func (s *SQL) SweepSentMemos(ctx context.Context, retainBefore string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM memo WHERE sent_at!='' AND sent_at<?`, retainBefore)
 	return err
@@ -2625,7 +2625,7 @@ func scanMemoCategory(row scanner) (MemoCategory, error) {
 
 // ListCategories returns a membership's categories ordered by repo then explicit
 // position (created_at breaks ties so the order is stable).
-func (s *sqlStore) ListCategories(ctx context.Context, membershipID string) ([]MemoCategory, error) {
+func (s *SQL) ListCategories(ctx context.Context, membershipID string) ([]MemoCategory, error) {
 	rows, err := s.db.QueryContext(ctx,
 		memoCategoryCols+` WHERE membership_id=? ORDER BY repo, position, created_at`, membershipID)
 	if err != nil {
@@ -2643,7 +2643,7 @@ func (s *sqlStore) ListCategories(ctx context.Context, membershipID string) ([]M
 	return out, rows.Err()
 }
 
-func (s *sqlStore) GetCategory(ctx context.Context, id string) (MemoCategory, bool, error) {
+func (s *SQL) GetCategory(ctx context.Context, id string) (MemoCategory, bool, error) {
 	c, err := scanMemoCategory(s.db.QueryRowContext(ctx, memoCategoryCols+` WHERE id=?`, id))
 	if err == sql.ErrNoRows {
 		return MemoCategory{}, false, nil
@@ -2651,7 +2651,7 @@ func (s *sqlStore) GetCategory(ctx context.Context, id string) (MemoCategory, bo
 	return c, err == nil, err
 }
 
-func (s *sqlStore) CreateCategory(ctx context.Context, c MemoCategory) error {
+func (s *SQL) CreateCategory(ctx context.Context, c MemoCategory) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO memo_category(id, membership_id, repo, name, position, created_at)
 		 VALUES(?,?,?,?,?,?)`,
@@ -2660,14 +2660,14 @@ func (s *sqlStore) CreateCategory(ctx context.Context, c MemoCategory) error {
 }
 
 // UpdateCategory sets name + position on an owned category (membership_id in the WHERE).
-func (s *sqlStore) UpdateCategory(ctx context.Context, c MemoCategory) error {
+func (s *SQL) UpdateCategory(ctx context.Context, c MemoCategory) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE memo_category SET name=?, position=? WHERE id=? AND membership_id=?`,
 		c.Name, c.Position, c.ID, c.MembershipID)
 	return err
 }
 
-func (s *sqlStore) DeleteCategory(ctx context.Context, id, membershipID string) error {
+func (s *SQL) DeleteCategory(ctx context.Context, id, membershipID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM memo_category WHERE id=? AND membership_id=?`, id, membershipID)
 	return err
@@ -2675,7 +2675,7 @@ func (s *sqlStore) DeleteCategory(ctx context.Context, id, membershipID string) 
 
 // ReassignMemoCategory rewrites memo.category from `from` to `to` for the caller's memos
 // in a repo bucket (ownership by membership_id in the WHERE).
-func (s *sqlStore) ReassignMemoCategory(ctx context.Context, membershipID, repo, from, to string) error {
+func (s *SQL) ReassignMemoCategory(ctx context.Context, membershipID, repo, from, to string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE memo SET category=? WHERE membership_id=? AND repo=? AND category=?`,
 		to, membershipID, repo, from)
@@ -2693,14 +2693,14 @@ func scanNotification(row scanner) (Notification, error) {
 	return n, err
 }
 
-func (s *sqlStore) InsertNotification(ctx context.Context, n Notification) error {
+func (s *SQL) InsertNotification(ctx context.Context, n Notification) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO notification(event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING`, n.EventID, n.MembershipID,
 		n.Kind, n.TargetType, n.TargetID, n.TargetKind, n.DisplayName, n.Payload, n.CreatedAt, n.SeenAt)
 	return err
 }
 
-func (s *sqlStore) ListNotifications(ctx context.Context, membershipID, retainAfter string, limit int) ([]Notification, error) {
+func (s *SQL) ListNotifications(ctx context.Context, membershipID, retainAfter string, limit int) ([]Notification, error) {
 	rows, err := s.db.QueryContext(ctx, notificationCols+` WHERE membership_id=? AND created_at>=? ORDER BY seq DESC LIMIT ?`, membershipID, retainAfter, limit)
 	if err != nil {
 		return nil, err
@@ -2717,18 +2717,18 @@ func (s *sqlStore) ListNotifications(ctx context.Context, membershipID, retainAf
 	return out, rows.Err()
 }
 
-func (s *sqlStore) CountUnseenNotifications(ctx context.Context, membershipID, retainAfter string) (int, error) {
+func (s *SQL) CountUnseenNotifications(ctx context.Context, membershipID, retainAfter string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notification WHERE membership_id=? AND created_at>=? AND seen_at=''`, membershipID, retainAfter).Scan(&n)
 	return n, err
 }
 
-func (s *sqlStore) MarkNotificationsSeenThrough(ctx context.Context, membershipID string, seq int64, seenAt string) error {
+func (s *SQL) MarkNotificationsSeenThrough(ctx context.Context, membershipID string, seq int64, seenAt string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE notification SET seen_at=? WHERE membership_id=? AND seq<=? AND seen_at=''`, seenAt, membershipID, seq)
 	return err
 }
 
-func (s *sqlStore) MarkNotificationsSeen(ctx context.Context, membershipID string, eventIDs []string, seenAt string) error {
+func (s *SQL) MarkNotificationsSeen(ctx context.Context, membershipID string, eventIDs []string, seenAt string) error {
 	if len(eventIDs) == 0 {
 		return nil
 	}
@@ -2742,12 +2742,12 @@ func (s *sqlStore) MarkNotificationsSeen(ctx context.Context, membershipID strin
 	return err
 }
 
-func (s *sqlStore) SweepNotifications(ctx context.Context, retainBefore string) error {
+func (s *SQL) SweepNotifications(ctx context.Context, retainBefore string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM notification WHERE created_at<?`, retainBefore)
 	return err
 }
 
-func (s *sqlStore) GetUsageNotificationState(ctx context.Context, membershipID, source, windowKey string) (UsageNotificationState, bool, error) {
+func (s *SQL) GetUsageNotificationState(ctx context.Context, membershipID, source, windowKey string) (UsageNotificationState, bool, error) {
 	var st UsageNotificationState
 	err := s.db.QueryRowContext(ctx, `SELECT membership_id, source, window_key, resets_at, armed FROM notification_usage_state WHERE membership_id=? AND source=? AND window_key=?`, membershipID, source, windowKey).
 		Scan(&st.MembershipID, &st.Source, &st.WindowKey, &st.ResetsAt, &st.Armed)
@@ -2757,7 +2757,7 @@ func (s *sqlStore) GetUsageNotificationState(ctx context.Context, membershipID, 
 	return st, err == nil, err
 }
 
-func (s *sqlStore) PutUsageNotificationState(ctx context.Context, st UsageNotificationState) error {
+func (s *SQL) PutUsageNotificationState(ctx context.Context, st UsageNotificationState) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO notification_usage_state(membership_id, source, window_key, resets_at, armed) VALUES(?,?,?,?,?)
 		ON CONFLICT(membership_id, source, window_key) DO UPDATE SET resets_at=excluded.resets_at, armed=excluded.armed`,
 		st.MembershipID, st.Source, st.WindowKey, st.ResetsAt, st.Armed)
@@ -2796,7 +2796,7 @@ func scanSchedule(row scanner) (Schedule, error) {
 	return s, err
 }
 
-func (s *sqlStore) CreateSchedule(ctx context.Context, sc Schedule) error {
+func (s *SQL) CreateSchedule(ctx context.Context, sc Schedule) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO schedule(id, membership_id, tenant_id, owner_conv, spec_kind, spec, spec_label, tz,
 		   wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
@@ -2810,7 +2810,7 @@ func (s *sqlStore) CreateSchedule(ctx context.Context, sc Schedule) error {
 	return err
 }
 
-func (s *sqlStore) GetSchedule(ctx context.Context, id string) (Schedule, bool, error) {
+func (s *SQL) GetSchedule(ctx context.Context, id string) (Schedule, bool, error) {
 	sc, err := scanSchedule(s.db.QueryRowContext(ctx, scheduleCols+` WHERE id=?`, id))
 	if err == sql.ErrNoRows {
 		return Schedule{}, false, nil
@@ -2818,7 +2818,7 @@ func (s *sqlStore) GetSchedule(ctx context.Context, id string) (Schedule, bool, 
 	return sc, err == nil, err
 }
 
-func (s *sqlStore) ListSchedules(ctx context.Context, membershipID string) ([]Schedule, error) {
+func (s *SQL) ListSchedules(ctx context.Context, membershipID string) ([]Schedule, error) {
 	rows, err := s.db.QueryContext(ctx, scheduleCols+` WHERE membership_id=? ORDER BY created_at`, membershipID)
 	if err != nil {
 		return nil, err
@@ -2838,7 +2838,7 @@ func (s *sqlStore) ListSchedules(ctx context.Context, membershipID string) ([]Sc
 // ListDueSchedules returns enabled rows with a non-empty next_run at or before
 // nowRFC. The empty-string guard matters: next_run=” (a paused/spent schedule)
 // must never look due, and ” sorts before any real RFC3339 stamp.
-func (s *sqlStore) ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error) {
+func (s *SQL) ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error) {
 	rows, err := s.db.QueryContext(ctx,
 		scheduleCols+` WHERE enabled=1 AND next_run!='' AND next_run<=? ORDER BY next_run`, nowRFC)
 	if err != nil {
@@ -2856,7 +2856,7 @@ func (s *sqlStore) ListDueSchedules(ctx context.Context, nowRFC string) ([]Sched
 	return out, rows.Err()
 }
 
-func (s *sqlStore) UpdateSchedule(ctx context.Context, sc Schedule) error {
+func (s *SQL) UpdateSchedule(ctx context.Context, sc Schedule) error {
 	// membership_id in the WHERE so a member can only update their own row.
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE schedule SET owner_conv=?, spec_kind=?, spec=?, spec_label=?, tz=?, wake_policy=?,
@@ -2875,26 +2875,26 @@ func (s *sqlStore) UpdateSchedule(ctx context.Context, sc Schedule) error {
 // Kept separate from RecordScheduleFire (which advances the cron ledger) because the
 // firer computes these before the fire ledger is stamped, and only reuse schedules touch
 // them.
-func (s *sqlStore) SetScheduleReuse(ctx context.Context, id, reuseSession, reuseStartedAt string, runCount int, updatedAt string) error {
+func (s *SQL) SetScheduleReuse(ctx context.Context, id, reuseSession, reuseStartedAt string, runCount int, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE schedule SET reuse_session=?, reuse_started_at=?, reuse_run_count=?, updated_at=? WHERE id=?`,
 		reuseSession, reuseStartedAt, runCount, updatedAt, id)
 	return err
 }
 
-func (s *sqlStore) SetScheduleEnabled(ctx context.Context, id, membershipID string, enabled bool, nextRun, updatedAt string) error {
+func (s *SQL) SetScheduleEnabled(ctx context.Context, id, membershipID string, enabled bool, nextRun, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE schedule SET enabled=?, next_run=?, updated_at=? WHERE id=? AND membership_id=?`,
 		b2i(enabled), nextRun, updatedAt, id, membershipID)
 	return err
 }
 
-func (s *sqlStore) DeleteSchedule(ctx context.Context, id, membershipID string) error {
+func (s *SQL) DeleteSchedule(ctx context.Context, id, membershipID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM schedule WHERE id=? AND membership_id=?`, id, membershipID)
 	return err
 }
 
-func (s *sqlStore) RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error {
+func (s *SQL) RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error {
 	// Clear manual_fire_pending on every fire: the run-now signal is consumed once the
 	// fire it requested has happened (the scheduler already read it to tag the run).
 	_, err := s.db.ExecContext(ctx,
@@ -2907,14 +2907,14 @@ func (s *sqlStore) RecordScheduleFire(ctx context.Context, id, lastRun, lastStat
 // schedule immediately AND records that this next fire was manually triggered, so the run
 // history can distinguish it from an automatic scheduled fire (docs/log/38). enabled is forced
 // true (run-now on a paused schedule is rejected earlier). membership_id scopes the write.
-func (s *sqlStore) MarkManualFirePending(ctx context.Context, id, membershipID, nextRun, updatedAt string) error {
+func (s *SQL) MarkManualFirePending(ctx context.Context, id, membershipID, nextRun, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE schedule SET enabled=1, next_run=?, manual_fire_pending=1, updated_at=? WHERE id=? AND membership_id=?`,
 		nextRun, updatedAt, id, membershipID)
 	return err
 }
 
-func (s *sqlStore) AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error {
+func (s *SQL) AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO schedule_run(id, schedule_id, membership_id, fired_at, status, detail, session, trigger_kind) VALUES(?,?,?,?,?,?,?,?)`,
 		run.ID, run.ScheduleID, run.MembershipID, run.FiredAt, run.Status, run.Detail, run.Session, run.Trigger); err != nil {
@@ -2932,7 +2932,7 @@ func (s *sqlStore) AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN
 	return err
 }
 
-func (s *sqlStore) ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error) {
+func (s *SQL) ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -2975,7 +2975,7 @@ func scanMCPServer(row scanner) (MCPServerRow, error) {
 	return m, err
 }
 
-func (s *sqlStore) ListMCPServers(ctx context.Context, tenantID string) ([]MCPServerRow, error) {
+func (s *SQL) ListMCPServers(ctx context.Context, tenantID string) ([]MCPServerRow, error) {
 	rows, err := s.db.QueryContext(ctx, mcpServerCols+` WHERE tenant_id=? ORDER BY name`, tenantID)
 	if err != nil {
 		return nil, err
@@ -2992,7 +2992,7 @@ func (s *sqlStore) ListMCPServers(ctx context.Context, tenantID string) ([]MCPSe
 	return out, rows.Err()
 }
 
-func (s *sqlStore) GetMCPServer(ctx context.Context, tenantID, id string) (MCPServerRow, bool, error) {
+func (s *SQL) GetMCPServer(ctx context.Context, tenantID, id string) (MCPServerRow, bool, error) {
 	m, err := scanMCPServer(s.db.QueryRowContext(ctx, mcpServerCols+` WHERE tenant_id=? AND id=?`, tenantID, id))
 	if err == sql.ErrNoRows {
 		return MCPServerRow{}, false, nil
@@ -3000,7 +3000,7 @@ func (s *sqlStore) GetMCPServer(ctx context.Context, tenantID, id string) (MCPSe
 	return m, err == nil, err
 }
 
-func (s *sqlStore) CreateMCPServer(ctx context.Context, m MCPServerRow) error {
+func (s *SQL) CreateMCPServer(ctx context.Context, m MCPServerRow) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO mcp_server(id, tenant_id, name, label, transport, url, headers_enc, key_ref,
 		   targets, kinds, timeout_ms, enabled, user_secret, created_by, created_at, updated_at)
@@ -3010,7 +3010,7 @@ func (s *sqlStore) CreateMCPServer(ctx context.Context, m MCPServerRow) error {
 	return err
 }
 
-func (s *sqlStore) UpdateMCPServer(ctx context.Context, m MCPServerRow) error {
+func (s *SQL) UpdateMCPServer(ctx context.Context, m MCPServerRow) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE mcp_server SET name=?, label=?, transport=?, url=?, headers_enc=?, key_ref=?,
 		   targets=?, kinds=?, timeout_ms=?, enabled=?, user_secret=?, updated_at=?
@@ -3021,7 +3021,7 @@ func (s *sqlStore) UpdateMCPServer(ctx context.Context, m MCPServerRow) error {
 	return err
 }
 
-func (s *sqlStore) DeleteMCPServer(ctx context.Context, tenantID, id string) error {
+func (s *SQL) DeleteMCPServer(ctx context.Context, tenantID, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM mcp_server WHERE tenant_id=? AND id=?`, tenantID, id)
 	return err
 }
@@ -3041,7 +3041,7 @@ func scanTenantIdP(sc scanner) (TenantIdP, error) {
 	return t, err
 }
 
-func (s *sqlStore) ListTenantIdPs(ctx context.Context, tenantID string) ([]TenantIdP, error) {
+func (s *SQL) ListTenantIdPs(ctx context.Context, tenantID string) ([]TenantIdP, error) {
 	rows, err := s.db.QueryContext(ctx, tenantIdPCols+` WHERE tenant_id=? ORDER BY name`, tenantID)
 	if err != nil {
 		return nil, err
@@ -3058,11 +3058,11 @@ func (s *sqlStore) ListTenantIdPs(ctx context.Context, tenantID string) ([]Tenan
 	return out, rows.Err()
 }
 
-func (s *sqlStore) ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error) {
+func (s *SQL) ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error) {
 	return s.listTenantIdPs(ctx, "")
 }
 
-func (s *sqlStore) ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error) {
+func (s *SQL) ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error) {
 	return s.listTenantIdPs(ctx, "active")
 }
 
@@ -3073,7 +3073,7 @@ func (s *sqlStore) ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[s
 //
 // ★ Rows of a non-active tenant are left out: a suspended tenant's IdP must not keep
 // minting sessions, the same way ListTenantLoginRules only loads active tenants.
-func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantIdP, map[string]TenantRef, error) {
+func (s *SQL) listTenantIdPs(ctx context.Context, status string) ([]TenantIdP, map[string]TenantRef, error) {
 	q := `SELECT p.id, p.tenant_id, p.name, p.label_ja, p.label_en, p.kind, p.issuer, p.client_id,
 	             p.secret_enc, p.key_ref, p.trust, p.allowed_tids, p.allowed_domains, p.allowed_orgs,
 	             p.link_claim, p.status,
@@ -3108,7 +3108,7 @@ func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantI
 	return out, tenants, rows.Err()
 }
 
-func (s *sqlStore) GetTenantIdP(ctx context.Context, tenantID, id string) (TenantIdP, bool, error) {
+func (s *SQL) GetTenantIdP(ctx context.Context, tenantID, id string) (TenantIdP, bool, error) {
 	t, err := scanTenantIdP(s.db.QueryRowContext(ctx, tenantIdPCols+` WHERE tenant_id=? AND id=?`, tenantID, id))
 	if err == sql.ErrNoRows {
 		return TenantIdP{}, false, nil
@@ -3116,7 +3116,7 @@ func (s *sqlStore) GetTenantIdP(ctx context.Context, tenantID, id string) (Tenan
 	return t, err == nil, err
 }
 
-func (s *sqlStore) CreateTenantIdP(ctx context.Context, t TenantIdP) error {
+func (s *SQL) CreateTenantIdP(ctx context.Context, t TenantIdP) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant_idp(id, tenant_id, name, label_ja, label_en, kind, issuer, client_id,
 		   secret_enc, key_ref, trust, allowed_tids, allowed_domains, allowed_orgs, link_claim, status,
@@ -3132,7 +3132,7 @@ func (s *sqlStore) CreateTenantIdP(ctx context.Context, t TenantIdP) error {
 // written here too, because an edit that changes the issuer, the client_id or the
 // trust rule sends the row back to pending (決定 30) — the caller computes that and
 // this is where it lands.
-func (s *sqlStore) UpdateTenantIdP(ctx context.Context, t TenantIdP) error {
+func (s *SQL) UpdateTenantIdP(ctx context.Context, t TenantIdP) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE tenant_idp SET name=?, label_ja=?, label_en=?, kind=?, issuer=?, client_id=?,
 		   secret_enc=?, key_ref=?, trust=?, allowed_tids=?, allowed_domains=?, allowed_orgs=?,
@@ -3145,14 +3145,14 @@ func (s *sqlStore) UpdateTenantIdP(ctx context.Context, t TenantIdP) error {
 	return err
 }
 
-func (s *sqlStore) SetTenantIdPStatus(ctx context.Context, tenantID, id, status, approvedBy, approvedAt, updatedAt string) error {
+func (s *SQL) SetTenantIdPStatus(ctx context.Context, tenantID, id, status, approvedBy, approvedAt, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE tenant_idp SET status=?, approved_by=?, approved_at=?, updated_at=? WHERE tenant_id=? AND id=?`,
 		status, approvedBy, approvedAt, updatedAt, tenantID, id)
 	return err
 }
 
-func (s *sqlStore) DeleteTenantIdP(ctx context.Context, tenantID, id string) error {
+func (s *SQL) DeleteTenantIdP(ctx context.Context, tenantID, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM tenant_idp WHERE tenant_id=? AND id=?`, tenantID, id)
 	return err
 }
@@ -3169,7 +3169,7 @@ func scanTenantGitOAuth(sc scanner) (TenantGitOAuth, error) {
 	return g, err
 }
 
-func (s *sqlStore) ListTenantGitOAuth(ctx context.Context, tenantID string) ([]TenantGitOAuth, error) {
+func (s *SQL) ListTenantGitOAuth(ctx context.Context, tenantID string) ([]TenantGitOAuth, error) {
 	rows, err := s.db.QueryContext(ctx, tenantGitOAuthCols+` WHERE tenant_id=? ORDER BY provider`, tenantID)
 	if err != nil {
 		return nil, err
@@ -3186,7 +3186,7 @@ func (s *sqlStore) ListTenantGitOAuth(ctx context.Context, tenantID string) ([]T
 	return out, rows.Err()
 }
 
-func (s *sqlStore) GetTenantGitOAuth(ctx context.Context, tenantID, provider string) (TenantGitOAuth, bool, error) {
+func (s *SQL) GetTenantGitOAuth(ctx context.Context, tenantID, provider string) (TenantGitOAuth, bool, error) {
 	g, err := scanTenantGitOAuth(s.db.QueryRowContext(ctx,
 		tenantGitOAuthCols+` WHERE tenant_id=? AND provider=?`, tenantID, provider))
 	if err == sql.ErrNoRows {
@@ -3197,7 +3197,7 @@ func (s *sqlStore) GetTenantGitOAuth(ctx context.Context, tenantID, provider str
 
 // PutTenantGitOAuth upserts on the (tenant_id, provider) unique index. created_at is
 // left alone on conflict so the row keeps the date it was first registered.
-func (s *sqlStore) PutTenantGitOAuth(ctx context.Context, g TenantGitOAuth) error {
+func (s *SQL) PutTenantGitOAuth(ctx context.Context, g TenantGitOAuth) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant_git_oauth(id, tenant_id, provider, client_id, secret_enc, key_ref,
 		   updated_by, created_at, updated_at)
@@ -3210,7 +3210,7 @@ func (s *sqlStore) PutTenantGitOAuth(ctx context.Context, g TenantGitOAuth) erro
 	return err
 }
 
-func (s *sqlStore) DeleteTenantGitOAuth(ctx context.Context, tenantID, provider string) error {
+func (s *SQL) DeleteTenantGitOAuth(ctx context.Context, tenantID, provider string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM tenant_git_oauth WHERE tenant_id=? AND provider=?`, tenantID, provider)
 	return err
 }
@@ -3218,7 +3218,7 @@ func (s *sqlStore) DeleteTenantGitOAuth(ctx context.Context, tenantID, provider 
 // TenantIdPIssuerInUse — see the interface. Rows of every tenant, and every status:
 // a PENDING second registration is exactly the one worth catching, since the whole
 // point is to say something before it is approved and people start signing in.
-func (s *sqlStore) TenantIdPIssuerInUse(ctx context.Context, issuer, excludeID string) (bool, error) {
+func (s *SQL) TenantIdPIssuerInUse(ctx context.Context, issuer, excludeID string) (bool, error) {
 	if issuer == "" {
 		return false, nil
 	}
@@ -3238,7 +3238,7 @@ func (s *sqlStore) TenantIdPIssuerInUse(ctx context.Context, issuer, excludeID s
 // method belongs to another tenant. Somebody with no identity_provider row at all is
 // not counted either — they have never signed in (an invite placeholder), so this
 // provider is not what they would lose.
-func (s *sqlStore) CountMembersOnlyOnProvider(ctx context.Context, tenantID, providerID string) (int, error) {
+func (s *SQL) CountMembersOnlyOnProvider(ctx context.Context, tenantID, providerID string) (int, error) {
 	if tenantID == "" || providerID == "" {
 		return 0, nil
 	}
@@ -3262,7 +3262,7 @@ func (s *sqlStore) CountMembersOnlyOnProvider(ctx context.Context, tenantID, pro
 // days first is also what makes a day that came back empty actually become empty —
 // otherwise a resource that lost its tag would leave its last attributed row frozen in
 // place forever, and the invoice would never stop blaming that person.
-func (s *sqlStore) PutCloudCost(ctx context.Context, days []string, rows []CloudCostRow) error {
+func (s *SQL) PutCloudCost(ctx context.Context, days []string, rows []CloudCostRow) error {
 	if len(days) == 0 {
 		return nil
 	}
@@ -3276,7 +3276,7 @@ func (s *sqlStore) PutCloudCost(ctx context.Context, days []string, rows []Cloud
 			return err
 		}
 	}
-	now := nowTS()
+	now := NowTS()
 	for _, r := range rows {
 		est := 0
 		if r.Estimated {
@@ -3305,7 +3305,7 @@ func (s *sqlStore) PutCloudCost(ctx context.Context, days []string, rows []Cloud
 // NOT return it — a tenant_admin seeing the deployment's ALB/RDS bill would be reading
 // outside their tenant (ADR 0048 決定 4). It falls out of the WHERE naturally, and that
 // is deliberate rather than accidental.
-func (s *sqlStore) ListCloudCost(ctx context.Context, tenantID, membershipID, fromDay, toDay string) ([]CloudCostRow, error) {
+func (s *SQL) ListCloudCost(ctx context.Context, tenantID, membershipID, fromDay, toDay string) ([]CloudCostRow, error) {
 	q := `SELECT day, membership_id, tenant_id, service, unblended, amortized, currency, estimated
 	      FROM cloud_cost_daily WHERE day BETWEEN ? AND ?`
 	args := []any{fromDay, toDay}
@@ -3341,7 +3341,7 @@ func (s *sqlStore) ListCloudCost(ctx context.Context, tenantID, membershipID, fr
 // deleted membership keeps its spend and surfaces with empty key/email, like ListUsage).
 // The shared bucket is included as a row with an empty MembershipID; the API decides
 // who is allowed to see it.
-func (s *sqlStore) CloudCostTotals(ctx context.Context, tenantID, fromDay, toDay string) ([]CloudCostTotal, error) {
+func (s *SQL) CloudCostTotals(ctx context.Context, tenantID, fromDay, toDay string) ([]CloudCostTotal, error) {
 	q := `SELECT COALESCE(t.slug,''), c.membership_id, COALESCE(i.user_key,''), COALESCE(i.email,''),
 	             SUM(c.unblended), SUM(c.amortized), COALESCE(MAX(c.currency),'')
 	      FROM cloud_cost_daily c
@@ -3376,7 +3376,7 @@ func (s *sqlStore) CloudCostTotals(ctx context.Context, tenantID, fromDay, toDay
 // "cost allocation was not switched on before this date" instead of drawing an honest-
 // looking zero — and that distinction is permanent, because activation is not
 // retroactive (docs/log/67 §67.5).
-func (s *sqlStore) CloudCostDays(ctx context.Context) (string, string, error) {
+func (s *SQL) CloudCostDays(ctx context.Context) (string, string, error) {
 	var first, last sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT MIN(day), MAX(day) FROM cloud_cost_daily`).Scan(&first, &last)
@@ -3403,7 +3403,7 @@ func scanWorkItemQuery(sc interface{ Scan(...any) error }) (WorkItemQuery, error
 	return q, err
 }
 
-func (s *sqlStore) ListWorkItemQueries(ctx context.Context, membershipID string) ([]WorkItemQuery, error) {
+func (s *SQL) ListWorkItemQueries(ctx context.Context, membershipID string) ([]WorkItemQuery, error) {
 	rows, err := s.db.QueryContext(ctx,
 		workItemQueryCols+` WHERE membership_id=? ORDER BY position, created_at`, membershipID)
 	if err != nil {
@@ -3421,7 +3421,7 @@ func (s *sqlStore) ListWorkItemQueries(ctx context.Context, membershipID string)
 	return out, rows.Err()
 }
 
-func (s *sqlStore) GetWorkItemQuery(ctx context.Context, id string) (WorkItemQuery, bool, error) {
+func (s *SQL) GetWorkItemQuery(ctx context.Context, id string) (WorkItemQuery, bool, error) {
 	q, err := scanWorkItemQuery(s.db.QueryRowContext(ctx, workItemQueryCols+` WHERE id=?`, id))
 	if err == sql.ErrNoRows {
 		return WorkItemQuery{}, false, nil
@@ -3429,7 +3429,7 @@ func (s *sqlStore) GetWorkItemQuery(ctx context.Context, id string) (WorkItemQue
 	return q, err == nil, err
 }
 
-func (s *sqlStore) CreateWorkItemQuery(ctx context.Context, q WorkItemQuery) error {
+func (s *SQL) CreateWorkItemQuery(ctx context.Context, q WorkItemQuery) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO work_item_query(id, membership_id, provider, label, query, repo_hint,
 		 enabled, position, created_at, fetched_at, last_error)
@@ -3441,7 +3441,7 @@ func (s *sqlStore) CreateWorkItemQuery(ctx context.Context, q WorkItemQuery) err
 
 // UpdateWorkItemQuery is ownership-guarded by membership_id and deliberately leaves
 // fetched_at / last_error alone — editing the label must not claim a fresh fetch.
-func (s *sqlStore) UpdateWorkItemQuery(ctx context.Context, q WorkItemQuery) error {
+func (s *SQL) UpdateWorkItemQuery(ctx context.Context, q WorkItemQuery) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE work_item_query SET provider=?, label=?, query=?, repo_hint=?, enabled=?, position=?
 		 WHERE id=? AND membership_id=?`,
@@ -3453,7 +3453,7 @@ func (s *sqlStore) UpdateWorkItemQuery(ctx context.Context, q WorkItemQuery) err
 // DeleteWorkItemQuery drops the query and the rows it cached. The ledger
 // (work_item_session) is NOT touched: the sessions someone started are not a
 // property of the search that surfaced them.
-func (s *sqlStore) DeleteWorkItemQuery(ctx context.Context, id, membershipID string) error {
+func (s *SQL) DeleteWorkItemQuery(ctx context.Context, id, membershipID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -3470,7 +3470,7 @@ func (s *sqlStore) DeleteWorkItemQuery(ctx context.Context, id, membershipID str
 	return tx.Commit()
 }
 
-func (s *sqlStore) MarkWorkItemQueryFetched(ctx context.Context, id, fetchedAt, errMsg string) error {
+func (s *SQL) MarkWorkItemQueryFetched(ctx context.Context, id, fetchedAt, errMsg string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE work_item_query SET fetched_at=?, last_error=? WHERE id=?`, fetchedAt, errMsg, id)
 	return err
@@ -3486,7 +3486,7 @@ func scanWorkItem(sc interface{ Scan(...any) error }) (WorkItem, error) {
 	return w, err
 }
 
-func (s *sqlStore) ListWorkItems(ctx context.Context, membershipID string) ([]WorkItem, error) {
+func (s *SQL) ListWorkItems(ctx context.Context, membershipID string) ([]WorkItem, error) {
 	rows, err := s.db.QueryContext(ctx,
 		workItemCols+` WHERE membership_id=? ORDER BY updated_at DESC, item_key`, membershipID)
 	if err != nil {
@@ -3507,7 +3507,7 @@ func (s *sqlStore) ListWorkItems(ctx context.Context, membershipID string) ([]Wo
 // ReplaceWorkItems swaps the cached rows of `queryIDs` for `items` in one transaction.
 // ★ Only the named queries are cleared: a refresh where one query failed must keep the
 // other queries' rows, otherwise one 401 blanks the whole rail.
-func (s *sqlStore) ReplaceWorkItems(ctx context.Context, membershipID string, queryIDs []string, items []WorkItem) error {
+func (s *SQL) ReplaceWorkItems(ctx context.Context, membershipID string, queryIDs []string, items []WorkItem) error {
 	if len(queryIDs) == 0 {
 		return nil
 	}
@@ -3535,7 +3535,7 @@ func (s *sqlStore) ReplaceWorkItems(ctx context.Context, membershipID string, qu
 	return tx.Commit()
 }
 
-func (s *sqlStore) ListWorkItemSessions(ctx context.Context, membershipID string) ([]WorkItemSession, error) {
+func (s *SQL) ListWorkItemSessions(ctx context.Context, membershipID string) ([]WorkItemSession, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, membership_id, provider, item_key, session_name, repo, branch, created_at
 		 FROM work_item_session WHERE membership_id=? ORDER BY created_at DESC`, membershipID)
@@ -3555,7 +3555,7 @@ func (s *sqlStore) ListWorkItemSessions(ctx context.Context, membershipID string
 	return out, rows.Err()
 }
 
-func (s *sqlStore) CreateWorkItemSession(ctx context.Context, w WorkItemSession) error {
+func (s *SQL) CreateWorkItemSession(ctx context.Context, w WorkItemSession) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO work_item_session(id, membership_id, provider, item_key, session_name,
 		 repo, branch, created_at) VALUES(?,?,?,?,?,?,?,?)`,
@@ -3563,7 +3563,7 @@ func (s *sqlStore) CreateWorkItemSession(ctx context.Context, w WorkItemSession)
 	return err
 }
 
-func (s *sqlStore) DeleteWorkItemSession(ctx context.Context, id, membershipID string) error {
+func (s *SQL) DeleteWorkItemSession(ctx context.Context, id, membershipID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM work_item_session WHERE id=? AND membership_id=?`, id, membershipID)
 	return err

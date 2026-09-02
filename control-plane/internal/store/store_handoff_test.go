@@ -8,7 +8,7 @@ import (
 )
 
 type handoffFixture struct {
-	st              *sqlStore
+	st              *SQL
 	tenant          Tenant
 	owner           Membership
 	recipient       Membership
@@ -21,7 +21,7 @@ type handoffFixture struct {
 func newHandoffFixture(t *testing.T) handoffFixture {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,20 +36,20 @@ func newHandoffFixture(t *testing.T) handoffFixture {
 	owner, _ := st.EnsureMembership(ctx, oid.ID, tn.ID, "member")
 	recipient, _ := st.EnsureMembership(ctx, rid.ID, tn.ID, "member")
 	other, _ := st.EnsureMembership(ctx, xid.ID, tn.ID, "member")
-	ws := Workspace{ID: newID(), TenantID: tn.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n",
-		DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: nowTS()}
+	ws := Workspace{ID: NewID(), TenantID: tn.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n",
+		DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: NowTS()}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	share := SessionShare{ID: newID(), TenantID: tn.ID, OwnerMembershipID: owner.ID,
+	share := SessionShare{ID: NewID(), TenantID: tn.ID, OwnerMembershipID: owner.ID,
 		RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: "s1",
-		Permission: "ro", CreatedAt: nowTS(), UpdatedAt: nowTS()}
+		Permission: "ro", CreatedAt: NowTS(), UpdatedAt: NowTS()}
 	if err := st.PutSessionShare(ctx, share); err != nil {
 		t.Fatal(err)
 	}
-	cat := SharedSessionCatalog{ID: newID(), WorkspaceID: ws.ID, OwnerMembershipID: owner.ID,
+	cat := SharedSessionCatalog{ID: NewID(), WorkspaceID: ws.ID, OwnerMembershipID: owner.ID,
 		Name: "s1", Kind: "claude", Dir: "/repos/app", Repo: "app", WorkingCopyID: "wc_1",
-		CreatedAt: nowTS(), State: "running", LastSeen: nowTS()}
+		CreatedAt: NowTS(), State: "running", LastSeen: NowTS()}
 	if err := st.ReplaceSharedSessionCatalog(ctx, ws.ID, owner.ID, []SharedSessionCatalog{cat}); err != nil {
 		t.Fatal(err)
 	}
@@ -66,11 +66,11 @@ func (f handoffFixture) offer(t *testing.T, expiresAt string) SessionHandoffOffe
 	if expiresAt == "" {
 		expiresAt = time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
 	}
-	return SessionHandoffOffer{ID: newID(), TenantID: f.tenant.ID, CatalogID: f.catalog.ID,
+	return SessionHandoffOffer{ID: NewID(), TenantID: f.tenant.ID, CatalogID: f.catalog.ID,
 		OwnerMembershipID: f.owner.ID, RecipientMembershipID: f.recipient.ID,
 		Title: "続き", Ciphertext: "body", RepoRemote: "https://example.com/x.git", Branch: "temp/x",
 		SourceSessionName: "s1", SourceSessionKind: "claude", Status: "pending",
-		CreatedAt: nowTS(), ExpiresAt: expiresAt}
+		CreatedAt: NowTS(), ExpiresAt: expiresAt}
 }
 
 // TestHandoffOfferOnePendingPerSession — 未処理は 1 セッション 1 件（ADR 0057 決定 10）。
@@ -92,7 +92,7 @@ func TestHandoffOfferOnePendingPerSession(t *testing.T) {
 	}
 	// 決着させれば次を出せる（撤回して投げ直す導線）。
 	first, _ := f.st.ListSessionHandoffOffersByOwner(ctx, f.owner.ID)
-	if _, err := f.st.TransitionSessionHandoffOffer(ctx, first[0].ID, "pending", "withdrawn", nowTS(), ""); err != nil {
+	if _, err := f.st.TransitionSessionHandoffOffer(ctx, first[0].ID, "pending", "withdrawn", NowTS(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if created, err := f.st.CreateSessionHandoffOffer(ctx, second); err != nil || !created {
@@ -139,7 +139,7 @@ func TestHandoffOfferSurvivesOnReadOnlyShare(t *testing.T) {
 	}
 	// 権限を触る操作（RO のまま putし直す）でも失効しない。
 	row := f.sessionShareRow
-	row.UpdatedAt = nowTS()
+	row.UpdatedAt = NowTS()
 	if err := f.st.PutSessionShare(ctx, row); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestHandoffOfferAcceptKeepsBodyDeclineClearsIt(t *testing.T) {
 	if _, err := f.st.CreateSessionHandoffOffer(ctx, accepted); err != nil {
 		t.Fatal(err)
 	}
-	if changed, err := f.st.TransitionSessionHandoffOffer(ctx, accepted.ID, "pending", "accepted", nowTS(), "new-session"); err != nil || !changed {
+	if changed, err := f.st.TransitionSessionHandoffOffer(ctx, accepted.ID, "pending", "accepted", NowTS(), "new-session"); err != nil || !changed {
 		t.Fatalf("accept changed=%v err=%v", changed, err)
 	}
 	got, _, _ := f.st.GetSessionHandoffOffer(ctx, accepted.ID)
@@ -167,19 +167,19 @@ func TestHandoffOfferAcceptKeepsBodyDeclineClearsIt(t *testing.T) {
 		t.Fatalf("accepted offer lost its body or session name: %+v", got)
 	}
 	// 二重決着は通らない。A の自分起動と B の受諾の競合を閉じているのはこの条件付き更新。
-	if changed, err := f.st.TransitionSessionHandoffOffer(ctx, accepted.ID, "pending", "withdrawn", nowTS(), ""); err != nil || changed {
+	if changed, err := f.st.TransitionSessionHandoffOffer(ctx, accepted.ID, "pending", "withdrawn", NowTS(), ""); err != nil || changed {
 		t.Fatalf("second decision changed=%v err=%v, want false", changed, err)
 	}
 
 	declined := f.offer(t, "")
 	declined.CatalogID = f.catalog.ID
-	if _, err := f.st.TransitionSessionHandoffOffer(ctx, accepted.ID, "accepted", "accepted", nowTS(), "new-session"); err != nil {
+	if _, err := f.st.TransitionSessionHandoffOffer(ctx, accepted.ID, "accepted", "accepted", NowTS(), "new-session"); err != nil {
 		t.Fatal(err)
 	}
 	if created, err := f.st.CreateSessionHandoffOffer(ctx, declined); err != nil || !created {
 		t.Fatalf("create second=%v err=%v", created, err)
 	}
-	if _, err := f.st.TransitionSessionHandoffOffer(ctx, declined.ID, "pending", "declined", nowTS(), ""); err != nil {
+	if _, err := f.st.TransitionSessionHandoffOffer(ctx, declined.ID, "pending", "declined", NowTS(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if got, _, _ := f.st.GetSessionHandoffOffer(ctx, declined.ID); got.Ciphertext != "" {
@@ -194,12 +194,12 @@ func TestHandoffOfferExpiryReturnsRows(t *testing.T) {
 	if _, err := f.st.CreateSessionHandoffOffer(ctx, o); err != nil {
 		t.Fatal(err)
 	}
-	expired, err := f.st.ExpireSessionHandoffOffers(ctx, nowTS())
+	expired, err := f.st.ExpireSessionHandoffOffers(ctx, NowTS())
 	if err != nil || len(expired) != 1 || expired[0].ID != o.ID {
 		t.Fatalf("expired=%v err=%v", expired, err)
 	}
 	// 2 回目は空。失効通知が毎ポーリング鳴り続けるのを防ぐのはこの冪等性。
-	if again, err := f.st.ExpireSessionHandoffOffers(ctx, nowTS()); err != nil || len(again) != 0 {
+	if again, err := f.st.ExpireSessionHandoffOffers(ctx, NowTS()); err != nil || len(again) != 0 {
 		t.Fatalf("second sweep=%v err=%v", again, err)
 	}
 }
