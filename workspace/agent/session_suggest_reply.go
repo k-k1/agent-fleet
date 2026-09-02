@@ -12,6 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // replyMarkerRe は行頭の箇条書き/番号マーカーだけを剥がす。記号（- * ・ >）は空白の有無に
@@ -297,7 +298,7 @@ func handleSuggestReplies(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), replySuggestTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureSuggestSession, Trigger: usageTriggerManual, Ref: name})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureSuggestSession, Trigger: usagex.TriggerManual, Ref: name})
 	reps, err := runReplySuggestLLM(ctx, turns)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "generation_failed", "reply suggestion failed")

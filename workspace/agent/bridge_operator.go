@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // runOperatorTurn runs ONE operator turn over the conversation and returns the assistant
@@ -30,13 +31,13 @@ import (
 // are the same turn but NOT the same consumption to a reader of the usage graph, so the
 // usage tag is the caller's to supply (ADR 0029 §2).
 func runOperatorTurn(conv, text string) (string, error) {
-	return runOperatorTurnAs(conv, text, usageTag{
-		Feature: usageFeatureAssistantBridge, Trigger: usageTriggerBridge, Ref: conv,
+	return runOperatorTurnAs(conv, text, usagex.Tag{
+		Feature: usagex.FeatureAssistantBridge, Trigger: usagex.TriggerBridge, Ref: conv,
 	})
 }
 
 // runOperatorTurnAs is runOperatorTurn with an explicit usage tag.
-func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
+func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
 	en := bridgeAnswerEN()
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -68,7 +69,7 @@ func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
 	// human approval (bridgeApprovalTimeout), which must fit inside the turn.
 	ctx, cancel := context.WithTimeout(context.Background(), operatorTurnTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, tag)                 // 使用量台帳（ADR 0029 §3）
+	ctx = usagex.WithTag(ctx, tag)               // 使用量台帳（ADR 0029 §3）
 	deregister := registerLiveTurn(conv, cancel) // Stop button / in_progress work as usual
 	defer deregister()
 

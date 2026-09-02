@@ -33,6 +33,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // reportLink is the v1 arm record (session-report/<name>.json): 1セッション = 1bit。
@@ -527,8 +528,8 @@ func runReportAutoTurn(convID string) {
 	defer cancel()
 	// 使用量台帳（ADR 0029 §3）: 完了報告への自動ターンは連鎖しうる無人消費 — 独立した
 	// feature として、利用者が撃ったターンと混ぜずに数える。
-	ctx = withUsageTag(ctx, usageTag{
-		Feature: usageFeatureAssistantAutoTur, Trigger: usageTriggerAuto, Ref: c.ID, Verb: c.SeedVerb,
+	ctx = usagex.WithTag(ctx, usagex.Tag{
+		Feature: usagex.FeatureAssistantAutoTur, Trigger: usagex.TriggerAuto, Ref: c.ID, Verb: c.SeedVerb,
 	})
 	deregister := registerLiveTurn(convID, cancel) // Stop button + in_progress work as usual
 	defer deregister()

@@ -25,6 +25,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 const (
@@ -117,7 +118,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), titleSuggestTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureTitleSession, Trigger: usageTriggerAuto, Ref: name})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerAuto, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)
 	if err != nil || title == "" {
 		return // ok stays false -> backoff before the next attempt
@@ -579,7 +580,7 @@ func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn)
 	succeeded := false
 	defer func() { titleGenDone(name, succeeded) }()
 
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureTitleSession, Trigger: usageTriggerManual, Ref: name})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerManual, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)
 	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
@@ -747,7 +748,7 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureBranchSuggest, Trigger: usageTriggerManual, Ref: name})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureBranchSuggest, Trigger: usagex.TriggerManual, Ref: name})
 	branch, err := runBranchSuggestLLM(ctx, turns)
 	if err != nil {
 		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.

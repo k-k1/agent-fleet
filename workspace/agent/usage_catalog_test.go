@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // useUsageCatalog は指定 JSON をカタログとして差す（実機のカタログは見せない）。
@@ -134,11 +135,11 @@ func TestUsageSeriesReportsPricesAndCatalog(t *testing.T) {
 	useIsolatedUsageDir(t)
 	useUsageCatalog(t, catalogFixture)
 	day := daysAgo(0)
-	mk := func(call, kind, model string, in int) usageRecord {
-		return usageRecord{
-			TS: day + "T12:00:00Z", Call: call, Feature: usageFeatureSession, Kind: kind,
-			Model: model, ModelSrc: usageModelReported, Trigger: usageTriggerUser,
-			In: in, Spend: in, OK: true, Measured: usageMeasuredExact,
+	mk := func(call, kind, model string, in int) usagex.Record {
+		return usagex.Record{
+			TS: day + "T12:00:00Z", Call: call, Feature: usagex.FeatureSession, Kind: kind,
+			Model: model, ModelSrc: usagex.ModelReported, Trigger: usagex.TriggerUser,
+			In: in, Spend: in, OK: true, Measured: usagex.MeasuredExact,
 		}
 	}
 	writeUsageDay(t, day,

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,7 +30,7 @@ func TestCompactConversation(t *testing.T) {
 		ID: randUUID(), Agent: "claude",
 		ClaudeSessionID: "old-claude", CodexSessionID: "old-codex", OpencodeSessionID: "old-oc",
 		AgyConversationID: "old-agy",
-		Context:           &contextUsage{Tokens: 170000, Window: 200000, Pct: 85},
+		Context:           &usagex.ContextUsage{Tokens: 170000, Window: 200000, Pct: 85},
 		CtxWarned:         true,
 		Messages:          []chatMessage{{Role: "user", Content: "hi", TS: 1}},
 	}
@@ -119,7 +120,7 @@ func TestMaybeAutoCompact(t *testing.T) {
 	base := func(pct float64) *chatConversation {
 		return &chatConversation{
 			ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
-			Context:  &contextUsage{Tokens: int(pct * 2000), Window: 200000, Pct: pct},
+			Context:  &usagex.ContextUsage{Tokens: int(pct * 2000), Window: 200000, Pct: pct},
 			Messages: []chatMessage{},
 		}
 	}
@@ -188,7 +189,7 @@ func TestMaybeAutoCompactDisabledBySetting(t *testing.T) {
 	}
 	c := &chatConversation{
 		ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
-		Context: &contextUsage{Tokens: 190000, Window: 200000, Pct: 95},
+		Context: &usagex.ContextUsage{Tokens: 190000, Window: 200000, Pct: 95},
 	}
 	prov := &stubProvider{reply: "要約"}
 	if maybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
@@ -203,7 +204,7 @@ func TestMaybeAutoCompactAbsoluteTokenThreshold(t *testing.T) {
 	// $1 級になる）。
 	c := &chatConversation{
 		ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
-		Context:  &contextUsage{Tokens: 200000, Window: 1000000, Pct: 20},
+		Context:  &usagex.ContextUsage{Tokens: 200000, Window: 1000000, Pct: 20},
 		Messages: []chatMessage{},
 	}
 	prov := &stubProvider{reply: "自動要約"}
@@ -217,7 +218,7 @@ func TestMaybeAutoCompactAbsoluteTokenThreshold(t *testing.T) {
 	// 絶対閾値未満・相対閾値未満 → no-op。
 	c = &chatConversation{
 		ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
-		Context: &contextUsage{Tokens: 120000, Window: 1000000, Pct: 12},
+		Context: &usagex.ContextUsage{Tokens: 120000, Window: 1000000, Pct: 12},
 	}
 	prov = &stubProvider{reply: "要約"}
 	if maybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
@@ -228,7 +229,7 @@ func TestMaybeAutoCompactAbsoluteTokenThreshold(t *testing.T) {
 	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "500000")
 	c = &chatConversation{
 		ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
-		Context: &contextUsage{Tokens: 200000, Window: 1000000, Pct: 20},
+		Context: &usagex.ContextUsage{Tokens: 200000, Window: 1000000, Pct: 20},
 	}
 	if maybeAutoCompact(context.Background(), c, &stubProvider{reply: "要約"}) {
 		t.Fatal("compacted despite the raised token threshold")

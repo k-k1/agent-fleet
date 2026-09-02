@@ -33,6 +33,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // 圧縮の2ブロック出力を仕切る記号。モデルが素で書かない綴りにする（会話本文に偶然
@@ -329,8 +330,8 @@ func planTailText(s string) string {
 func refreshPlan(ctx context.Context, c *chatConversation) (bool, error) {
 	// 使用量台帳（ADR 0029 §3）: 計画更新は会話ターンとは別の補助機能。タグを付けないと
 	// unknown（＝タグ付け忘れの信号）に落ちる。
-	ctx = withUsageTag(ctx, usageTag{
-		Feature: usageFeaturePlanUpdate, Trigger: usageTriggerManual, Ref: c.ID,
+	ctx = usagex.WithTag(ctx, usagex.Tag{
+		Feature: usagex.FeaturePlanUpdate, Trigger: usagex.TriggerManual, Ref: c.ID,
 	})
 	lang := uiprefs.Locale()
 	reply, err := oneShotHeadless(ctx, planRefreshPersonaFor(lang), planRefreshPrompt(c, lang), planModel())

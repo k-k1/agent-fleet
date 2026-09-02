@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // --- HTTP handlers ---
@@ -243,7 +244,7 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
 	// 使用量台帳（ADR 0029 §3）。会話は非永続なので ref は空 — 束ねる先が無い。
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureAssistantAsk, Trigger: usageTriggerUser})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureAssistantAsk, Trigger: usagex.TriggerUser})
 	reply, err := prov.send(ctx, c, prompt)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
@@ -450,7 +451,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, chatTurnUsageTag(c, usageTriggerUser)) // 使用量台帳（ADR 0029 §3）
+	ctx = usagex.WithTag(ctx, chatTurnUsageTag(c, usagex.TriggerUser)) // 使用量台帳（ADR 0029 §3）
 	reply, err := prov.send(ctx, c, prompt)
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
 		// docs/log/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
@@ -545,7 +546,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// cancel func (handleChatStop); the bounded chatTimeout caps a runaway turn.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), chatTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, chatTurnUsageTag(c, usageTriggerUser)) // 使用量台帳（ADR 0029 §3）
+	ctx = usagex.WithTag(ctx, chatTurnUsageTag(c, usagex.TriggerUser)) // 使用量台帳（ADR 0029 §3）
 	deregister := registerLiveTurn(id, cancel)
 	defer deregister()
 

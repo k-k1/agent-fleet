@@ -14,6 +14,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 const (
@@ -101,7 +102,7 @@ func handleChatSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
 	defer cancel()
-	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureTitleChat, Trigger: usageTriggerManual, Ref: c.ID})
+	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleChat, Trigger: usagex.TriggerManual, Ref: c.ID})
 	title, err := runChatTitleSuggestLLM(ctx, c.Messages)
 	if err != nil || title == "" {
 		httpx.WriteErr(w, http.StatusInternalServerError, "generation_failed", "title generation failed")

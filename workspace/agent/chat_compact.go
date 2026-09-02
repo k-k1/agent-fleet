@@ -32,6 +32,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // compactSummaryPromptFor は現行セッションへ流す引き継ぎ指示。後任アシスタントが読む前提の
@@ -93,11 +94,11 @@ const (
 func compactTrigger(reason string) string {
 	switch reason {
 	case compactReasonAuto:
-		return usageTriggerAuto
+		return usagex.TriggerAuto
 	case compactReasonRecovery:
-		return usageTriggerRecovery
+		return usagex.TriggerRecovery
 	default:
-		return usageTriggerManual
+		return usagex.TriggerManual
 	}
 }
 
@@ -110,8 +111,8 @@ func compactConversation(ctx context.Context, c *chatConversation, prov chatProv
 	// 使用量台帳（ADR 0029 §3）: 圧縮はチャットターンの内側から呼ばれるので、ここで
 	// タグを上書きしないと外側の assistant.chat として数えられてしまう。要約は現行
 	// セッション上で撃つ＝コンテキストが積み上がったところに1回撃つので、単価が高い。
-	ctx = withUsageTag(ctx, usageTag{
-		Feature: usageFeatureCompact, Trigger: compactTrigger(reason), Ref: c.ID,
+	ctx = usagex.WithTag(ctx, usagex.Tag{
+		Feature: usagex.FeatureCompact, Trigger: compactTrigger(reason), Ref: c.ID,
 	})
 	prompt := syncProviderPrompt(c, agent, compactPrompt(c), len(c.Messages))
 	out, err := prov.send(ctx, c, prompt)

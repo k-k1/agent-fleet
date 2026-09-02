@@ -39,6 +39,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 	"time"
 )
 
@@ -64,10 +65,10 @@ func usageRefKey(ref string) string {
 //
 // **呼び出しは行の追記順に、かつ期間で絞る前に**行う。どの行を「最初の1件」とみなすかが
 // クエリ期間で変わると、期間を変えただけで合計が動く（同じ日の数字が期間指定で揺れる）。
-func (d usageDedupIndex) accept(r usageRecord, ts time.Time) bool {
+func (d usageDedupIndex) accept(r usagex.Record, ts time.Time) bool {
 	// 補助呼び出しには idx が無い（1回の呼び出しをその場で1行書くだけなので、
 	// 重複の生じる経路そのものが無い）。
-	if r.Feature != usageFeatureSession || r.Ref == "" || r.Idx <= 0 {
+	if r.Feature != usagex.FeatureSession || r.Ref == "" || r.Idx <= 0 {
 		return true
 	}
 	k := usageRefKey(r.Ref)

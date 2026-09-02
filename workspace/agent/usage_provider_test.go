@@ -17,36 +17,37 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // 停止操作や result 前の異常終了では modelUsage が来ない。assistant イベントで見た
 // スナップショットを partial として残す（0 トークン・measured=none にしない）。
 func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
 	// 1) result が来なかった: スナップショットを partial で採る。
-	stopped := usageCall{Kind: session.KindClaude}
+	stopped := usagex.Call{Kind: session.KindClaude}
 	snap := claudeUsage{InputTokens: 12, OutputTokens: 34, CacheReadInputTokens: 5600, CacheCreationInputTokens: 78}
-	stopped.FallbackTotals(snap.ledgerTokens(), usageMeasuredPartial)
+	stopped.FallbackTotals(snap.ledgerTokens(), usagex.MeasuredPartial)
 	if stopped.Totals.In != 12 || stopped.Totals.Out != 34 ||
 		stopped.Totals.CacheRead != 5600 || stopped.Totals.CacheCreate != 78 {
 		t.Fatalf("停止時のトークンを落とした: %+v", stopped.Totals)
 	}
-	if got := stopped.MeasuredOr(stopped.Totals); got != usageMeasuredPartial {
+	if got := stopped.MeasuredOr(stopped.Totals); got != usagex.MeasuredPartial {
 		t.Fatalf("measured = %q, want partial（途中のスナップショットは exact ではない）", got)
 	}
 
 	// 2) modelUsage が来た呼び出しは触らない（モデル別の内訳の方が正）。
-	full := usageCall{Kind: session.KindClaude, Models: usageModelRows(map[string]claudeModelUsage{
+	full := usagex.Call{Kind: session.KindClaude, Models: usageModelRows(map[string]claudeModelUsage{
 		"claude-haiku-4-5-20251001": {InputTokens: 1, OutputTokens: 2, CanonicalModel: "claude-haiku-4-5"},
 	})}
-	full.FallbackTotals(snap.ledgerTokens(), usageMeasuredPartial)
+	full.FallbackTotals(snap.ledgerTokens(), usagex.MeasuredPartial)
 	if full.Totals.Any() || full.Measured != "" {
 		t.Fatalf("modelUsage のある呼び出しを縮退で上書きした: %+v", full)
 	}
 
 	// 3) 何も取れていない呼び出しは none のまま（0 を「消費 0」と偽らない）。
-	empty := usageCall{Kind: session.KindClaude}
-	empty.FallbackTotals(claudeUsage{}.ledgerTokens(), usageMeasuredPartial)
-	if empty.Measured != "" || empty.MeasuredOr(empty.Totals) != usageMeasuredNone {
+	empty := usagex.Call{Kind: session.KindClaude}
+	empty.FallbackTotals(claudeUsage{}.ledgerTokens(), usagex.MeasuredPartial)
+	if empty.Measured != "" || empty.MeasuredOr(empty.Totals) != usagex.MeasuredNone {
 		t.Fatalf("トークンが1つも無いのに partial を名乗った: %+v", empty)
 	}
 }
@@ -67,14 +68,14 @@ func TestClaudeStreamRecordsTokensWhenKilledBeforeResult(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	c := &chatConversation{ID: "conv1", Model: "haiku"}
-	ctx := withUsageTag(context.Background(), usageTag{
-		Feature: usageFeatureAssistantChat, Trigger: usageTriggerUser, Ref: c.ID,
+	ctx := usagex.WithTag(context.Background(), usagex.Tag{
+		Feature: usagex.FeatureAssistantChat, Trigger: usagex.TriggerUser, Ref: c.ID,
 	})
 	if _, _, err := (claudeChat{}).sendStream(ctx, c, "hi", func(chatStreamEvent) {}); err == nil {
 		t.Fatal("result 前に死んだのに成功扱いになった")
 	}
 
-	rows := readUsageRows()
+	rows := usagex.ReadRows()
 	if len(rows) != 1 {
 		t.Fatalf("台帳 = %d 行, want 1（失敗経路でも1行残る）", len(rows))
 	}
@@ -82,7 +83,7 @@ func TestClaudeStreamRecordsTokensWhenKilledBeforeResult(t *testing.T) {
 	if r.Spend != 12+78+34 {
 		t.Fatalf("spend = %d, want 124（停止時のスナップショットを採れていない）: %+v", r.Spend, r)
 	}
-	if r.Measured != usageMeasuredPartial {
+	if r.Measured != usagex.MeasuredPartial {
 		t.Fatalf("measured = %q, want partial（result 前なので exact ではない）", r.Measured)
 	}
 	if r.OK {
@@ -189,7 +190,7 @@ func TestClaudeLedgerTokensUsesCallTotals(t *testing.T) {
 	if got.In != 9 || got.Out != 533 || got.CacheCreate != 10015 || got.CacheRead != 6002 {
 		t.Fatalf("ledgerTokens = %+v", got)
 	}
-	if s := usageSpend(got.In, got.CacheCreate, got.Out); s != 10557 {
+	if s := usagex.Spend(got.In, got.CacheCreate, got.Out); s != 10557 {
 		t.Fatalf("spend = %d, want 10557（cache_read を含めない）", s)
 	}
 }

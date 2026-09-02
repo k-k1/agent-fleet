@@ -14,6 +14,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // useTempUsageDir は台帳を一時ディレクトリへ向け、prune の節流状態も畳んでおく
@@ -38,7 +39,7 @@ func useTempUsageDir(t *testing.T) string {
 	// これが**一時ディレクトリの削除より先**に走る——順序が逆だと、待っている間に書き手が
 	// 消えたディレクトリへ書くことになる（memory: tempdir-cleanup-lifo-detached-writer）。
 	t.Cleanup(func() { waitUsageFoldIdle(t) })
-	resetUsagePruneClock() // 移送で usageMu / usagePrunedAt が usagex の未公開状態になった
+	usagex.ResetPruneClock() // 移送で usageMu / usagePrunedAt が usagex の未公開状態になった
 	usageFoldGate.Lock()
 	usageFoldedAt = time.Time{}
 	usageFoldGate.Unlock()
@@ -78,10 +79,10 @@ func resetUsageCatalogCache(t *testing.T) {
 
 func TestRecordUsageCallSplitsClaudeModelRows(t *testing.T) {
 	useTempUsageDir(t)
-	ctx := withUsageTag(context.Background(), usageTag{
-		Feature: usageFeatureTitleSession, Trigger: usageTriggerAuto, Ref: "slot01",
+	ctx := usagex.WithTag(context.Background(), usagex.Tag{
+		Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerAuto, Ref: "slot01",
 	})
-	call := usageCall{
+	call := usagex.Call{
 		Kind: session.KindClaude, ModelReq: "haiku", OK: true,
 		CostUSD: 0.0084,
 		Models: usageModelRows(map[string]claudeModelUsage{
@@ -95,9 +96,9 @@ func TestRecordUsageCallSplitsClaudeModelRows(t *testing.T) {
 			},
 		}),
 	}
-	recordUsageCall(ctx, &call, time.Now())
+	usagex.RecordCall(ctx, &call, time.Now())
 
-	rows := readUsageRows()
+	rows := usagex.ReadRows()
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2 (model 毎に1行)", len(rows))
 	}
@@ -109,17 +110,17 @@ func TestRecordUsageCallSplitsClaudeModelRows(t *testing.T) {
 	if h.Model != "claude-haiku-4-5" || h.ModelRaw != "claude-haiku-4-5-20251001" {
 		t.Fatalf("model = %q / raw %q", h.Model, h.ModelRaw)
 	}
-	if h.ModelSrc != usageModelReported || h.ModelReq != "haiku" {
+	if h.ModelSrc != usagex.ModelReported || h.ModelReq != "haiku" {
 		t.Fatalf("model_src = %q, model_req = %q", h.ModelSrc, h.ModelReq)
 	}
 	// spend = in + ccreate + out（cache_read を含めない）
 	if want := 2 + 4186 + 5; h.Spend != want {
 		t.Fatalf("spend = %d, want %d", h.Spend, want)
 	}
-	if h.CostUSD != 0.0084 || h.Measured != usageMeasuredExact || !h.OK {
+	if h.CostUSD != 0.0084 || h.Measured != usagex.MeasuredExact || !h.OK {
 		t.Fatalf("row = %+v", h)
 	}
-	if h.Feature != usageFeatureTitleSession || h.Trigger != usageTriggerAuto || h.Ref != "slot01" {
+	if h.Feature != usagex.FeatureTitleSession || h.Trigger != usagex.TriggerAuto || h.Ref != "slot01" {
 		t.Fatalf("tag not carried: %+v", h)
 	}
 }
@@ -135,15 +136,15 @@ func TestRecordUsageCallModelFallback(t *testing.T) {
 		wantSrc    string
 		wantMeasrd string
 	}{
-		{"要求値あり", "gpt-5.4-mini", "gpt-5.4-mini", usageModelRequest, usageMeasuredExact},
-		{"CLI 既定に委ねた", "", "", usageModelUnknown, usageMeasuredExact},
+		{"要求値あり", "gpt-5.4-mini", "gpt-5.4-mini", usagex.ModelRequest, usagex.MeasuredExact},
+		{"CLI 既定に委ねた", "", "", usagex.ModelUnknown, usagex.MeasuredExact},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := useTempUsageDir(t)
-			call := usageCall{Kind: session.KindCodex, ModelReq: tc.req, OK: true}
+			call := usagex.Call{Kind: session.KindCodex, ModelReq: tc.req, OK: true}
 			call.SetTotals(100, 20, 30, 40)
-			recordUsageCall(context.Background(), &call, time.Now())
-			rows := readUsageRows()
+			usagex.RecordCall(context.Background(), &call, time.Now())
+			rows := usagex.ReadRows()
 			if len(rows) != 1 {
 				t.Fatalf("rows = %d in %s", len(rows), dir)
 			}
@@ -152,8 +153,8 @@ func TestRecordUsageCallModelFallback(t *testing.T) {
 				t.Fatalf("row = %+v", r)
 			}
 			// タグの無い呼び出しでも必ず1行残る（無記録＝見えない消費を作らない）。
-			if r.Feature != usageFeatureUnknown {
-				t.Fatalf("feature = %q, want %q", r.Feature, usageFeatureUnknown)
+			if r.Feature != usagex.FeatureUnknown {
+				t.Fatalf("feature = %q, want %q", r.Feature, usagex.FeatureUnknown)
 			}
 			if want := 100 + 40 + 20; r.Spend != want {
 				t.Fatalf("spend = %d, want %d", r.Spend, want)
@@ -165,10 +166,10 @@ func TestRecordUsageCallModelFallback(t *testing.T) {
 // トークンを報告しない CLI の 0 は「消費 0」ではない — measured=none で回数だけ数える。
 func TestRecordUsageCallUnmeasuredCountsTheCall(t *testing.T) {
 	useTempUsageDir(t)
-	call := usageCall{Kind: session.KindAgy, Measured: usageMeasuredNone, OK: true}
-	recordUsageCall(context.Background(), &call, time.Now())
-	rows := readUsageRows()
-	if len(rows) != 1 || rows[0].Measured != usageMeasuredNone || rows[0].Spend != 0 {
+	call := usagex.Call{Kind: session.KindAgy, Measured: usagex.MeasuredNone, OK: true}
+	usagex.RecordCall(context.Background(), &call, time.Now())
+	rows := usagex.ReadRows()
+	if len(rows) != 1 || rows[0].Measured != usagex.MeasuredNone || rows[0].Spend != 0 {
 		t.Fatalf("rows = %+v", rows)
 	}
 }
@@ -176,9 +177,9 @@ func TestRecordUsageCallUnmeasuredCountsTheCall(t *testing.T) {
 // 失敗したターンも記録する（ok=false）。エラーで消えると「撃ったのに見えない」が生まれる。
 func TestRecordUsageCallRecordsFailures(t *testing.T) {
 	useTempUsageDir(t)
-	call := usageCall{Kind: session.KindClaude, ModelReq: "haiku"} // OK は false のまま
-	recordUsageCall(context.Background(), &call, time.Now())
-	rows := readUsageRows()
+	call := usagex.Call{Kind: session.KindClaude, ModelReq: "haiku"} // OK は false のまま
+	usagex.RecordCall(context.Background(), &call, time.Now())
+	rows := usagex.ReadRows()
 	if len(rows) != 1 || rows[0].OK {
 		t.Fatalf("rows = %+v", rows)
 	}
@@ -187,10 +188,10 @@ func TestRecordUsageCallRecordsFailures(t *testing.T) {
 func TestUsageRecordingCanBeDisabled(t *testing.T) {
 	useTempUsageDir(t)
 	t.Setenv("AF_USAGE_RECORD", "0")
-	call := usageCall{Kind: session.KindClaude, OK: true}
+	call := usagex.Call{Kind: session.KindClaude, OK: true}
 	call.SetTotals(1, 2, 3, 4)
-	recordUsageCall(context.Background(), &call, time.Now())
-	if rows := readUsageRows(); len(rows) != 0 {
+	usagex.RecordCall(context.Background(), &call, time.Now())
+	if rows := usagex.ReadRows(); len(rows) != 0 {
 		t.Fatalf("rows = %d, want 0 when recording is off", len(rows))
 	}
 }
@@ -209,7 +210,7 @@ func TestPruneUsageRawDropsExpiredDays(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	pruneUsageRawNow()
+	usagex.PruneRawNow()
 	if _, err := os.Stat(filepath.Join(raw, old)); !os.IsNotExist(err) {
 		t.Fatalf("保持期間を過ぎた %s が残っている", old)
 	}
@@ -253,8 +254,8 @@ func TestFoldTurnRowsMatchesAggregateUsage(t *testing.T) {
 	if !rows[2].Sidechain {
 		t.Fatalf("サブエージェントのターンが sidechain で割れていない: %+v", rows[2])
 	}
-	if rows[1].Trigger != usageTriggerOperator {
-		t.Fatalf("trigger = %q, want %q", rows[1].Trigger, usageTriggerOperator)
+	if rows[1].Trigger != usagex.TriggerOperator {
+		t.Fatalf("trigger = %q, want %q", rows[1].Trigger, usagex.TriggerOperator)
 	}
 	if rows[0].Idx != 1 || rows[1].Idx != 2 || rows[2].Idx != 3 {
 		t.Fatalf("idx が通し番号でない: %+v", rows)
@@ -264,7 +265,7 @@ func TestFoldTurnRowsMatchesAggregateUsage(t *testing.T) {
 	all := foldTurnRows(turns, true)
 	sum := 0
 	for _, r := range all {
-		sum += usageSpend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out)
+		sum += usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out)
 	}
 	want := aggregateUsage(turns).Cumulative.Spend
 	if sum != want {
@@ -312,19 +313,19 @@ func TestFoldSessionUsageIsIdempotent(t *testing.T) {
 	if n := fold(false); n != 1 {
 		t.Fatalf("閉じた末尾ターンの折り込み = %d 行, want 1", n)
 	}
-	rows := readUsageRows()
+	rows := usagex.ReadRows()
 	if len(rows) != 3 {
 		t.Fatalf("台帳 = %d 行, want 3", len(rows))
 	}
 	for i, r := range rows {
-		if r.Feature != usageFeatureSession || r.Ref != "slot01" || r.Idx != i+1 {
+		if r.Feature != usagex.FeatureSession || r.Ref != "slot01" || r.Idx != i+1 {
 			t.Fatalf("row%d = %+v", i, r)
 		}
 		// 出自は行へ焼き込む（セッションが消えても集計が壊れない）。
 		if r.Origin != session.OriginOperator || r.OriginConv != "a1b2c3d" {
 			t.Fatalf("row%d origin = %q/%q", i, r.Origin, r.OriginConv)
 		}
-		if r.ModelSrc != usageModelReported || r.Model != "claude-haiku-4-5" {
+		if r.ModelSrc != usagex.ModelReported || r.Model != "claude-haiku-4-5" {
 			t.Fatalf("row%d model = %q (%q)", i, r.Model, r.ModelSrc)
 		}
 	}
@@ -353,7 +354,7 @@ func TestFoldMatchesSessionUsageLive(t *testing.T) {
 		rows := foldTurnRows(turns, true)
 		sum := 0
 		for _, r := range rows {
-			sum += usageSpend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out)
+			sum += usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out)
 		}
 		cum := aggregateUsage(turns).Cumulative
 		if sum != cum.Spend || len(rows) != cum.Turns {
@@ -371,7 +372,7 @@ func TestFoldMatchesSessionUsageLive(t *testing.T) {
 
 	// 実データでのバックフィルと冪等性: 1回目で過去分がまとめて入り、2回目は増えない。
 	n1 := foldAllSessionUsage()
-	rows := readUsageRows()
+	rows := usagex.ReadRows()
 	if n1 == 0 || len(rows) != n1 {
 		t.Fatalf("初回バックフィル = %d 行 / 台帳 %d 行", n1, len(rows))
 	}
@@ -383,12 +384,12 @@ func TestFoldMatchesSessionUsageLive(t *testing.T) {
 
 func TestUsageMeasuredForKind(t *testing.T) {
 	for kind, want := range map[string]string{
-		session.KindClaude:  usageMeasuredExact,
-		session.KindCodex:   usageMeasuredExact,
-		session.KindCopilot: usageMeasuredPartial, // 転写に outTok しかない
-		session.KindCursor:  usageMeasuredNone,    // 転写にトークンが無い
-		session.KindKiro:    usageMeasuredNone,
-		session.KindAgy:     usageMeasuredNone,
+		session.KindClaude:  usagex.MeasuredExact,
+		session.KindCodex:   usagex.MeasuredExact,
+		session.KindCopilot: usagex.MeasuredPartial,
+		session.KindCursor:  usagex.MeasuredNone,
+		session.KindKiro:    usagex.MeasuredNone,
+		session.KindAgy:     usagex.MeasuredNone,
 	} {
 		if got := usageMeasuredForKind(kind); got != want {
 			t.Errorf("%s: measured = %q, want %q", kind, got, want)
@@ -434,12 +435,12 @@ func TestOriginOfDefaultsToUnknown(t *testing.T) {
 
 func TestUsageTriggerFromTurnSource(t *testing.T) {
 	for src, want := range map[string]string{
-		"":                       usageTriggerUser,
-		turnSourceOperator:       usageTriggerOperator,
-		turnSourceDiscord:        usageTriggerBridge,
-		turnSourceSlack:          usageTriggerBridge,
-		turnSourceSchedule:       usageTriggerSchedule,
-		turnSourceScheduleManual: usageTriggerSchedule,
+		"":                       usagex.TriggerUser,
+		turnSourceOperator:       usagex.TriggerOperator,
+		turnSourceDiscord:        usagex.TriggerBridge,
+		turnSourceSlack:          usagex.TriggerBridge,
+		turnSourceSchedule:       usagex.TriggerSchedule,
+		turnSourceScheduleManual: usagex.TriggerSchedule,
 	} {
 		if got := usageTriggerFromTurnSource(src); got != want {
 			t.Errorf("%q -> %q, want %q", src, got, want)
@@ -449,9 +450,9 @@ func TestUsageTriggerFromTurnSource(t *testing.T) {
 
 func TestCompactTriggerMapping(t *testing.T) {
 	for reason, want := range map[string]string{
-		compactReasonManual:   usageTriggerManual,
-		compactReasonAuto:     usageTriggerAuto,
-		compactReasonRecovery: usageTriggerRecovery,
+		compactReasonManual:   usagex.TriggerManual,
+		compactReasonAuto:     usagex.TriggerAuto,
+		compactReasonRecovery: usagex.TriggerRecovery,
 	} {
 		if got := compactTrigger(reason); got != want {
 			t.Errorf("%q -> %q, want %q", reason, got, want)
@@ -498,7 +499,7 @@ func TestFoldDoesNotAdvanceWatermarkWhenAppendFails(t *testing.T) {
 	if n, err = foldSessionUsageWithTurns(m, &st, turns, false); err != nil || n != 2 {
 		t.Fatalf("復旧後の折り込み = %d 行 / err=%v, want 2 / nil", n, err)
 	}
-	if rows := readUsageRows(); len(rows) != 2 {
+	if rows := usagex.ReadRows(); len(rows) != 2 {
 		t.Fatalf("台帳 = %d 行, want 2", len(rows))
 	}
 	if st.Sessions[m.Name].Groups != 2 {
@@ -516,7 +517,7 @@ func TestCommitSessionUsageFoldPersistsWatermarkPerSession(t *testing.T) {
 		t.Fatalf("commit に失敗: %v", err)
 	}
 	// 転写が無いので行も watermark も増えない（空の state を書き散らかさない）。
-	if rows := readUsageRows(); len(rows) != 0 {
+	if rows := usagex.ReadRows(); len(rows) != 0 {
 		t.Fatalf("台帳 = %d 行, want 0", len(rows))
 	}
 
@@ -851,7 +852,7 @@ func TestFoldSurvivesTranscriptFileSwitch(t *testing.T) {
 	if n := fold(grown, &st); n != 1 {
 		t.Fatalf("伸びた本体の続き = %d 行, want 1", n)
 	}
-	rows := readUsageRows()
+	rows := usagex.ReadRows()
 	if len(rows) != 6 {
 		t.Fatalf("台帳 = %d 行, want 6", len(rows))
 	}
@@ -881,7 +882,7 @@ func TestFoldRecoversAfterPartialAppend(t *testing.T) {
 	if _, err := foldSessionUsageWithTurns(m, &partial, turns[:2], true); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(readUsageRows()); n != 1 {
+	if n := len(usagex.ReadRows()); n != 1 {
 		t.Fatalf("前提が崩れている: 台帳 = %d 行, want 1", n)
 	}
 
@@ -889,7 +890,7 @@ func TestFoldRecoversAfterPartialAppend(t *testing.T) {
 	if n, err := foldSessionUsageWithTurns(m, &st, turns, false); err != nil || n != 2 {
 		t.Fatalf("復旧後の折り込み = %d 行 / err=%v, want 2 / nil", n, err)
 	}
-	if n := len(readUsageRows()); n != 3 {
+	if n := len(usagex.ReadRows()); n != 3 {
 		t.Fatalf("台帳 = %d 行, want 3（1件は重複として残る）", n)
 	}
 	got := getSeries(t, "from=2026-07-26&to=2026-07-26")

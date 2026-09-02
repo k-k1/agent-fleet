@@ -30,6 +30,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // --- providers ---
@@ -177,8 +178,8 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）: 呼び出しの開始時点で記録を defer に積む。成功・エラー
 	// result・exec 失敗・パース失敗のどの経路を通っても必ず1回だけ行が残る。
-	call := usageCall{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
-	defer recordUsageCall(ctx, &call, time.Now())
+	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
+	defer usagex.RecordCall(ctx, &call, time.Now())
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", c.personaOf()}
 	args = append(args, "--model", chatModelFor(c, session.KindClaude))
@@ -279,8 +280,8 @@ type streamLine struct {
 func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(chatStreamEvent)) (string, []chatStep, error) {
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）— send と同じく全経路で1回記録する。
-	call := usageCall{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
-	defer recordUsageCall(ctx, &call, time.Now())
+	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
+	defer usagex.RecordCall(ctx, &call, time.Now())
 	// stream-json requires --verbose with -p; --include-partial-messages adds the
 	// per-token text_delta events we forward for live display.
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -373,7 +374,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	// イベントで見た最後のスナップショットを縮退として採る（出力側は途中なので partial）。
 	// 採らないと「トークン 0 / measured=none」の行になり、**止めた回の消費だけが台帳から
 	// 消える** — 止められるのは重いターンほど多いので、そこが欠けると配分の絵が狂う。
-	call.FallbackTotals(ctxTrack.snap.ledgerTokens(), usageMeasuredPartial)
+	call.FallbackTotals(ctxTrack.snap.ledgerTokens(), usagex.MeasuredPartial)
 	// An error result (e.g. context overflow) rides the stream's `result` event AND makes
 	// claude exit non-zero. Prefer the parsed message so the overflow self-heal can see
 	// "Prompt is too long …" (chat_recover.go); a bare "exit status 1" from waitErr would
@@ -423,8 +424,8 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 	// 使用量台帳（ADR 0029 §3）。codex はどのイベントにもモデルを載せない（実測）ので、
 	// -m を渡した時だけ requested、未指定なら default_unknown に縮退する。
 	model := chatModelFor(c, session.KindCodex) // ピン留めが別 kind ならこの CLI の設定から解決
-	call := usageCall{Kind: session.KindCodex, ModelReq: model}
-	defer recordUsageCall(ctx, &call, time.Now())
+	call := usagex.Call{Kind: session.KindCodex, ModelReq: model}
+	defer usagex.RecordCall(ctx, &call, time.Now())
 	// The default read-only sandbox is exactly the chat contract (no file writes, no
 	// state mutation) — the claude side enforces the same via --disallowedTools. Global
 	// exec flags must precede the resume subcommand (verified live: resume rejects
@@ -614,9 +615,9 @@ type opencodeChat struct{}
 
 func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
 	c.startTurn()
-	pinned := chatModelFor(c, session.KindOpencode)                 // ピン留めが別 kind ならこの CLI の設定から解決
-	call := usageCall{Kind: session.KindOpencode, ModelReq: pinned} // 使用量台帳（ADR 0029 §3）
-	defer recordUsageCall(ctx, &call, time.Now())
+	pinned := chatModelFor(c, session.KindOpencode)                   // ピン留めが別 kind ならこの CLI の設定から解決
+	call := usagex.Call{Kind: session.KindOpencode, ModelReq: pinned} // 使用量台帳（ADR 0029 §3）
+	defer usagex.RecordCall(ctx, &call, time.Now())
 	dir := opencodeChatDir(c)
 	args := []string{"run", "--format", "json", "--dir", dir}
 	if c.OpencodeSessionID != "" {
@@ -639,7 +640,7 @@ func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string
 	reply, sesID, model, turnErr, usage := parseOpencodeRunEvents(out)
 	call.Totals = usage.ledgerTokens()
 	if model != "" {
-		call.Models = []usageModelRow{{Model: model, ModelRaw: model, Tokens: call.Totals}}
+		call.Models = []usagex.ModelRow{{Model: model, ModelRaw: model, Tokens: call.Totals}}
 	}
 	if err != nil {
 		if turnErr != "" {
@@ -973,8 +974,8 @@ func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (st
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）: agy は素のテキストしか返さないので measured=none —
 	// トークンは 0 ではなく「未計測」として、回数だけを数える。
-	call := usageCall{Kind: session.KindAgy, ModelReq: chatModelFor(c, session.KindAgy), Measured: usageMeasuredNone}
-	defer recordUsageCall(ctx, &call, time.Now())
+	call := usagex.Call{Kind: session.KindAgy, ModelReq: chatModelFor(c, session.KindAgy), Measured: usagex.MeasuredNone}
+	defer usagex.RecordCall(ctx, &call, time.Now())
 	home, wd, err := chatAgyHome(c)
 	if err != nil {
 		// Never fall back to the real HOME: the MCP/permission config is global
@@ -1188,12 +1189,12 @@ func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）。cursor は result にモデルを載せない（実測）ので requested
 	// 止まり。"auto" は --model を渡さない＝解決後のモデル不明なので default_unknown。
-	call := usageCall{Kind: session.KindCursor}
+	call := usagex.Call{Kind: session.KindCursor}
 	pinned := chatModelFor(c, session.KindCursor) // ピン留めが別 kind ならこの CLI の設定から解決
 	if pinned != "" && pinned != "auto" {
 		call.ModelReq = pinned
 	}
-	defer recordUsageCall(ctx, &call, time.Now())
+	defer usagex.RecordCall(ctx, &call, time.Now())
 	args := cursorChatBaseArgs()
 	if m := pinned; m != "" && m != "auto" { // "auto" = cursor's default = no --model
 		args = append(args, "--model", m)
@@ -1452,7 +1453,7 @@ type codexOneShotRun func(ctx context.Context, args []string, prompt string) (st
 // そこが1回分に見えるのが一番まずい。要求値（model_req）は「モデルを外して撃ち直した」ことが
 // 分かるようリトライ側で上書きする（行は1本なので、後勝ちで実際に答えを出した方を載せる）。
 func codexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, prompt string,
-	run codexOneShotRun) (reply string, tok usageTokens, modelReq string, err error) {
+	run codexOneShotRun) (reply string, tok usagex.Tokens, modelReq string, err error) {
 	modelReq = argValue(args, "-m")
 	reply, usage, err := run(ctx, args, prompt)
 	tok = usage.ledgerTokens()
@@ -1475,8 +1476,8 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	// 書くと claude-less ワークスペースの消費が全部 claude に化ける（docs/log/46 §2）。
 	// oneShotHeadless の戻り値を広げず内部で記録するのは、記録点がここの内側にある以上、
 	// 呼び出し側4箇所を触る理由がないため。
-	call := usageCall{}
-	defer recordUsageCall(ctx, &call, time.Now())
+	call := usagex.Call{}
+	defer usagex.RecordCall(ctx, &call, time.Now())
 	kind := preferredHeadlessAgent()
 	selected, configured := assistantUtilityModelPref(kind)
 	selected = strings.TrimSpace(selected)
@@ -1540,7 +1541,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		}
 		call.Totals, call.OK = usage.ledgerTokens(), true
 		if model != "" {
-			call.Models = []usageModelRow{{Model: model, ModelRaw: model, Tokens: call.Totals}}
+			call.Models = []usagex.ModelRow{{Model: model, ModelRaw: model, Tokens: call.Totals}}
 		}
 		// opencode has no ephemeral mode — delete the throwaway session so one-shots
 		// don't pile "New session…" rows into the shared store. Best-effort, detached
@@ -1596,7 +1597,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		// on every title call). Runs on the cheap Flash default (quota-scarce free
 		// plan) unless overridden.
 		// agy は素のテキスト出力なのでトークンが一切取れない — measured=none で回数だけ数える。
-		call.Kind, call.Measured = session.KindAgy, usageMeasuredNone
+		call.Kind, call.Measured = session.KindAgy, usagex.MeasuredNone
 		home, wdir, err := chatAgyHome(&chatConversation{ID: "oneshot"})
 		if err != nil {
 			return "", fmt.Errorf("agy chat home: %v", err)

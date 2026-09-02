@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 	"strings"
 	"testing"
 )
@@ -180,7 +181,7 @@ func TestNoteContextPressureOncePerCrossing(t *testing.T) {
 }
 
 func TestCtxPressureContent(t *testing.T) {
-	u := &contextUsage{Tokens: 170000, Window: 200000, Pct: 85}
+	u := &usagex.ContextUsage{Tokens: 170000, Window: 200000, Pct: 85}
 	s := ctxPressureContent(u)
 	for _, want := range []string{"85%", "170k", "200k", "新しいチャット"} {
 		if !strings.Contains(s, want) {
