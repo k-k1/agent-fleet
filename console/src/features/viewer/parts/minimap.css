@@ -1,0 +1,50 @@
+/* minimap: a scaled mirror of the code with a draggable viewport box */
+.minimap {
+  position: relative;
+  width: 110px;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--panel2);
+  border-left: 1px solid var(--border2);
+  cursor: pointer;
+  /* Own touch gestures (tap/swipe to scroll) instead of letting the page scroll. */
+  touch-action: none;
+}
+/* Make the file view an inline-size container so its minimap can shrink when the
+   pane is narrow (split panes), where a fixed 110px eats too much of the code
+   width. Both names stay on the element: a bare `container: filepane` here would
+   drop the `paneview` name set above (line 11) and the @container paneview
+   queries (header collapse, .file-mine-remote-diff below) would stop matching. */
+.fileview {
+  container: paneview filepane / inline-size;
+}
+@container filepane (max-width: 460px) {
+  .fileview .minimap {
+    width: 72px;
+  }
+}
+@container filepane (max-width: 320px) {
+  .fileview .minimap {
+    width: 48px;
+  }
+}
+.minimap-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.minimap-inner .code {
+  padding: 6px 8px;
+}
+.minimap-viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(130, 170, 210, 0.16);
+  border-top: 1px solid rgba(150, 185, 215, 0.35);
+  border-bottom: 1px solid rgba(150, 185, 215, 0.35);
+  pointer-events: none;
+}

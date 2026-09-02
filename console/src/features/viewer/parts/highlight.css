@@ -1,0 +1,78 @@
+/* highlight.js token colors — themed via --hl-* (see :root). Mirrors the GitHub
+   theme's class groupings so the file viewer / markdown code follow light & dark. */
+.hljs {
+  color: var(--hl-fg);
+  background: transparent;
+}
+.hljs-doctag,
+.hljs-keyword,
+.hljs-meta .hljs-keyword,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-variable.language_ {
+  color: var(--hl-keyword);
+}
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.class_.inherited__,
+.hljs-title.function_ {
+  color: var(--hl-title);
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-literal,
+.hljs-meta,
+.hljs-number,
+.hljs-operator,
+.hljs-variable,
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-selector-id {
+  color: var(--hl-attr);
+}
+.hljs-regexp,
+.hljs-string,
+.hljs-meta .hljs-string {
+  color: var(--hl-string);
+}
+.hljs-built_in,
+.hljs-symbol {
+  color: var(--hl-built);
+}
+.hljs-comment,
+.hljs-code,
+.hljs-formula {
+  color: var(--hl-comment);
+}
+.hljs-name,
+.hljs-quote,
+.hljs-selector-tag,
+.hljs-selector-pseudo {
+  color: var(--hl-name);
+}
+.hljs-subst {
+  color: var(--hl-fg);
+}
+.hljs-section {
+  color: var(--hl-attr);
+  font-weight: bold;
+}
+.hljs-bullet {
+  color: var(--hl-built);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: bold;
+}
+.hljs-addition {
+  color: var(--hl-add-fg);
+  background: var(--hl-add-bg);
+}
+.hljs-deletion {
+  color: var(--hl-del-fg);
+  background: var(--hl-del-bg);
+}
+

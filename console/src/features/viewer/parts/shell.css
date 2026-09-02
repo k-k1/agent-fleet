@@ -1,0 +1,38 @@
+/* File/Code/Markdown/Marp/Image/Diff viewer styles — extracted from the old
+   console's styles.css (regions 2531–2550, 3424–3512, 4173–4924) so the P4
+   viewers render pixel-identical. Trimmed at swap time (P8) if unused. */
+.fileview,
+.mirrorview {
+  flex: 1;
+  min-width: 0;
+  /* Inline-size container (like .termview) so the head's fork / ターミナル⇄チャット
+     controls can collapse to icon-only when the pane is narrow (mobile or a slim
+     split), via the @container paneview rules below. */
+  container: paneview / inline-size;
+  /* min-height:0 lets the viewer shrink to its flex track in .pane (column,
+     overflow:hidden) instead of overflowing it. Without it a body sub-view that
+     can't itself shrink (e.g. .md-scroll) pushes .fileview to full content
+     height and the pane clips it, killing scroll. The code path is saved by
+     .codeview-wrap's own min-height:0; markdown preview had no such rescue. */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Optional tinted viewer background (a step darker than the surfaces); the
+     content panes below are transparent so they sit on it. Default = theme --bg. */
+  background: var(--viewer-bg, var(--bg));
+}
+.fileview {
+  position: relative;
+}
+
+.mt-toolrun.open > .mt-toolrun-head {
+  opacity: 0.7;
+}
+/* Expanded traces sit indented under the head, aligned past the chevron. */
+.mt-toolrun-body {
+  margin: 0.1em 0 0.2em 14px;
+}
+.mt-toolrun-body .mt-tool {
+  margin: 0.15em 0;
+}
+

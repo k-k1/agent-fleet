@@ -1,0 +1,54 @@
+/* SCM (legacy rules only — the changes-list / commitbox styles live in scm.css,
+   which loads before this file; duplicates here would win the cascade and mask it). */
+.scmbody {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.scmleft {
+  width: 360px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  overflow: auto;
+  padding: 8px 10px;
+}
+/* The 変更 view and the working-tree diff pane have no inline right panel — their diff
+   opens in a separate pane — so the left column fills the whole pane. */
+.scmbody.scm-changes-single > .scmleft {
+  width: auto;
+  flex: 1;
+  border-right: none;
+}
+.log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.log li {
+  padding: 3px 2px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.log code {
+  color: #c9a;
+}
+.log-row {
+  cursor: pointer;
+}
+.log-row:hover {
+  background: var(--hover-bg);
+}
+.log-row.active {
+  background: var(--active-bg);
+}
+/* ChangesView right (diff) pane. */
+.scmright {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+
