@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -238,15 +239,15 @@ func handleChatLock(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	unlock := lockConv(id) // serialize with an in-flight turn's load-modify-save
+	unlock := chatx.LockConv(id) // serialize with an in-flight turn's load-modify-save
 	defer unlock()
-	c, err := loadConv(id)
+	c, err := chatx.LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
 	}
 	c.Locked = req.Locked
-	if err := saveConv(c); err != nil {
+	if err := chatx.SaveConv(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return
 	}

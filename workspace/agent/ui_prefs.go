@@ -16,6 +16,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -66,10 +67,10 @@ func init() { agents.SkipPermissionsPref = skipPermissionsPref }
 // conversation / one-shot call without a restart.
 func assistantAgentOrderPref() []string {
 	prefs := uiprefs.Read()
-	out := make([]string, 0, len(defaultHeadlessOrder))
+	out := make([]string, 0, len(chatx.DefaultHeadlessOrder))
 	seen := map[string]bool{}
 	add := func(k string) {
-		if _, ok := chatProviders[k]; ok && !seen[k] {
+		if _, ok := chatx.ChatProviders[k]; ok && !seen[k] {
 			seen[k] = true
 			out = append(out, k)
 		}
@@ -83,7 +84,7 @@ func assistantAgentOrderPref() []string {
 	} else if pin, _ := prefs["assistantAgent"].(string); pin != "" {
 		add(pin) // legacy pin ("auto" is not a kind, so it falls through to the default)
 	}
-	for _, k := range defaultHeadlessOrder {
+	for _, k := range chatx.DefaultHeadlessOrder {
 		add(k)
 	}
 	return out
@@ -105,7 +106,7 @@ func assistantModelPref(key, kind string) (string, bool) {
 	// 「使わないモデル」で除外された値が設定に残っていても採用しない（model_deny.go）。
 	// 未設定扱いに落とすことで、呼び出し側は推奨／CLI 既定へ退避する。
 	// "recommended" は実モデル id ではない番兵なのでそのまま通す。
-	if v != assistantRecommendedModel && modelHidden(kind, v) {
+	if v != chatx.AssistantRecommendedModel && modelHidden(kind, v) {
 		return "", false
 	}
 	return v, true
@@ -126,14 +127,14 @@ func assistantUtilityModelPref(kind string) (string, bool) {
 func chatAutoTurnLimit() int {
 	v, ok := uiprefs.Read()["assistantAutoTurnLimit"].(float64)
 	if !ok {
-		return defaultAutoTurns
+		return chatx.DefaultAutoTurns
 	}
 	n := int(v)
 	if n < 1 {
 		return 1
 	}
-	if n > maxAutoTurnLimit {
-		return maxAutoTurnLimit
+	if n > chatx.MaxAutoTurnLimit {
+		return chatx.MaxAutoTurnLimit
 	}
 	return n
 }

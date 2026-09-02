@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -85,7 +86,7 @@ func TestRecordUsageCallSplitsClaudeModelRows(t *testing.T) {
 	call := usagex.Call{
 		Kind: session.KindClaude, ModelReq: "haiku", OK: true,
 		CostUSD: 0.0084,
-		Models: usageModelRows(map[string]claudeModelUsage{
+		Models: chatx.UsageModelRows(map[string]chatx.ClaudeModelUsage{
 			"claude-haiku-4-5-20251001": {
 				InputTokens: 2, OutputTokens: 5, CacheCreationInputTokens: 4186,
 				CostUSD: 0.0084, CanonicalModel: "claude-haiku-4-5",
@@ -450,11 +451,11 @@ func TestUsageTriggerFromTurnSource(t *testing.T) {
 
 func TestCompactTriggerMapping(t *testing.T) {
 	for reason, want := range map[string]string{
-		compactReasonManual:   usagex.TriggerManual,
-		compactReasonAuto:     usagex.TriggerAuto,
-		compactReasonRecovery: usagex.TriggerRecovery,
+		chatx.CompactReasonManual:   usagex.TriggerManual,
+		chatx.CompactReasonAuto:     usagex.TriggerAuto,
+		chatx.CompactReasonRecovery: usagex.TriggerRecovery,
 	} {
-		if got := compactTrigger(reason); got != want {
+		if got := chatx.CompactTrigger(reason); got != want {
 			t.Errorf("%q -> %q, want %q", reason, got, want)
 		}
 	}

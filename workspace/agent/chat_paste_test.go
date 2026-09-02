@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -49,7 +50,7 @@ func TestChatPasteImageRoundtrip(t *testing.T) {
 
 	// A claude conversation accepts the upload and serves it back.
 	claudeID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	if err := saveConv(&chatConversation{ID: claudeID, Agent: session.KindClaude}); err != nil {
+	if err := chatx.SaveConv(&chatx.ChatConversation{ID: claudeID, Agent: session.KindClaude}); err != nil {
 		t.Fatal(err)
 	}
 	res := upload(t, claudeID)
@@ -83,7 +84,7 @@ func TestChatPasteImageRoundtrip(t *testing.T) {
 	// A codex conversation accepts the upload too (codex exec opens the path via
 	// view_image — live-verified when the gate was widened).
 	codexID := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-	if err := saveConv(&chatConversation{ID: codexID, Agent: session.KindCodex}); err != nil {
+	if err := chatx.SaveConv(&chatx.ChatConversation{ID: codexID, Agent: session.KindCodex}); err != nil {
 		t.Fatal(err)
 	}
 	if res := upload(t, codexID); res.StatusCode != http.StatusCreated {
@@ -93,7 +94,7 @@ func TestChatPasteImageRoundtrip(t *testing.T) {
 	// An opencode conversation is rejected: `opencode run` declines image input on
 	// non-vision models, and the chat can't know the model sees images.
 	ocID := "dddddddd-dddd-dddd-dddd-dddddddddddd"
-	if err := saveConv(&chatConversation{ID: ocID, Agent: session.KindOpencode}); err != nil {
+	if err := chatx.SaveConv(&chatx.ChatConversation{ID: ocID, Agent: session.KindOpencode}); err != nil {
 		t.Fatal(err)
 	}
 	if res := upload(t, ocID); res.StatusCode != http.StatusBadRequest {

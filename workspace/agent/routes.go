@@ -11,6 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 )
 
@@ -136,33 +137,33 @@ func buildMux() *http.ServeMux {
 
 	// Assistant chat — headless-CLI LLM chat/translation, separate from tmux
 	// sessions (docs/log/19). Non-streaming; the CP proxies these verbatim.
-	mux.HandleFunc("GET /chat/conversations", handleChatList)
-	mux.HandleFunc("POST /chat/conversations", handleChatCreate)
-	mux.HandleFunc("GET /chat/conversations/{id}", handleChatGet)
-	mux.HandleFunc("PATCH /chat/conversations/{id}", handleChatPatch) // 改名 / エージェント切替
-	mux.HandleFunc("POST /chat/conversations/{id}/title/suggest", handleChatSuggestTitle)
-	mux.HandleFunc("POST /chat/conversations/{id}/suggest-replies", handleChatSuggestReplies) // LLM 返信サジェスト v2（preview 専用）
-	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
+	mux.HandleFunc("GET /chat/conversations", chatx.HandleChatList)
+	mux.HandleFunc("POST /chat/conversations", chatx.HandleChatCreate)
+	mux.HandleFunc("GET /chat/conversations/{id}", chatx.HandleChatGet)
+	mux.HandleFunc("PATCH /chat/conversations/{id}", chatx.HandleChatPatch) // 改名 / エージェント切替
+	mux.HandleFunc("POST /chat/conversations/{id}/title/suggest", chatx.HandleChatSuggestTitle)
+	mux.HandleFunc("POST /chat/conversations/{id}/suggest-replies", chatx.HandleChatSuggestReplies) // LLM 返信サジェスト v2（preview 専用）
+	mux.HandleFunc("DELETE /chat/conversations/{id}", chatx.HandleChatDelete)
 	mux.HandleFunc("POST /chat/conversations/{id}/lock", handleChatLock) // 削除ロック（docs/log/45）
-	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
-	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream)            // SSE (Phase B)
-	mux.HandleFunc("POST /chat/conversations/{id}/stop", handleChatStop)                // cancel a detached in-flight turn
-	mux.HandleFunc("POST /chat/conversations/{id}/compact", handleChatCompact)          // 要約引き継ぎ（docs/log/33 第2段）
-	mux.HandleFunc("GET /chat/conversations/{id}/plan", handleChatPlanGet)              // 作業計画の取得（docs/log/33 第5段・MCP 用の軽い口）
-	mux.HandleFunc("PUT /chat/conversations/{id}/plan", handleChatPlanSet)              // 作業計画の手編集（docs/log/33 第5段）
-	mux.HandleFunc("POST /chat/conversations/{id}/plan/refresh", handleChatPlanRefresh) // 作業計画の明示更新（同）
+	mux.HandleFunc("POST /chat/conversations/{id}/messages", chatx.HandleChatSend)
+	mux.HandleFunc("POST /chat/conversations/{id}/stream", chatx.HandleChatStream)            // SSE (Phase B)
+	mux.HandleFunc("POST /chat/conversations/{id}/stop", chatx.HandleChatStop)                // cancel a detached in-flight turn
+	mux.HandleFunc("POST /chat/conversations/{id}/compact", chatx.HandleChatCompact)          // 要約引き継ぎ（docs/log/33 第2段）
+	mux.HandleFunc("GET /chat/conversations/{id}/plan", chatx.HandleChatPlanGet)              // 作業計画の取得（docs/log/33 第5段・MCP 用の軽い口）
+	mux.HandleFunc("PUT /chat/conversations/{id}/plan", chatx.HandleChatPlanSet)              // 作業計画の手編集（docs/log/33 第5段）
+	mux.HandleFunc("POST /chat/conversations/{id}/plan/refresh", chatx.HandleChatPlanRefresh) // 作業計画の明示更新（同）
 	mux.HandleFunc("POST /chat/conversations/{id}/paste-image", handleChatPasteImage)
 	mux.HandleFunc("GET /chat/conversations/{id}/pasted/{file}", handleChatPastedImage)
 	// Assistant-to-assistant consult (docs/log/19): af_write orchestrators' ask_assistant tool
 	// hits this via the local stdio MCP. Internal (Agent REST) only — not proxied by the CP.
-	mux.HandleFunc("POST /chat/ask", handleChatAsk)
+	mux.HandleFunc("POST /chat/ask", chatx.HandleChatAsk)
 	// スケジュール発のアシスタント発火（docs/log/38 session_mode=assistant）: CP スケジューラが
 	// 会話（UUID/slug）へ 1 ターンを同期実行する。runOperatorTurn 委譲（assistant_turn.go）。
 	mux.HandleFunc("POST /assistant-turns", handleAssistantTurn)
 	// Session report kick (docs/log/30): the session-status hook / record-exit process posts
 	// here when an operator-armed session reaches an awaiting-input / abnormal-exit
 	// state. Internal (Agent REST) only — not proxied by the CP.
-	mux.HandleFunc("POST /chat/report", handleChatReport)
+	mux.HandleFunc("POST /chat/report", chatx.HandleChatReport)
 
 	// Assistant templates — configurable chat personas (docs/log/19 Q2). Builtins are
 	// code-injected; user-defined ones are stored under ~/.config/agent-fleet/assistants.

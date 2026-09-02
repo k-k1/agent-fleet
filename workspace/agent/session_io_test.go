@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -300,7 +301,7 @@ esac
 	if turns[0].Source != turnSourceSchedule {
 		t.Errorf("Source = %q, want %q (mirror badge)", turns[0].Source, turnSourceSchedule)
 	}
-	if rows := readInstrRows(name); len(rows) != 0 {
+	if rows := chatx.ReadInstrRows(name); len(rows) != 0 {
 		t.Errorf("instruction ledger = %d rows, want 0 (report_to が空＝報告先が無い)", len(rows))
 	}
 }
@@ -387,7 +388,7 @@ exit 0
 	if turns[0].Source != turnSourcePeer {
 		t.Errorf("Source = %q, want %q（ミラーのバッジ）", turns[0].Source, turnSourcePeer)
 	}
-	if rows := readInstrRows(name); len(rows) != 0 {
+	if rows := chatx.ReadInstrRows(name); len(rows) != 0 {
 		t.Errorf("指示台帳 = %d 行, want 0（peer は arm に触らない — ADR 0041 決定4）", len(rows))
 	}
 }

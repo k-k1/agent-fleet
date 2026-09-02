@@ -22,6 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -769,7 +770,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// docs/log/51 Phase 2: 指示台帳へ1行追加する（旧 arm の1bit）。managed は
 		// session-status hook を持たないが、完了は notify seam → リコンサイラで拾われる。
 		if req.ReportTo != "" {
-			addInstruction(name, req.ReportTo, injectionSource(req.Source))
+			chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
 			recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)
 		} else if s := scheduleInjectionSource(req.Source); s != "" {
 			// 完了報告 OFF の定時実行が作ったセッション: 台帳は立てない（報告先が無い）が、
@@ -796,7 +797,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// The initial_prompt, when present, is an orchestrated injection (docs/log/30 ② /
 	// docs/log/38) — remember it with its origin so the mirror badges its user turn.
 	if req.ReportTo != "" {
-		addInstruction(name, req.ReportTo, injectionSource(req.Source))
+		chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source))
 	} else if s := scheduleInjectionSource(req.Source); s != "" {
 		recordInjection(name, req.InitialPrompt, s) // 報告 OFF の定時実行（managed 側と同じ）
@@ -1030,7 +1031,7 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 	if body.DisarmReport {
 		// Disarm even when the session turns out to be already stopped below: the
 		// operator's intent (cancel the instruction) does not depend on liveness.
-		disarmSessionReport(name)
+		chatx.DisarmSessionReport(name)
 	}
 	if m.DriverKind() == session.DriverManaged {
 		// ★持ち越しは **DropHandle より前**（docs/log/75 P5）。保留中の Interaction は

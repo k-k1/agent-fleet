@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -69,20 +70,20 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /chat/report", handleChatReport)
+	mux.HandleFunc("POST /chat/report", chatx.HandleChatReport)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	t.Setenv("AGENT_ADDR", strings.TrimPrefix(srv.URL, "http://"))
 
-	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
-	if err := saveConv(conv); err != nil {
+	conv := &chatx.ChatConversation{ID: chatx.RandUUID(), Agent: "claude", Messages: []chatx.ChatMessage{}}
+	if err := chatx.SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 	m := session.Meta{Name: "slot42", Dir: t.TempDir(), Kind: session.KindClaude, Title: "検証タスク"}
 	session.WriteMeta(m)
 	sid := session.UUID(m.Dir, m.Name)
 
-	addInstruction(m.Name, conv.ID, turnSourceOperator) // create_session / send_to_session with report_to
+	chatx.AddInstruction(m.Name, conv.ID, turnSourceOperator) // create_session / send_to_session with report_to
 
 	status.Persist(sid, "working") // the operator's instruction starts a turn
 	// A real turn leaves a FRESH main transcript behind (the answer was just written).
@@ -102,10 +103,10 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	// deliverSessionReport finishes in a goroutine off the handler. Read under the
 	// conversation lock like every real reader does: saveConv is a plain (non-atomic)
 	// os.WriteFile, so an unlocked poll can catch the file mid-truncate.
-	var got *chatMessage
+	var got *chatx.ChatMessage
 	for i := 0; i < 100 && got == nil; i++ {
-		unlock := lockConv(conv.ID)
-		c, err := loadConv(conv.ID)
+		unlock := chatx.LockConv(conv.ID)
+		c, err := chatx.LoadConv(conv.ID)
 		unlock()
 		if err == nil {
 			for j := range c.Messages {
@@ -143,13 +144,13 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 	withTestReconciler(t, 20*time.Millisecond)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /chat/report", handleChatReport)
+	mux.HandleFunc("POST /chat/report", chatx.HandleChatReport)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	t.Setenv("AGENT_ADDR", strings.TrimPrefix(srv.URL, "http://"))
 
-	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
-	if err := saveConv(conv); err != nil {
+	conv := &chatx.ChatConversation{ID: chatx.RandUUID(), Agent: "claude", Messages: []chatx.ChatMessage{}}
+	if err := chatx.SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 	m := session.Meta{Name: "slot43", Dir: t.TempDir(), Kind: session.KindClaude, Title: "BG検証"}
@@ -166,14 +167,14 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	addInstruction(m.Name, conv.ID, turnSourceOperator)
+	chatx.AddInstruction(m.Name, conv.ID, turnSourceOperator)
 	status.Persist(sid, "working")
 	runSessionStatusHook([]string{"idle", sid}) // Stop right after the BG launch → kick
 
 	countReports := func() int {
-		unlock := lockConv(conv.ID)
+		unlock := chatx.LockConv(conv.ID)
 		defer unlock()
-		c, err := loadConv(conv.ID)
+		c, err := chatx.LoadConv(conv.ID)
 		if err != nil {
 			return -1
 		}
@@ -188,7 +189,7 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 
 	// Deferred: the arm survives the premature Stop and no report card lands.
 	time.Sleep(100 * time.Millisecond)
-	if !sessionReportPending(m.Name) {
+	if !chatx.SessionReportPending(m.Name) {
 		t.Fatal("premature Stop consumed the arm despite live background agents")
 	}
 	if n := countReports(); n != 0 {
@@ -209,8 +210,8 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 		t.Fatalf("deferred report count = %d, want 1", n)
 	}
 	awaitReported(t, m.Name)
-	unlock := lockConv(conv.ID)
-	c, err := loadConv(conv.ID)
+	unlock := chatx.LockConv(conv.ID)
+	c, err := chatx.LoadConv(conv.ID)
 	unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -239,13 +240,13 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	withTestReconciler(t, 20*time.Millisecond)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /chat/report", handleChatReport)
+	mux.HandleFunc("POST /chat/report", chatx.HandleChatReport)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	t.Setenv("AGENT_ADDR", strings.TrimPrefix(srv.URL, "http://"))
 
-	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
-	if err := saveConv(conv); err != nil {
+	conv := &chatx.ChatConversation{ID: chatx.RandUUID(), Agent: "claude", Messages: []chatx.ChatMessage{}}
+	if err := chatx.SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 	m := session.Meta{Name: "slot44", Dir: t.TempDir(), Kind: session.KindClaude, Title: "誤idle検証"}
@@ -274,14 +275,14 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	}
 	writeMainAt(t, time.Now()) // freshly appended (the turn is still running)
 
-	addInstruction(m.Name, conv.ID, turnSourceOperator)
+	chatx.AddInstruction(m.Name, conv.ID, turnSourceOperator)
 	status.Persist(sid, "working")
 	runSessionStatusHook([]string{"idle", sid}) // early Stop → kick → deferred (BG busy)
 
 	countReports := func() int {
-		unlock := lockConv(conv.ID)
+		unlock := chatx.LockConv(conv.ID)
 		defer unlock()
-		c, err := loadConv(conv.ID)
+		c, err := chatx.LoadConv(conv.ID)
 		if err != nil {
 			return -1
 		}
@@ -307,7 +308,7 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	if n := countReports(); n != 0 {
 		t.Fatalf("delivered on a missing marker + fresh transcript (n=%d)", n)
 	}
-	if !sessionReportPending(m.Name) {
+	if !chatx.SessionReportPending(m.Name) {
 		t.Fatal("false idle consumed the arm")
 	}
 
@@ -344,8 +345,8 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 
 func TestHaltDisarmsReportOnlyWhenFlagged(t *testing.T) {
 	withTempHome(t)
-	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
-	if err := saveConv(conv); err != nil {
+	conv := &chatx.ChatConversation{ID: chatx.RandUUID(), Agent: "claude", Messages: []chatx.ChatMessage{}}
+	if err := chatx.SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 
@@ -362,15 +363,15 @@ func TestHaltDisarmsReportOnlyWhenFlagged(t *testing.T) {
 
 	for _, name := range []string{"slot11", "slot12"} {
 		session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
-		addInstruction(name, conv.ID, turnSourceOperator)
+		chatx.AddInstruction(name, conv.ID, turnSourceOperator)
 	}
 
 	halt("slot11", `{"disarm_report":true}`)
-	if sessionReportPending("slot11") {
+	if chatx.SessionReportPending("slot11") {
 		t.Fatal("stop_session halt must disarm the pending report")
 	}
 	halt("slot12", "")
-	if !sessionReportPending("slot12") {
+	if !chatx.SessionReportPending("slot12") {
 		t.Fatal("Console halt (no body) must keep the arm")
 	}
 }

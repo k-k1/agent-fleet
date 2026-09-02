@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -86,7 +87,7 @@ func applyInput(a *assistants.Assistant, in assistantInput) error {
 	if name == "" {
 		return errors.New("名前を入力してください")
 	}
-	if _, ok := chatProviders[in.Agent]; !ok {
+	if _, ok := chatx.ChatProviders[in.Agent]; !ok {
 		return errors.New("未対応のエージェントです")
 	}
 	tools := in.Tools
@@ -105,7 +106,7 @@ func applyInput(a *assistants.Assistant, in assistantInput) error {
 		if !assistants.ValidIntegration(id) {
 			return errors.New("未対応の連携です: " + id)
 		}
-		integrations = appendUniqueStr(integrations, id)
+		integrations = chatx.AppendUniqueStr(integrations, id)
 	}
 	a.Name = name
 	a.Icon = strings.TrimSpace(in.Icon)
@@ -125,8 +126,8 @@ func handleAssistantCreate(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
-	now := nowMs()
-	a := &assistants.Assistant{ID: randUUID(), Builtin: false, CreatedAt: now, UpdatedAt: now}
+	now := chatx.NowMs()
+	a := &assistants.Assistant{ID: chatx.RandUUID(), Builtin: false, CreatedAt: now, UpdatedAt: now}
 	if err := applyInput(a, in); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "invalid", err.Error())
 		return
@@ -157,7 +158,7 @@ func handleAssistantUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
-	a.UpdatedAt = nowMs()
+	a.UpdatedAt = chatx.NowMs()
 	if err := assistants.SaveUser(a); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "save", err.Error())
 		return
@@ -193,6 +194,6 @@ func handleAssistantDelete(w http.ResponseWriter, r *http.Request) {
 func assistantDeps() assistants.Deps {
 	return assistants.NewDeps(
 		ensureBuiltinKnowledge, // //go:embed が main に残るため
-		preferredHeadlessAgent, // chat 家系にあるため
+		chatx.PreferredHeadlessAgent,
 	)
 }
