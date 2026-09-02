@@ -25,12 +25,12 @@ func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
 	// 1) result が来なかった: スナップショットを partial で採る。
 	stopped := usageCall{Kind: session.KindClaude}
 	snap := claudeUsage{InputTokens: 12, OutputTokens: 34, CacheReadInputTokens: 5600, CacheCreationInputTokens: 78}
-	stopped.fallbackTotals(snap.ledgerTokens(), usageMeasuredPartial)
+	stopped.FallbackTotals(snap.ledgerTokens(), usageMeasuredPartial)
 	if stopped.Totals.In != 12 || stopped.Totals.Out != 34 ||
 		stopped.Totals.CacheRead != 5600 || stopped.Totals.CacheCreate != 78 {
 		t.Fatalf("停止時のトークンを落とした: %+v", stopped.Totals)
 	}
-	if got := stopped.measuredOr(stopped.Totals); got != usageMeasuredPartial {
+	if got := stopped.MeasuredOr(stopped.Totals); got != usageMeasuredPartial {
 		t.Fatalf("measured = %q, want partial（途中のスナップショットは exact ではない）", got)
 	}
 
@@ -38,15 +38,15 @@ func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
 	full := usageCall{Kind: session.KindClaude, Models: usageModelRows(map[string]claudeModelUsage{
 		"claude-haiku-4-5-20251001": {InputTokens: 1, OutputTokens: 2, CanonicalModel: "claude-haiku-4-5"},
 	})}
-	full.fallbackTotals(snap.ledgerTokens(), usageMeasuredPartial)
-	if full.Totals.any() || full.Measured != "" {
+	full.FallbackTotals(snap.ledgerTokens(), usageMeasuredPartial)
+	if full.Totals.Any() || full.Measured != "" {
 		t.Fatalf("modelUsage のある呼び出しを縮退で上書きした: %+v", full)
 	}
 
 	// 3) 何も取れていない呼び出しは none のまま（0 を「消費 0」と偽らない）。
 	empty := usageCall{Kind: session.KindClaude}
-	empty.fallbackTotals(claudeUsage{}.ledgerTokens(), usageMeasuredPartial)
-	if empty.Measured != "" || empty.measuredOr(empty.Totals) != usageMeasuredNone {
+	empty.FallbackTotals(claudeUsage{}.ledgerTokens(), usageMeasuredPartial)
+	if empty.Measured != "" || empty.MeasuredOr(empty.Totals) != usageMeasuredNone {
 		t.Fatalf("トークンが1つも無いのに partial を名乗った: %+v", empty)
 	}
 }
@@ -116,7 +116,7 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 					uses = true
 				}
 			case *ast.SelectorExpr:
-				if fun.Sel.Name == "fallbackTotals" {
+				if fun.Sel.Name == "FallbackTotals" { // 移送でメソッドが公開名になった
 					falls = true
 				}
 			}
@@ -186,14 +186,15 @@ func TestClaudeLedgerTokensUsesCallTotals(t *testing.T) {
 // 本文らしきものが増えていないかを見る。
 func TestUsageRecordHasNoContentFields(t *testing.T) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "usage_ledger.go", nil, 0)
+	// 台帳は internal/usagex へ移送済み（型名も usageRecord → Record）。
+	f, err := parser.ParseFile(fset, "internal/usagex/ledger.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	banned := []string{"text", "prompt", "reply", "body", "content", "message"}
 	ast.Inspect(f, func(n ast.Node) bool {
 		ts, ok := n.(*ast.TypeSpec)
-		if !ok || ts.Name.Name != "usageRecord" {
+		if !ok || ts.Name.Name != "Record" {
 			return true
 		}
 		st, ok := ts.Type.(*ast.StructType)

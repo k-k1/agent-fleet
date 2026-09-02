@@ -38,9 +38,7 @@ func useTempUsageDir(t *testing.T) string {
 	// これが**一時ディレクトリの削除より先**に走る——順序が逆だと、待っている間に書き手が
 	// 消えたディレクトリへ書くことになる（memory: tempdir-cleanup-lifo-detached-writer）。
 	t.Cleanup(func() { waitUsageFoldIdle(t) })
-	usageMu.Lock()
-	usagePrunedAt = time.Time{}
-	usageMu.Unlock()
+	resetUsagePruneClock() // 移送で usageMu / usagePrunedAt が usagex の未公開状態になった
 	usageFoldGate.Lock()
 	usageFoldedAt = time.Time{}
 	usageFoldGate.Unlock()
@@ -143,7 +141,7 @@ func TestRecordUsageCallModelFallback(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := useTempUsageDir(t)
 			call := usageCall{Kind: session.KindCodex, ModelReq: tc.req, OK: true}
-			call.setTotals(100, 20, 30, 40)
+			call.SetTotals(100, 20, 30, 40)
 			recordUsageCall(context.Background(), &call, time.Now())
 			rows := readUsageRows()
 			if len(rows) != 1 {
@@ -190,7 +188,7 @@ func TestUsageRecordingCanBeDisabled(t *testing.T) {
 	useTempUsageDir(t)
 	t.Setenv("AF_USAGE_RECORD", "0")
 	call := usageCall{Kind: session.KindClaude, OK: true}
-	call.setTotals(1, 2, 3, 4)
+	call.SetTotals(1, 2, 3, 4)
 	recordUsageCall(context.Background(), &call, time.Now())
 	if rows := readUsageRows(); len(rows) != 0 {
 		t.Fatalf("rows = %d, want 0 when recording is off", len(rows))
@@ -211,9 +209,7 @@ func TestPruneUsageRawDropsExpiredDays(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	usageMu.Lock()
-	pruneUsageRawLocked()
-	usageMu.Unlock()
+	pruneUsageRawNow()
 	if _, err := os.Stat(filepath.Join(raw, old)); !os.IsNotExist(err) {
 		t.Fatalf("保持期間を過ぎた %s が残っている", old)
 	}

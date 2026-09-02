@@ -1,4 +1,4 @@
-package main
+package usagex
 
 // 使用量台帳（docs/log/46 / ADR0029 P1）。1行 = LLM 呼び出し1回、または折り込んだ
 // セッションの論理ターン1回。
@@ -24,51 +24,51 @@ import (
 
 // feature — 消費源の列挙（ADR0029 §2 で凍結。Console 側で i18n する）。
 const (
-	usageFeatureAssistantChat    = "assistant.chat"     // 利用者のチャット1ターン
-	usageFeatureAssistantAsk     = "assistant.ask"      // 単発アドバイザリ（非永続）
-	usageFeatureAssistantAutoTur = "assistant.autoturn" // セッション完了報告への自動ターン
-	usageFeatureAssistantBridge  = "assistant.bridge"   // Discord/Slack からのオペレーター応答
-	usageFeatureCompact          = "compact"            // 要約引き継ぎ（docs/log/33）
-	usageFeaturePlanUpdate       = "plan.update"        // 作業計画の明示更新（docs/log/33 第5段）
-	usageFeatureTitleSession     = "title.session"      // セッション件名の提案
-	usageFeatureTitleChat        = "title.chat"         // 会話タイトルの提案
-	usageFeatureBranchSuggest    = "branch.suggest"     // ブランチ名の提案
-	usageFeatureSuggestSession   = "suggest.session"    // ミラーの ✨ 返信候補
-	usageFeatureSuggestChat      = "suggest.chat"       // チャットの ✨ 返信候補
-	usageFeatureSuggestEdit      = "suggest.edit"       // エディタの ✨ AI変更提案（docs/log/44 Phase 4）
-	usageFeatureSession          = "session"            // 対話セッション本体（転写から折り込み）
-	// usageFeatureUnknown はタグの付いていない呼び出し。新しい補助機能がタグを付け忘れても
+	FeatureAssistantChat    = "assistant.chat"     // 利用者のチャット1ターン
+	FeatureAssistantAsk     = "assistant.ask"      // 単発アドバイザリ（非永続）
+	FeatureAssistantAutoTur = "assistant.autoturn" // セッション完了報告への自動ターン
+	FeatureAssistantBridge  = "assistant.bridge"   // Discord/Slack からのオペレーター応答
+	FeatureCompact          = "compact"            // 要約引き継ぎ（docs/log/33）
+	FeaturePlanUpdate       = "plan.update"        // 作業計画の明示更新（docs/log/33 第5段）
+	FeatureTitleSession     = "title.session"      // セッション件名の提案
+	FeatureTitleChat        = "title.chat"         // 会話タイトルの提案
+	FeatureBranchSuggest    = "branch.suggest"     // ブランチ名の提案
+	FeatureSuggestSession   = "suggest.session"    // ミラーの ✨ 返信候補
+	FeatureSuggestChat      = "suggest.chat"       // チャットの ✨ 返信候補
+	FeatureSuggestEdit      = "suggest.edit"       // エディタの ✨ AI変更提案（docs/log/44 Phase 4）
+	FeatureSession          = "session"            // 対話セッション本体（転写から折り込み）
+	// FeatureUnknown はタグの付いていない呼び出し。新しい補助機能がタグを付け忘れても
 	// 必ず1行残す（無記録＝見えない消費、を作らないことをタグの正しさより優先する）。
-	usageFeatureUnknown = "unknown"
+	FeatureUnknown = "unknown"
 )
 
 // trigger — ターンの注入元。
 const (
-	usageTriggerUser     = "user"
-	usageTriggerAuto     = "auto"
-	usageTriggerManual   = "manual"
-	usageTriggerSchedule = "schedule"
-	usageTriggerOperator = "operator"
-	usageTriggerBridge   = "bridge"
-	usageTriggerRecovery = "recovery"
+	TriggerUser     = "user"
+	TriggerAuto     = "auto"
+	TriggerManual   = "manual"
+	TriggerSchedule = "schedule"
+	TriggerOperator = "operator"
+	TriggerBridge   = "bridge"
+	TriggerRecovery = "recovery"
 )
 
 // model_src — モデル次元をどこから得たかの自己申告（ADR0029 §4）。
 const (
-	usageModelReported = "reported"        // 実行側が報告した（claude / 転写の Turn.Model）
-	usageModelRequest  = "requested"       // こちらが要求した値しか分からない
-	usageModelUnknown  = "default_unknown" // CLI 側の既定に委ねた＝解決後のモデル不明
+	ModelReported = "reported"        // 実行側が報告した（claude / 転写の Turn.Model）
+	ModelRequest  = "requested"       // こちらが要求した値しか分からない
+	ModelUnknown  = "default_unknown" // CLI 側の既定に委ねた＝解決後のモデル不明
 )
 
 // measured — 「0」と「未計測」を絶対に混同させないための自己申告。
 const (
-	usageMeasuredExact   = "exact"   // in/out/cache すべて取れた
-	usageMeasuredPartial = "partial" // 一部だけ（copilot の outTok のみ 等）
-	usageMeasuredNone    = "none"    // トークンを報告しない CLI — 回数だけ数える
+	MeasuredExact   = "exact"   // in/out/cache すべて取れた
+	MeasuredPartial = "partial" // 一部だけ（copilot の outTok のみ 等）
+	MeasuredNone    = "none"    // トークンを報告しない CLI — 回数だけ数える
 )
 
-// usageRecord は台帳1行。JSON タグは Console/API と対の凍結ワイヤ（ADR0029 §1）。
-type usageRecord struct {
+// Record は台帳1行。JSON タグは Console/API と対の凍結ワイヤ（ADR0029 §1）。
+type Record struct {
 	TS   string `json:"ts"`   // 呼び出し完了時刻（UTC・RFC3339）
 	Call string `json:"call"` // 呼び出し ID: 1呼び出しが複数モデル行に割れる時に束ねる
 	// Feature/Trigger/Ref/Verb は ctx の usageTag 由来（usage_tag.go）。
@@ -104,26 +104,26 @@ type usageRecord struct {
 	Measured    string  `json:"measured"`
 }
 
-// usageSpend は主指標。cache_read を含めないのは既存の get_session_usage / ミラーの
+// Spend は主指標。cache_read を含めないのは既存の get_session_usage / ミラーの
 // ContextBar と同じ定義に揃えるため（二つの画面が食い違わない方が、理論的な正しさより重い）。
-func usageSpend(in, create, out int) int { return in + create + out }
+func Spend(in, create, out int) int { return in + create + out }
 
-// usageEnabled — 記録の全体スイッチ。AF_USAGE_RECORD=0 で完全に止める（P5 の設定 UI が
+// Enabled — 記録の全体スイッチ。AF_USAGE_RECORD=0 で完全に止める（P5 の設定 UI が
 // 書き換える口）。既定 ON。
-func usageEnabled() bool { return os.Getenv("AF_USAGE_RECORD") != "0" }
+func Enabled() bool { return os.Getenv("AF_USAGE_RECORD") != "0" }
 
-// usageDir は台帳のルート。AF_USAGE_DIR はテスト用の差し替え口。
-func usageDir() string {
+// Dir は台帳のルート。AF_USAGE_DIR はテスト用の差し替え口。
+func Dir() string {
 	if v := os.Getenv("AF_USAGE_DIR"); v != "" {
 		return v
 	}
 	return filepath.Join(paths.AgentDataDir(), "usage")
 }
 
-func usageRawDir() string { return filepath.Join(usageDir(), "raw") }
+func RawDir() string { return filepath.Join(Dir(), "raw") }
 
-// usageRetentionDays — raw の保持日数（rollup は無期限・ADR0029 §7-3）。
-func usageRetentionDays() int {
+// RetentionDays — raw の保持日数（rollup は無期限・ADR0029 §7-3）。
+func RetentionDays() int {
 	if v := os.Getenv("AF_USAGE_RETENTION_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
@@ -133,13 +133,20 @@ func usageRetentionDays() int {
 }
 
 var (
-	usageMu sync.Mutex // 追記と prune を直列化（同一プロセス内の並行ターン）
-	// usagePrunedAt は最後に保持期間 prune を走らせた時刻。追記のたびにディレクトリを
+	// Mu は追記と prune を直列化する（同一プロセス内の並行ターン）。公開しているのは
+	// usage_rollup.go の readUsageDayForRollup が「追記と競合しない形で 1 日分を読む」ために
+	// 同じロックを取るため。
+	//
+	// 🔥 main 側で受けるときは **必ずポインタ**（alias_usagex.go の `var usageMu = &usagex.Mu`）。
+	// `var usageMu = usagex.Mu` と書くと **mutex ごと写されて別物になり**、追記側と読み側が
+	// 違う錠を掛けて直列化が無言で消える。
+	Mu sync.Mutex
+	// prunedAt は最後に保持期間 prune を走らせた時刻。追記のたびにディレクトリを
 	// 走査しないための節流 — 台帳は追記の方が桁違いに多い。
-	usagePrunedAt time.Time
+	prunedAt time.Time
 )
 
-// appendUsageRows は行群を当日のファイルへ追記する。1呼び出しが複数モデルに割れた行は
+// AppendRows は行群を当日のファイルへ追記する。1呼び出しが複数モデルに割れた行は
 // 同じ Call を共有した状態で渡ってくる（呼び出し回数を二重に数えないため）。
 //
 // 書けなかったことは error で返す。呼び出し元の扱いは2種類に分かれる:
@@ -147,13 +154,13 @@ var (
 //     チャットやタイトル提案が失敗してはならないので、握り潰す。
 //   - セッション折り込み（usage_fold.go）は**失敗を伝播させる**。書けていないのに
 //     watermark を進めると、その分の消費が二度と入らない。
-func appendUsageRows(rows []usageRecord) error {
-	if len(rows) == 0 || !usageEnabled() {
+func AppendRows(rows []Record) error {
+	if len(rows) == 0 || !Enabled() {
 		return nil
 	}
-	usageMu.Lock()
-	defer usageMu.Unlock()
-	dir := usageRawDir()
+	Mu.Lock()
+	defer Mu.Unlock()
+	dir := RawDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -173,24 +180,24 @@ func appendUsageRows(rows []usageRecord) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	pruneUsageRawLocked()
+	pruneRawLocked()
 	return nil
 }
 
-// pruneUsageRawLocked は保持期間を過ぎた日次ファイルを消す。usageMu 保持前提。
+// pruneRawLocked は保持期間を過ぎた日次ファイルを消す。Mu 保持前提。
 // 1時間に1回までしか走らない（追記のホットパスに ReadDir を積まない）。
-func pruneUsageRawLocked() {
+func pruneRawLocked() {
 	now := time.Now()
-	if !usagePrunedAt.IsZero() && now.Sub(usagePrunedAt) < time.Hour {
+	if !prunedAt.IsZero() && now.Sub(prunedAt) < time.Hour {
 		return
 	}
-	usagePrunedAt = now
-	dir := usageRawDir()
+	prunedAt = now
+	dir := RawDir()
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
-	cutoff := now.UTC().AddDate(0, 0, -usageRetentionDays())
+	cutoff := now.UTC().AddDate(0, 0, -RetentionDays())
 	for _, e := range ents {
 		name := e.Name()
 		if e.IsDir() || filepath.Ext(name) != ".jsonl" {
@@ -207,9 +214,9 @@ func pruneUsageRawLocked() {
 	}
 }
 
-// usageRawDays は台帳に存在する日（UTC の YYYY-MM-DD）を昇順で返す。
-func usageRawDays() []string {
-	ents, err := os.ReadDir(usageRawDir())
+// RawDays は台帳に存在する日（UTC の YYYY-MM-DD）を昇順で返す。
+func RawDays() []string {
+	ents, err := os.ReadDir(RawDir())
 	if err != nil {
 		return nil
 	}
@@ -228,19 +235,19 @@ func usageRawDays() []string {
 	return days
 }
 
-// readUsageDay は1日分の行を追記順で読む。順序を保つことが重要 — 1呼び出しが複数モデル行に
+// ReadDay は1日分の行を追記順で読む。順序を保つことが重要 — 1呼び出しが複数モデル行に
 // 割れたとき、同じ call の最初の行を「呼び出しを数える行」とみなすため（usage_rollup.go）。
-func readUsageDay(day string) []usageRecord {
-	b, err := os.ReadFile(filepath.Join(usageRawDir(), day+".jsonl"))
+func ReadDay(day string) []Record {
+	b, err := os.ReadFile(filepath.Join(RawDir(), day+".jsonl"))
 	if err != nil {
 		return nil
 	}
-	var out []usageRecord
+	var out []Record
 	for _, ln := range bytes.Split(b, []byte("\n")) {
 		if len(bytes.TrimSpace(ln)) == 0 {
 			continue
 		}
-		var r usageRecord
+		var r Record
 		if json.Unmarshal(ln, &r) == nil && r.Feature != "" {
 			out = append(out, r)
 		}
@@ -248,11 +255,29 @@ func readUsageDay(day string) []usageRecord {
 	return out
 }
 
-// readUsageRows は台帳の全行を時系列で読む（テストと小規模な走査用）。
-func readUsageRows() []usageRecord {
-	var out []usageRecord
-	for _, day := range usageRawDays() {
-		out = append(out, readUsageDay(day)...)
+// ReadRows は台帳の全行を時系列で読む（テストと小規模な走査用）。
+func ReadRows() []Record {
+	var out []Record
+	for _, day := range RawDays() {
+		out = append(out, ReadDay(day)...)
 	}
 	return out
+}
+
+// PruneRawNow は保持期間 prune を今すぐ回す（テスト専用の口）。節流は効いたままなので、
+// 直前に ResetPruneClock を呼んでおくこと。移送前は main のテストが usageMu を自分で取って
+// pruneUsageRawLocked() を直接呼んでいたが、どちらも未公開になったのでここに 1 つ口を開ける。
+func PruneRawNow() {
+	Mu.Lock()
+	pruneRawLocked()
+	Mu.Unlock()
+}
+
+// ResetPruneClock は保持期間 prune の節流時計を戻す（テスト専用の口）。
+// 移送前は main のテストヘルパ useTempUsageDir が `usageMu` / `usagePrunedAt` を直接
+// 触っていたが、どちらもこのパッケージの未公開状態になったので、その 1 点だけを開ける。
+func ResetPruneClock() {
+	Mu.Lock()
+	prunedAt = time.Time{}
+	Mu.Unlock()
 }
