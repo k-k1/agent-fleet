@@ -386,8 +386,8 @@ func TestUsageMeasuredForKind(t *testing.T) {
 	for kind, want := range map[string]string{
 		session.KindClaude:  usagex.MeasuredExact,
 		session.KindCodex:   usagex.MeasuredExact,
-		session.KindCopilot: usagex.MeasuredPartial,
-		session.KindCursor:  usagex.MeasuredNone,
+		session.KindCopilot: usagex.MeasuredPartial, // 転写に outTok しかない
+		session.KindCursor:  usagex.MeasuredNone,    // 転写にトークンが無い
 		session.KindKiro:    usagex.MeasuredNone,
 		session.KindAgy:     usagex.MeasuredNone,
 	} {

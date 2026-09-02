@@ -1,14 +1,16 @@
 package main
 
-// アシスタント層のうち **main にしか置けない 2 つ**がここに残る（実体は internal/assistants・
-// 別名は alias_assistants.go）:
+// アシスタント層のうち **main にしか置けない 3 つ**がここに残る（実体は internal/assistants を
+// 直接呼ぶ。ウェーブ B の別名 alias_assistants.go は RECLAIM-B で回収済み）:
 //
 //   - //go:embed の組み込みナレッジ。embed のパスは相対で `..` を書けず、
 //     `workspace/agent/knowledge/af-usage.md` は .dockerignore（`**/*.md` を落として
 //     `agent/knowledge/*.md` だけ戻している）と scripts/docs-check.py が直接見ているので、
 //     ディレクトリごと動かすと Docker ビルドと docs ワークフローが壊れる。
 //   - HTTP ハンドラ。errcodes.go の errCodeAssistant* と chat 家系（chatProviders /
-//     nowMs / randUUID / validConvID / appendUniqueStr）に依存していて、どちらも所有外。
+//     nowMs / randUUID / appendUniqueStr）に依存していて、どちらも所有外。
+//   - `assistantDeps()`（末尾）。internal/assistants へ渡す Deps を組む唯一の入口で、
+//     別名ではなく DI の構築点。
 
 import (
 	"embed"
