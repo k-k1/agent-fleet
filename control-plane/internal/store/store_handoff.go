@@ -1,4 +1,4 @@
-package main
+package store
 
 // メンバーへの引き継ぎ（docs/log/77 / ADR 0057）のストア。
 //
