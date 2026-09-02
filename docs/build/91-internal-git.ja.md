@@ -121,21 +121,25 @@ updated: "2026-07"
 
 ## 7. 統合点（変更箇所の地図）
 
+⚠️ **行番号は書かない。** この表は実装当時の写真になりやすい（実際に一度そうなった: 移送で
+`store.go` も移行 SQL も動いたのに、表だけが古いパスを指したまま残った）。**ファイルと
+シンボル名で指す**——同じ理由で、1 行だけ現在形に直すのも禁止。ずれていたら表ごと揃える。
+
 | # | 箇所 | 変更 |
 |---|------|------|
-| 1 | `control-plane/main.go`（mux, 〜419） | ルート追加: `/git/{slug}/{repo...}`（smart-HTTP）、`/api/internal-git/*`（管理 API） |
+| 1 | `control-plane/routes.go` `registerInternalGitRoutes` | ルート登録: `/git/{slug}/{repo...}`（smart-HTTP）、`/git/{slug}/{repo}/info/lfs/*`（LFS・catch-all より前に置く）、`/api/internal-git/*`（管理 API）＋ `exemptPrefix("/git/")` で authGate 免除 |
 | 2 | `control-plane/git_http.go`（新規） | HMAC トークン発行/検証 + `git http-backend`(CGI) ラッパ + slug 封じ込め + 台帳存在確認 + role 認可 |
-| 3 | `control-plane/internal_git.go`（新規） | repo 一覧/作成/削除、branches、`clone_url` 生成 |
-| 4 | `control-plane/migrations/0014_git_repo.sql`（新規） | `git_repo` テーブルのみ（**token 表は作らない** — 決定的 HMAC） |
-| 5 | `control-plane/store{,_sqlite}.go` | `GitRepo` 型 + CRUD、`GetMembershipByID`（token→tenant/role 解決用） |
-| 6 | `control-plane/main.go` | ルート登録（`/api/internal-git/*`、`/git/{slug}/{repo...}`）＋ `/git/` を authGate 免除、`internalGitHost` 設定 |
-| 7 | `control-plane/manager.go`（env 注入） | `workspaceExtraEnv` で `AF_INTERNAL_GIT_HOST` / `AF_INTERNAL_GIT_TOKEN` を注入 |
+| 3 | `control-plane/internal_git.go`（新規） | repo 一覧/作成/削除/改名、branches、`clone_url` 生成。閲覧（tree/blob/commits）は `internal_git_browse.go`、LFS は `git_lfs.go` / `git_lfs_locks.go`、bare の掃除は `git_gc.go` |
+| 4 | `control-plane/internal/store/migrations/0014_git_repo.sql`（新規） | `git_repo` テーブルのみ（**token 表は作らない** — 決定的 HMAC）。**Postgres 側は `migrations-pg/0001_init.sql` に同梱**（方言ごとに置き場が別。`//go:embed` で拾うので `internal/store/` の外へ置くと**無言で適用されない**） |
+| 5 | `control-plane/internal/store/{store,store_sqlite}.go` | `GitRepo` 型 + CRUD、`GetMembershipByID`（token→tenant/role 解決用） |
+| 6 | `control-plane/main.go` → `control-plane/manager.go` | `PUBLIC_BASE_URL` のホストを `mgr.internalGitHost` に持たせる（クローン先ホスト＝Caddy の TLS 終端） |
+| 7 | `control-plane/workspace_lifecycle.go` `workspaceExtraEnv` | Workspace 起動ごとに `AF_INTERNAL_GIT_HOST` / `AF_INTERNAL_GIT_TOKEN` を注入 |
 | 8 | `control-plane/Dockerfile` | runtime に `git`（`git-http-backend`）を追加 |
 | 9 | `workspace/agent/cred_helper.go` | `seedInternalGit`（起動時に env→`s.Git[host]` へ seed）＋ `internalGitHost` |
 | 10 | `workspace/agent/connections.go` | `handleConnectionsGet` に `internal` 状態（`internalGitStatus`） |
 | 11 | `workspace/agent/git.go` `gitProviderHost` | 内部ホスト（env で動的一致）を `internal` slug にバッジ |
-| 12 | `console/src/components/RepoPicker.tsx` | `PROVIDERS` に `internal` タブ、internal 時は repo/branch を **`api/internal-git/*`**（CP 直）へ分岐 |
-| 13 | `console/src/settings/GitTab.tsx` | 「内部リポジトリ」カード（一覧/作成/削除、OAuth 不要、WS 停止中も可） |
+| 12 | `console/src/features/repos/RepoPicker.tsx` | `PROVIDERS` に `internal` タブ、internal 時は repo/branch を **`api/internal-git/*`**（CP 直）へ分岐 |
+| 13 | `console/src/features/settings/workspace/InternalReposTab.tsx`（＋`InternalRepoBrowser.tsx`） | 設定の「内部リポジトリ」タブ（一覧/作成/削除、OAuth 不要、WS 停止中も可）＋ clone なしの閲覧 |
 | 14 | `docs/README.md` / 本書 / ADR 0010 | 索引・設計・決定の更新 |
 
 `workspace/agent/git_remote.go` の switch は触らない（内部一覧は **CP 直**。Agent→CP 認証が要るため Agent
