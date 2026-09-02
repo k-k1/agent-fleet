@@ -1,4 +1,4 @@
-package main
+package assistants
 
 // Assistant templates (docs/log/19 Q2). An "assistant" is a configurable persona for the
 // headless-CLI chat (custom-GPT style): a name, an agent backend, an optional model,
