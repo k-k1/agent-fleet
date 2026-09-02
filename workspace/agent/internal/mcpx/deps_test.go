@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -129,6 +130,32 @@ func TestConfigureRejectsHollowValues(t *testing.T) {
 			}()
 			Configure(d)
 		})
+	}
+}
+
+// mcpToolWait は「道具が Agent を叩く」のを待つ上限。**素の `<-ch` にしない**ための値で、
+// 正常系ではここまで待たない（叩いた瞬間に返る）。
+const mcpToolWait = 5 * time.Second
+
+// awaitHit は道具が Agent を叩いたことを**上限つき**で待つ。
+//
+// 🔥 素の `<-ch` だと、道具がそもそも出ていないとき（`--write` の配線事故・広告漏れ・
+// 名前の変更）に**テストが落ちずに固まる**。CI では「赤」ではなく**ジョブのタイムアウト**
+// になり、どの検査が何を待っていたのかが残らない。実測 2026-09-02:
+// `withWriteEnabled` が値を設定しない変異を当てると、
+// `TestMCPCreateSessionForwardsWorktreeOptions` は `panic: test timed out after 45s`
+// で初めて止まった（同じ変異で兄弟のテストは普通に FAIL する）。
+//
+// **上限を入れて、理由の見える赤にする**のがここの仕事である。
+func awaitHit[T any](t *testing.T, ch <-chan T, tool string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(mcpToolWait):
+		t.Fatalf("%s が Agent を叩かないまま %s 経った（道具が出ていない: --write の配線 / 広告漏れ / 名前の変更を疑う）", tool, mcpToolWait)
+		var zero T
+		return zero
 	}
 }
 
