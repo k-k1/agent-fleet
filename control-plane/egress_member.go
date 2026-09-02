@@ -29,7 +29,7 @@ import (
 	"strings"
 )
 
-// Wire codes for the member face. 追加・改名時は console/src/lib/i18n/locales/{ja,en}.ts
+// Wire codes for the member face. 追加・改名時は console/src/lib/i18n/locales/{ja,en}/errors.ts
 // の "err.<code>" も同時に（docs/log/48 §11.3: 1 理由 = 1 コード）。
 const (
 	codeEgressEntryInvalid = "egress_entry_invalid"

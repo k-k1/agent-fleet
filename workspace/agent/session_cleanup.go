@@ -51,7 +51,7 @@ type cleanupCandidate struct {
 
 // The "reason" of a candidate is text WE generate for the user to read, so per ADR 0033
 // it is carried as a catalog key and rendered by the Console (`clean.reason.*` in
-// console/src/lib/i18n/locales/{ja,en}.ts) — it follows settings.locale instead of
+// console/src/lib/i18n/locales/{ja,en}/admin.ts) — it follows settings.locale instead of
 // freezing to Japanese as it did before.
 //
 // Reason still ships the source-language (ja, ADR 0016 §4) sentence: it is the fallback

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -81,22 +79,18 @@ func TestClassifyWorktreeCleanup(t *testing.T) {
 // カタログに入れ忘れると、英語 Console だけが静かに ja フォールバックへ落ちて気づけない。
 func TestCleanupReasonKeysExistInConsoleCatalogs(t *testing.T) {
 	for _, locale := range []string{"ja", "en"} {
-		path := filepath.Join("..", "..", "console", "src", "lib", "i18n", "locales", locale+".ts")
-		b, err := os.ReadFile(path)
-		if err != nil {
-			t.Skipf("catalog not available (%v)", err)
-		}
+		catalog := consoleCatalog(t, locale)
 		for key := range cleanupReasonJA {
-			if !strings.Contains(string(b), `"`+key+`"`) {
-				t.Errorf("%s.ts is missing %q", locale, key)
+			if !consoleCatalogHasKey(catalog, key) {
+				t.Errorf("%s catalog is missing %q", locale, key)
 			}
 			// The Console also renders each reason as a state badge + hint (row line 2,
 			// clean.reason_badge.* / clean.reason_hint.*). A missing pair degrades to the
 			// full sentence silently — keep the split catalogs complete instead.
 			suffix := strings.TrimPrefix(key, "clean.reason.")
 			for _, derived := range []string{"clean.reason_badge." + suffix, "clean.reason_hint." + suffix} {
-				if !strings.Contains(string(b), `"`+derived+`"`) {
-					t.Errorf("%s.ts is missing %q", locale, derived)
+				if !consoleCatalogHasKey(catalog, derived) {
+					t.Errorf("%s catalog is missing %q", locale, derived)
 				}
 			}
 		}

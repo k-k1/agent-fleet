@@ -136,8 +136,8 @@ in the same change — a shelf with a stale translation is worse than one with n
 - `decisions/` is bilingual too, on the same terms. An ADR is append-only and
   immutable, so translating one is a translation and not a rewrite: never change the
   wording of a decision, a measurement or a discarded option to make it read better.
-- Quote the Console's own strings for UI labels: `console/src/lib/i18n/locales/en.ts`
-  for English, `ja.ts` for Japanese. Inventing a translation for a button creates a
+- Quote the Console's own strings for UI labels: `console/src/lib/i18n/locales/en/`
+  for English, `ja/` for Japanese (one file per domain). Inventing a translation for a button creates a
   term the reader cannot find on screen.
 
 ## 6. Say it once, in `guide/ref/`

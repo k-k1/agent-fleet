@@ -32,7 +32,7 @@ import (
 )
 
 // Validation codes, identical to mcpreg's (docs/log/48 §11.3: one reason = one code).
-// 追加・改名時は console/src/lib/i18n/locales/{ja,en}.ts の "err.<code>" も同時に。
+// 追加・改名時は console/src/lib/i18n/locales/{ja,en}/errors.ts の "err.<code>" も同時に。
 const (
 	codeMCPNameInvalid    = "mcp_name_invalid"
 	codeMCPNameReserved   = "mcp_name_reserved"

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -94,14 +92,10 @@ func TestNoticeKeysExistInConsoleCatalogs(t *testing.T) {
 		noticeKeyAutoPaused + ".tail",
 	}
 	for _, locale := range []string{"ja", "en"} {
-		path := filepath.Join("..", "..", "console", "src", "lib", "i18n", "locales", locale+".ts")
-		b, err := os.ReadFile(path)
-		if err != nil {
-			t.Skipf("catalog not available (%v)", err)
-		}
+		catalog := consoleCatalog(t, locale)
 		for _, k := range append(append([]string{}, keys...), autoPaused...) {
-			if !strings.Contains(string(b), `"`+k+`"`) {
-				t.Errorf("%s.ts is missing %q", locale, k)
+			if !consoleCatalogHasKey(catalog, k) {
+				t.Errorf("%s catalog is missing %q", locale, k)
 			}
 		}
 	}
