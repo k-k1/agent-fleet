@@ -1,6 +1,6 @@
-// runtime_ecs_ec2_golden_sweep_test.go — sweepOrphans, the AWS half of "the database
+// runtime_ecs_ec2_golden_sweep_test.go — SweepOrphans, the AWS half of "the database
 // forgot about a bake workspace but AWS did not" (docs/log/64 §64.29.5).
-package main
+package runtime
 
 import (
 	"context"
@@ -35,9 +35,9 @@ func TestGoldenSweepOrphansRemovesWhatNoRowOwns(t *testing.T) {
 	h.ecs.addService(sweepSeedName, "ACTIVE", 0, 0)
 	h.ec2.addHomeVolume("vol-seed", "M-seed", sweepSeedName, "ap-northeast-1a")
 
-	removed, err := h.factory().sweepOrphans(ctx, sweepSeedName)
+	removed, err := h.factory().SweepOrphans(ctx, sweepSeedName)
 	if err != nil {
-		t.Fatalf("sweepOrphans: %v", err)
+		t.Fatalf("SweepOrphans: %v", err)
 	}
 	if len(removed) != 2 || !strings.Contains(removed[0], sweepSeedName) || !strings.Contains(removed[1], "vol-seed") {
 		t.Fatalf("removed = %v, want the service and the home", removed)
@@ -56,9 +56,9 @@ func TestGoldenSweepOrphansIsANoOpWhenThereIsNothing(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
 
-	removed, err := h.factory().sweepOrphans(ctx, sweepSeedName)
+	removed, err := h.factory().SweepOrphans(ctx, sweepSeedName)
 	if err != nil || len(removed) != 0 {
-		t.Fatalf("sweepOrphans = %v, %v; want nothing removed and no error", removed, err)
+		t.Fatalf("SweepOrphans = %v, %v; want nothing removed and no error", removed, err)
 	}
 	if len(h.ecs.deleteCalls) != 0 {
 		t.Fatalf("deleted %v although there was nothing to delete", h.ecs.deleteCalls)
@@ -74,7 +74,7 @@ func TestGoldenSweepOrphansLeavesALiveServiceAlone(t *testing.T) {
 	h.ecs.addService(sweepSeedName, "ACTIVE", 1, 1)
 	h.ec2.addHomeVolume("vol-seed", "M-seed", sweepSeedName, "ap-northeast-1a")
 
-	removed, err := h.factory().sweepOrphans(ctx, sweepSeedName)
+	removed, err := h.factory().SweepOrphans(ctx, sweepSeedName)
 	if err == nil {
 		t.Fatal("swept a service that is running a task")
 	}
@@ -94,7 +94,7 @@ func TestGoldenSweepOrphansLeavesAnAttachedHomeAlone(t *testing.T) {
 	h.ec2.addHomeVolume("vol-seed", "M-seed", sweepSeedName, "ap-northeast-1a")
 	h.ec2.attach("vol-seed", "i-1", time.Now())
 
-	if _, err := h.factory().sweepOrphans(ctx, sweepSeedName); err == nil {
+	if _, err := h.factory().SweepOrphans(ctx, sweepSeedName); err == nil {
 		t.Fatal("swept a home that is still attached")
 	}
 	if _, ok := h.ec2.volumes["vol-seed"]; !ok {
@@ -113,9 +113,9 @@ func TestGoldenSweepOrphansWaitsForACaptureInFlight(t *testing.T) {
 		State: ec2types.SnapshotStatePending,
 	}
 
-	removed, err := h.factory().sweepOrphans(ctx, sweepSeedName)
+	removed, err := h.factory().SweepOrphans(ctx, sweepSeedName)
 	if err != nil {
-		t.Fatalf("sweepOrphans: %v", err)
+		t.Fatalf("SweepOrphans: %v", err)
 	}
 	if len(removed) != 0 {
 		t.Fatalf("removed = %v while a snapshot was still copying", removed)

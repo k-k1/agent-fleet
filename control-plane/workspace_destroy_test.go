@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // destroyingRuntime records the teardown and reports a leftover, standing in for the
@@ -32,7 +34,7 @@ type destroyingFactory struct {
 	err       error
 }
 
-func (f *destroyingFactory) New(Workspace, string, []string) Runtime {
+func (f *destroyingFactory) New(runtime.Workspace, string, []string) Runtime {
 	return destroyingRuntime{destroyed: &f.destroyed, leftovers: f.leftovers, err: f.err}
 }
 

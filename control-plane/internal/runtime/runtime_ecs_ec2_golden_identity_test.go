@@ -8,7 +8,7 @@
 // 逆向きはもっと悪い: 可変タグ（`:dev`）へ新しい内容を push すると文字列は一致したままで、
 // 新規メンバーだけが**古いイメージで焼かれた home** を配られる。どちらの誤りも「テストも
 // 実機も緑」で通る型なので、両方向をここで固定する。
-package main
+package runtime
 
 import (
 	"context"
@@ -29,10 +29,10 @@ const (
 // answer (and the second one's fake ECR would never be called).
 func withFreshCache(t *testing.T) {
 	t.Helper()
-	orig := freshness
-	t.Cleanup(func() { freshness = orig })
+	orig := Freshness
+	t.Cleanup(func() { Freshness = orig })
 	now := time.Unix(1000, 0)
-	freshness = &ttlCache{m: map[string]ttlEntry{}, now: func() time.Time { return now }}
+	Freshness = &TTLCache{m: map[string]TTLEntry{}, now: func() time.Time { return now }}
 }
 
 // addGoldenIdentity puts a completed x86_64 golden in the fake world with both stamps —
@@ -139,9 +139,9 @@ func TestGoldenCaptureStampsBothIdentities(t *testing.T) {
 	f.base.ecr = reg
 	f.base.cfg.workspaceImage = goldenImgNewTag
 
-	id, err := f.snapshotHome(ctx, "vol-1", "af-ws-acme-alice", ec2ArchX86)
+	id, err := f.SnapshotHome(ctx, "vol-1", "af-ws-acme-alice", EC2ArchX86)
 	if err != nil {
-		t.Fatalf("snapshotHome: %v", err)
+		t.Fatalf("SnapshotHome: %v", err)
 	}
 	snap := h.ec2.snapshots[id]
 	if snap == nil {

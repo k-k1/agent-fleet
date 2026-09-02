@@ -1,4 +1,4 @@
-package main
+package runtime
 
 import (
 	"context"
@@ -96,9 +96,9 @@ type ecsEC2Runtime struct {
 	sleep func(context.Context, time.Duration) error
 
 	// seedRole is the snapshot ROLE a brand-new home for this workspace is built from.
-	// Empty — which is every workspace a person owns — means ec2RoleGolden.
+	// Empty — which is every workspace a person owns — means EC2RoleGolden.
 	//
-	// The golden baker sets it to ec2RoleGoldenCandidate on its probe, and that is the
+	// The golden baker sets it to EC2RoleGoldenCandidate on its probe, and that is the
 	// entire mechanism by which a freshly baked golden is proven to boot BEFORE anyone
 	// else can be given it (docs/log/64 §64.28.3). Set once by the baker on a runtime for
 	// its own reserved membership, before that workspace is ever started; no session,
@@ -167,12 +167,12 @@ const (
 	// entrypoint symlinks it back into ~ (ADR 0045 決定 3-6 のハイブリッド).
 	ec2KeepPath = "/var/lib/af/keep"
 
-	ec2TagPool       = "af-pool"
-	ec2TagRole       = "af-role"
-	ec2TagMembership = "af-membership"
-	ec2TagWorkspace  = "af-workspace"
-	ec2TagSlotSize   = "af-slot-size"
-	// ec2TagTenant is the owning tenant's SLUG, and it exists only for the bill
+	EC2TagPool       = "af-pool"
+	EC2TagRole       = "af-role"
+	EC2TagMembership = "af-membership"
+	EC2TagWorkspace  = "af-workspace"
+	EC2TagSlotSize   = "af-slot-size"
+	// EC2TagTenant is the owning tenant's SLUG, and it exists only for the bill
 	// (docs/log/67, ADR 0048 決定 3). Nothing in the pool logic reads it: the CP can already
 	// derive the tenant from af-membership through its own DB, so an opaque tenant id
 	// here would buy nothing. A slug can be read straight out of Cost Explorer, which
@@ -182,20 +182,20 @@ const (
 	// in billing data for the same reason af-workspace is NOT activated as a cost
 	// allocation tag: a slug names an organisation, af-workspace names a person
 	// (it is built from their email).
-	ec2TagTenant = "af-tenant"
-	// ec2TagClaim marks a home volume as "a slot is being launched for this user".
+	EC2TagTenant = "af-tenant"
+	// EC2TagClaim marks a home volume as "a slot is being launched for this user".
 	// It exists for exactly one window: RunInstances returns a PENDING instance, and
 	// AttachVolume only accepts running|stopped, so for those few seconds the volume
 	// is the only place that can say "this workspace is starting". Without it State()
 	// would answer `stopped`, the Console would offer Start again, and the second
 	// Start would create a second slot.
-	ec2TagClaim   = "af-claim"
+	EC2TagClaim   = "af-claim"
 	ec2TagClaimAt = "af-claim-at"
-	// ec2TagIdleSince marks a home that is still ATTACHED to its slot but whose
+	// EC2TagIdleSince marks a home that is still ATTACHED to its slot but whose
 	// workspace is stopped. It is what makes "the same user gets the same slot" work
 	// without the CP remembering anything: the attachment IS the affinity, and this tag
 	// is how long it has been dormant (for the idle-stop and for picking a victim).
-	ec2TagIdleSince = "af-idle-since"
+	EC2TagIdleSince = "af-idle-since"
 	// ec2TagSlotIdleSince is af-idle-since's counterpart for a slot that holds NO home:
 	// the moment the box went back to the free pool. It is on the INSTANCE because there
 	// is nowhere else to put it — a free slot has no volume, and the CP holds no state
@@ -213,7 +213,7 @@ const (
 	// already uses. Cleared when a workspace takes the slot, so a short tenancy does not
 	// leave the box looking free since before it was busy.
 	ec2TagSlotIdleSince = "af-slot-idle-since"
-	// ec2TagHibernating marks a home that has entered hibernation (§64.18.2) and the
+	// EC2TagHibernating marks a home that has entered hibernation (§64.18.2) and the
 	// moment it did. It exists because hibernation spans several sweeps and cannot lean
 	// on af-idle-since: releaseSlot — hibernation's own first step — clears that tag.
 	//
@@ -221,7 +221,7 @@ const (
 	// captures this dormancy" apart from "a snapshot of the same volume taken during an
 	// EARLIER one", and mistaking the second for the first deletes a volume holding work
 	// that was never captured. Only a snapshot started after this mark counts.
-	ec2TagHibernating = "af-hibernating"
+	EC2TagHibernating = "af-hibernating"
 
 	ec2RoleHome = "home"
 	ec2RoleSlot = "slot"
@@ -242,37 +242,37 @@ const (
 	// terminate it, and "some slot went away" is not a report.
 	ec2TagQuarantineReason = "af-quarantine-reason"
 	ec2TagQuarantineAt     = "af-quarantine-at"
-	// ec2RoleGolden is the ONE shared snapshot new homes are built from: a home that has
+	// EC2RoleGolden is the ONE shared snapshot new homes are built from: a home that has
 	// already paid boot-install (48s) and warmed its caches (ADR 0045 決定 9). One per
 	// pool, no membership tag — deleting it by mistake would cost every future user
 	// their first two minutes, which is why nothing that walks per-membership resources
 	// can ever match it.
-	ec2RoleGolden = "golden"
-	// ec2RoleGoldenCandidate is a golden that has been BAKED but not yet proven to
+	EC2RoleGolden = "golden"
+	// EC2RoleGoldenCandidate is a golden that has been BAKED but not yet proven to
 	// boot (docs/log/64 §64.28.3). Nothing seeds an ordinary home from it — the whole
 	// point is that it is invisible to goldenSnapshot()'s default lookup, so a
 	// candidate that turns out to be unbootable can never reach a real user. The
 	// baker's probe asks for this role explicitly, and only a probe that comes up
-	// healthy gets it renamed to ec2RoleGolden.
+	// healthy gets it renamed to EC2RoleGolden.
 	//
 	// ★ The failure this exists for: a golden whose home cannot boot looks like a
 	// complete success right up to "snapshot completed". What breaks is the NEXT new
 	// user, and the only symptom is a task that restarts forever. Measured on a live
 	// deployment — the first golden ever baked from the product's own path was
 	// unbootable, and nothing before the user's Console said so.
-	ec2RoleGoldenCandidate = "golden-candidate"
-	// ec2RoleGoldenRejected is a candidate whose probe did not come up. Kept rather
+	EC2RoleGoldenCandidate = "golden-candidate"
+	// EC2RoleGoldenRejected is a candidate whose probe did not come up. Kept rather
 	// than deleted: it is the evidence for why this image has no golden, and it is
 	// also the memo that stops the baker retrying the same broken image every tick.
-	ec2RoleGoldenRejected = "golden-rejected"
+	EC2RoleGoldenRejected = "golden-rejected"
 	// ec2TagBakeStarted is when the baker began waiting on a step, by the CP's clock.
 	// It is the deadline anchor for "the probe never became healthy" — without it a
 	// crash-looping probe would hold a slot forever, since nothing else about it ever
-	// changes. Same discipline as ec2TagHibernating: the state lives in AWS, so a CP
+	// changes. Same discipline as EC2TagHibernating: the state lives in AWS, so a CP
 	// that restarts mid-bake resumes instead of starting over (ADR 0012).
 	ec2TagBakeStarted = "af-bake-started"
-	// ec2TagBakeReason records why a candidate was rejected, for the operator.
-	ec2TagBakeReason = "af-bake-reason"
+	// EC2TagBakeReason records why a candidate was rejected, for the operator.
+	EC2TagBakeReason = "af-bake-reason"
 	// ec2TagBakeReady marks a SEED's home volume as having finished boot-install — the
 	// difference between "this home is worth capturing" and "this home merely exists".
 	//
@@ -289,10 +289,10 @@ const (
 	// sweep, and to the golden lookup. Nothing gets to mistake a backup for the copy it
 	// was waiting for.
 	ec2RoleBackup = "backup"
-	// ec2TagBackupAt is when a backup was STARTED, by the CP's clock. EBS reports its own
+	// EC2TagBackupAt is when a backup was STARTED, by the CP's clock. EBS reports its own
 	// StartTime, but the schedule is decided against this: a snapshot's StartTime is what
 	// AWS did, and the question here is when this deployment last asked.
-	ec2TagBackupAt = "af-backup-at"
+	EC2TagBackupAt = "af-backup-at"
 	// ec2TagImage stamps the golden snapshot with the workspace image it was baked from.
 	// A golden that predates an image or CLI-pin bump would start new users on the OLD
 	// tools, silently and only for them — so the CP compares and refuses a stale one
@@ -569,8 +569,8 @@ type ec2Slot struct {
 // CPU architectures a class may declare. They are the ECS/EC2 spellings, so the
 // value goes straight into RuntimePlatform without a second vocabulary.
 const (
-	ec2ArchX86 = "x86_64"
-	ec2ArchArm = "arm64"
+	EC2ArchX86 = "x86_64"
+	EC2ArchArm = "arm64"
 )
 
 // ec2SlotClass is one named ladder: which KIND of machine, as opposed to how big.
@@ -615,8 +615,8 @@ func (f *ecsEC2Factory) MaxSlots() int { return f.pool.maxSlots }
 // group, image) and adds the EC2/SSM clients plus the pool settings; then it starts
 // the drift sweeper (docs/log/64 §64.15.6), which is what makes the "no CP-side state"
 // choice survivable — every unfinished teardown is re-derived from tags.
-func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
-	baseFactory, err := newECSFactory(m)
+func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
+	baseFactory, err := newECSFactory(mcfg)
 	if err != nil {
 		return nil, err
 	}
@@ -624,7 +624,7 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 	if !ok {
 		return nil, fmt.Errorf("ecs-ec2: unexpected base factory %T", baseFactory)
 	}
-	ac, err := awsConfigFor(context.Background(), base.cfg.region)
+	ac, err := AWSConfigFor(context.Background(), base.cfg.region)
 	if err != nil {
 		return nil, fmt.Errorf("aws config: %w", err)
 	}
@@ -634,9 +634,9 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		pool:           envOr("AF_ECS_EC2_POOL", base.cfg.cluster),
 		classes:        parseSlotClasses(envOr("AF_ECS_EC2_SLOT_TYPES", "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")),
 		defaultClass:   os.Getenv("AF_ECS_EC2_DEFAULT_SLOT_CLASS"),
-		maxSlots:       envInt("AF_ECS_EC2_MAX_SLOTS", 8),
-		homeGiB:        int32(envInt("AF_ECS_EC2_HOME_GB", 50)),
-		tmpfsMiB:       int32(envInt("AF_ECS_EC2_TMP_MB", 2048)),
+		maxSlots:       EnvInt("AF_ECS_EC2_MAX_SLOTS", 8),
+		homeGiB:        int32(EnvInt("AF_ECS_EC2_HOME_GB", 50)),
+		tmpfsMiB:       int32(EnvInt("AF_ECS_EC2_TMP_MB", 2048)),
 		// noexec is deliberately NOT in the default set. ADR 0045 決定 8 names
 		// noexec,nosuid,nodev, but this is a developer container: installers, test
 		// runners and build tools routinely exec out of /tmp, and a noexec /tmp turns
@@ -648,23 +648,23 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		// A launch that has not produced a running service within this window is dead,
 		// and the workspace must become startable again — the claim is what would
 		// otherwise keep answering `starting` forever.
-		claimTTL:       time.Duration(envInt("AF_ECS_EC2_CLAIM_TTL_SEC", 300)) * time.Second,
-		releaseGrace:   time.Duration(envInt("AF_ECS_EC2_RELEASE_GRACE_SEC", 600)) * time.Second,
-		slotSleepAfter: time.Duration(envInt("AF_ECS_EC2_SLOT_SLEEP_SEC", 900)) * time.Second,
+		claimTTL:       time.Duration(EnvInt("AF_ECS_EC2_CLAIM_TTL_SEC", 300)) * time.Second,
+		releaseGrace:   time.Duration(EnvInt("AF_ECS_EC2_RELEASE_GRACE_SEC", 600)) * time.Second,
+		slotSleepAfter: time.Duration(EnvInt("AF_ECS_EC2_SLOT_SLEEP_SEC", 900)) * time.Second,
 		// Default 0 = never terminate. See the field comment: this is the step that gives
 		// the root volume back, and it is the pre-existing behaviour, so it is opt-in.
-		slotTerminateAfter: time.Duration(envInt("AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC", 0)) * time.Second,
+		slotTerminateAfter: time.Duration(EnvInt("AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC", 0)) * time.Second,
 		// Default 0 = no hibernation. See the field comment: this is the one automatic
 		// path that moves a user's home, so it is opt-in.
-		hibernateAfter: time.Duration(envInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second,
-		backupKeep:     envInt("AF_ECS_EC2_BACKUP_KEEP", 3),
-		sweepEvery:     time.Duration(envInt("AF_ECS_EC2_SWEEP_SEC", 300)) * time.Second,
-		ghostAfter:     time.Duration(envInt("AF_ECS_EC2_GHOST_AFTER_SEC", 3600)) * time.Second,
-		waitBudget:     time.Duration(envInt("AF_ECS_EC2_WAIT_SEC", 600)) * time.Second,
+		hibernateAfter: time.Duration(EnvInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second,
+		backupKeep:     EnvInt("AF_ECS_EC2_BACKUP_KEEP", 3),
+		sweepEvery:     time.Duration(EnvInt("AF_ECS_EC2_SWEEP_SEC", 300)) * time.Second,
+		ghostAfter:     time.Duration(EnvInt("AF_ECS_EC2_GHOST_AFTER_SEC", 3600)) * time.Second,
+		waitBudget:     time.Duration(EnvInt("AF_ECS_EC2_WAIT_SEC", 600)) * time.Second,
 		// Default ON, unlike the other timers here: this one does not change what the
 		// product does in the normal case, it only puts an end to a wait that was
 		// previously unbounded in practice. See the field comment for the incident.
-		slotLostAfter:  time.Duration(envInt("AF_ECS_EC2_SLOT_LOST_AFTER_SEC", 300)) * time.Second,
+		slotLostAfter:  time.Duration(EnvInt("AF_ECS_EC2_SLOT_LOST_AFTER_SEC", 300)) * time.Second,
 		hostReserveMiB: parseHostReserveMiB(envOr("AF_ECS_EC2_HOST_RESERVE_MB", "auto")),
 	}
 	if err := pool.validate(); err != nil {
@@ -862,7 +862,7 @@ func (p ec2PoolConfig) workspaceMemCapMiB(slotMemMiB int64) int64 {
 func parseSlotClasses(spec string) []ec2SlotClass {
 	if !strings.Contains(spec, "|") {
 		if slots := parseSlotSizes(spec); len(slots) > 0 {
-			return []ec2SlotClass{{id: "default", arch: ec2ArchX86, slots: slots}}
+			return []ec2SlotClass{{id: "default", arch: EC2ArchX86, slots: slots}}
 		}
 		return nil
 	}
@@ -882,8 +882,8 @@ func parseSlotClasses(spec string) []ec2SlotClass {
 		if id == "" {
 			continue
 		}
-		if arch != ec2ArchX86 && arch != ec2ArchArm {
-			log.Printf("ecs-ec2: ignoring slot class %q: arch %q is not %s or %s", id, arch, ec2ArchX86, ec2ArchArm)
+		if arch != EC2ArchX86 && arch != EC2ArchArm {
+			log.Printf("ecs-ec2: ignoring slot class %q: arch %q is not %s or %s", id, arch, EC2ArchX86, EC2ArchArm)
 			continue
 		}
 		slots := parseSlotSizes(parts[3])
@@ -1252,7 +1252,7 @@ func (e *ecsEC2Runtime) Stop(ctx context.Context) error {
 func (e *ecsEC2Runtime) markIdle(ctx context.Context, volumeID string) {
 	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{volumeID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagIdleSince), Value: aws.String(e.now().UTC().Format(time.RFC3339))}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagIdleSince), Value: aws.String(e.now().UTC().Format(time.RFC3339))}},
 	}); err != nil {
 		log.Printf("ecs-ec2: marking %s idle failed (the sweeper will stamp it): %v", volumeID, err)
 	}
@@ -1261,7 +1261,7 @@ func (e *ecsEC2Runtime) markIdle(ctx context.Context, volumeID string) {
 func (e *ecsEC2Runtime) clearIdle(ctx context.Context, volumeID string) {
 	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{volumeID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagIdleSince)}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagIdleSince)}},
 	}); err != nil {
 		log.Printf("ecs-ec2: clearing the idle mark on %s failed: %v", volumeID, err)
 	}
@@ -1279,7 +1279,7 @@ func (e *ecsEC2Runtime) clearIdle(ctx context.Context, volumeID string) {
 func (e *ecsEC2Runtime) clearDormancy(ctx context.Context, volumeID string) {
 	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{volumeID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagIdleSince)}, {Key: aws.String(ec2TagHibernating)}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagIdleSince)}, {Key: aws.String(EC2TagHibernating)}},
 	}); err != nil {
 		log.Printf("ecs-ec2: clearing the dormancy marks on %s failed: %v", volumeID, err)
 	}
@@ -1287,7 +1287,7 @@ func (e *ecsEC2Runtime) clearDormancy(ctx context.Context, volumeID string) {
 
 // idleSince reports how long a home has been dormant, and whether it is dormant at all.
 func idleSince(vol *ec2types.Volume, now time.Time) (time.Duration, bool) {
-	v := ec2TagValue(vol.Tags, ec2TagIdleSince)
+	v := ec2TagValue(vol.Tags, EC2TagIdleSince)
 	if v == "" {
 		return 0, false
 	}
@@ -1841,7 +1841,7 @@ func (e *ecsEC2Runtime) markQuarantined(ctx context.Context, instanceID string, 
 	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{instanceID},
 		Tags: []ec2types.Tag{
-			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleQuarantined)},
+			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleQuarantined)},
 			{Key: aws.String(ec2TagQuarantineReason), Value: aws.String(reason)},
 			{Key: aws.String(ec2TagQuarantineAt), Value: aws.String(e.now().UTC().Format(time.RFC3339))},
 		},
@@ -2009,8 +2009,8 @@ func instancesHoldTaskENI(out *ec2.DescribeInstancesOutput) bool {
 func (e *ecsEC2Runtime) homeVolume(ctx context.Context) (*ec2types.Volume, error) {
 	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagMembership, e.base.membershipID),
-			tagFilter(ec2TagRole, ec2RoleHome),
+			tagFilter(EC2TagMembership, e.base.membershipID),
+			tagFilter(EC2TagRole, ec2RoleHome),
 		},
 	})
 	if err != nil {
@@ -2072,10 +2072,10 @@ func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2ty
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeVolume,
 			Tags: e.ownedTags([]ec2types.Tag{
-				{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
-				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
-				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
-				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
+				{Key: aws.String(EC2TagMembership), Value: aws.String(e.base.membershipID)},
+				{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleHome)},
+				{Key: aws.String(EC2TagWorkspace), Value: aws.String(e.base.name)},
+				{Key: aws.String(EC2TagPool), Value: aws.String(e.pool.pool)},
 				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-home")},
 			}),
 		}},
@@ -2173,12 +2173,12 @@ func (e *ecsEC2Runtime) attachHome(ctx context.Context, volumeID, instanceID str
 }
 
 // claim / unclaim mark the one window where a workspace is starting but has nothing
-// attached yet (see ec2TagClaim).
+// attached yet (see EC2TagClaim).
 func (e *ecsEC2Runtime) claim(ctx context.Context, volumeID, instanceID string) error {
 	_, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{volumeID},
 		Tags: []ec2types.Tag{
-			{Key: aws.String(ec2TagClaim), Value: aws.String(instanceID)},
+			{Key: aws.String(EC2TagClaim), Value: aws.String(instanceID)},
 			{Key: aws.String(ec2TagClaimAt), Value: aws.String(e.now().UTC().Format(time.RFC3339))},
 		},
 	})
@@ -2188,7 +2188,7 @@ func (e *ecsEC2Runtime) claim(ctx context.Context, volumeID, instanceID string) 
 func (e *ecsEC2Runtime) unclaim(ctx context.Context, volumeID string) {
 	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{volumeID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagClaim)}, {Key: aws.String(ec2TagClaimAt)}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagClaim)}, {Key: aws.String(ec2TagClaimAt)}},
 	}); err != nil {
 		log.Printf("ecs-ec2: clearing the claim on %s failed (sweeper will): %v", volumeID, err)
 	}
@@ -2202,7 +2202,7 @@ func (e *ecsEC2Runtime) ownedTags(tags []ec2types.Tag) []ec2types.Tag {
 	if e.base.tenantSlug == "" {
 		return tags
 	}
-	return append(tags, ec2types.Tag{Key: aws.String(ec2TagTenant), Value: aws.String(e.base.tenantSlug)})
+	return append(tags, ec2types.Tag{Key: aws.String(EC2TagTenant), Value: aws.String(e.base.tenantSlug)})
 }
 
 // tagSlotOwner / untagSlotOwner put this workspace's owner tags on the INSTANCE, and
@@ -2228,7 +2228,7 @@ func (e *ecsEC2Runtime) tagSlotOwner(ctx context.Context, instanceID string) {
 		return
 	}
 	tags := e.ownedTags([]ec2types.Tag{
-		{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
+		{Key: aws.String(EC2TagMembership), Value: aws.String(e.base.membershipID)},
 	})
 	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{instanceID},
@@ -2245,8 +2245,8 @@ func (e *ecsEC2Runtime) untagSlotOwner(ctx context.Context, instanceID string) {
 	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{instanceID},
 		Tags: []ec2types.Tag{
-			{Key: aws.String(ec2TagMembership)},
-			{Key: aws.String(ec2TagTenant)},
+			{Key: aws.String(EC2TagMembership)},
+			{Key: aws.String(EC2TagTenant)},
 		},
 	}); err != nil {
 		log.Printf("ecs-ec2: clearing the owner of slot %s failed (sweeper will): %v", instanceID, err)
@@ -2293,7 +2293,7 @@ func (e *ecsEC2Runtime) clearSlotFree(ctx context.Context, instanceID string) {
 // matters: a claim that outlives its failed launch pins the workspace at `starting`
 // forever, and Start returns early on `starting`, so the user could never recover.
 func (e *ecsEC2Runtime) claimLive(vol *ec2types.Volume) bool {
-	if ec2TagValue(vol.Tags, ec2TagClaim) == "" {
+	if ec2TagValue(vol.Tags, EC2TagClaim) == "" {
 		return false
 	}
 	at, err := time.Parse(time.RFC3339, ec2TagValue(vol.Tags, ec2TagClaimAt))
@@ -2329,8 +2329,8 @@ type ec2SlotCandidate struct {
 // and where a slot can be had is what decides its AZ.
 func (e *ecsEC2Runtime) slotsOfMyType(ctx context.Context, az string) (*ec2.DescribeInstancesOutput, error) {
 	filters := []ec2types.Filter{
-		tagFilter(ec2TagPool, e.pool.pool),
-		tagFilter(ec2TagRole, ec2RoleSlot),
+		tagFilter(EC2TagPool, e.pool.pool),
+		tagFilter(EC2TagRole, ec2RoleSlot),
 		{Name: aws.String("instance-state-name"), Values: []string{"running", "stopped"}},
 		{Name: aws.String("instance-type"), Values: []string{e.instanceType}},
 	}
@@ -2398,8 +2398,8 @@ func (e *ecsEC2Runtime) freeSlots(ctx context.Context, az string) ([]ec2SlotCand
 func (e *ecsEC2Runtime) occupiedInstances(ctx context.Context) (map[string]bool, error) {
 	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, e.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleHome),
+			tagFilter(EC2TagPool, e.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleHome),
 		},
 	})
 	if err != nil {
@@ -2410,7 +2410,7 @@ func (e *ecsEC2Runtime) occupiedInstances(ctx context.Context) (map[string]bool,
 		if inst := attachedInstance(&out.Volumes[i]); inst != "" {
 			busy[inst] = true
 		}
-		if inst := ec2TagValue(out.Volumes[i].Tags, ec2TagClaim); inst != "" && e.claimLive(&out.Volumes[i]) {
+		if inst := ec2TagValue(out.Volumes[i].Tags, EC2TagClaim); inst != "" && e.claimLive(&out.Volumes[i]) {
 			busy[inst] = true
 		}
 	}
@@ -2541,7 +2541,7 @@ func (p *ec2PoolConfig) validate() error {
 	}
 	if p.amiArm64 == "" {
 		for _, c := range p.classes {
-			if c.arch == ec2ArchArm {
+			if c.arch == EC2ArchArm {
 				return fmt.Errorf("slot class %q is %s but AF_ECS_EC2_AMI_ARM64 is empty "+
 					"(redeploy cfn/40-ec2-pool.yaml and pass its SlotAmiIdArm64 output)", c.id, c.arch)
 			}
@@ -2561,7 +2561,7 @@ func (p *ec2PoolConfig) validate() error {
 // template's own. An empty arch (a deployment that never declared classes) is x86_64,
 // which is what the template has always pinned.
 func (p ec2PoolConfig) amiFor(arch string) string {
-	if arch == ec2ArchArm {
+	if arch == EC2ArchArm {
 		return p.amiArm64
 	}
 	return ""
@@ -2618,9 +2618,9 @@ func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) 
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeInstance,
 			Tags: []ec2types.Tag{
-				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
-				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleSlot)},
-				{Key: aws.String(ec2TagSlotSize), Value: aws.String(e.instanceType)},
+				{Key: aws.String(EC2TagPool), Value: aws.String(e.pool.pool)},
+				{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleSlot)},
+				{Key: aws.String(EC2TagSlotSize), Value: aws.String(e.instanceType)},
 				{Key: aws.String("Name"), Value: aws.String("af-slot-" + e.instanceType)},
 			},
 		}},
@@ -2697,8 +2697,8 @@ func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string
 	}
 	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, e.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleHome),
+			tagFilter(EC2TagPool, e.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleHome),
 		},
 	})
 	if err != nil {
@@ -2715,7 +2715,7 @@ func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string
 		if az != "" && aws.ToString(v.AvailabilityZone) != az {
 			continue
 		}
-		if aws.ToString(v.VolumeId) == "" || ec2TagValue(v.Tags, ec2TagMembership) == e.base.membershipID {
+		if aws.ToString(v.VolumeId) == "" || ec2TagValue(v.Tags, EC2TagMembership) == e.base.membershipID {
 			continue
 		}
 		idle, ok := idleSince(v, now)
@@ -2776,10 +2776,10 @@ func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string
 func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, e.pool.pool),
+			tagFilter(EC2TagPool, e.pool.pool),
 			// af-role=slot leaves quarantined boxes alone, as everywhere else: those are
 			// evidence an operator has not looked at yet (決定 20).
-			tagFilter(ec2TagRole, ec2RoleSlot),
+			tagFilter(EC2TagRole, ec2RoleSlot),
 			{Name: aws.String("instance-state-name"), Values: []string{"running", "stopped"}},
 		},
 	})
@@ -2788,8 +2788,8 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 	}
 	vols, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, e.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleHome),
+			tagFilter(EC2TagPool, e.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleHome),
 		},
 	})
 	if err != nil {
@@ -2811,7 +2811,7 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 	for i := range vols.Volumes {
 		v := &vols.Volumes[i]
 		// A box a Start is landing on holds no attachment yet; only the claim says so.
-		if inst := ec2TagValue(v.Tags, ec2TagClaim); inst != "" && e.claimLive(v) {
+		if inst := ec2TagValue(v.Tags, EC2TagClaim); inst != "" && e.claimLive(v) {
 			claimed[inst] = true
 		}
 		if inst := attachedInstance(v); inst != "" {
@@ -2859,7 +2859,7 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 					freeFor = now.Sub(at)
 				}
 				take(candidate{id: id, itype: string(inst.InstanceType), free: true, idle: freeFor})
-			case occ.dormant && ec2TagValue(occ.vol.Tags, ec2TagMembership) != e.base.membershipID:
+			case occ.dormant && ec2TagValue(occ.vol.Tags, EC2TagMembership) != e.base.membershipID:
 				take(candidate{id: id, itype: string(inst.InstanceType), idle: occ.idle, vol: occ.vol})
 			}
 		}
@@ -2929,8 +2929,8 @@ func (e *ecsEC2Runtime) waitSlotGone(ctx context.Context, instanceID string) err
 // same trick the sweeper uses. Only the identity and the clients matter here; the
 // runtime is used exclusively to release that workspace's slot.
 func (e *ecsEC2Runtime) siblingFor(vol *ec2types.Volume) *ecsEC2Runtime {
-	membership := ec2TagValue(vol.Tags, ec2TagMembership)
-	name := ec2TagValue(vol.Tags, ec2TagWorkspace)
+	membership := ec2TagValue(vol.Tags, EC2TagMembership)
+	name := ec2TagValue(vol.Tags, EC2TagWorkspace)
 	if membership == "" || name == "" {
 		return nil
 	}
@@ -2947,8 +2947,8 @@ func (e *ecsEC2Runtime) siblingFor(vol *ec2types.Volume) *ecsEC2Runtime {
 func (e *ecsEC2Runtime) poolSize(ctx context.Context) (int, error) {
 	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, e.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleSlot),
+			tagFilter(EC2TagPool, e.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleSlot),
 			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
 		},
 	})
@@ -3027,8 +3027,8 @@ func (e *ecsEC2Runtime) spreadAZs(ctx context.Context) ([]string, error) {
 	}
 	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, e.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleHome),
+			tagFilter(EC2TagPool, e.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleHome),
 		},
 	})
 	if err != nil {
@@ -3517,7 +3517,7 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 	// field is part of what taskDefFingerprint hashes, so a member moved to another
 	// class provably gets a new revision rather than a reused one.
 	arch := ecstypes.CPUArchitectureX8664
-	if e.arch == ec2ArchArm {
+	if e.arch == EC2ArchArm {
 		arch = ecstypes.CPUArchitectureArm64
 	}
 	in := &ecs.RegisterTaskDefinitionInput{
@@ -3912,8 +3912,8 @@ func (e *ecsEC2Runtime) homeSnapshots(ctx context.Context) ([]ec2types.Snapshot,
 	out, err := e.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 		OwnerIds: []string{"self"},
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagMembership, e.base.membershipID),
-			tagFilter(ec2TagRole, ec2RoleHome),
+			tagFilter(EC2TagMembership, e.base.membershipID),
+			tagFilter(EC2TagRole, ec2RoleHome),
 		},
 	})
 	if err != nil {
@@ -3948,14 +3948,23 @@ func (e *ecsEC2Runtime) homeSnapshots(ctx context.Context) ([]ec2types.Snapshot,
 //   - a live service ⇒ do nothing. The reaper decided from the database that nobody has
 //     opened this workspace in weeks; AWS is the authority on whether it is running right
 //     now, and it is the one that would lose the mount.
-var _ hibernatingRuntime = (*ecsEC2Runtime)(nil)
+//
+// Hibernating pins this adapter to the hibernation entry point as an interface value.
+// The real interface is the reaper's (reaper.go: hibernatingRuntime) and cannot be
+// imported here, so the CP asserts against THIS in alias_runtime.go — chaining the two
+// declarations, because a drift between them would not break anything loudly: the
+// reaper's `rt.(hibernatingRuntime)` would simply stop matching, and homes would quietly
+// never hibernate again.
+var Hibernating interface {
+	BeginHibernate(ctx context.Context) error
+} = (*ecsEC2Runtime)(nil)
 
 func (e *ecsEC2Runtime) BeginHibernate(ctx context.Context) error {
 	vol, err := e.homeVolume(ctx)
 	if err != nil || vol == nil {
 		return err // no home here: already a snapshot, or never created
 	}
-	if at := ec2TagValue(vol.Tags, ec2TagHibernating); at != "" {
+	if at := ec2TagValue(vol.Tags, EC2TagHibernating); at != "" {
 		return nil // under way; the pool sweeper carries it the rest of the way
 	}
 	s, ok, err := e.base.describeService(ctx)
@@ -4040,10 +4049,10 @@ func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeSnapshot,
 			Tags: e.ownedTags([]ec2types.Tag{
-				{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
-				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
-				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
-				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
+				{Key: aws.String(EC2TagMembership), Value: aws.String(e.base.membershipID)},
+				{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleHome)},
+				{Key: aws.String(EC2TagWorkspace), Value: aws.String(e.base.name)},
+				{Key: aws.String(EC2TagPool), Value: aws.String(e.pool.pool)},
 				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-home")},
 			}),
 		}},
@@ -4064,7 +4073,7 @@ func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 // The "fresh" answer is what lets the caller take it back when the very next step fails:
 // see hibernate.
 func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volume) (time.Time, bool, error) {
-	if v := ec2TagValue(vol.Tags, ec2TagHibernating); v != "" {
+	if v := ec2TagValue(vol.Tags, EC2TagHibernating); v != "" {
 		at, err := time.Parse(time.RFC3339, v)
 		if err == nil {
 			return at, false, nil
@@ -4072,7 +4081,7 @@ func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volum
 		// An unparseable mark is worse than none: every snapshot would compare against a
 		// zero time and be accepted. Re-stamp.
 		log.Printf("ecs-ec2 hibernate: %s has an unreadable %s tag (%q); re-stamping",
-			e.base.name, ec2TagHibernating, v)
+			e.base.name, EC2TagHibernating, v)
 	}
 	// RFC3339Nano, not RFC3339: second granularity would round the mark DOWN, placing it
 	// up to a second before it was actually written — long enough to accept a snapshot
@@ -4080,7 +4089,7 @@ func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volum
 	at := e.now().UTC()
 	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{aws.ToString(vol.VolumeId)},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagHibernating), Value: aws.String(at.Format(time.RFC3339Nano))}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagHibernating), Value: aws.String(at.Format(time.RFC3339Nano))}},
 	}); err != nil {
 		return time.Time{}, false, fmt.Errorf("mark %s as hibernating: %w", aws.ToString(vol.VolumeId), err)
 	}
@@ -4093,7 +4102,7 @@ func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volum
 func (e *ecsEC2Runtime) unmarkHibernating(ctx context.Context, volumeID string) {
 	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{volumeID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagHibernating)}},
+		Tags:      []ec2types.Tag{{Key: aws.String(EC2TagHibernating)}},
 	}); err != nil {
 		log.Printf("ecs-ec2 hibernate: could not take the mark back off %s: %v", volumeID, err)
 	}
@@ -4143,18 +4152,18 @@ func (e *ecsEC2Runtime) restoreSnapshot(ctx context.Context) (string, error) {
 // they get old CLIs, and everything looks fine. A stale golden is therefore refused —
 // loudly — rather than used.
 func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
-	// Everybody reads ec2RoleGolden. Only the baker's probe reads a candidate, and it
+	// Everybody reads EC2RoleGolden. Only the baker's probe reads a candidate, and it
 	// says so on itself — an unproven golden is not something a lookup should be able
 	// to reach by accident (§64.28.3).
 	role := e.seedRole
 	if role == "" {
-		role = ec2RoleGolden
+		role = EC2RoleGolden
 	}
 	out, err := e.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 		OwnerIds: []string{"self"},
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, e.pool.pool),
-			tagFilter(ec2TagRole, role),
+			tagFilter(EC2TagPool, e.pool.pool),
+			tagFilter(EC2TagRole, role),
 		},
 	})
 	if err != nil {
@@ -4203,7 +4212,7 @@ func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
 	// A stale CANDIDATE is the baker's own bookkeeping, not an operator problem — it
 	// only means the image moved while a bake was in flight, and the next tick starts a
 	// fresh one. Only a stale published golden is worth the standing warning.
-	if len(stale) > 0 && role == ec2RoleGolden {
+	if len(stale) > 0 && role == EC2RoleGolden {
 		log.Printf("ecs-ec2: the golden snapshot %s was baked from another image; this deployment runs %s. "+
 			"New homes are being built EMPTY (slow first start) until it is re-baked — ADR 0045 決定 9.",
 			strings.Join(stale, ", "), want)
@@ -4246,8 +4255,8 @@ func (e *ecsEC2Runtime) backupSnapshots(ctx context.Context) ([]ec2types.Snapsho
 	out, err := e.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 		OwnerIds: []string{"self"},
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagMembership, e.base.membershipID),
-			tagFilter(ec2TagRole, ec2RoleBackup),
+			tagFilter(EC2TagMembership, e.base.membershipID),
+			tagFilter(EC2TagRole, ec2RoleBackup),
 		},
 	})
 	if err != nil {
@@ -4264,7 +4273,7 @@ func (e *ecsEC2Runtime) backupSnapshots(ctx context.Context) ([]ec2types.Snapsho
 // reports. The tag is preferred because the schedule is a statement about this deployment
 // ("when did we last ask"), not about how long AWS took to answer.
 func backupStamp(s ec2types.Snapshot) time.Time {
-	if v := ec2TagValue(s.Tags, ec2TagBackupAt); v != "" {
+	if v := ec2TagValue(s.Tags, EC2TagBackupAt); v != "" {
 		if at, err := time.Parse(time.RFC3339Nano, v); err == nil {
 			return at
 		}
@@ -4304,7 +4313,7 @@ func (e *ecsEC2Runtime) BackupHome(ctx context.Context, every time.Duration) err
 		// backup would add.
 		return err
 	}
-	if ec2TagValue(vol.Tags, ec2TagHibernating) != "" {
+	if ec2TagValue(vol.Tags, EC2TagHibernating) != "" {
 		// A hibernation is capturing this volume and will DELETE it. A second capture of
 		// the same blocks would pay twice for one moment in time.
 		return nil
@@ -4328,11 +4337,11 @@ func (e *ecsEC2Runtime) BackupHome(ctx context.Context, every time.Duration) err
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeSnapshot,
 			Tags: e.ownedTags([]ec2types.Tag{
-				{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
-				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleBackup)},
-				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
-				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
-				{Key: aws.String(ec2TagBackupAt), Value: aws.String(at.Format(time.RFC3339Nano))},
+				{Key: aws.String(EC2TagMembership), Value: aws.String(e.base.membershipID)},
+				{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleBackup)},
+				{Key: aws.String(EC2TagWorkspace), Value: aws.String(e.base.name)},
+				{Key: aws.String(EC2TagPool), Value: aws.String(e.pool.pool)},
+				{Key: aws.String(EC2TagBackupAt), Value: aws.String(at.Format(time.RFC3339Nano))},
 				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-backup")},
 			}),
 		}},
@@ -4422,8 +4431,8 @@ func (f *ecsEC2Factory) sweep(ctx context.Context) error {
 	defer cancel()
 	vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, f.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleHome),
+			tagFilter(EC2TagPool, f.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleHome),
 		},
 	})
 	if err != nil {
@@ -4459,14 +4468,14 @@ func (f *ecsEC2Factory) sweepSlotOwnerTags(ctx context.Context, homes []ec2types
 	for i := range homes {
 		if inst := attachedInstance(&homes[i]); inst != "" {
 			owner[inst] = ownerTags{
-				membership: ec2TagValue(homes[i].Tags, ec2TagMembership),
-				tenant:     ec2TagValue(homes[i].Tags, ec2TagTenant),
+				membership: ec2TagValue(homes[i].Tags, EC2TagMembership),
+				tenant:     ec2TagValue(homes[i].Tags, EC2TagTenant),
 			}
 		}
 	}
 	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, f.pool.pool),
+			tagFilter(EC2TagPool, f.pool.pool),
 			// A terminated box still answers DescribeInstances for a while and cannot be
 			// tagged; excluding it keeps the log free of failures nobody can act on.
 			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
@@ -4479,7 +4488,7 @@ func (f *ecsEC2Factory) sweepSlotOwnerTags(ctx context.Context, homes []ec2types
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
 			id := aws.ToString(inst.InstanceId)
-			stamped := ec2TagValue(inst.Tags, ec2TagMembership)
+			stamped := ec2TagValue(inst.Tags, EC2TagMembership)
 			want := owner[id]
 			switch {
 			case stamped == want.membership:
@@ -4488,15 +4497,15 @@ func (f *ecsEC2Factory) sweepSlotOwnerTags(ctx context.Context, homes []ec2types
 				log.Printf("ecs-ec2 sweep: slot %s is billed to %q but holds no home; clearing", id, stamped)
 				if _, err := f.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 					Resources: []string{id},
-					Tags:      []ec2types.Tag{{Key: aws.String(ec2TagMembership)}, {Key: aws.String(ec2TagTenant)}},
+					Tags:      []ec2types.Tag{{Key: aws.String(EC2TagMembership)}, {Key: aws.String(EC2TagTenant)}},
 				}); err != nil {
 					log.Printf("ecs-ec2 sweep: clearing the owner of slot %s failed: %v", id, err)
 				}
 			default:
 				log.Printf("ecs-ec2 sweep: slot %s holds %q but is billed to %q; restamping", id, want.membership, stamped)
-				tags := []ec2types.Tag{{Key: aws.String(ec2TagMembership), Value: aws.String(want.membership)}}
+				tags := []ec2types.Tag{{Key: aws.String(EC2TagMembership), Value: aws.String(want.membership)}}
 				if want.tenant != "" {
-					tags = append(tags, ec2types.Tag{Key: aws.String(ec2TagTenant), Value: aws.String(want.tenant)})
+					tags = append(tags, ec2types.Tag{Key: aws.String(EC2TagTenant), Value: aws.String(want.tenant)})
 				}
 				if _, err := f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{Resources: []string{id}, Tags: tags}); err != nil {
 					log.Printf("ecs-ec2 sweep: restamping the owner of slot %s failed: %v", id, err)
@@ -4504,10 +4513,10 @@ func (f *ecsEC2Factory) sweepSlotOwnerTags(ctx context.Context, homes []ec2types
 				// The new owner's tenant is unknown but the previous one's may still be
 				// on the box; leaving it would bill this person's hours to a tenant they
 				// are not in, which is worse than no tenant at all.
-				if want.tenant == "" && ec2TagValue(inst.Tags, ec2TagTenant) != "" {
+				if want.tenant == "" && ec2TagValue(inst.Tags, EC2TagTenant) != "" {
 					if _, err := f.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 						Resources: []string{id},
-						Tags:      []ec2types.Tag{{Key: aws.String(ec2TagTenant)}},
+						Tags:      []ec2types.Tag{{Key: aws.String(EC2TagTenant)}},
 					}); err != nil {
 						log.Printf("ecs-ec2 sweep: clearing a stale tenant tag on %s failed: %v", id, err)
 					}
@@ -4523,7 +4532,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		return
 	}
 	volumeID := aws.ToString(vol.VolumeId)
-	if ec2TagValue(vol.Tags, ec2TagClaim) != "" && !rt.claimLive(vol) {
+	if ec2TagValue(vol.Tags, EC2TagClaim) != "" && !rt.claimLive(vol) {
 		log.Printf("ecs-ec2 sweep: clearing an expired claim on %s", volumeID)
 		rt.unclaim(ctx, volumeID)
 	}
@@ -4534,7 +4543,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		// cannot be what resumes it). Keep advancing it — nothing else will, and stopping
 		// here leaves BOTH a snapshot and a volume billing. Deliberately not gated on
 		// hibernateAfter: turning the feature off must not strand a home half-way.
-		if ec2TagValue(vol.Tags, ec2TagHibernating) != "" {
+		if ec2TagValue(vol.Tags, EC2TagHibernating) != "" {
 			if err := rt.hibernate(ctx); err != nil {
 				log.Printf("ecs-ec2 sweep: hibernating %s failed: %v", rt.base.name, err)
 			}
@@ -4698,16 +4707,16 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 		}
 		// A slot some other workspace is LAUNCHING onto holds no attachment yet; only the
 		// claim says so. Missing it would stop a box mid-Start.
-		if inst := ec2TagValue(homes[i].Tags, ec2TagClaim); inst != "" && probe.claimLive(&homes[i]) {
+		if inst := ec2TagValue(homes[i].Tags, EC2TagClaim); inst != "" && probe.claimLive(&homes[i]) {
 			busy[inst] = true
 		}
 	}
 	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, f.pool.pool),
+			tagFilter(EC2TagPool, f.pool.pool),
 			// af-role=slot excludes quarantined boxes on purpose: quarantineSlot already
 			// stopped those, and re-stopping them would only add noise to the log.
-			tagFilter(ec2TagRole, ec2RoleSlot),
+			tagFilter(EC2TagRole, ec2RoleSlot),
 			{Name: aws.String("instance-state-name"), Values: []string{"running", "stopped"}},
 		},
 	})
@@ -4907,8 +4916,8 @@ func (f *ecsEC2Factory) probeRuntime() *ecsEC2Runtime {
 // tag — the sweeper starts from AWS, not from the database, so it can clean up after a
 // workspace the CP has not looked at since it restarted.
 func (f *ecsEC2Factory) runtimeForVolume(vol *ec2types.Volume) *ecsEC2Runtime {
-	membership := ec2TagValue(vol.Tags, ec2TagMembership)
-	name := ec2TagValue(vol.Tags, ec2TagWorkspace)
+	membership := ec2TagValue(vol.Tags, EC2TagMembership)
+	name := ec2TagValue(vol.Tags, EC2TagWorkspace)
 	if membership == "" || name == "" {
 		return nil
 	}
@@ -5071,7 +5080,7 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 
 // --- pool status for the admin UI (docs/log/64 §64.18.6) ---
 
-// ec2SlotView / ec2HomeView / ec2PoolStatus are what an operator needs to answer the three
+// ec2SlotView / ec2HomeView / EC2PoolStatus are what an operator needs to answer the three
 // questions this runtime introduces and no other one has: how many boxes am I paying for,
 // which of them are asleep, and whose home is where. Everything is derived from AWS at
 // call time — there is no pool state in the CP to show (ADR 0012).
@@ -5107,7 +5116,7 @@ type ec2HomeView struct {
 	BackupAgeMinutes int `json:"backup_age_minutes"`
 }
 
-type ec2PoolStatus struct {
+type EC2PoolStatus struct {
 	Runtime     string `json:"runtime"`
 	Pool        string `json:"pool"`
 	MaxSlots    int    `json:"max_slots"`
@@ -5134,10 +5143,10 @@ type ec2PoolStatus struct {
 	// deployment's classes declare (docs/log/70 §70.6). The six scalars above are this
 	// list's FIRST entry — the default class's architecture — kept so nothing that
 	// reads them has to change on a deployment that has only one.
-	Goldens []ec2GoldenView `json:"goldens,omitempty"`
+	Goldens []EC2GoldenView `json:"goldens,omitempty"`
 	// SlotClasses names the declared classes for the pool screen. Absent when the
 	// deployment declared a single unnamed ladder.
-	SlotClasses []workspaceSlotClass `json:"slot_classes,omitempty"`
+	SlotClasses []WorkspaceSlotClass `json:"slot_classes,omitempty"`
 	// AutoBake is AF_ECS_EC2_GOLDEN_AUTOBAKE. Not derivable from AWS like everything
 	// else here, and filled in by the manager rather than this adapter — but without it
 	// "there is no golden and nothing is happening" has two very different meanings
@@ -5152,12 +5161,12 @@ type ec2PoolStatus struct {
 	// max_workspaces bounds CONCURRENT workspaces, MaxSlots bounds boxes that EXIST, and
 	// a stopped workspace still holds a box (lazy release) while counting toward neither
 	// tenant's concurrency. See poolBudget.
-	Budget *poolBudget `json:"budget,omitempty"`
+	Budget *PoolBudget `json:"budget,omitempty"`
 }
 
-// ec2GoldenView is one architecture's golden situation, including how far along a bake
+// EC2GoldenView is one architecture's golden situation, including how far along a bake
 // that is under way has got (docs/log/64 §64.30).
-type ec2GoldenView struct {
+type EC2GoldenView struct {
 	Arch       string `json:"arch"`
 	SnapshotID string `json:"snapshot_id"`
 	Image      string `json:"image"`
@@ -5206,11 +5215,11 @@ const (
 	ec2BakePhaseSnapshot  = "snapshot"  // EBS is copying the candidate
 	ec2BakePhaseProbe     = "probe"     // a probe workspace is being booted from the candidate
 	ec2BakePhasePublished = "published" // a golden for the running image is in use
-	ec2BakePhaseIdle      = "idle"      // nothing under way; the next tick starts one
-	ec2BakePhaseBlocked   = "blocked"   // a bake needs two free slots and cannot have them
+	EC2BakePhaseIdle      = "idle"      // nothing under way; the next tick starts one
+	EC2BakePhaseBlocked   = "blocked"   // a bake needs two free slots and cannot have them
 	ec2BakePhaseRejected  = "rejected"  // the last candidate could not boot; one attempt left
 	ec2BakePhaseGaveUp    = "gave_up"   // two candidates burned on this image — no more tries
-	ec2BakePhaseOff       = "off"       // AF_ECS_EC2_GOLDEN_AUTOBAKE=0
+	EC2BakePhaseOff       = "off"       // AF_ECS_EC2_GOLDEN_AUTOBAKE=0
 )
 
 // ec2BakeWorkspaceView is one of the two reserved workspaces a bake stands up.
@@ -5234,11 +5243,11 @@ func bakePhaseActive(phase string) bool {
 // PoolStatus reports the live pool. Read-only and tolerant: a section that cannot be read
 // comes back empty rather than failing the whole call, because the most likely time an
 // operator opens this screen is when something is already wrong.
-func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
+func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 	// One throwaway runtime as the library for the tag queries — the same trick the
 	// sweeper uses.
 	probe := f.probeRuntime()
-	st := ec2PoolStatus{
+	st := EC2PoolStatus{
 		Runtime: "ecs-ec2", Pool: f.pool.pool, MaxSlots: f.pool.maxSlots,
 		SleepAfterS:     int(f.pool.slotSleepAfter.Seconds()),
 		TerminateAfterS: int(f.pool.slotTerminateAfter.Seconds()),
@@ -5251,8 +5260,8 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 
 	vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, f.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleHome),
+			tagFilter(EC2TagPool, f.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleHome),
 		},
 	})
 	if err != nil {
@@ -5276,12 +5285,12 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		idle, _ := idleSince(v, now)
 		h := ec2HomeView{
 			VolumeID:    aws.ToString(v.VolumeId),
-			Workspace:   ec2TagValue(v.Tags, ec2TagWorkspace),
+			Workspace:   ec2TagValue(v.Tags, EC2TagWorkspace),
 			SizeGiB:     aws.ToInt32(v.Size),
 			AZ:          aws.ToString(v.AvailabilityZone),
 			AttachedTo:  attachedInstance(v),
 			IdleMinutes: int(idle.Minutes()),
-			Hibernating: ec2TagValue(v.Tags, ec2TagHibernating) != "",
+			Hibernating: ec2TagValue(v.Tags, EC2TagHibernating) != "",
 			// -1 rather than 0: "no copy at all" and "copied a moment ago" are opposite
 			// answers and must not render as the same number.
 			BackupAgeMinutes: -1,
@@ -5303,8 +5312,8 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	// see (決定 20).
 	insts, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
-			tagFilter(ec2TagPool, f.pool.pool),
-			{Name: aws.String("tag:" + ec2TagRole), Values: []string{ec2RoleSlot, ec2RoleQuarantined}},
+			tagFilter(EC2TagPool, f.pool.pool),
+			{Name: aws.String("tag:" + EC2TagRole), Values: []string{ec2RoleSlot, ec2RoleQuarantined}},
 			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
 		},
 	})
@@ -5334,7 +5343,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 				// been like that" — which used to read as 0 whatever the answer was.
 				s.IdleMinutes = int(now.Sub(at).Minutes())
 			}
-			if ec2TagValue(inst.Tags, ec2TagRole) == ec2RoleQuarantined {
+			if ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined {
 				s.Quarantined = true
 				s.QuarantineReason = ec2TagValue(inst.Tags, ec2TagQuarantineReason)
 			}
@@ -5347,7 +5356,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	// Hibernation snapshots, matched back onto the homes they belong to, plus the golden.
 	snaps, err := f.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 		OwnerIds: []string{"self"},
-		Filters:  []ec2types.Filter{tagFilter(ec2TagPool, f.pool.pool)},
+		Filters:  []ec2types.Filter{tagFilter(EC2TagPool, f.pool.pool)},
 	})
 	if err != nil {
 		log.Printf("ecs-ec2 pool status: snapshots unreadable: %v", err)
@@ -5356,25 +5365,25 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	// One golden per architecture (docs/log/70 §70.6), so the screen answers "is every
 	// class covered" rather than "is there a golden". byArch is keyed by the snapshot's
 	// af-arch — absent means x86_64, the only kind that existed before classes.
-	byArch := map[string]*ec2GoldenView{}
+	byArch := map[string]*EC2GoldenView{}
 	candidateState := map[string]ec2types.SnapshotState{}
 	// The screen has to agree with the Start path about what "for the running image"
 	// means, or it reports a golden as stale that goldenSnapshot happily uses (and the
 	// operator re-bakes for nothing). Same identity, same rule (goldenIdentity).
 	imgID := f.imageIdentity(ctx)
 	goldenMatched := map[string]bool{}
-	golden := func(arch string) *ec2GoldenView {
+	golden := func(arch string) *EC2GoldenView {
 		g, ok := byArch[arch]
 		if !ok {
-			g = &ec2GoldenView{Arch: arch}
+			g = &EC2GoldenView{Arch: arch}
 			byArch[arch] = g
 		}
 		return g
 	}
 	for _, s := range snaps.Snapshots {
 		arch := snapshotArch(s)
-		switch ec2TagValue(s.Tags, ec2TagRole) {
-		case ec2RoleGolden:
+		switch ec2TagValue(s.Tags, EC2TagRole) {
+		case EC2RoleGolden:
 			// A matching golden wins over a stale one, so the screen shows what the Start
 			// path would actually use — and shows the stale one only when that is all
 			// there is, which is exactly when the operator needs to be told to re-bake.
@@ -5384,7 +5393,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 				g.SnapshotID, g.Image = aws.ToString(s.SnapshotId), img
 				goldenMatched[arch] = match
 			}
-		case ec2RoleGoldenCandidate:
+		case EC2RoleGoldenCandidate:
 			// Only a candidate for the image being RUN says a bake is under way. One
 			// stamped with anything else is a leftover the baker will sweep.
 			if imgID.matches(s.Tags) {
@@ -5397,17 +5406,17 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 				candidateState[arch] = s.State
 				g.PhaseSince = bakeStartedAt(s)
 			}
-		case ec2RoleGoldenRejected:
+		case EC2RoleGoldenRejected:
 			if imgID.matches(s.Tags) {
 				g := golden(arch)
 				g.Rejected = aws.ToString(s.SnapshotId)
-				g.Reason = ec2TagValue(s.Tags, ec2TagBakeReason)
-				// The same count the baker gives up on (rejectedAttempts), derived from
+				g.Reason = ec2TagValue(s.Tags, EC2TagBakeReason)
+				// The same count the baker gives up on (RejectedAttempts), derived from
 				// the snapshots this call already read rather than asked for again.
 				g.Attempts++
 			}
 		case ec2RoleBackup:
-			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
+			ws := ec2TagValue(s.Tags, EC2TagWorkspace)
 			for i := range st.Homes {
 				if st.Homes[i].Workspace != ws {
 					continue
@@ -5425,7 +5434,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 				}
 			}
 		case ec2RoleHome:
-			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
+			ws := ec2TagValue(s.Tags, EC2TagWorkspace)
 			for i := range st.Homes {
 				if st.Homes[i].Workspace == ws {
 					st.Homes[i].SnapshotID = aws.ToString(s.SnapshotId)
@@ -5449,13 +5458,13 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	slotsInUse, slotRunning := 0, map[string]bool{}
 	for _, s := range st.Slots {
 		if s.Quarantined {
-			continue // the same set bakeBlocked counts: af-role=slot, quarantine excluded
+			continue // the same set BakeBlocked counts: af-role=slot, quarantine excluded
 		}
 		slotsInUse++
 		slotRunning[s.InstanceID] = s.State == "running"
 	}
 	blocked, _ := bakeCapacityBlocked(slotsInUse, f.pool.maxSlots)
-	for _, arch := range f.bakeArches() {
+	for _, arch := range f.BakeArches() {
 		g := golden(arch)
 		g.Stale = g.SnapshotID != "" && !goldenMatched[arch]
 		describeBake(g, arch, bakeHomes, slotRunning, candidateState[arch], blocked, slotsInUse)

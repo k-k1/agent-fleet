@@ -167,20 +167,6 @@ func TestDocsBridgeAuth(t *testing.T) {
 	}
 }
 
-// Which adapters stage <dataDir>/docs is a fact the start path reads off the type. If an
-// ECS adapter ever claimed the marker it would copy megabytes onto the CP's disk that no
-// task can read; if docker/native lost it, their bind mount would go empty.
-func TestDocsMounterMarker(t *testing.T) {
-	var _ runtimeDocsMounter = (*dockerRuntime)(nil)
-	var _ runtimeDocsMounter = (*nativeRuntime)(nil)
-	if _, ok := any((*ecsRuntime)(nil)).(runtimeDocsMounter); ok {
-		t.Error("ecsRuntime has no host seam to mount from — it must not claim staged docs")
-	}
-	if _, ok := any((*ecsEC2Runtime)(nil)).(runtimeDocsMounter); ok {
-		t.Error("ecsEC2Runtime has no host seam to mount from — it must not claim staged docs")
-	}
-}
-
 // A deployment with no baked docs must say so, rather than serving an empty archive the
 // agent would happily "install" (leaving the guide broken with no trace of why).
 func TestDocsBridgeNoBakedDocs(t *testing.T) {

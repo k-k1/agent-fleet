@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // --- fakes ------------------------------------------------------------------------
@@ -54,19 +56,19 @@ func newFakeGoldenPool() *fakeGoldenPool {
 	}
 }
 
-func (f *fakeGoldenPool) workspaceImage() string { return f.image }
-func (f *fakeGoldenPool) poolLabel() string      { return "test-pool" }
+func (f *fakeGoldenPool) WorkspaceImage() string { return f.image }
+func (f *fakeGoldenPool) PoolLabel() string      { return "test-pool" }
 
-func (f *fakeGoldenPool) bakeArches() []string { return f.arches }
+func (f *fakeGoldenPool) BakeArches() []string { return f.arches }
 
 // seedClassFor mirrors the real one: a class id on that arch. The tests only need it
 // to be distinct per arch and recorded.
-func (f *fakeGoldenPool) seedClassFor(arch string) string {
+func (f *fakeGoldenPool) SeedClassFor(arch string) string {
 	f.seedArch = append(f.seedArch, arch)
 	return "class-" + arch
 }
 
-func (f *fakeGoldenPool) goldenFor(_ context.Context, role, arch string) (goldenSnap, bool, error) {
+func (f *fakeGoldenPool) GoldenFor(_ context.Context, role, arch string) (goldenSnap, bool, error) {
 	var best goldenSnap
 	found := false
 	for id, r := range f.roles {
@@ -81,7 +83,7 @@ func (f *fakeGoldenPool) goldenFor(_ context.Context, role, arch string) (golden
 	return best, found, nil
 }
 
-func (f *fakeGoldenPool) bakeBlocked(context.Context) (bool, string, error) {
+func (f *fakeGoldenPool) BakeBlocked(context.Context) (bool, string, error) {
 	return f.blocked, f.blockWhy, nil
 }
 
@@ -94,7 +96,7 @@ func (f *fakeGoldenPool) archOf(id string) string {
 	return ec2ArchX86
 }
 
-func (f *fakeGoldenPool) snapshotHome(_ context.Context, volumeID, _, arch string) (string, error) {
+func (f *fakeGoldenPool) SnapshotHome(_ context.Context, volumeID, _, arch string) (string, error) {
 	f.nextID++
 	id := "snap-" + string(rune('a'+f.nextID-1))
 	f.snaps[id] = &goldenSnap{ID: id, Started: f.now}
@@ -104,7 +106,7 @@ func (f *fakeGoldenPool) snapshotHome(_ context.Context, volumeID, _, arch strin
 	return id, nil
 }
 
-func (f *fakeGoldenPool) setGoldenRole(_ context.Context, id, role, reason string) error {
+func (f *fakeGoldenPool) SetGoldenRole(_ context.Context, id, role, reason string) error {
 	f.roles[id] = role
 	if reason != "" {
 		f.reasons[id] = reason
@@ -112,7 +114,7 @@ func (f *fakeGoldenPool) setGoldenRole(_ context.Context, id, role, reason strin
 	return nil
 }
 
-func (f *fakeGoldenPool) dropSupersededGoldens(_ context.Context, keepID, arch string) error {
+func (f *fakeGoldenPool) DropSupersededGoldens(_ context.Context, keepID, arch string) error {
 	for id, r := range f.roles {
 		if id == keepID || f.archOf(id) != arch || (r != ec2RoleGolden && r != ec2RoleGoldenCandidate) {
 			continue
@@ -127,7 +129,7 @@ func (f *fakeGoldenPool) dropSupersededGoldens(_ context.Context, keepID, arch s
 // sweepOrphans stands in for "what is still in AWS under this name". orphans is what
 // the deployment has; swept records the names the baker asked about, so a test can tell
 // "it looked and found nothing" from "it never looked".
-func (f *fakeGoldenPool) sweepOrphans(_ context.Context, workspace string) ([]string, error) {
+func (f *fakeGoldenPool) SweepOrphans(_ context.Context, workspace string) ([]string, error) {
 	f.swept = append(f.swept, workspace)
 	if f.sweepErr != nil {
 		return nil, f.sweepErr
@@ -140,7 +142,7 @@ func (f *fakeGoldenPool) sweepOrphans(_ context.Context, workspace string) ([]st
 	return left, nil
 }
 
-func (f *fakeGoldenPool) rejectedAttempts(_ context.Context, arch string) (int, error) {
+func (f *fakeGoldenPool) RejectedAttempts(_ context.Context, arch string) (int, error) {
 	n := 0
 	for id, r := range f.roles {
 		if r == ec2RoleGoldenRejected && f.archOf(id) == arch {
@@ -194,15 +196,15 @@ func (r *fakeSeedRuntime) Endpoint() string             { return r.endpoint }
 func (r *fakeSeedRuntime) Token() string                { return "" }
 func (r *fakeSeedRuntime) Name() string                 { return r.name }
 
-func (r *fakeSeedRuntime) seedFromCandidate() { r.seededFromCand = true }
-func (r *fakeSeedRuntime) homeForBake(context.Context) (goldenHome, error) {
+func (r *fakeSeedRuntime) SeedFromCandidate() { r.seededFromCand = true }
+func (r *fakeSeedRuntime) HomeForBake(context.Context) (goldenHome, error) {
 	return r.home, nil
 }
-func (r *fakeSeedRuntime) markHomeBaked(_ context.Context, _ string) error {
+func (r *fakeSeedRuntime) MarkHomeBaked(_ context.Context, _ string) error {
 	r.home.Baked = true
 	return nil
 }
-func (r *fakeSeedRuntime) releaseForBake(context.Context) error {
+func (r *fakeSeedRuntime) ReleaseForBake(context.Context) error {
 	r.released = true
 	r.home.Capturable = true
 	return nil
@@ -228,7 +230,7 @@ type fakeGoldenFactory struct {
 	image string
 }
 
-func (f *fakeGoldenFactory) New(ws Workspace, _ string, _ []string) Runtime {
+func (f *fakeGoldenFactory) New(ws runtime.Workspace, _ string, _ []string) Runtime {
 	if rt, ok := f.rts[ws.ContainerName]; ok {
 		return rt
 	}
@@ -237,6 +239,12 @@ func (f *fakeGoldenFactory) New(ws Workspace, _ string, _ []string) Runtime {
 	return rt
 }
 func (f *fakeGoldenFactory) WorkspaceImage() string { return f.image }
+
+// poolCapableFactory is a RuntimeFactory that ALSO answers the golden-bake pool
+// interface — the capability goldenBakerFor gates on.
+type poolCapableFactory struct{ *fakeGoldenPool }
+
+func (*poolCapableFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
 
 // --- fixture ----------------------------------------------------------------------
 
@@ -423,7 +431,7 @@ func TestGoldenBakeRejectsACandidateThatWillNotBoot(t *testing.T) {
 	if f.role(candID) != ec2RoleGoldenRejected {
 		t.Fatalf("a probe that never came up must reject the candidate, got %q", f.role(candID))
 	}
-	if _, ok, _ := f.pool.goldenFor(ctx, ec2RoleGolden, ec2ArchX86); ok {
+	if _, ok, _ := f.pool.GoldenFor(ctx, ec2RoleGolden, ec2ArchX86); ok {
 		t.Fatal("published a golden despite the probe failing")
 	}
 	if !strings.Contains(f.pool.reasons[candID], "did not come up") {
@@ -490,7 +498,7 @@ func TestGoldenBakeTearsDownASeedThatNeverBoots(t *testing.T) {
 	if f.hasWorkspace(t, goldenSeedKey) {
 		t.Fatal("a seed that never booted was left holding its slot")
 	}
-	if n, _ := f.pool.rejectedAttempts(ctx, ec2ArchX86); n != 0 {
+	if n, _ := f.pool.RejectedAttempts(ctx, ec2ArchX86); n != 0 {
 		t.Fatalf("a seed that never booted burned a rejection attempt (%d) — that is evidence about the slot, not the image", n)
 	}
 }
@@ -548,7 +556,7 @@ func TestGoldenBakeProbeStillReadsTheCandidateOnASecondRound(t *testing.T) {
 		f.baker.step(ctx)
 		f.pool.completeAnyCandidate()
 	}
-	if _, ok, _ := f.pool.goldenFor(ctx, ec2RoleGolden, ec2ArchX86); !ok {
+	if _, ok, _ := f.pool.GoldenFor(ctx, ec2RoleGolden, ec2ArchX86); !ok {
 		t.Fatal("the first round did not publish a golden")
 	}
 
@@ -575,11 +583,17 @@ func TestGoldenBakerOnlyOnAPoolThatSeedsFromSnapshots(t *testing.T) {
 	if b := goldenBakerFor(mgr, true); b != nil {
 		t.Fatal("built a baker for a factory that cannot seed from a shared snapshot")
 	}
-	if b := goldenBakerFor(&manager{rtFactory: &ecsEC2Factory{}}, false); b != nil {
+	// The real pool is the ecs-ec2 factory, whose type is unexported in
+	// internal/runtime. What this gate reads is the INTERFACE, and that the real
+	// factory satisfies it is asserted where it is declared
+	// (internal/runtime/runtime_ecs_ec2_golden.go: `var _ GoldenBakePool = …`), so a
+	// stand-in checks the same branch here.
+	pool := &poolCapableFactory{fakeGoldenPool: newFakeGoldenPool()}
+	if b := goldenBakerFor(&manager{rtFactory: pool}, false); b != nil {
 		t.Fatal("AF_ECS_EC2_GOLDEN_AUTOBAKE=0 did not switch it off")
 	}
-	if b := goldenBakerFor(&manager{rtFactory: &ecsEC2Factory{}}, true); b == nil {
-		t.Fatal("no baker on ecs-ec2")
+	if b := goldenBakerFor(&manager{rtFactory: pool}, true); b == nil {
+		t.Fatal("no baker on a factory that can seed from a shared snapshot")
 	}
 }
 

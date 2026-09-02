@@ -1,7 +1,7 @@
 // runtime_ecs_stale_test.go — ECS 系の「要再起動」判定の契約テスト。
 // docker で二度踏んだ罠（二辺比較・digest 比較）を ECS でも踏み直さないことと、
 // 判らないときは黙ることを固定する。
-package main
+package runtime
 
 import (
 	"context"
@@ -75,10 +75,10 @@ func newStaleTestECS(t *testing.T, reg *fakeECR) (*ecsRuntime, *fakeECS) {
 //	実体に選ぶと、内容が同じでも表現が動いて恒久点灯する（docker で二度踏んだ）。
 //	provenance だけ付け直した再 push が黙ることを、このテストが担保している。
 func TestECSStaleImageStamp(t *testing.T) {
-	orig := freshness
-	defer func() { freshness = orig }()
+	orig := Freshness
+	defer func() { Freshness = orig }()
 	now := time.Unix(1000, 0)
-	freshness = &ttlCache{m: map[string]ttlEntry{}, now: func() time.Time { return now }}
+	Freshness = &TTLCache{m: map[string]TTLEntry{}, now: func() time.Time { return now }}
 
 	const (
 		amd64Old = "sha256:aaaa0001"
@@ -168,9 +168,9 @@ func TestECSStaleUnknownNeverNags(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			orig := freshness
-			defer func() { freshness = orig }()
-			freshness = &ttlCache{m: map[string]ttlEntry{}}
+			orig := Freshness
+			defer func() { Freshness = orig }()
+			Freshness = &TTLCache{m: map[string]TTLEntry{}}
 
 			reg := &fakeECR{manifest: index("sha256:aaaa0001", "sha256:bbbb0001", false), digest: "sha256:index0001"}
 			rt, fe := newStaleTestECS(t, reg)
@@ -179,7 +179,7 @@ func TestECSStaleUnknownNeverNags(t *testing.T) {
 			}
 			tc.setup(rt, fe)
 			// Start が入れたキャッシュを捨てて、素の判定を見る。
-			freshness = &ttlCache{m: map[string]ttlEntry{}}
+			Freshness = &TTLCache{m: map[string]TTLEntry{}}
 			// タグは動いている（＝判定できていれば true になる状況）。
 			reg.manifest, reg.digest = index("sha256:aaaa9999", "sha256:bbbb0001", false), "sha256:index9999"
 			if rt.Stale(ctx) {
@@ -192,9 +192,9 @@ func TestECSStaleUnknownNeverNags(t *testing.T) {
 // ecs-ec2 は同じ判定を使う（同じ image・同じタスク定義ファミリ）。委譲が外れると
 // EC2 スロット構成だけ静かに検出できなくなるので、経路をここで固定する。
 func TestECSEC2StaleDelegatesToBase(t *testing.T) {
-	orig := freshness
-	defer func() { freshness = orig }()
-	freshness = &ttlCache{m: map[string]ttlEntry{}}
+	orig := Freshness
+	defer func() { Freshness = orig }()
+	Freshness = &TTLCache{m: map[string]TTLEntry{}}
 
 	ctx := context.Background()
 	reg := &fakeECR{manifest: index("sha256:aaaa0001", "sha256:bbbb0001", false), digest: "sha256:index0001"}
@@ -207,7 +207,7 @@ func TestECSEC2StaleDelegatesToBase(t *testing.T) {
 		t.Fatal("same image: stale, want false")
 	}
 	reg.manifest, reg.digest = index("sha256:aaaa0002", "sha256:bbbb0001", false), "sha256:index0002"
-	freshness = &ttlCache{m: map[string]ttlEntry{}}
+	Freshness = &TTLCache{m: map[string]TTLEntry{}}
 	if !rt.Stale(ctx) {
 		t.Fatal("tag moved: not stale, want stale")
 	}
@@ -286,9 +286,9 @@ func TestParseECRRef(t *testing.T) {
 // 逆に、ECR が一時的に引けなかっただけで指紋が動いてもいけない（不要な強制デプロイ＝
 // 7ae97ea1 が消した Service Connect の 1〜2 分の窓が戻る）。両方をここで固定する。
 func TestECSEC2TaskDefReuseSeesTheImageStamp(t *testing.T) {
-	origFresh := freshness
-	defer func() { freshness = origFresh }()
-	freshness = &ttlCache{m: map[string]ttlEntry{}}
+	origFresh := Freshness
+	defer func() { Freshness = origFresh }()
+	Freshness = &TTLCache{m: map[string]TTLEntry{}}
 
 	ctx := context.Background()
 	h := newEC2Harness(t)

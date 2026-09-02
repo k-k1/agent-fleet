@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // agentStatsRuntime は「API 越しに State は分かるが docker からは見えない」という
@@ -27,7 +29,7 @@ type agentStatsFactory struct {
 	state    string
 }
 
-func (f agentStatsFactory) New(Workspace, string, []string) Runtime {
+func (f agentStatsFactory) New(runtime.Workspace, string, []string) Runtime {
 	return agentStatsRuntime{stubRuntime: stubRuntime{endpoint: f.endpoint}, state: f.state}
 }
 

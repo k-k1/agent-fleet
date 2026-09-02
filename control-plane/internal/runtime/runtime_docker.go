@@ -1,6 +1,6 @@
 // runtime_docker.go — ローカル Docker アダプタ（dockerRuntime / dockerFactory）。
 // runtime.go からの機械的分割（docs/log/23 P2-W1）。
-package main
+package runtime
 
 import (
 	"context"
@@ -196,7 +196,7 @@ func (d *dockerRuntime) recordImageStamp(ctx context.Context) {
 	// Prime the TTL cache with the value we just probed: a cached PRE-rebuild
 	// fingerprint would otherwise make this freshly started container look stale for
 	// up to a minute (Start is the one moment we know the truth).
-	freshness.set("img:"+d.image, fp)
+	Freshness.set("img:"+d.image, fp)
 	_ = os.WriteFile(d.imageStampPath(), []byte(fp), 0o644)
 	_ = os.Remove(d.legacyImageIDStampPath())
 }
@@ -225,7 +225,7 @@ func (d *dockerRuntime) Stale(ctx context.Context) bool {
 	if was == "" {
 		return false
 	}
-	now := freshness.get("img:"+d.image, 60*time.Second, func() string { return d.imageFingerprint(ctx) })
+	now := Freshness.get("img:"+d.image, 60*time.Second, func() string { return d.imageFingerprint(ctx) })
 	return now != "" && now != was
 }
 
@@ -249,7 +249,7 @@ func dockerInspectOne(ctx context.Context, typ, ref, format string) string {
 
 // Start launches the Workspace container and waits for the Agent to be healthy.
 // mountsStagedDocs marks this adapter as one that bind-mounts <dataDir>/docs, so the
-// start path stages it (runtime.go runtimeDocsMounter).
+// start path stages it (runtime.go DocsMounter).
 func (d *dockerRuntime) mountsStagedDocs() {}
 
 func (d *dockerRuntime) Start(ctx context.Context) error {
@@ -261,7 +261,7 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 		// answered yet). Falling through would `docker rm -f` a container that is in the
 		// middle of its entrypoint — killing a legitimate start and losing whatever the
 		// boot-install had already downloaded. Let the poller observe the transition;
-		// the marker is time-boxed (agentBootBudget) so this can never wedge.
+		// the marker is time-boxed (AgentBootBudget) so this can never wedge.
 		return nil
 	}
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", d.name).Run() // clear any stopped remnant
@@ -357,8 +357,8 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	// 引いても "starting" が返り、死んだソケットに繋ぎに行かない。
 	grace := agentHealthWait(d.startHealthWait())
 	marker := d.startingMarker()
-	marker.arm(time.Now().Add(maxDuration(agentBootBudget, grace)))
-	err := waitAgentHealthy(ctx, d.Endpoint(), grace)
+	marker.arm(time.Now().Add(maxDuration(AgentBootBudget, grace)))
+	err := WaitAgentHealthy(ctx, d.Endpoint(), grace)
 	if err == nil {
 		marker.clear()
 		return nil
@@ -370,7 +370,7 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	}
 	// 予算切れ。失敗ではない — 状態として表に出し、ポーラーに収束を任せる。
 	log.Printf("docker start: container %s is up but the Agent has not answered within %s; still starting (budget %s)",
-		d.name, grace, agentBootBudget)
+		d.name, grace, AgentBootBudget)
 	return nil
 }
 
@@ -431,7 +431,7 @@ func (d *dockerRuntime) startHealthWait() time.Duration {
 		// An unattended start (scheduler wake) skips the update block entirely and has
 		// nobody waiting on the answer — the fire path polls the Agent itself, patiently
 		// (AF_SCHEDULE_WAKE_TIMEOUT). Blocking the tick goroutine longer buys nothing.
-		if kv == unattendedStartEnv {
+		if kv == UnattendedStartEnv {
 			return 15 * time.Second
 		}
 	}
@@ -457,7 +457,7 @@ func (d *dockerRuntime) ensureNetwork(ctx context.Context) error {
 // (AF_STOP_GRACE_SEC, default 30) drives both adapters. Clamped to Fargate's
 // stopTimeout ceiling (120s) so one value stays valid everywhere.
 func stopGraceSec() int {
-	n := envInt("AF_STOP_GRACE_SEC", 30)
+	n := EnvInt("AF_STOP_GRACE_SEC", 30)
 	if n < 1 {
 		n = 1
 	}
@@ -556,10 +556,10 @@ var homeKeep = map[string]bool{
 // entries in homeKeep. The caller MUST stop the container first — we mutate the host
 // bind-mount source, and deleting under a live mount risks inconsistency.
 func cleanHome(dataDir string) error {
-	return cleanHomeContext(context.Background(), dataDir)
+	return CleanHomeContext(context.Background(), dataDir)
 }
 
-func cleanHomeContext(ctx context.Context, dataDir string) error {
+func CleanHomeContext(ctx context.Context, dataDir string) error {
 	home := filepath.Join(dataDir, "home")
 	entries, err := os.ReadDir(home)
 	if err != nil {
@@ -575,17 +575,17 @@ func cleanHomeContext(ctx context.Context, dataDir string) error {
 		if homeKeep[e.Name()] {
 			continue
 		}
-		if err := removeAllContext(ctx, filepath.Join(home, e.Name())); err != nil {
+		if err := RemoveAllContext(ctx, filepath.Join(home, e.Name())); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// removeAllContext is the cancellable lifecycle equivalent of os.RemoveAll.
+// RemoveAllContext is the cancellable lifecycle equivalent of os.RemoveAll.
 // It never follows symlinks and checks the lease-derived context between entries,
 // so a fenced holder stops deleting before another CP can start the workspace.
-func removeAllContext(ctx context.Context, path string) error {
+func RemoveAllContext(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -604,7 +604,7 @@ func removeAllContext(ctx context.Context, path string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if err := removeAllContext(ctx, filepath.Join(path, entry.Name())); err != nil {
+		if err := RemoveAllContext(ctx, filepath.Join(path, entry.Name())); err != nil {
 			return err
 		}
 	}
@@ -614,15 +614,15 @@ func removeAllContext(ctx context.Context, path string) error {
 	return os.Remove(path)
 }
 
-// dockerInspectOut runs `docker <args...>` and returns its stdout.
+// DockerInspectOut runs `docker <args...>` and returns its stdout.
 // テスト用シーム（gitBackendServe と同型）。
-var dockerInspectOut = func(args ...string) ([]byte, error) {
+var DockerInspectOut = func(args ...string) ([]byte, error) {
 	return exec.Command("docker", args...).Output()
 }
 
-// dockerPublishedPort returns the host port mapped to the container's 7700/tcp.
-func dockerPublishedPort(name string) string {
-	out, err := dockerInspectOut("inspect", "-f",
+// DockerPublishedPort returns the host port mapped to the container's 7700/tcp.
+func DockerPublishedPort(name string) string {
+	out, err := DockerInspectOut("inspect", "-f",
 		`{{with index .NetworkSettings.Ports "7700/tcp"}}{{(index . 0).HostPort}}{{end}}`, name)
 	if err != nil {
 		return ""
@@ -630,9 +630,9 @@ func dockerPublishedPort(name string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// dockerEnvValue returns the value of an env var baked into a container's config.
-func dockerEnvValue(name, key string) string {
-	out, err := dockerInspectOut("inspect", "-f",
+// DockerEnvValue returns the value of an env var baked into a container's config.
+func DockerEnvValue(name, key string) string {
+	out, err := DockerInspectOut("inspect", "-f",
 		`{{range .Config.Env}}{{println .}}{{end}}`, name)
 	if err != nil {
 		return ""
@@ -646,5 +646,5 @@ func dockerEnvValue(name, key string) string {
 	return ""
 }
 
-// agentHealthWait / waitAgentHealthy / agentStartingMarker は runtime_health.go へ
+// agentHealthWait / WaitAgentHealthy / agentStartingMarker は runtime_health.go へ
 // 移した（docker と native の両方が使う共通部品なので）。

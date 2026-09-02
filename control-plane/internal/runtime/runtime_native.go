@@ -10,7 +10,7 @@
 //     導入済みであること（Dockerfile / entrypoint.sh 相当の初期化はしない）。rootfs
 //     モード（AF_NATIVE_ROOTFS — docs/log/35 §35.7.2）は workspace イメージの rootfs を
 //     bwrap で read-only 実行し、entrypoint 初期化・ピン止めが docker と同等に働く。
-package main
+package runtime
 
 import (
 	"bufio"
@@ -89,9 +89,9 @@ const rootfsImageEnvPath = "usr/local/share/agent-fleet/image-env.json"
 // the sole operator — and the launch prerequisites must exist: in rootfs mode a
 // complete extracted rootfs plus a bwrap binary, otherwise a host workspace-agent
 // (AF_NATIVE_AGENT_BIN or PATH).
-func newNativeFactory(m *manager) (RuntimeFactory, error) {
-	if m.authMode != "dev" {
-		return nil, fmt.Errorf("AF_RUNTIME=native is single-user only (no container isolation); it requires AUTH=dev, got AUTH=%s", m.authMode)
+func newNativeFactory(mcfg Config) (RuntimeFactory, error) {
+	if mcfg.AuthMode != "dev" {
+		return nil, fmt.Errorf("AF_RUNTIME=native is single-user only (no container isolation); it requires AUTH=dev, got AUTH=%s", mcfg.AuthMode)
 	}
 	if rootfs := os.Getenv("AF_NATIVE_ROOTFS"); rootfs != "" {
 		abs, err := filepath.Abs(rootfs)
@@ -135,9 +135,9 @@ func newNativeFactory(m *manager) (RuntimeFactory, error) {
 			agentBin:    bwrapAbs,
 			rootfs:      abs,
 			jvmDir:      os.Getenv("WS_JVM_DIR"),
-			sessionCmd:  m.sessionCmd,
-			extraEnv:    m.extraEnv,
-			rootDataDir: m.rootedDataDir,
+			sessionCmd:  mcfg.SessionCmd,
+			extraEnv:    mcfg.ExtraEnv,
+			rootDataDir: mcfg.rootedDataDir,
 		}, nil
 	}
 	bin := os.Getenv("AF_NATIVE_AGENT_BIN")
@@ -157,9 +157,9 @@ func newNativeFactory(m *manager) (RuntimeFactory, error) {
 	}
 	return &nativeFactory{
 		agentBin:    abs,
-		sessionCmd:  m.sessionCmd,
-		extraEnv:    m.extraEnv,
-		rootDataDir: m.rootedDataDir,
+		sessionCmd:  mcfg.SessionCmd,
+		extraEnv:    mcfg.ExtraEnv,
+		rootDataDir: mcfg.rootedDataDir,
 	}, nil
 }
 
@@ -259,7 +259,7 @@ func (n *nativeRuntime) startingMarker() agentStartingMarker {
 // URLs) that must never leak into a workspace process that runs arbitrary user
 // sessions.
 // mountsStagedDocs: native ro-binds (or points AGENT_DOCS_DIR at) <dataDir>/docs, so it
-// needs the same per-start staging as docker (runtime.go runtimeDocsMounter).
+// needs the same per-start staging as docker (runtime.go DocsMounter).
 func (n *nativeRuntime) mountsStagedDocs() {}
 
 func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
@@ -361,8 +361,8 @@ func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
 	// いた頃は、この関数の defer が **まだ boot-install 中のプロセスを kill** していた
 	// ので、遅い初回起動ほど確実に殺していた。
 	marker := n.startingMarker()
-	marker.arm(time.Now().Add(maxDuration(agentBootBudget, healthWait)))
-	waitErr := waitAgentHealthy(ctx, n.Endpoint(), healthWait)
+	marker.arm(time.Now().Add(maxDuration(AgentBootBudget, healthWait)))
+	waitErr := WaitAgentHealthy(ctx, n.Endpoint(), healthWait)
 	if waitErr == nil {
 		marker.clear()
 		return nil
@@ -373,7 +373,7 @@ func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
 		return fmt.Errorf("%w (see %s)", waitErr, filepath.Join(n.dataDir, "agent.log"))
 	}
 	log.Printf("[ws %s] agent not answering yet after %s; still starting (budget %s, progress in %s)",
-		n.name, healthWait, agentBootBudget, filepath.Join(n.dataDir, "agent.log"))
+		n.name, healthWait, AgentBootBudget, filepath.Join(n.dataDir, "agent.log"))
 	return nil
 }
 

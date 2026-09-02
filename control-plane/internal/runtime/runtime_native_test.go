@@ -1,4 +1,4 @@
-package main
+package runtime
 
 import (
 	"context"
@@ -52,7 +52,7 @@ func newTraditionalNativeRuntime(t *testing.T, extraEnv ...string) *nativeRuntim
 	dataDir := t.TempDir()
 	return &nativeRuntime{
 		agentBin:  writeFakeAgent(t, t.TempDir()),
-		name:      "af-native-fence-" + newID(),
+		name:      "af-native-fence-" + newTestID(),
 		dataDir:   dataDir,
 		agentPort: freeLoopbackPort(t),
 		extraEnv:  extraEnv,
@@ -182,12 +182,12 @@ func TestNativeFactoryGates(t *testing.T) {
 	bin := writeFakeAgent(t, t.TempDir())
 	t.Setenv("AF_NATIVE_AGENT_BIN", bin)
 	for _, mode := range []string{"proxy", "oauth"} {
-		if _, err := newRuntimeFactory("native", &manager{authMode: mode, dataRoot: t.TempDir()}); err == nil {
+		if _, err := NewFactory("native", Config{AuthMode: mode, RootDataDir: StaticRootDataDir(t.TempDir(), "")}); err == nil {
 			t.Errorf("AUTH=%s: expected error, got nil", mode)
 		}
 	}
 	t.Setenv("AF_NATIVE_AGENT_BIN", filepath.Join(t.TempDir(), "missing"))
-	if _, err := newRuntimeFactory("wsl", &manager{authMode: "dev", dataRoot: t.TempDir()}); err == nil {
+	if _, err := NewFactory("wsl", Config{AuthMode: "dev", RootDataDir: StaticRootDataDir(t.TempDir(), "")}); err == nil {
 		t.Error("missing agent binary: expected error, got nil")
 	}
 }
@@ -254,22 +254,22 @@ func TestNativeRootfsFactoryGates(t *testing.T) {
 
 	t.Setenv("AF_NATIVE_ROOTFS", t.TempDir()) // empty dir: no agent/entrypoint/env
 	t.Setenv("AF_NATIVE_BWRAP", bwrap)
-	if _, err := newRuntimeFactory("native", &manager{authMode: "dev", dataRoot: t.TempDir()}); err == nil {
+	if _, err := NewFactory("native", Config{AuthMode: "dev", RootDataDir: StaticRootDataDir(t.TempDir(), "")}); err == nil {
 		t.Error("incomplete rootfs: expected error, got nil")
 	}
 
 	rootfs := writeFakeRootfs(t)
 	t.Setenv("AF_NATIVE_ROOTFS", rootfs)
 	t.Setenv("AF_NATIVE_BWRAP", filepath.Join(t.TempDir(), "missing-bwrap"))
-	if _, err := newRuntimeFactory("native", &manager{authMode: "dev", dataRoot: t.TempDir()}); err == nil {
+	if _, err := NewFactory("native", Config{AuthMode: "dev", RootDataDir: StaticRootDataDir(t.TempDir(), "")}); err == nil {
 		t.Error("missing bwrap: expected error, got nil")
 	}
 
 	t.Setenv("AF_NATIVE_BWRAP", bwrap)
-	if _, err := newRuntimeFactory("native", &manager{authMode: "oauth", dataRoot: t.TempDir()}); err == nil {
+	if _, err := NewFactory("native", Config{AuthMode: "oauth", RootDataDir: StaticRootDataDir(t.TempDir(), "")}); err == nil {
 		t.Error("AUTH=oauth: expected error, got nil")
 	}
-	if _, err := newRuntimeFactory("native", &manager{authMode: "dev", dataRoot: t.TempDir()}); err != nil {
+	if _, err := NewFactory("native", Config{AuthMode: "dev", RootDataDir: StaticRootDataDir(t.TempDir(), "")}); err != nil {
 		t.Errorf("complete rootfs + bwrap: unexpected error: %v", err)
 	}
 }
@@ -287,8 +287,8 @@ func TestNativeRootfsLifecycle(t *testing.T) {
 	t.Setenv("WS_JVM_DIR", "") // keep the optional jvm bind out of the golden argv
 	t.Setenv("AF_MASTER_KEY", "cp-deployment-secret")
 
-	m := &manager{authMode: "dev", dataRoot: dataRoot, extraEnv: []string{"GITHUB_OAUTH_CLIENT_ID=cid123"}}
-	f, err := newRuntimeFactory("native", m)
+	m := Config{AuthMode: "dev", RootDataDir: StaticRootDataDir(dataRoot, ""), ExtraEnv: []string{"GITHUB_OAUTH_CLIENT_ID=cid123"}}
+	f, err := NewFactory("native", m)
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
@@ -386,8 +386,8 @@ func TestNativeRuntimeLifecycle(t *testing.T) {
 	// The CP's own secrets must never reach the workspace process env.
 	t.Setenv("AF_MASTER_KEY", "cp-deployment-secret")
 
-	m := &manager{authMode: "dev", dataRoot: dataRoot, extraEnv: []string{"GITHUB_OAUTH_CLIENT_ID=cid123"}}
-	f, err := newRuntimeFactory("native", m)
+	m := Config{AuthMode: "dev", RootDataDir: StaticRootDataDir(dataRoot, ""), ExtraEnv: []string{"GITHUB_OAUTH_CLIENT_ID=cid123"}}
+	f, err := NewFactory("native", m)
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}

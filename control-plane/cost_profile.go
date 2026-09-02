@@ -8,47 +8,17 @@
 // "効かない項目を画面に出すのは嘘に近い" (ADR 0045 決定 21).
 package main
 
-import "net/http"
+import (
+	"net/http"
 
-// costProfile is the runtime's answer to "is there money to show here, and what does it
-// cover". Everything in it is a claim the Console is allowed to print.
-type costProfile struct {
-	Runtime string `json:"runtime"`
-	// Available is the whole gate: false = no cost surface anywhere in the UI.
-	Available bool `json:"available"`
-	// Attributable lists what actually carries `af-membership`, so the Console can name
-	// what a member's number covers instead of implying it covers everything. Measured
-	// on the reference deployment: what CAN be attributed is about a fifth of the bill
-	// (docs/log/67 §67.3), and the rest is shared — never divided (ADR 0048 決定 4).
-	Attributable []string `json:"attributable,omitempty"`
-	// Shared lists the big cost centres that belong to nobody. Shown only to a
-	// super_admin, but declared here so the member-facing hint can say what is EXCLUDED
-	// without the Console hard-coding a list of AWS service names.
-	Shared []string `json:"shared,omitempty"`
-	// Verified is false where the tagging exists in code but has never been observed on
-	// a real deployment (Fargate). A number nobody has ever seen arrive should not be
-	// presented with the same confidence as one that has.
-	Verified bool `json:"verified"`
-}
-
-// cost centre labels. Kept as stable identifiers rather than prose so the Console can
-// translate them; the Console owns the wording in both languages.
-const (
-	costCentreSlotHours   = "slot_hours"   // EC2 instance-hours while a home is attached
-	costCentreHomeVolume  = "home_volume"  // the member's persistent EBS home
-	costCentreSnapshots   = "snapshots"    // hibernation + backup snapshots of that home
-	costCentreTaskCompute = "task_compute" // Fargate task vCPU/GB-hours
-	costCentreScratch     = "scratch"      // ECS-managed EBS working disk
-
-	costCentreNAT      = "nat"       // the single biggest shared line, and untaggable
-	costCentreDNS      = "dns"       // Route53 hosted zone + queries
-	costCentreLB       = "lb"        // ALB
-	costCentreDB       = "db"        // RDS
-	costCentreEFS      = "efs"       // billed per filesystem, so it cannot be split
-	costCentreIdlePool = "idle_pool" // warm slots nobody is holding
-	costCentreCP       = "cp"        // the control plane's own task
-	costCentreTax      = "tax"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
+
+// costProfile is declared by the adapters' package: cost_profile.go used to hang a
+// CostProfile() method on each of the four factory types, and Go only allows that in
+// the package that declares them (internal/runtime/profiles.go). The alias keeps the
+// CP-side name — cloudcost.go embeds it, and the JSON is unchanged.
+type costProfile = runtime.CostProfile
 
 // costProfiler is the optional RuntimeFactory capability, like sizingProfiler.
 type costProfiler interface {
@@ -64,38 +34,6 @@ func (m *manager) cloudCostProfile() costProfile {
 		return f.CostProfile()
 	}
 	return costProfile{Runtime: "local"}
-}
-
-// CostProfile — docker: the operator's own hardware. There is no invoice to read.
-func (f *dockerFactory) CostProfile() costProfile { return costProfile{Runtime: "local"} }
-
-// CostProfile — native: same, containerless.
-func (f *nativeFactory) CostProfile() costProfile { return costProfile{Runtime: "native"} }
-
-// CostProfile — Fargate. The task is the billed unit and it now inherits af-membership
-// from its service, but ⚠️ this has never run against real Fargate: the deployment this
-// was developed on is ecs-ec2 (ADR 0048 決定 9). Reported as unverified rather than
-// quietly claimed.
-func (f *ecsFactory) CostProfile() costProfile {
-	return costProfile{
-		Runtime: "ecs", Available: true, Verified: false,
-		Attributable: []string{costCentreTaskCompute, costCentreScratch},
-		Shared: []string{costCentreNAT, costCentreDNS, costCentreLB, costCentreDB,
-			costCentreEFS, costCentreCP, costCentreTax},
-	}
-}
-
-// CostProfile — the EC2 slot pool, the one that has been measured end to end. A slot is
-// used by exactly one person while their home is attached (ADR 0045 決定 8), which is
-// what makes instance-hours attributable at all; an unclaimed warm slot is shared, and
-// showing that is the point rather than a caveat (it is the price of the pool size).
-func (f *ecsEC2Factory) CostProfile() costProfile {
-	return costProfile{
-		Runtime: "ecs-ec2", Available: true, Verified: true,
-		Attributable: []string{costCentreSlotHours, costCentreHomeVolume, costCentreSnapshots},
-		Shared: []string{costCentreNAT, costCentreDNS, costCentreLB, costCentreDB,
-			costCentreEFS, costCentreIdlePool, costCentreCP, costCentreTax},
-	}
 }
 
 // costProfileHandler (GET /api/cost/profile) — any signed-in identity may read it. It

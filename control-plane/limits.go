@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // tenantLimits is the parsed tenant.limits JSON (0 = unlimited for the int
@@ -149,33 +151,11 @@ type slotCapacityReporter interface {
 	MaxSlots() int
 }
 
-// poolBudget is the comparison, as the API and the pool screen both need it. The pieces
-// are separate on purpose: an operator who is told only "over" cannot tell whether to
-// raise the cap, lower a tenant, or stop worrying.
-type poolBudget struct {
-	// MaxSlots is the pool's hard cap — how many boxes may EXIST.
-	MaxSlots int `json:"max_slots"`
-	// Reserved is what a golden bake needs free at once (seed + probe). Subtracted
-	// because a deployment that allocates every slot can never re-bake its golden, and
-	// the symptom of that is "new members start slowly", weeks later.
-	Reserved int `json:"reserved_slots"`
-	// Capacity is MaxSlots - Reserved: the concurrency the tenants may share out.
-	Capacity int `json:"capacity"`
-	// Allocated is Σ(max_workspaces) over ACTIVE tenants — how many workspaces could be
-	// running at once if every tenant used its full quota.
-	Allocated int `json:"allocated"`
-	// Unbounded names the active tenants whose max_workspaces is 0. ⚠️ 0 means UNLIMITED
-	// here (like every other int quota), so ONE of these makes Allocated meaningless as
-	// a bound — it is a different problem from "over", and needs saying differently.
-	Unbounded []string `json:"unbounded_tenants,omitempty"`
-	// Over reports Allocated > Capacity, and is false whenever Unbounded is non-empty:
-	// there is no sum to compare.
-	Over bool `json:"over"`
-}
-
-// OK reports whether this deployment's tenant quotas fit its pool. Both failure modes
-// are WARNINGS, never rejections — see setTenantLimits for why.
-func (b poolBudget) OK() bool { return !b.Over && len(b.Unbounded) == 0 }
+// poolBudget is declared by the adapters' package (internal/runtime/deps.go): the EC2
+// pool status DTO embeds it, and that DTO moved with the adapter. The type and its OK()
+// went along because a Go alias cannot carry methods. Everything on this side — the
+// totalling below, the admin API, the pool screen's JSON — is unchanged.
+type poolBudget = runtime.PoolBudget
 
 // poolBudget totals the tenants' concurrency quotas against the pool cap.
 //

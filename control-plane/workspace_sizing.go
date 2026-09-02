@@ -14,82 +14,31 @@
 // the task reserves nothing (ADR 0045 決定 8).
 package main
 
-import "net/http"
+import (
+	"net/http"
 
-// Values for workspaceSizing.MemMeaning / DiskMeaning. Kept as short strings rather
-// than booleans because there are three disk answers, not two, and a boolean pair
-// would have to be re-read every time a fourth runtime appears.
-const (
-	memMeaningLimit = "limit" // a cap: docker --memory, Fargate task size
-	memMeaningSlot  = "slot"  // a requirement: pick the smallest box that holds it
-
-	diskMeaningWork  = "work"  // working disk, wiped when the workspace stops (Fargate)
-	diskMeaningHome  = "home"  // the persistent home volume itself (ecs-ec2)
-	diskMeaningQuota = "quota" // a reported number only; nothing enforces it (docker/native)
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
-// workspaceSizing is the runtime's answer to "what do these three axes do here".
-type workspaceSizing struct {
-	Runtime string `json:"runtime"`
-	// CPUEffective is false when the CPU axis is stored but never reaches the
-	// backend. A field that does nothing is worse than a missing field, so the
-	// Console hides it rather than showing it greyed out.
-	CPUEffective bool   `json:"cpu_effective"`
-	MemMeaning   string `json:"mem_meaning"`
-	DiskMeaning  string `json:"disk_meaning"`
-	// DiskDefaultGB is what 0 on the disk axis actually gives (0 = "the backend's own
-	// default", which is all docker/native can say).
-	DiskDefaultGB int `json:"disk_default_gb"`
-	// DiskCreateOnly: the value is read when the volume is created and never again.
-	// ecs-ec2 has no ModifyVolume call, and EBS cannot shrink in any case.
-	DiskCreateOnly bool `json:"disk_create_only"`
-	// Slots is the ladder a memory request lands on, ascending. Only ecs-ec2 has one;
-	// everywhere else it is absent and the Console shows no box.
-	//
-	// ⚠️ With more than one class (below) this is the DEFAULT class's ladder. It stays
-	// because a Console built before classes existed reads it, and because the common
-	// deployment has exactly one class — SlotClasses then holds the same rungs once.
-	Slots []workspaceSlot `json:"slots,omitempty"`
-	// SlotClasses are the machine classes this deployment offers (docs/log/70 §70.4).
-	// Absent when the deployment declared a single unnamed ladder, which is what every
-	// existing AF_ECS_EC2_SLOT_TYPES value parses to — so a one-class deployment shows
-	// no picker rather than a picker with one entry.
-	SlotClasses []workspaceSlotClass `json:"slot_classes,omitempty"`
-	// DefaultSlotClass is the id a member with no per-user and no per-tenant value
-	// lands on.
-	DefaultSlotClass string `json:"default_slot_class,omitempty"`
-}
+// The sizing vocabulary and its three types are declared by the adapters' package:
+// this file used to hang a SizingProfile() method on each of the four factory types,
+// and Go only allows that in the package that declares them
+// (internal/runtime/profiles.go). Aliased here so every CP-side reader — the handler
+// below, tenant_slot_class.go, the JSON — is unchanged.
+const (
+	memMeaningLimit = runtime.MemMeaningLimit
+	memMeaningSlot  = runtime.MemMeaningSlot
 
-// workspaceSlotClass is one declared machine class: a display name, a CPU
-// architecture and its own ladder.
-//
-// Label is the operator's words, not a generated one. The Console shows THIS, and
-// `m7g.xlarge` only as the "you land on" detail — a tenant admin is choosing
-// "省コスト（Arm）", not an EC2 instance family (docs/log/70 §70.10).
-type workspaceSlotClass struct {
-	ID    string          `json:"id"`
-	Label string          `json:"label"`
-	Arch  string          `json:"arch"` // x86_64 | arm64
-	Slots []workspaceSlot `json:"slots"`
-}
+	diskMeaningWork  = runtime.DiskMeaningWork
+	diskMeaningHome  = runtime.DiskMeaningHome
+	diskMeaningQuota = runtime.DiskMeaningQuota
+)
 
-// workspaceSlot is one rung of the ladder. VCPU is 0 when the operator did not
-// declare it (AF_ECS_EC2_SLOT_TYPES accepts type:memMiB and type:memMiB:vcpu) — the
-// Console then simply does not print a vCPU count rather than guessing one.
-type workspaceSlot struct {
-	InstanceType string `json:"instance_type"`
-	MemMiB       int64  `json:"mem_mib"`
-	VCPU         int    `json:"vcpu,omitempty"`
-	// UsableMemMiB is what the WORKSPACE gets, as opposed to what the box has: the
-	// rung less the reserve held back for the box's own daemons (ADR 0045 決定 28).
-	//
-	// It exists because the two stopped being the same number. While the container was
-	// uncapped, "8 GiB" described both the machine and the workspace and one figure was
-	// honest; now the workspace's limit is lower, and printing only the box would tell
-	// a member they have memory the cgroup will not give them. Omitted (0) when the
-	// deployment runs uncapped, which is the one case where the box IS the answer.
-	UsableMemMiB int64 `json:"usable_mem_mib,omitempty"`
-}
+type (
+	workspaceSizing    = runtime.WorkspaceSizing
+	workspaceSlotClass = runtime.WorkspaceSlotClass
+	workspaceSlot      = runtime.WorkspaceSlot
+)
 
 // sizingProfiler is the optional RuntimeFactory capability. Same shape as
 // WorkspaceImage(): adapters that have nothing special to say don't implement it.
@@ -107,71 +56,6 @@ func (m *manager) workspaceSizing() workspaceSizing {
 		Runtime: "local", CPUEffective: true,
 		MemMeaning: memMeaningLimit, DiskMeaning: diskMeaningQuota,
 	}
-}
-
-// SizingProfile — docker: --memory and --cpus are real caps; the disk number is the
-// display-only quota it has always been (nothing enforces it on a shared host).
-func (f *dockerFactory) SizingProfile() workspaceSizing {
-	return workspaceSizing{
-		Runtime: "local", CPUEffective: true,
-		MemMeaning: memMeaningLimit, DiskMeaning: diskMeaningQuota,
-	}
-}
-
-// SizingProfile — native: containerless, so nothing is enforced at all (there is no
-// cgroup to put a limit in). Reported honestly rather than pretending docker.
-func (f *nativeFactory) SizingProfile() workspaceSizing {
-	return workspaceSizing{
-		Runtime: "native", CPUEffective: false,
-		MemMeaning: memMeaningLimit, DiskMeaning: diskMeaningQuota,
-	}
-}
-
-// SizingProfile — Fargate: all three axes reach the task definition, and the disk is
-// the ephemeral working disk (free up to 20 GiB, wiped on stop).
-func (f *ecsFactory) SizingProfile() workspaceSizing {
-	def := f.cfg.diskGiB
-	if def == 0 {
-		def = 20 // Fargate's free default when the field is left out
-	}
-	return workspaceSizing{
-		Runtime: "ecs", CPUEffective: true,
-		MemMeaning: memMeaningLimit, DiskMeaning: diskMeaningWork,
-		DiskDefaultGB: def,
-	}
-}
-
-// SizingProfile — the EC2 slot pool. Memory picks a box, CPU is not used, and the
-// disk number is the persistent home's EBS size, honoured only at creation.
-func (f *ecsEC2Factory) SizingProfile() workspaceSizing {
-	rungs := func(slots []ec2Slot) []workspaceSlot {
-		out := make([]workspaceSlot, 0, len(slots))
-		for _, s := range slots {
-			out = append(out, workspaceSlot{
-				InstanceType: s.instanceType, MemMiB: s.memMiB, VCPU: s.vcpu,
-				UsableMemMiB: f.pool.workspaceMemCapMiB(s.memMiB),
-			})
-		}
-		return out
-	}
-	p := workspaceSizing{
-		Runtime: "ecs-ec2", CPUEffective: false,
-		MemMeaning: memMeaningSlot, DiskMeaning: diskMeaningHome,
-		DiskDefaultGB: int(f.pool.homeGiB), DiskCreateOnly: true,
-		DefaultSlotClass: f.pool.defaultClass,
-		Slots:            rungs(f.pool.classFor(f.pool.defaultClass).slots),
-	}
-	// A single unnamed ladder is reported the way it always was — no class list, so
-	// the Console shows the memory chips and no picker. Offering a picker with one
-	// entry would be a new question with only one possible answer (docs/log/70 §70.10).
-	if len(f.pool.classes) > 1 {
-		for _, c := range f.pool.classes {
-			p.SlotClasses = append(p.SlotClasses, workspaceSlotClass{
-				ID: c.id, Label: c.label, Arch: c.arch, Slots: rungs(c.slots),
-			})
-		}
-	}
-	return p
 }
 
 // workspaceSizingHandler (GET /api/admin/workspace-sizing) — read-only description of

@@ -50,6 +50,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // The reserved tenant and the two reserved members. They are ordinary rows — the
@@ -60,8 +62,10 @@ import (
 const (
 	goldenTenantSlug = "af-golden"
 	goldenTenantName = "golden snapshot (system)"
-	goldenSeedKey    = "af-golden-seed"
-	goldenProbeKey   = "af-golden-probe"
+	// The two reserved member keys are declared by the adapters' package: the ecs-ec2
+	// golden reader matches AWS resources against them, and it moved there.
+	goldenSeedKey  = runtime.GoldenSeedKey
+	goldenProbeKey = runtime.GoldenProbeKey
 )
 
 // goldenBaker drives the series above. One per CP; the reaper ticks it.
@@ -115,7 +119,7 @@ func goldenBakerFor(mgr *manager, enabled bool) *goldenBaker {
 // nobody can rely on.
 func (b *goldenBaker) run(ctx context.Context, every time.Duration) {
 	log.Printf("golden: auto-bake on (pool=%s image=%s, checking every %s)",
-		b.pool.poolLabel(), b.pool.workspaceImage(), every)
+		b.pool.PoolLabel(), b.pool.WorkspaceImage(), every)
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -137,12 +141,9 @@ func (b *goldenBaker) run(ctx context.Context, every time.Duration) {
 func (b *goldenBaker) seedKey(arch string) string  { return archKey(goldenSeedKey, arch) }
 func (b *goldenBaker) probeKey(arch string) string { return archKey(goldenProbeKey, arch) }
 
-func archKey(base, arch string) string {
-	if arch == "" || arch == ec2ArchX86 {
-		return base
-	}
-	return base + "-" + arch
-}
+// archKey is declared by the adapters' package for the same reason as the two keys
+// above — the golden reader on the ecs-ec2 side derives the same names from AWS tags.
+var archKey = runtime.ArchKey
 
 // step advances the bake by at most one move PER ARCHITECTURE. Errors are logged and
 // dropped: a bake is housekeeping, and there is no caller who could do anything about
@@ -152,7 +153,7 @@ func archKey(base, arch string) string {
 // pool, so the second arch's seed simply is not created while the first one holds a
 // slot, and it starts on a later tick.
 func (b *goldenBaker) step(ctx context.Context) {
-	arches := b.pool.bakeArches()
+	arches := b.pool.BakeArches()
 	if len(arches) == 0 {
 		arches = []string{ec2ArchX86}
 	}
@@ -162,12 +163,12 @@ func (b *goldenBaker) step(ctx context.Context) {
 }
 
 func (b *goldenBaker) stepArch(ctx context.Context, arch string) {
-	image := b.pool.workspaceImage()
+	image := b.pool.WorkspaceImage()
 
 	// 1. Already published and current? Then the only thing left is to make sure a
 	//    previous round did not leave its seed or probe behind (a CP that died between
 	//    "promote" and "destroy" would otherwise pay for two homes forever).
-	if _, ok, err := b.pool.goldenFor(ctx, ec2RoleGolden, arch); err != nil {
+	if _, ok, err := b.pool.GoldenFor(ctx, ec2RoleGolden, arch); err != nil {
 		log.Printf("golden[%s]: reading the published golden failed: %v", arch, err)
 		return
 	} else if ok {
@@ -177,7 +178,7 @@ func (b *goldenBaker) stepArch(ctx context.Context, arch string) {
 
 	// 2. Have we already burned this image? Twice is the give-up point: once can be an
 	//    AZ having a bad day, twice is the image.
-	if n, err := b.pool.rejectedAttempts(ctx, arch); err != nil {
+	if n, err := b.pool.RejectedAttempts(ctx, arch); err != nil {
 		log.Printf("golden[%s]: counting rejected candidates failed: %v", arch, err)
 		return
 	} else if n >= 2 {
@@ -185,7 +186,7 @@ func (b *goldenBaker) stepArch(ctx context.Context, arch string) {
 		return
 	}
 
-	cand, haveCand, err := b.pool.goldenFor(ctx, ec2RoleGoldenCandidate, arch)
+	cand, haveCand, err := b.pool.GoldenFor(ctx, ec2RoleGoldenCandidate, arch)
 	if err != nil {
 		log.Printf("golden[%s]: reading the candidate failed: %v", arch, err)
 		return
@@ -208,7 +209,7 @@ func (b *goldenBaker) bake(ctx context.Context, image, arch string) {
 		return
 	}
 	if !seedExists {
-		blocked, why, err := b.pool.bakeBlocked(ctx)
+		blocked, why, err := b.pool.BakeBlocked(ctx)
 		if err != nil {
 			log.Printf("golden: reading the pool failed: %v", err)
 			return
@@ -233,7 +234,7 @@ func (b *goldenBaker) bake(ctx context.Context, image, arch string) {
 		return // not ecs-ec2 after all; goldenBakerFor should have prevented this
 	}
 
-	home, err := seed.homeForBake(ctx)
+	home, err := seed.HomeForBake(ctx)
 	if err != nil {
 		log.Printf("golden[%s]: reading the seed's home failed: %v", arch, err)
 		return
@@ -268,7 +269,7 @@ func (b *goldenBaker) bake(ctx context.Context, image, arch string) {
 			if home.VolumeID == "" {
 				return // running but no home yet visible — next tick
 			}
-			if err := seed.markHomeBaked(ctx, home.VolumeID); err != nil {
+			if err := seed.MarkHomeBaked(ctx, home.VolumeID); err != nil {
 				log.Printf("golden[%s]: marking the seed's home baked failed: %v", arch, err)
 				return
 			}
@@ -288,11 +289,11 @@ func (b *goldenBaker) bake(ctx context.Context, image, arch string) {
 			return
 		}
 		log.Printf("golden[%s]: releasing the seed's slot before the snapshot", arch)
-		if err := seed.releaseForBake(ctx); err != nil {
+		if err := seed.ReleaseForBake(ctx); err != nil {
 			log.Printf("golden[%s]: releasing the seed's slot failed: %v", arch, err)
 		}
 	default:
-		if _, err := b.pool.snapshotHome(ctx, home.VolumeID, seedRes.ws.ContainerName, arch); err != nil {
+		if _, err := b.pool.SnapshotHome(ctx, home.VolumeID, seedRes.ws.ContainerName, arch); err != nil {
 			log.Printf("golden[%s]: snapshotting the seed's home failed: %v", arch, err)
 		}
 	}
@@ -331,7 +332,7 @@ func (b *goldenBaker) verify(ctx context.Context, cand goldenSnap, image, arch s
 	if !ok {
 		return
 	}
-	seed.seedFromCandidate()
+	seed.SeedFromCandidate()
 
 	if state := probeRes.rt.State(ctx); state == "running" {
 		if _, err := b.mgr.agentSessions(ctx, probeRes.rt); err == nil {
@@ -351,14 +352,14 @@ func (b *goldenBaker) verify(ctx context.Context, cand goldenSnap, image, arch s
 }
 
 func (b *goldenBaker) publish(ctx context.Context, cand goldenSnap, image, arch string) {
-	if err := b.pool.setGoldenRole(ctx, cand.ID, ec2RoleGolden, ""); err != nil {
+	if err := b.pool.SetGoldenRole(ctx, cand.ID, ec2RoleGolden, ""); err != nil {
 		log.Printf("golden[%s]: publishing %s failed: %v", arch, cand.ID, err)
 		return
 	}
 	log.Printf("golden[%s]: %s is now the golden for %s — a probe started from it cleanly", arch, cand.ID, image)
 	// Only after the promotion succeeded: deleting the old one first would leave the
 	// pool with no golden at all if the CreateTags above had failed.
-	if err := b.pool.dropSupersededGoldens(ctx, cand.ID, arch); err != nil {
+	if err := b.pool.DropSupersededGoldens(ctx, cand.ID, arch); err != nil {
 		log.Printf("golden[%s]: dropping the superseded golden failed: %v", arch, err)
 	}
 	b.tidy(ctx, arch)
@@ -368,7 +369,7 @@ func (b *goldenBaker) publish(ctx context.Context, cand goldenSnap, image, arch 
 // deleted: it is the answer to "why does this deployment have no golden", and the CP
 // log line scrolls away long before an operator goes looking.
 func (b *goldenBaker) reject(ctx context.Context, cand goldenSnap, reason, arch string) {
-	if err := b.pool.setGoldenRole(ctx, cand.ID, ec2RoleGoldenRejected, reason); err != nil {
+	if err := b.pool.SetGoldenRole(ctx, cand.ID, ec2RoleGoldenRejected, reason); err != nil {
 		log.Printf("golden[%s]: rejecting %s failed: %v", arch, cand.ID, err)
 		return
 	}
@@ -435,7 +436,7 @@ func (b *goldenBaker) destroy(ctx context.Context, key string) {
 // current, and a line a minute for "still nothing" is how a log stops being read.
 func (b *goldenBaker) sweep(ctx context.Context, key string) {
 	name, _, _ := b.mgr.workspaceNames(goldenTenantSlug, key)
-	removed, err := b.pool.sweepOrphans(ctx, name)
+	removed, err := b.pool.SweepOrphans(ctx, name)
 	if err != nil {
 		b.warn(key, "golden: cleaning up what is left of %s failed: %v", name, err)
 		return
@@ -501,7 +502,7 @@ func (b *goldenBaker) create(ctx context.Context, key, arch string) (*resolved, 
 	// rename or drop a class at any redeploy, and a seed left pinned to a class that
 	// no longer exists would quietly bake on the default architecture instead — i.e.
 	// publish an x86_64 home as the arm64 golden.
-	if class := b.pool.seedClassFor(arch); class != "" {
+	if class := b.pool.SeedClassFor(arch); class != "" {
 		cur, _, err := b.mgr.store.GetUserLimit(ctx, mem.MembershipID)
 		if err != nil {
 			return nil, err
