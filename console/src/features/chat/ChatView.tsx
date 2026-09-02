@@ -1,8 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent, ClipboardEvent, ReactNode } from "react";
 import { Icon } from "../../ui/Icon.tsx";
-import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -51,16 +49,15 @@ import { ChatPlan } from "./ChatPlan.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
-import { agentOf, AGENTS } from "../../agents/registry.ts";
+import { agentOf } from "../../agents/registry.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
-import { SESSION_KINDS } from "../../types/session.ts";
 import { getCachedConns, subscribeConns } from "../repos/connsCache.ts";
 import { assistantName, assistantDesc } from "./assistantI18n.ts";
 import { ChatMarkdown, StreamingMarkdown } from "./parts/ChatMarkdown.tsx";
 import { ChatSteps } from "./parts/ChatSteps.tsx";
 import { ChatMessageRow } from "./parts/ChatMessageRow.tsx";
-import { kindClass } from "../../lib/sessionkind.ts";
+import { ChatHead } from "./parts/ChatHead.tsx";
 import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
 import type { SessionKind } from "../../types/session.ts";
@@ -81,10 +78,6 @@ interface ChatViewProps {
   /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
   headerActions?: ReactNode;
 }
-
-// Backends a conversation can run on, straight off the registry cap — the same source as
-// the assistant form's picker and the Agent's chatProviders map.
-const CHAT_KINDS: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.headlessChat);
 
 const chatDraftKey = (conversationId: string) => "af.chat-draft." + conversationId;
 
@@ -1197,88 +1190,28 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         ...(asstAccent ? { "--chat-accent": asstAccent } : {}),
       } as CSSProperties}
     >
-      <ViewHead className="fileinfo" actions={headerActions}>
-        <span className="fi-name">
-          <Icon name={draftAsst?.icon || "comment-discussion"} /> {title}
-        </span>
-        {/* エージェントのチップ。既存会話ではそのまま切替ピッカーのボタンを兼ねる
-            （draft はまだ会話が無いので表示のみ）。 */}
-        {agent && conversationId && (
-          <button
-            type="button"
-            ref={agentTagRef}
-            className={"kind-tag kind-" + kindClass(agentKind!) + " chat-agent-pick"}
-            title={tr("chat.switch_agent_tip")}
-            aria-haspopup="menu"
-            aria-expanded={agentPickerOpen}
-            disabled={switching || showStreaming || compacting || !wsRunning}
-            onClick={() => setAgentPickerOpen((o) => !o)}
-          >
-            <Icon name={switching ? "loading" : agent.icon} spin={switching} />
-            {agent.assistantName}
-            <Icon name="chevron-down" className="chat-agent-caret" />
-          </button>
-        )}
-        {agent && !conversationId && (
-          <span className={"kind-tag kind-" + kindClass(agentKind!)}>
-            <Icon name={agent.icon} />
-            {agent.assistantName}
-          </span>
-        )}
-        {agentPickerOpen &&
-          createPortal(
-            <div className="ui-menu chat-agent-menu" ref={agentMenuRef} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-              <div className="assistant-picker-label">{tr("chat.switch_agent")}</div>
-              {CHAT_KINDS.map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  className="ui-menu-item"
-                  role="menuitemradio"
-                  aria-checked={k === conv?.agent}
-                  // 未接続の CLI にピン留めしても、送信時に接続済みのバックエンドへ退避する
-                  // だけ（chatProviderFor）＝選ばせても効かない。接続状況が分からないとき
-                  // （キャッシュが冷えている）は塞がない。
-                  disabled={!!chatConns && !agentOf(k).available({ conns: chatConns })}
-                  title={
-                    chatConns && !agentOf(k).available({ conns: chatConns })
-                      ? tr("chat.switch_agent_offline")
-                      : undefined
-                  }
-                  onClick={() => void doSwitchAgent(k)}
-                >
-                  <Icon name={k === conv?.agent ? "check" : "blank"} />
-                  {/* kind の色は tokens.css の --kind-* が1ソース（agent-display-naming）。 */}
-                  <span className="chat-agent-ic" style={{ color: `var(--kind-${kindClass(k)})` }}>
-                    <Icon name={agentOf(k).icon} />
-                  </span>
-                  {agentOf(k).assistantName}
-                </button>
-              ))}
-              <div className="chat-agent-note muted">{tr("chat.switch_agent_note")}</div>
-            </div>,
-            document.body,
-          )}
-        {(conv || showStreaming || !wsRunning) && (
-          <span className={"session-state " + stateChip.cls}>
-            <Icon name={stateChip.icon} spin={stateChip.spin} /> {stateChip.text}
-          </span>
-        )}
-        {/* 作業計画（docs/log/33 第5段）: 圧縮を跨いで原文のまま運ばれる枠の開閉。計画が
-            入っている会話は塗って示す — 「アシスタントが絶対に忘れない内容」がどれかを
-            一目で分かるようにするのがこのバッジの役目。 */}
-        {conversationId && (
-          <button
-            type="button"
-            className={"chat-plan-toggle" + (conv?.plan ? " has-plan" : "") + (planOpen ? " open" : "")}
-            title={tr("chat.plan.toggle_tip")}
-            aria-expanded={planOpen}
-            onClick={() => setPlanOpen((v) => !v)}
-          >
-            <Icon name="checklist" /> {tr("chat.plan.title")}
-          </button>
-        )}
-      </ViewHead>
+      <ChatHead
+        headerActions={headerActions}
+        title={title}
+        draftAsst={draftAsst}
+        conv={conv}
+        conversationId={conversationId}
+        agent={agent}
+        agentKind={agentKind}
+        agentTagRef={agentTagRef}
+        agentMenuRef={agentMenuRef}
+        agentPickerOpen={agentPickerOpen}
+        onToggleAgentPicker={() => setAgentPickerOpen((o) => !o)}
+        onSwitchAgent={(k) => void doSwitchAgent(k)}
+        chatConns={chatConns}
+        switching={switching}
+        showStreaming={showStreaming}
+        compacting={compacting}
+        wsRunning={wsRunning}
+        stateChip={stateChip}
+        planOpen={planOpen}
+        onTogglePlan={() => setPlanOpen((v) => !v)}
+      />
       {planOpen && conversationId && (
         <ChatPlan
           conversationId={conversationId}
