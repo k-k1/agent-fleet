@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Work item inbox (docs/log/80 / ADR 0061) — external tickets (GitHub Issue / PR; Jira in
@@ -49,7 +51,7 @@ var workItemFetchInFlight sync.Map // membershipID -> struct{}
 
 type workItemsAPI struct {
 	memberAuth
-	store WorkItemStore
+	store store.WorkItemStore
 }
 
 func newWorkItemsAPI(m *manager) workItemsAPI { return workItemsAPI{memberAuth{m}, m.store} }
@@ -93,19 +95,19 @@ type workItemSessionDTO struct {
 	CreatedAt   string `json:"createdAt"`
 }
 
-func workItemToDTO(w WorkItem) workItemDTO {
+func workItemToDTO(w store.WorkItem) workItemDTO {
 	return workItemDTO{ID: w.ID, QueryID: w.QueryID, Provider: w.Provider, Kind: w.Kind,
 		Key: w.Key, Title: w.Title, State: w.State, URL: w.URL, Assignee: w.Assignee,
 		Labels: splitLabels(w.Labels), Repo: w.Repo, UpdatedAt: w.UpdatedAt}
 }
 
-func workItemQueryToDTO(q WorkItemQuery) workItemQueryDTO {
+func workItemQueryToDTO(q store.WorkItemQuery) workItemQueryDTO {
 	return workItemQueryDTO{ID: q.ID, Provider: q.Provider, Label: q.Label, Query: q.Query,
 		RepoHint: q.RepoHint, Enabled: q.Enabled, Position: q.Position,
 		FetchedAt: q.FetchedAt, LastError: q.LastError}
 }
 
-func workItemSessionToDTO(s WorkItemSession) workItemSessionDTO {
+func workItemSessionToDTO(s store.WorkItemSession) workItemSessionDTO {
 	return workItemSessionDTO{ID: s.ID, Provider: s.Provider, ItemKey: s.ItemKey,
 		SessionName: s.SessionName, Repo: s.Repo, Branch: s.Branch, CreatedAt: s.CreatedAt}
 }
@@ -237,7 +239,7 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 		return
 	}
 	cutoff := time.Now().UTC().Add(-workItemsRefreshEvery).Format(time.RFC3339)
-	due := make([]WorkItemQuery, 0, len(queries))
+	due := make([]store.WorkItemQuery, 0, len(queries))
 	for _, q := range queries {
 		if !q.Enabled {
 			continue
@@ -253,7 +255,7 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 		return
 	}
 	rows, errs, err := fetchWorkItemsFromAgent(ctx, res.rt, due)
-	now := nowTS()
+	now := store.NowTS()
 	if err != nil {
 		// Agent に届かなかった（停止直後・再起動中）。fetched_at は進めない —
 		// 進めると次の 5 分間、届かなかったことを「取得済み」として黙らせてしまう。
@@ -263,7 +265,7 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 		return
 	}
 	ok := make([]string, 0, len(due))
-	items := make([]WorkItem, 0, 64)
+	items := make([]store.WorkItem, 0, 64)
 	for _, q := range due {
 		if msg := errs[q.ID]; msg != "" {
 			// ★ 失敗したクエリの行は消さない。消すと 1 本の 401 で棚が空になる。
@@ -272,7 +274,7 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 		}
 		ok = append(ok, q.ID)
 		for _, it := range rows[q.ID] {
-			it.ID = newID()
+			it.ID = store.NewID()
 			it.MembershipID = mid
 			it.QueryID = q.ID
 			it.FetchedAt = now
@@ -320,7 +322,7 @@ type agentWorkItemsResp struct {
 // fetchWorkItemsFromAgent asks the running Agent to resolve the queries. Returns the rows
 // per query id and the per-query error messages; a transport-level failure comes back as
 // the error (the caller then keeps the previous fetched_at, see refreshNow).
-func fetchWorkItemsFromAgent(ctx context.Context, rt Runtime, queries []WorkItemQuery) (map[string][]WorkItem, map[string]string, error) {
+func fetchWorkItemsFromAgent(ctx context.Context, rt Runtime, queries []store.WorkItemQuery) (map[string][]store.WorkItem, map[string]string, error) {
 	in := agentWorkItemsReq{Queries: make([]agentWorkItemQuery, 0, len(queries))}
 	for _, q := range queries {
 		in.Queries = append(in.Queries, agentWorkItemQuery{ID: q.ID, Provider: q.Provider, Query: q.Query})
@@ -350,9 +352,9 @@ func fetchWorkItemsFromAgent(ctx context.Context, rt Runtime, queries []WorkItem
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, nil, err
 	}
-	rows := map[string][]WorkItem{}
+	rows := map[string][]store.WorkItem{}
 	for _, it := range out.Items {
-		rows[it.QueryID] = append(rows[it.QueryID], WorkItem{
+		rows[it.QueryID] = append(rows[it.QueryID], store.WorkItem{
 			Provider: it.Provider, Kind: it.Kind, Key: it.Key, Title: it.Title,
 			State: it.State, URL: it.URL, Assignee: it.Assignee,
 			Labels: strings.Join(it.Labels, ","), Repo: it.Repo, UpdatedAt: it.UpdatedAt,
@@ -427,7 +429,7 @@ func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resol
 
 // --- saved queries -----------------------------------------------------------
 
-func (a workItemsAPI) listQueries(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a workItemsAPI) listQueries(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	rows, err := a.store.ListWorkItemQueries(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -447,8 +449,8 @@ func (a workItemsAPI) listQueries(w http.ResponseWriter, r *http.Request, _ Iden
 // else here is pass-through — the query text, the rows and the per-query error message
 // all belong to the Agent, which is the only side holding a token (ADR 0061 決定 6.5). So
 // adding Bitbucket cost one line here and nothing else in the CP.
-func validateWorkItemQuery(mv MembershipView, in workItemQueryDTO) (WorkItemQuery, *apiError) {
-	q := WorkItemQuery{
+func validateWorkItemQuery(mv store.MembershipView, in workItemQueryDTO) (store.WorkItemQuery, *apiError) {
+	q := store.WorkItemQuery{
 		MembershipID: mv.MembershipID,
 		Provider:     strings.TrimSpace(in.Provider),
 		Label:        strings.TrimSpace(in.Label),
@@ -461,13 +463,13 @@ func validateWorkItemQuery(mv MembershipView, in workItemQueryDTO) (WorkItemQuer
 		q.Provider = "github"
 	}
 	if !workItemProviders[q.Provider] {
-		return WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_provider", "provider must be github, jira or bitbucket"}
+		return store.WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_provider", "provider must be github, jira or bitbucket"}
 	}
 	if q.Query == "" {
-		return WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_query", "query is required"}
+		return store.WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_query", "query is required"}
 	}
 	if len(q.Query) > 400 {
-		return WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_query", "query is too long"}
+		return store.WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_query", "query is too long"}
 	}
 	if q.Label == "" {
 		q.Label = q.Query
@@ -475,7 +477,7 @@ func validateWorkItemQuery(mv MembershipView, in workItemQueryDTO) (WorkItemQuer
 	return q, nil
 }
 
-func (a workItemsAPI) createQuery(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a workItemsAPI) createQuery(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	var in workItemQueryDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
@@ -500,8 +502,8 @@ func (a workItemsAPI) createQuery(w http.ResponseWriter, r *http.Request, _ Iden
 			q.Position = row.Position + 1
 		}
 	}
-	q.ID = newID()
-	q.CreatedAt = nowTS()
+	q.ID = store.NewID()
+	q.CreatedAt = store.NowTS()
 	if err := a.store.CreateWorkItemQuery(r.Context(), q); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -509,7 +511,7 @@ func (a workItemsAPI) createQuery(w http.ResponseWriter, r *http.Request, _ Iden
 	writeJSON(w, http.StatusOK, workItemQueryToDTO(q))
 }
 
-func (a workItemsAPI) updateQuery(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a workItemsAPI) updateQuery(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	cur, ok, err := a.store.GetWorkItemQuery(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -538,7 +540,7 @@ func (a workItemsAPI) updateQuery(w http.ResponseWriter, r *http.Request, _ Iden
 	writeJSON(w, http.StatusOK, workItemQueryToDTO(q))
 }
 
-func (a workItemsAPI) deleteQuery(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a workItemsAPI) deleteQuery(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	if err := a.store.DeleteWorkItemQuery(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -550,13 +552,13 @@ func (a workItemsAPI) deleteQuery(w http.ResponseWriter, r *http.Request, _ Iden
 
 // createSession records "this ticket was started as that session". Idempotent per
 // (item, session) so a retried launch does not double the row.
-func (a workItemsAPI) createSession(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a workItemsAPI) createSession(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	var in workItemSessionDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	rec := WorkItemSession{
+	rec := store.WorkItemSession{
 		MembershipID: mv.MembershipID,
 		Provider:     strings.TrimSpace(in.Provider),
 		ItemKey:      strings.TrimSpace(in.ItemKey),
@@ -582,8 +584,8 @@ func (a workItemsAPI) createSession(w http.ResponseWriter, r *http.Request, _ Id
 			return
 		}
 	}
-	rec.ID = newID()
-	rec.CreatedAt = nowTS()
+	rec.ID = store.NewID()
+	rec.CreatedAt = store.NowTS()
 	if err := a.store.CreateWorkItemSession(r.Context(), rec); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -591,7 +593,7 @@ func (a workItemsAPI) createSession(w http.ResponseWriter, r *http.Request, _ Id
 	writeJSON(w, http.StatusOK, workItemSessionToDTO(rec))
 }
 
-func (a workItemsAPI) deleteSession(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a workItemsAPI) deleteSession(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	if err := a.store.DeleteWorkItemSession(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -601,6 +603,6 @@ func (a workItemsAPI) deleteSession(w http.ResponseWriter, r *http.Request, _ Id
 
 // sortQueriesByPosition keeps the rail order stable for callers that build their own
 // list (tests, and the rail's reorder path).
-func sortQueriesByPosition(rows []WorkItemQuery) {
+func sortQueriesByPosition(rows []store.WorkItemQuery) {
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Position < rows[j].Position })
 }

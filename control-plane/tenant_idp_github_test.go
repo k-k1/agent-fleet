@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // docs/log/61 §61.15 / ADR0043 決定 34 / 35 — テナントが GitHub をサインイン方法にする。
@@ -22,11 +24,11 @@ import (
 // --- 行 → アダプタ ------------------------------------------------------------
 
 func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
-	base := TenantIdP{
+	base := store.TenantIdP{
 		Name: "github", Kind: tenantIdPKindGitHub, ClientID: "c",
 		AllowedOrgs: "Acme-Sub, other", AllowedDomains: "@sub.co.jp",
 	}
-	p, err := buildTenantProvider(base, TenantRef{Slug: "sub"}, "s")
+	p, err := buildTenantProvider(base, store.TenantRef{Slug: "sub"}, "s")
 	if err != nil {
 		t.Fatalf("the valid row must build: %v", err)
 	}
@@ -59,22 +61,22 @@ func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
 		t.Fatal("a tenant row must not inherit the deployment-wide entry gate")
 	}
 
-	bad := map[string]func(*TenantIdP){
-		"no orgs":    func(r *TenantIdP) { r.AllowedOrgs = "" },
-		"no domains": func(r *TenantIdP) { r.AllowedDomains = "" },
-		"no client":  func(r *TenantIdP) { r.ClientID = "" },
-		"bad name":   func(r *TenantIdP) { r.Name = "Git Hub" },
-		"other kind": func(r *TenantIdP) { r.Kind = "saml" },
+	bad := map[string]func(*store.TenantIdP){
+		"no orgs":    func(r *store.TenantIdP) { r.AllowedOrgs = "" },
+		"no domains": func(r *store.TenantIdP) { r.AllowedDomains = "" },
+		"no client":  func(r *store.TenantIdP) { r.ClientID = "" },
+		"bad name":   func(r *store.TenantIdP) { r.Name = "Git Hub" },
+		"other kind": func(r *store.TenantIdP) { r.Kind = "saml" },
 	}
 	for label, mutate := range bad {
 		row := base
 		mutate(&row)
-		if _, err := buildTenantProvider(row, TenantRef{Slug: "sub"}, "s"); err == nil {
+		if _, err := buildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s"); err == nil {
 			t.Fatalf("%s: must be refused", label)
 		}
 	}
 	// 秘密が空（復号できなかった等）でも組めてはいけない。
-	if _, err := buildTenantProvider(base, TenantRef{Slug: "sub"}, ""); err == nil {
+	if _, err := buildTenantProvider(base, store.TenantRef{Slug: "sub"}, ""); err == nil {
 		t.Fatal("an empty client_secret must be refused")
 	}
 }
@@ -141,7 +143,7 @@ func TestTenantGitHubSaveTimeValidation(t *testing.T) {
 // ★ 承認は「この org のメンバーを、このドメイン範囲で」に対して与えたもの。org が
 // 増えれば対象の人の集合が変わるので、承認をやり直す。減るのは戻さない。
 func TestGitHubRowRepends(t *testing.T) {
-	active := TenantIdP{
+	active := store.TenantIdP{
 		Kind: tenantIdPKindGitHub, Status: "active", ClientID: "c", Issuer: githubWebBase,
 		Trust: trustAPI, AllowedOrgs: "acme-sub", AllowedDomains: "sub.co.jp",
 	}
@@ -176,7 +178,7 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const email = "yamada@acme.co.jp"
 
-	first, _, err := st.LinkIdentity(ctx, IdentityLink{
+	first, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: githubProviderID, Subject: "42", Realm: githubWebBase, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: true,
 	})
@@ -184,7 +186,7 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 		t.Fatalf("deployment github: %v", err)
 	}
 	// テナント定義の行なので EmailJoin=false — つまり規則 2 は使えない。
-	second, isNew, err := st.LinkIdentity(ctx, IdentityLink{
+	second, isNew, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "t:sub:github", Subject: "42", Realm: githubWebBase, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: false,
 	})
@@ -200,7 +202,7 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 
 	// ★ realm が違えば、subject がたまたま同じでも別物。数値 subject は IdP を
 	// またぐと衝突し得るので、ここを緩めると他人の workspace に着地する。
-	if _, _, err := st.LinkIdentity(ctx, IdentityLink{
+	if _, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "t:sub:keycloak", Subject: "42", Realm: "https://idp.sub.co.jp/realms/x",
 		Email: email, FallbackKey: sanitizeUser(email), EmailJoin: false,
 	}); err == nil {
@@ -208,7 +210,7 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 	}
 
 	// realm を持たない行（0041 以前・proxy 経由）は従来どおり拒否のまま。
-	if _, _, err := st.LinkIdentity(ctx, IdentityLink{
+	if _, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "t:sub:entra", Subject: "99", Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: false,
 	}); err == nil {
@@ -227,7 +229,7 @@ func TestFillProviderRealmMakesOldRowsJoinable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("legacy login: %v", err)
 	}
-	if _, _, err := st.LinkIdentity(ctx, IdentityLink{
+	if _, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "t:sub:github", Subject: "42", Realm: githubWebBase, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: false,
 	}); err == nil {
@@ -237,7 +239,7 @@ func TestFillProviderRealmMakesOldRowsJoinable(t *testing.T) {
 	if err := st.FillProviderRealm(ctx, githubProviderID, githubWebBase); err != nil {
 		t.Fatalf("fill: %v", err)
 	}
-	joined, _, err := st.LinkIdentity(ctx, IdentityLink{
+	joined, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "t:sub:github", Subject: "42", Realm: githubWebBase, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: false,
 	})
@@ -334,11 +336,11 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 	st := p3Store(t)
 	mgr := p4Manager(t, st)
 	tn, _ := st.CreateTenant(ctx, "sub", "子会社")
-	row := TenantIdP{
-		ID: newID(), TenantID: tn.ID, Name: "github", Kind: tenantIdPKindGitHub,
+	row := store.TenantIdP{
+		ID: store.NewID(), TenantID: tn.ID, Name: "github", Kind: tenantIdPKindGitHub,
 		Issuer: githubWebBase, ClientID: "c", SecretEnc: "s", Trust: trustAPI,
 		AllowedOrgs: "acme-sub", AllowedDomains: "@sub.co.jp",
-		Status: "active", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		Status: "active", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateTenantIdP(ctx, row); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -385,7 +387,7 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 	// ★ 行が自分でラベルを書いていればそちらが勝つ。既定を補うのが目的で、
 	// 管理者が選んだ文言を上書きするのは別のこと。
 	row.LabelJA, row.LabelEN = "子会社の GitHub", "Subsidiary GitHub"
-	p, err := buildTenantProvider(row, TenantRef{Slug: "sub", Name: "子会社"}, "s")
+	p, err := buildTenantProvider(row, store.TenantRef{Slug: "sub", Name: "子会社"}, "s")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -397,14 +399,14 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 // 表示名の無いテナント（name が空）では slug で代用する。会社名が読めなくても、
 // 「どちらのボタンか」が分かることのほうが大事。
 func TestTenantLabelFallsBackToTheSlug(t *testing.T) {
-	if got := tenantLabelSuffix("GitHub でサインイン", TenantRef{Slug: "sub"}, "ja"); got != "GitHub でサインイン（sub）" {
+	if got := tenantLabelSuffix("GitHub でサインイン", store.TenantRef{Slug: "sub"}, "ja"); got != "GitHub でサインイン（sub）" {
 		t.Fatalf("ja = %q", got)
 	}
-	if got := tenantLabelSuffix("Sign in with GitHub", TenantRef{Slug: "sub"}, "en"); got != "Sign in with GitHub (sub)" {
+	if got := tenantLabelSuffix("Sign in with GitHub", store.TenantRef{Slug: "sub"}, "en"); got != "Sign in with GitHub (sub)" {
 		t.Fatalf("en = %q", got)
 	}
 	// slug も名前も無いのは実際には起きないが、そのときは接尾辞を足さない。
-	if got := tenantLabelSuffix("x", TenantRef{}, "ja"); got != "x" {
+	if got := tenantLabelSuffix("x", store.TenantRef{}, "ja"); got != "x" {
 		t.Fatalf("empty tenant = %q", got)
 	}
 }

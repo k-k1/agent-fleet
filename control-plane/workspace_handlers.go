@@ -17,6 +17,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // workspaceAPI は Workspace ライフサイクル + Session 管理の機能ハンドラ集
@@ -36,7 +38,7 @@ const (
 )
 
 type workspaceLifecycleLeaseGuard struct {
-	store     Store
+	store     store.Store
 	owner     string
 	token     string
 	ttl       time.Duration
@@ -50,19 +52,19 @@ type workspaceLifecycleLeaseGuard struct {
 
 func leaseTS(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000000000Z07:00") }
 
-func acquireWorkspaceLifecycleLease(ctx context.Context, st Store, owner string) (*workspaceLifecycleLeaseGuard, error) {
+func acquireWorkspaceLifecycleLease(ctx context.Context, st store.Store, owner string) (*workspaceLifecycleLeaseGuard, error) {
 	return acquireWorkspaceLifecycleLeaseWithTiming(ctx, st, owner, workspaceLifecycleLease, workspaceLifecycleHeartbeat)
 }
 
-func acquireWorkspaceLifecycleLeaseWithTiming(ctx context.Context, st Store, owner string, ttl, heartbeat time.Duration) (*workspaceLifecycleLeaseGuard, error) {
+func acquireWorkspaceLifecycleLeaseWithTiming(ctx context.Context, st store.Store, owner string, ttl, heartbeat time.Duration) (*workspaceLifecycleLeaseGuard, error) {
 	now := time.Now().UTC()
-	token := newID()
+	token := store.NewID()
 	ok, err := st.AcquireSessionShareOwnerLease(ctx, owner, token, leaseTS(now), leaseTS(now.Add(ttl)))
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, errSessionShareOwnerBusy
+		return nil, store.ErrSessionShareOwnerBusy
 	}
 	opCtx, cancel := context.WithCancel(ctx)
 	guard := &workspaceLifecycleLeaseGuard{store: st, owner: owner, token: token, ttl: ttl,
@@ -100,7 +102,7 @@ func (l *workspaceLifecycleLeaseGuard) markLost() {
 
 func (l *workspaceLifecycleLeaseGuard) checkpoint(ctx context.Context) error {
 	if l.lost.Load() {
-		return errSessionShareOwnerBusy
+		return store.ErrSessionShareOwnerBusy
 	}
 	now := time.Now().UTC()
 	ok, err := l.store.RenewSessionShareOwnerLease(ctx, l.owner, l.token, leaseTS(now), leaseTS(now.Add(l.ttl)))
@@ -109,7 +111,7 @@ func (l *workspaceLifecycleLeaseGuard) checkpoint(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		return errSessionShareOwnerBusy
+		return store.ErrSessionShareOwnerBusy
 	}
 	return nil
 }
@@ -128,7 +130,7 @@ func (l *workspaceLifecycleLeaseGuard) Close() {
 }
 
 func workspaceLifecycleLeaseError(err error) *apiError {
-	if errors.Is(err, errSessionShareOwnerBusy) {
+	if errors.Is(err, store.ErrSessionShareOwnerBusy) {
 		return &apiError{http.StatusConflict, "workspace_operation_in_progress", "an approved Agent or workspace operation is in progress"}
 	}
 	return internalErr(err)
@@ -640,13 +642,13 @@ func fmtStarted(createdAt string) string {
 func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[string]any {
 	if res.rt.State(ctx) == "running" {
 		if list, err := a.mgr.agentSessions(ctx, res.rt); err == nil {
-			rows := make([]SessionRow, 0, len(list))
+			rows := make([]store.SessionRow, 0, len(list))
 			for _, s := range list {
 				state := "stopped"
 				if s.Alive {
 					state = "running"
 				}
-				rows = append(rows, SessionRow{
+				rows = append(rows, store.SessionRow{
 					Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 					Label: s.Label, CreatedAt: s.CreatedAt, State: state,
 					Carried: s.Carried,

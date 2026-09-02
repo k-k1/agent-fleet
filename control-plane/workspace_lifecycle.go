@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // createWorkspaceMu serializes port allocation (MaxAgentPort+1) と CreateWorkspace
@@ -25,7 +26,7 @@ var createWorkspaceMu sync.Mutex
 // createWorkspace allocates a new workspace record for a membership. An existing
 // container of the conventional name has its port/AGENT_TOKEN adopted; otherwise
 // a fresh port (DB max+1, floored at portBase) and token are minted.
-func (m *manager) createWorkspace(ctx context.Context, mv MembershipView, userKey string) (Workspace, error) {
+func (m *manager) createWorkspace(ctx context.Context, mv store.MembershipView, userKey string) (store.Workspace, error) {
 	createWorkspaceMu.Lock()
 	defer createWorkspaceMu.Unlock()
 	name, network, dataDir := m.workspaceNames(mv.TenantSlug, userKey)
@@ -33,7 +34,7 @@ func (m *manager) createWorkspace(ctx context.Context, mv MembershipView, userKe
 	if port == "" {
 		mx, err := m.store.MaxAgentPort(ctx)
 		if err != nil {
-			return Workspace{}, err
+			return store.Workspace{}, err
 		}
 		next := m.portBase
 		if mx+1 > next {
@@ -45,8 +46,8 @@ func (m *manager) createWorkspace(ctx context.Context, mv MembershipView, userKe
 	if token == "" {
 		token = randHex(24)
 	}
-	ws := Workspace{
-		ID:            newID(),
+	ws := store.Workspace{
+		ID:            store.NewID(),
 		TenantID:      mv.TenantID,
 		TenantSlug:    mv.TenantSlug, // not persisted; every later read joins it back
 		MembershipID:  mv.MembershipID,
@@ -56,10 +57,10 @@ func (m *manager) createWorkspace(ctx context.Context, mv MembershipView, userKe
 		AgentPort:     port,
 		AgentToken:    token,
 		State:         "stopped",
-		CreatedAt:     nowTS(),
+		CreatedAt:     store.NowTS(),
 	}
 	if err := m.store.CreateWorkspace(ctx, ws); err != nil {
-		return Workspace{}, err
+		return store.Workspace{}, err
 	}
 	return ws, nil
 }
@@ -99,7 +100,7 @@ func (m *manager) backfill(ctx context.Context) error {
 		if _, ok, err := m.store.GetWorkspaceByMembership(ctx, mem.ID); err != nil {
 			return err
 		} else if !ok {
-			mv := MembershipView{MembershipID: mem.ID, TenantID: t.ID, TenantSlug: t.Slug, TenantName: t.Name, Role: mem.Role}
+			mv := store.MembershipView{MembershipID: mem.ID, TenantID: t.ID, TenantSlug: t.Slug, TenantName: t.Name, Role: mem.Role}
 			if _, err := m.createWorkspace(ctx, mv, key); err != nil {
 				return err
 			}
@@ -281,7 +282,7 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEn
 //     受け付けないため、これが無いと NextAuth / Auth.js の構成が成立しない。
 //   - ★ 公開モードは起動のたびに必ず OFF へ戻す（fail-closed・決定 12）。この機能の
 //     事故は「公開のままにしていたのを忘れる」以外にほぼ無い。
-func (m *manager) rotatePreviewSlug(ctx context.Context, ws Workspace) (string, error) {
+func (m *manager) rotatePreviewSlug(ctx context.Context, ws store.Workspace) (string, error) {
 	raw, _ := m.store.GetWorkspaceSettings(ctx, ws.ID)
 	st := parseWSSettings(raw)
 	dirty := false
@@ -317,7 +318,7 @@ func (m *manager) rotatePreviewSlug(ctx context.Context, ws Workspace) (string, 
 	return slug, nil
 }
 
-func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string {
+func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []string {
 	t, err := m.store.GetTenant(ctx, ws.TenantID)
 	if err != nil {
 		return nil
@@ -416,7 +417,7 @@ const memFloorBytes = 256 * mib
 // runtime factory then maps them per backend (docker --memory/--cpus, ECS task size +
 // ephemeral storage). Fargate's valid (cpu, memory) pairs are enforced later by
 // fargateSize, not here — this function is runtime-neutral (ADR 0044 決定 1).
-func (m *manager) resolveWorkspaceSize(ctx context.Context, ws Workspace) (memBytes int64, cpuUnits, diskGB int) {
+func (m *manager) resolveWorkspaceSize(ctx context.Context, ws store.Workspace) (memBytes int64, cpuUnits, diskGB int) {
 	ul, ok, err := m.store.GetUserLimit(ctx, ws.MembershipID)
 	if err != nil || !ok {
 		return 0, 0, 0
@@ -465,7 +466,7 @@ func (m *manager) resolveWorkspaceSize(ctx context.Context, ws Workspace) (memBy
 // value has a smaller version; a class that is not available has no "nearer" class,
 // so the person silently runs somewhere they did not ask for. That is invisible until
 // the bill arrives, which is why the substitution is reported rather than just done.
-func (m *manager) resolveSlotClass(ctx context.Context, ws Workspace) (id, note string) {
+func (m *manager) resolveSlotClass(ctx context.Context, ws store.Workspace) (id, note string) {
 	p := m.workspaceSizing()
 	if len(p.SlotClasses) == 0 {
 		return "", ""
@@ -519,7 +520,7 @@ func (m *manager) resolveSlotClass(ctx context.Context, ws Workspace) (id, note 
 
 // resolveWorkspaceMemBytes is the memory axis alone, kept because the admin API and
 // MCP echo the post-clamp memory value back to the caller.
-func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws Workspace) int64 {
+func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws store.Workspace) int64 {
 	b, _, _ := m.resolveWorkspaceSize(ctx, ws)
 	return b
 }

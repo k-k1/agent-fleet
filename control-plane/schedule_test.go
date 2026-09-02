@@ -9,12 +9,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-func newSchedAPITest(t *testing.T) (scheduleAPI, context.Context, MembershipView) {
+func newSchedAPITest(t *testing.T) (scheduleAPI, context.Context, store.MembershipView) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -23,11 +25,11 @@ func newSchedAPITest(t *testing.T) (scheduleAPI, context.Context, MembershipView
 		t.Fatalf("migrate: %v", err)
 	}
 	api := newScheduleAPI(&manager{store: st})
-	return api, ctx, MembershipView{MembershipID: "m1", TenantID: "default"}
+	return api, ctx, store.MembershipView{MembershipID: "m1", TenantID: "default"}
 }
 
 // doJSON invokes a bare handler with a JSON body and optional path id.
-func doJSON(h func(http.ResponseWriter, *http.Request, MembershipView), mv MembershipView, method, body, id string) *httptest.ResponseRecorder {
+func doJSON(h func(http.ResponseWriter, *http.Request, store.MembershipView), mv store.MembershipView, method, body, id string) *httptest.ResponseRecorder {
 	var r *http.Request
 	if body != "" {
 		r = httptest.NewRequest(method, "/", strings.NewReader(body))
@@ -78,7 +80,7 @@ func TestScheduleCreateAndList(t *testing.T) {
 			t.Fatalf("list n=%d", len(got))
 		}
 	}
-	other := doJSON(api.list, MembershipView{MembershipID: "m2"}, "GET", "", "")
+	other := doJSON(api.list, store.MembershipView{MembershipID: "m2"}, "GET", "", "")
 	var got2 []scheduleDTO
 	_ = json.Unmarshal(other.Body.Bytes(), &got2)
 	if len(got2) != 0 {
@@ -269,7 +271,7 @@ func TestScheduleDeleteOwnership(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &dto)
 
 	// Foreign member gets 404 and the row survives.
-	if d := doJSON(api.delete, MembershipView{MembershipID: "m2"}, "DELETE", "", dto.ID); d.Code != http.StatusNotFound {
+	if d := doJSON(api.delete, store.MembershipView{MembershipID: "m2"}, "DELETE", "", dto.ID); d.Code != http.StatusNotFound {
 		t.Errorf("foreign delete -> %d, want 404", d.Code)
 	}
 	if _, ok, _ := api.store.GetSchedule(ctx, dto.ID); !ok {
@@ -291,8 +293,8 @@ func TestScheduleRunsHistory(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &dto)
 
 	// Seed a couple of runs directly.
-	_ = api.store.AppendScheduleRun(ctx, ScheduleRun{ID: newID(), ScheduleID: dto.ID, MembershipID: "m1", FiredAt: "2026-07-22T09:00:00Z", Status: "fired"}, 50)
-	_ = api.store.AppendScheduleRun(ctx, ScheduleRun{ID: newID(), ScheduleID: dto.ID, MembershipID: "m1", FiredAt: "2026-07-22T09:05:00Z", Status: "skipped_stopped"}, 50)
+	_ = api.store.AppendScheduleRun(ctx, store.ScheduleRun{ID: store.NewID(), ScheduleID: dto.ID, MembershipID: "m1", FiredAt: "2026-07-22T09:00:00Z", Status: "fired"}, 50)
+	_ = api.store.AppendScheduleRun(ctx, store.ScheduleRun{ID: store.NewID(), ScheduleID: dto.ID, MembershipID: "m1", FiredAt: "2026-07-22T09:05:00Z", Status: "skipped_stopped"}, 50)
 
 	r := doJSON(api.runs, mv, "GET", "", dto.ID)
 	if r.Code != 200 {
@@ -313,7 +315,7 @@ func TestScheduleRunsHistory(t *testing.T) {
 
 func TestAppendScheduleRunTrims(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -324,7 +326,7 @@ func TestAppendScheduleRunTrims(t *testing.T) {
 	// Append 5 runs but keep only 3.
 	for i := 0; i < 5; i++ {
 		firedAt := time.Date(2026, 7, 22, 9, i, 0, 0, time.UTC).Format(time.RFC3339)
-		if err := st.AppendScheduleRun(ctx, ScheduleRun{ID: newID(), ScheduleID: "s", MembershipID: "m1", FiredAt: firedAt, Status: "fired"}, 3); err != nil {
+		if err := st.AppendScheduleRun(ctx, store.ScheduleRun{ID: store.NewID(), ScheduleID: "s", MembershipID: "m1", FiredAt: firedAt, Status: "fired"}, 3); err != nil {
 			t.Fatalf("append %d: %v", i, err)
 		}
 	}

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Admin API for the tenant's git provider OAuth apps (docs/log/71 §71.4 + ADR0052).
@@ -52,7 +54,7 @@ func (a tenantGitOAuthAPI) list(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	byProvider := make(map[string]TenantGitOAuth, len(rows))
+	byProvider := make(map[string]store.TenantGitOAuth, len(rows))
 	for _, row := range rows {
 		byProvider[row.Provider] = row
 	}
@@ -117,14 +119,14 @@ func (a tenantGitOAuthAPI) save(w http.ResponseWriter, r *http.Request) {
 	if !gitOAuthNeedsSecret(provider) {
 		secretEnc, keyRef = "", ""
 	}
-	now := nowTS()
-	row := TenantGitOAuth{
+	now := store.NowTS()
+	row := store.TenantGitOAuth{
 		ID: prev.ID, TenantID: t.ID, Provider: provider, ClientID: b.ClientID,
 		SecretEnc: secretEnc, KeyRef: keyRef, UpdatedBy: ident.ID,
 		CreatedAt: prev.CreatedAt, UpdatedAt: now,
 	}
 	if !existed {
-		row.ID, row.CreatedAt = newID(), now
+		row.ID, row.CreatedAt = store.NewID(), now
 	}
 	if err := a.mgr.store.PutTenantGitOAuth(r.Context(), row); err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -132,8 +134,8 @@ func (a tenantGitOAuthAPI) save(w http.ResponseWriter, r *http.Request) {
 	}
 	// The client_id is not a secret, so it is recorded: "which app was this tenant
 	// pointed at on that day" is the question an audit of a leaked grant starts from.
-	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
-		ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
+	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
 		Action: "tenant.git_oauth_save", Target: provider,
 		Detail: "client_id=" + b.ClientID + " secret=" + boolWord(secretEnc != ""), At: now,
 	})
@@ -162,9 +164,9 @@ func (a tenantGitOAuthAPI) remove(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
-		ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
-		Action: "tenant.git_oauth_delete", Target: provider, At: nowTS(),
+	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
+		Action: "tenant.git_oauth_delete", Target: provider, At: store.NowTS(),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "provider": provider})
 }
@@ -179,7 +181,7 @@ func (a tenantGitOAuthAPI) remove(w http.ResponseWriter, r *http.Request) {
 // ★ Deliberately CP-native and not folded into GET /api/connections, which is proxied to
 // the Agent: the answer lives in the CP's database, and a workspace that is stopped
 // (502 from the proxy) is exactly when somebody is looking at this tab.
-func (a tenantGitOAuthAPI) availability(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a tenantGitOAuthAPI) availability(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	out := map[string]any{}
 	for _, p := range gitOAuthProviders {
 		out[p] = map[string]any{"configured": a.mgr.gitOAuthConfigured(r.Context(), mv.TenantID, p)}

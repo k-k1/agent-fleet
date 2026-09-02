@@ -11,19 +11,21 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // docsTestEnv wires an in-memory store plus the docs bridge over a miniature docs tree.
 type docsTestEnv struct {
 	a       docsAPI
-	st      *sqlStore
+	st      *store.SQL
 	signKey []byte
 }
 
 func newDocsTestEnv(t *testing.T) *docsTestEnv {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -56,10 +58,10 @@ func (e *docsTestEnv) addMembership(t *testing.T, tenantSlug, role string) strin
 	if err != nil {
 		t.Fatalf("identity: %v", err)
 	}
-	mid := newID()
+	mid := store.NewID()
 	if _, err := e.st.DB().ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at) VALUES(?,?,?,?, 'active', ?)`,
-		mid, ident.ID, tn.ID, role, nowTS()); err != nil {
+		mid, ident.ID, tn.ID, role, store.NowTS()); err != nil {
 		t.Fatalf("membership: %v", err)
 	}
 	return mid

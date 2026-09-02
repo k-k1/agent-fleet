@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Memo queue (docs/log/21). Per-membership notes accumulated across devices, then flushed
@@ -50,7 +52,7 @@ type memoDTO struct {
 	SentAt      string           `json:"sentAt"`
 }
 
-func memoToDTO(m Memo) memoDTO {
+func memoToDTO(m store.Memo) memoDTO {
 	return memoDTO{ID: m.ID, Repo: m.Repo, Category: m.Category, Kind: m.Kind,
 		Body: m.Body, RefPath: m.RefPath, Attachments: parseMemoAttachments(m.Attachments),
 		Position: m.Position, CreatedAt: m.CreatedAt, SentAt: m.SentAt}
@@ -102,7 +104,7 @@ func normalizeAttachments(in []memoAttachment) (string, *apiError) {
 // ため withResolved で登録する。
 type memoAPI struct {
 	memberAuth
-	store MemoStore
+	store store.MemoStore
 }
 
 func newMemoAPI(m *manager) memoAPI { return memoAPI{memberAuth{m}, m.store} }
@@ -110,12 +112,12 @@ func newMemoAPI(m *manager) memoAPI { return memoAPI{memberAuth{m}, m.store} }
 // memoListFor lists a membership's memos (unsent + retention-window sent), sweeping
 // expired sent rows first. The membership-scoped core shared by the three faces: the
 // session HTTP handler, the internal operator-token bridge, and the CP MCP tools.
-func memoListFor(ctx context.Context, store MemoStore, membershipID string) ([]memoDTO, error) {
+func memoListFor(ctx context.Context, st store.MemoStore, membershipID string) ([]memoDTO, error) {
 	cutoff := memoRetainBefore()
 	// Lazy sweep: drop expired sent memos before listing (best-effort; a failed
 	// sweep still lets the list run, the cutoff filter hides expired rows anyway).
-	_ = store.SweepSentMemos(ctx, cutoff)
-	rows, err := store.ListMemos(ctx, membershipID, cutoff)
+	_ = st.SweepSentMemos(ctx, cutoff)
+	rows, err := st.ListMemos(ctx, membershipID, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +128,7 @@ func memoListFor(ctx context.Context, store MemoStore, membershipID string) ([]m
 	return out, nil
 }
 
-func (a memoAPI) list(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a memoAPI) list(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	out, err := memoListFor(r.Context(), a.store, mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -138,12 +140,12 @@ func (a memoAPI) list(w http.ResponseWriter, r *http.Request, _ Identity, mv Mem
 // validateMemo trims + checks a memo DTO into a normalized Memo (id/created_at/sent_at
 // unset). kind must be "file" (ref_path required) or "text" (body OR image attachments
 // required — an image-only memo shared from a phone carries no body).
-func validateMemo(mv MembershipView, in memoDTO) (Memo, *apiError) {
+func validateMemo(mv store.MembershipView, in memoDTO) (store.Memo, *apiError) {
 	atts, aerr := normalizeAttachments(in.Attachments)
 	if aerr != nil {
-		return Memo{}, aerr
+		return store.Memo{}, aerr
 	}
-	m := Memo{
+	m := store.Memo{
 		MembershipID: mv.MembershipID,
 		Repo:         strings.TrimSpace(in.Repo),
 		Category:     strings.TrimSpace(in.Category),
@@ -156,20 +158,20 @@ func validateMemo(mv MembershipView, in memoDTO) (Memo, *apiError) {
 	switch m.Kind {
 	case "file":
 		if m.RefPath == "" {
-			return Memo{}, &apiError{http.StatusBadRequest, "bad_ref", "refPath is required for kind=file"}
+			return store.Memo{}, &apiError{http.StatusBadRequest, "bad_ref", "refPath is required for kind=file"}
 		}
 	case "text":
 		if m.Body == "" && atts == "" {
-			return Memo{}, &apiError{http.StatusBadRequest, "bad_body", "body or attachments is required for kind=text"}
+			return store.Memo{}, &apiError{http.StatusBadRequest, "bad_body", "body or attachments is required for kind=text"}
 		}
 	default:
-		return Memo{}, &apiError{http.StatusBadRequest, "bad_kind", "kind must be file or text"}
+		return store.Memo{}, &apiError{http.StatusBadRequest, "bad_kind", "kind must be file or text"}
 	}
 	return m, nil
 }
 
 // memoCreateFor validates + inserts one memo for a membership. Shared core.
-func memoCreateFor(ctx context.Context, store MemoStore, mv MembershipView, in memoDTO) (memoDTO, *apiError) {
+func memoCreateFor(ctx context.Context, st store.MemoStore, mv store.MembershipView, in memoDTO) (memoDTO, *apiError) {
 	m, aerr := validateMemo(mv, in)
 	if aerr != nil {
 		return memoDTO{}, aerr
@@ -177,7 +179,7 @@ func memoCreateFor(ctx context.Context, store MemoStore, mv MembershipView, in m
 	// New memos always join the end of their own repo/category group.  Clients do
 	// not need to coordinate a position (and an omitted JSON position otherwise
 	// becomes zero, which used to put every new memo at the top of the group).
-	rows, err := store.ListMemos(ctx, m.MembershipID, "")
+	rows, err := st.ListMemos(ctx, m.MembershipID, "")
 	if err != nil {
 		return memoDTO{}, internalErr(err)
 	}
@@ -186,15 +188,15 @@ func memoCreateFor(ctx context.Context, store MemoStore, mv MembershipView, in m
 			m.Position = row.Position + 1
 		}
 	}
-	m.ID = newID()
-	m.CreatedAt = nowTS()
-	if err := store.CreateMemo(ctx, m); err != nil {
+	m.ID = store.NewID()
+	m.CreatedAt = store.NowTS()
+	if err := st.CreateMemo(ctx, m); err != nil {
 		return memoDTO{}, internalErr(err)
 	}
 	return memoToDTO(m), nil
 }
 
-func (a memoAPI) create(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a memoAPI) create(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	var in memoDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
@@ -221,8 +223,8 @@ type memoPatch struct {
 
 // memoUpdateFor applies a partial edit to an owned memo (ownership by membership).
 // Nil patch fields are left unchanged. Shared core.
-func memoUpdateFor(ctx context.Context, store MemoStore, membershipID, id string, in memoPatch) (memoDTO, *apiError) {
-	cur, found, err := store.GetMemo(ctx, id)
+func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id string, in memoPatch) (memoDTO, *apiError) {
+	cur, found, err := st.GetMemo(ctx, id)
 	if err != nil {
 		return memoDTO{}, internalErr(err)
 	}
@@ -257,13 +259,13 @@ func memoUpdateFor(ctx context.Context, store MemoStore, membershipID, id string
 	if cur.Kind == "text" && cur.Body == "" && cur.Attachments == "" {
 		return memoDTO{}, &apiError{http.StatusBadRequest, "bad_body", "body or attachments is required for kind=text"}
 	}
-	if err := store.UpdateMemo(ctx, cur); err != nil {
+	if err := st.UpdateMemo(ctx, cur); err != nil {
 		return memoDTO{}, internalErr(err)
 	}
 	return memoToDTO(cur), nil
 }
 
-func (a memoAPI) update(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a memoAPI) update(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	var in memoPatch
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
@@ -281,7 +283,7 @@ func (a memoAPI) update(w http.ResponseWriter, r *http.Request, _ Identity, mv M
 // (empty category -> 未分類) and preserving the ORDER of the resolved memos
 // (already sorted by category/position on the way in). File memos surface their
 // ~/repos ref path plus any comment, text memos surface their body.
-func buildFlushMessage(memos []Memo) string {
+func buildFlushMessage(memos []store.Memo) string {
 	var b strings.Builder
 	lastCat := "\x00" // sentinel so the first real category (incl. "") emits a heading
 	n := 0
@@ -361,7 +363,7 @@ func (a memoAPI) flush(w http.ResponseWriter, r *http.Request, res *resolved) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (a memoAPI) delete(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a memoAPI) delete(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	if err := a.store.DeleteMemo(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -382,11 +384,11 @@ type memoCategoryDTO struct {
 	CreatedAt string `json:"createdAt"`
 }
 
-func memoCategoryToDTO(c MemoCategory) memoCategoryDTO {
+func memoCategoryToDTO(c store.MemoCategory) memoCategoryDTO {
 	return memoCategoryDTO{ID: c.ID, Repo: c.Repo, Name: c.Name, Position: c.Position, CreatedAt: c.CreatedAt}
 }
 
-func (a memoAPI) listCategories(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a memoAPI) listCategories(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	rows, err := a.store.ListCategories(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -402,7 +404,7 @@ func (a memoAPI) listCategories(w http.ResponseWriter, r *http.Request, _ Identi
 // createCategory adds a category to a repo bucket, appended after the existing ones. A
 // duplicate (membership, repo, name) is a no-op that returns the existing row, so the
 // "＋カテゴリ" button is idempotent and never 409s.
-func (a memoAPI) createCategory(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a memoAPI) createCategory(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	var in memoCategoryDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
@@ -431,7 +433,7 @@ func (a memoAPI) createCategory(w http.ResponseWriter, r *http.Request, _ Identi
 			}
 		}
 	}
-	c := MemoCategory{ID: newID(), MembershipID: mv.MembershipID, Repo: repo, Name: name, Position: maxPos + 1, CreatedAt: nowTS()}
+	c := store.MemoCategory{ID: store.NewID(), MembershipID: mv.MembershipID, Repo: repo, Name: name, Position: maxPos + 1, CreatedAt: store.NowTS()}
 	if err := a.store.CreateCategory(r.Context(), c); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -450,7 +452,7 @@ type memoCategoryPatch struct {
 // memos (Memo.Category is the name); renaming onto a name that already exists in the same
 // repo MERGES — the memos move to the survivor and the renamed row is deleted — because
 // the unique (membership, repo, name) index forbids two categories sharing a name.
-func (a memoAPI) updateCategory(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a memoAPI) updateCategory(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	var in memoCategoryPatch
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
@@ -502,7 +504,7 @@ func (a memoAPI) updateCategory(w http.ResponseWriter, r *http.Request, _ Identi
 
 // findCategory returns the caller's category with (repo, name), or nil. Small helper for
 // the merge-on-rename path.
-func (a memoAPI) findCategory(ctx context.Context, membershipID, repo, name string) *MemoCategory {
+func (a memoAPI) findCategory(ctx context.Context, membershipID, repo, name string) *store.MemoCategory {
 	rows, err := a.store.ListCategories(ctx, membershipID)
 	if err != nil {
 		return nil
@@ -517,7 +519,7 @@ func (a memoAPI) findCategory(ctx context.Context, membershipID, repo, name stri
 
 // deleteCategory removes a category and empties its memos (moves them to 未分類 rather
 // than deleting them — a category delete must never lose notes).
-func (a memoAPI) deleteCategory(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a memoAPI) deleteCategory(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	id := r.PathValue("id")
 	cur, found, err := a.store.GetCategory(r.Context(), id)
 	if err != nil {
@@ -544,7 +546,7 @@ func (a memoAPI) deleteCategory(w http.ResponseWriter, r *http.Request, _ Identi
 // runtime, and stamps sent_at on those memos. Returns the flush summary. Shared core
 // between the session HTTP handler, the internal operator-token bridge, and the CP MCP
 // tool — every face funnels through this so the "send once + mark sent" stays atomic.
-func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID, sessionName string, ids []string, textOverride string) (map[string]any, *apiError) {
+func memoFlushFor(ctx context.Context, st store.MemoStore, rt Runtime, membershipID, sessionName string, ids []string, textOverride string) (map[string]any, *apiError) {
 	sessionName = strings.TrimSpace(sessionName)
 	if sessionName == "" {
 		return nil, &apiError{http.StatusBadRequest, "bad_session", "sessionName is required"}
@@ -553,9 +555,9 @@ func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID
 		return nil, &apiError{http.StatusBadRequest, "no_ids", "ids is required"}
 	}
 	// Resolve the requested ids to owned memos (foreign/unknown ids are dropped).
-	memos := make([]Memo, 0, len(ids))
+	memos := make([]store.Memo, 0, len(ids))
 	for _, id := range ids {
-		m, found, err := store.GetMemo(ctx, id)
+		m, found, err := st.GetMemo(ctx, id)
 		if err != nil {
 			return nil, internalErr(err)
 		}
@@ -582,8 +584,8 @@ func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID
 	for i, m := range memos {
 		sentIDs[i] = m.ID
 	}
-	sentAt := nowTS()
-	if err := store.MarkMemosSent(ctx, membershipID, sentIDs, sentAt); err != nil {
+	sentAt := store.NowTS()
+	if err := st.MarkMemosSent(ctx, membershipID, sentIDs, sentAt); err != nil {
 		// 送信自体は完了している。ここで 500 を返すとクライアントの再試行が同内容の
 		// 二重送信を誘発するので、ログに残して成功として返す(メモは未送信のまま残る)。
 		log.Printf("memo flush: mark sent failed (message already delivered) session=%s ids=%v: %v",

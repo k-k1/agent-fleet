@@ -52,6 +52,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // The reserved tenant and the two reserved members. They are ordinary rows — the
@@ -532,49 +533,49 @@ func (b *goldenBaker) create(ctx context.Context, key, arch string) (*resolved, 
 // membership finds (or, with create, makes) one of the reserved memberships. The
 // identity carries NO email: an address here would be a person who does not exist, and
 // roleHintFor matches SUPER_ADMIN_EMAILS on the address alone.
-func (b *goldenBaker) membership(ctx context.Context, key string, create bool) (MembershipView, bool, error) {
+func (b *goldenBaker) membership(ctx context.Context, key string, create bool) (store.MembershipView, bool, error) {
 	t, ok, err := b.mgr.store.GetTenantBySlug(ctx, goldenTenantSlug)
 	if err != nil {
-		return MembershipView{}, false, err
+		return store.MembershipView{}, false, err
 	}
 	if !ok {
 		if !create {
-			return MembershipView{}, false, nil
+			return store.MembershipView{}, false, nil
 		}
 		if t, err = b.mgr.store.CreateTenant(ctx, goldenTenantSlug, goldenTenantName); err != nil {
-			return MembershipView{}, false, err
+			return store.MembershipView{}, false, err
 		}
 	}
 	ident, ok, err := b.mgr.store.GetIdentityByUserKey(ctx, key)
 	if err != nil {
-		return MembershipView{}, false, err
+		return store.MembershipView{}, false, err
 	}
 	if !ok {
 		if !create {
-			return MembershipView{}, false, nil
+			return store.MembershipView{}, false, nil
 		}
 		if ident, err = b.mgr.store.UpsertIdentity(ctx, "", key, ""); err != nil {
-			return MembershipView{}, false, err
+			return store.MembershipView{}, false, err
 		}
 	}
 	mem, ok, err := b.mgr.store.GetMembership(ctx, ident.ID, t.ID)
 	if err != nil {
-		return MembershipView{}, false, err
+		return store.MembershipView{}, false, err
 	}
 	if !ok {
 		if !create {
-			return MembershipView{}, false, nil
+			return store.MembershipView{}, false, nil
 		}
 		if mem, err = b.mgr.store.EnsureMembership(ctx, ident.ID, t.ID, "member"); err != nil {
-			return MembershipView{}, false, err
+			return store.MembershipView{}, false, err
 		}
 	}
 	if mem.Status != "active" && create {
 		if err := b.mgr.store.SetMembershipStatus(ctx, mem.ID, "active"); err != nil {
-			return MembershipView{}, false, err
+			return store.MembershipView{}, false, err
 		}
 	}
-	return MembershipView{
+	return store.MembershipView{
 		MembershipID: mem.ID, TenantID: t.ID, TenantSlug: t.Slug,
 		TenantName: t.Name, Role: mem.Role,
 	}, true, nil

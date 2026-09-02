@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // destroyingRuntime records the teardown and reports a leftover, standing in for the
@@ -40,7 +41,7 @@ func (f *destroyingFactory) New(runtime.Workspace, string, []string) Runtime {
 
 // setup for the destroy tests: a tenant with an admin and a member who already has a
 // workspace row.
-func destroyFixture(t *testing.T, f RuntimeFactory) (*sqlStore, *manager, Identity, Tenant) {
+func destroyFixture(t *testing.T, f RuntimeFactory) (*store.SQL, *manager, store.Identity, store.Tenant) {
 	t.Helper()
 	ctx := context.Background()
 	st := p3Store(t)
@@ -56,11 +57,11 @@ func destroyFixture(t *testing.T, f RuntimeFactory) (*sqlStore, *manager, Identi
 	if err != nil {
 		t.Fatalf("membership: %v", err)
 	}
-	if err := st.CreateWorkspace(ctx, Workspace{
+	if err := st.CreateWorkspace(ctx, store.Workspace{
 		ID: "W-1", TenantID: tn.ID, MembershipID: mem.ID,
 		ContainerName: "af-ws-sales-leaver", Network: "af-net-sales-leaver",
 		DataDir: "/srv/data/sales/leaver", AgentPort: "7731", AgentToken: "tok",
-		State: "stopped", CreatedAt: nowTS(),
+		State: "stopped", CreatedAt: store.NowTS(),
 	}); err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
@@ -93,7 +94,7 @@ func TestDestroyWorkspaceRefusesAnActiveMember(t *testing.T) {
 	}
 }
 
-func membershipIDOf(t *testing.T, st *sqlStore, ident Identity, tn Tenant) string {
+func membershipIDOf(t *testing.T, st *store.SQL, ident store.Identity, tn store.Tenant) string {
 	t.Helper()
 	mem, ok, err := st.GetMembership(context.Background(), ident.ID, tn.ID)
 	if err != nil || !ok {
@@ -176,7 +177,7 @@ func TestRemoveMembershipSelfKeepsTheLastOne(t *testing.T) {
 	}
 	// The admin's own throwaway tenant, with a workspace of its own — the shape the
 	// bake runbook leaves behind.
-	seedTenant := func(t *testing.T, st *sqlStore, admin Identity) Tenant {
+	seedTenant := func(t *testing.T, st *store.SQL, admin store.Identity) store.Tenant {
 		t.Helper()
 		tn, err := st.CreateTenant(ctx, "golden-seed", "焼き用")
 		if err != nil {
@@ -186,17 +187,17 @@ func TestRemoveMembershipSelfKeepsTheLastOne(t *testing.T) {
 		if err != nil {
 			t.Fatalf("membership: %v", err)
 		}
-		if err := st.CreateWorkspace(ctx, Workspace{
+		if err := st.CreateWorkspace(ctx, store.Workspace{
 			ID: "W-SEED", TenantID: tn.ID, MembershipID: mem.ID,
 			ContainerName: "af-ws-golden-seed-boss", Network: "af-net-golden-seed-boss",
 			DataDir: "/srv/data/golden-seed/boss", AgentPort: "7732", AgentToken: "tok",
-			State: "stopped", CreatedAt: nowTS(),
+			State: "stopped", CreatedAt: store.NowTS(),
 		}); err != nil {
 			t.Fatalf("workspace: %v", err)
 		}
 		return tn
 	}
-	adminOf := func(t *testing.T, st *sqlStore) Identity {
+	adminOf := func(t *testing.T, st *store.SQL) store.Identity {
 		t.Helper()
 		ident, ok, err := st.GetIdentityByUserKey(ctx, "boss-acme-co-jp")
 		if err != nil || !ok {

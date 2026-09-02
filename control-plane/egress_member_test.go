@@ -15,12 +15,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-func newEgressMemberFixture(t *testing.T) (*sqlStore, context.Context) {
+func newEgressMemberFixture(t *testing.T) (*store.SQL, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -45,7 +47,7 @@ type checkBody struct {
 func runCheck(t *testing.T, eg egressAPI, query string) checkBody {
 	t.Helper()
 	w := httptest.NewRecorder()
-	eg.checkHosts(w, httptest.NewRequest("GET", "/api/egress/check?"+query, nil), Identity{}, MembershipView{})
+	eg.checkHosts(w, httptest.NewRequest("GET", "/api/egress/check?"+query, nil), store.Identity{}, store.MembershipView{})
 	if w.Code != 200 {
 		t.Fatalf("check: want 200 got %d (%s)", w.Code, w.Body.String())
 	}
@@ -58,10 +60,10 @@ func runCheck(t *testing.T, eg egressAPI, query string) checkBody {
 
 func TestEgressCheckVerdicts(t *testing.T) {
 	st, ctx := newEgressMemberFixture(t)
-	_ = st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: "mcp.internal", State: "active", AddedAt: nowTS()})
-	_ = st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: ".wanted.example", State: "proposed", AddedAt: nowTS()})
+	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: "mcp.internal", State: "active", AddedAt: store.NowTS()})
+	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: ".wanted.example", State: "proposed", AddedAt: store.NowTS()})
 	// A retired entry is neither allowed nor pending — it must not read as either.
-	_ = st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: "old.example", State: "retired", AddedAt: nowTS()})
+	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: "old.example", State: "retired", AddedAt: store.NowTS()})
 	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil)
 
 	got := runCheck(t, eg, "host=mcp.internal&host=api.anthropic.com&host=srv.wanted.example&host=old.example&host=nope.example")
@@ -97,7 +99,7 @@ func TestEgressCheckVerdicts(t *testing.T) {
 // the host the proxy would match on.
 func TestEgressCheckNormalizesInput(t *testing.T) {
 	st, ctx := newEgressMemberFixture(t)
-	_ = st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: "mcp.internal", State: "active", AddedAt: nowTS()})
+	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: "mcp.internal", State: "active", AddedAt: store.NowTS()})
 	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil)
 
 	got := runCheck(t, eg, "host="+"https%3A%2F%2FMCP.Internal%3A8443%2Fmcp")
@@ -124,7 +126,7 @@ func propose(t *testing.T, eg egressAPI, body string) (int, map[string]any) {
 	t.Helper()
 	w := httptest.NewRecorder()
 	eg.propose(w, httptest.NewRequest("POST", "/api/egress/propose", strings.NewReader(body)),
-		Identity{ID: "u1", Email: "member@x"}, MembershipView{TenantID: "t1"})
+		store.Identity{ID: "u1", Email: "member@x"}, store.MembershipView{TenantID: "t1"})
 	var out map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &out)
 	return w.Code, out
@@ -187,7 +189,7 @@ func TestEgressProposeCollapsesDuplicates(t *testing.T) {
 	}
 
 	// Already active: nothing to ask for, and still no new row.
-	_ = st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: "live.example", State: "active", AddedAt: nowTS()})
+	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: "live.example", State: "active", AddedAt: store.NowTS()})
 	code, out = propose(t, eg, `{"entry":"live.example"}`)
 	if code != 200 || out["state"] != "active" || out["already"] != true {
 		t.Fatalf("active entry: %d %+v", code, out)
@@ -198,7 +200,7 @@ func TestEgressProposeCollapsesDuplicates(t *testing.T) {
 
 	// A previously rejected (retired) entry may be asked for again — that is the point of
 	// asking twice, with a new reason.
-	_ = st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: "back.example", State: "retired", AddedAt: nowTS()})
+	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: "back.example", State: "retired", AddedAt: store.NowTS()})
 	if code, _ := propose(t, eg, `{"entry":"back.example","reason":"needed after all"}`); code != 200 {
 		t.Fatalf("retired re-request: %d", code)
 	}
@@ -223,7 +225,7 @@ func TestEgressProposeRejectsBadEntries(t *testing.T) {
 	} {
 		w := httptest.NewRecorder()
 		eg.propose(w, httptest.NewRequest("POST", "/api/egress/propose",
-			strings.NewReader(`{"entry":`+quoteJSON(tc.entry)+`}`)), Identity{Email: "m@x"}, MembershipView{})
+			strings.NewReader(`{"entry":`+quoteJSON(tc.entry)+`}`)), store.Identity{Email: "m@x"}, store.MembershipView{})
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("%q: want 400 got %d (%s)", tc.entry, w.Code, w.Body.String())
 		}

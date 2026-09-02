@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Per-tenant login rules (docs/log/61 §61.9 + ADR0043 決定 15/16/19), and the short-TTL
@@ -34,20 +36,20 @@ const tenantRuleTTL = 30 * time.Second
 
 // tenantLoginStore is the narrow store view this cache needs.
 type tenantLoginStore interface {
-	ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error)
+	ListTenantLoginRules(ctx context.Context) ([]store.TenantLoginRules, error)
 	EmailHasActiveMembership(ctx context.Context, email string) (bool, error)
 }
 
 // tenantRuleSnapshot is one consistent read of every tenant's rules.
 type tenantRuleSnapshot struct {
-	byID   map[string]TenantLoginRules
-	bySlug map[string]TenantLoginRules
+	byID   map[string]store.TenantLoginRules
+	bySlug map[string]store.TenantLoginRules
 	// autoJoin maps an auto-join domain to the tenant that wins it. Two tenants
 	// claiming one domain is a configuration error the admin API refuses to create;
 	// if one exists anyway (edited before this version, or two admins racing), the
 	// LOWEST SLUG wins so the outcome is at least deterministic rather than
 	// whichever row the database happened to return first (§61.9.8).
-	autoJoin map[string]TenantLoginRules
+	autoJoin map[string]store.TenantLoginRules
 	// contested lists the domains more than one tenant claims, so the auto-join
 	// path can say so in the audit ledger rather than silently picking one.
 	contested map[string]bool
@@ -127,14 +129,14 @@ func (c *tenantLoginCache) snapshot(ctx context.Context) *tenantRuleSnapshot {
 	return snap
 }
 
-func buildTenantRuleSnapshot(rules []TenantLoginRules) *tenantRuleSnapshot {
+func buildTenantRuleSnapshot(rules []store.TenantLoginRules) *tenantRuleSnapshot {
 	s := &tenantRuleSnapshot{
-		byID:      make(map[string]TenantLoginRules, len(rules)),
-		bySlug:    make(map[string]TenantLoginRules, len(rules)),
-		autoJoin:  map[string]TenantLoginRules{},
+		byID:      make(map[string]store.TenantLoginRules, len(rules)),
+		bySlug:    make(map[string]store.TenantLoginRules, len(rules)),
+		autoJoin:  map[string]store.TenantLoginRules{},
 		contested: map[string]bool{},
 	}
-	sorted := append([]TenantLoginRules(nil), rules...)
+	sorted := append([]store.TenantLoginRules(nil), rules...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Slug < sorted[j].Slug })
 	for _, r := range sorted {
 		s.byID[r.ID] = r
@@ -222,18 +224,18 @@ func (c *tenantLoginCache) hasMembership(ctx context.Context, email string) bool
 // autoJoinTenant returns the tenant an address joins automatically, if any.
 // contested reports that more than one tenant claimed the domain, so the caller can
 // record the fact instead of quietly picking one.
-func (c *tenantLoginCache) autoJoinTenant(ctx context.Context, email string) (t TenantLoginRules, contested, ok bool) {
+func (c *tenantLoginCache) autoJoinTenant(ctx context.Context, email string) (t store.TenantLoginRules, contested, ok bool) {
 	if c == nil {
-		return TenantLoginRules{}, false, false
+		return store.TenantLoginRules{}, false, false
 	}
 	email = strings.ToLower(strings.TrimSpace(email))
 	at := strings.LastIndexByte(email, '@')
 	if at < 0 {
-		return TenantLoginRules{}, false, false
+		return store.TenantLoginRules{}, false, false
 	}
 	snap := c.snapshot(ctx)
 	if snap == nil {
-		return TenantLoginRules{}, false, false
+		return store.TenantLoginRules{}, false, false
 	}
 	domain := email[at+1:]
 	r, ok := snap.autoJoin[domain]
@@ -307,13 +309,13 @@ func (c *tenantLoginCache) networkAllowed(ctx context.Context, tenantID string, 
 }
 
 // rulesForSlug returns a tenant's rules by slug (login page rendering).
-func (c *tenantLoginCache) rulesForSlug(ctx context.Context, slug string) (TenantLoginRules, bool) {
+func (c *tenantLoginCache) rulesForSlug(ctx context.Context, slug string) (store.TenantLoginRules, bool) {
 	if c == nil || slug == "" {
-		return TenantLoginRules{}, false
+		return store.TenantLoginRules{}, false
 	}
 	snap := c.snapshot(ctx)
 	if snap == nil {
-		return TenantLoginRules{}, false
+		return store.TenantLoginRules{}, false
 	}
 	r, ok := snap.bySlug[slug]
 	return r, ok

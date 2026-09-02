@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // auditActionTarget classifies a proxied request as an auditable CHANGE operation
@@ -216,9 +217,9 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		if fsPutOutcome == errCodeFSWriteStateUnknown {
 			detail = "write_state_unknown"
 		}
-		_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{
-			ID: newID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
-			Action: action, Target: target, Detail: detail, HTTPStatus: resp.StatusCode, At: nowTS(),
+		_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{
+			ID: store.NewID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
+			Action: action, Target: target, Detail: detail, HTTPStatus: resp.StatusCode, At: store.NowTS(),
 		})
 	}
 

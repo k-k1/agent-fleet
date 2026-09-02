@@ -7,10 +7,12 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // usageHourFixture: 1 テナント・1 メンバー・1 ワークスペース。
-func usageHourFixture(t *testing.T) (*sqlStore, *manager, Tenant, Membership, Workspace) {
+func usageHourFixture(t *testing.T) (*store.SQL, *manager, store.Tenant, store.Membership, store.Workspace) {
 	t.Helper()
 	ctx := context.Background()
 	st := p3Store(t)
@@ -22,10 +24,10 @@ func usageHourFixture(t *testing.T) (*sqlStore, *manager, Tenant, Membership, Wo
 	if err != nil {
 		t.Fatalf("membership: %v", err)
 	}
-	ws := Workspace{
+	ws := store.Workspace{
 		ID: "W-1", TenantID: tn.ID, MembershipID: mem.ID,
 		ContainerName: "af-ws-sales-w", DataDir: "/srv/data/sales/w",
-		AgentPort: "7731", AgentToken: "tok", State: "running", CreatedAt: nowTS(),
+		AgentPort: "7731", AgentToken: "tok", State: "running", CreatedAt: store.NowTS(),
 	}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatalf("workspace: %v", err)
@@ -38,7 +40,7 @@ func usageHourFixture(t *testing.T) (*sqlStore, *manager, Tenant, Membership, Wo
 func TestAddUsageHourAddsSumsAndKeepsThePeak(t *testing.T) {
 	ctx := context.Background()
 	st, _, tn, mem, _ := usageHourFixture(t)
-	for _, c := range []UsageHourCounters{
+	for _, c := range []store.UsageHourCounters{
 		{Samples: 1, RunningSecs: 300, MeasuredSecs: 300, SessionSecs: 600, BusySecs: 300, MaxSessions: 2, MaxBusy: 1},
 		{Samples: 1, RunningSecs: 300, MeasuredSecs: 300, SessionSecs: 1200, BusySecs: 0, MaxSessions: 4, MaxBusy: 0},
 		{Samples: 1, RunningSecs: 300, MeasuredSecs: 0, SessionSecs: 0, BusySecs: 0, MaxSessions: 0, MaxBusy: 0},
@@ -55,7 +57,7 @@ func TestAddUsageHourAddsSumsAndKeepsThePeak(t *testing.T) {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
 	got := rows[0].UsageHourCounters
-	want := UsageHourCounters{Samples: 3, RunningSecs: 900, MeasuredSecs: 600, SessionSecs: 1800, BusySecs: 300, MaxSessions: 4, MaxBusy: 1}
+	want := store.UsageHourCounters{Samples: 3, RunningSecs: 900, MeasuredSecs: 600, SessionSecs: 1800, BusySecs: 300, MaxSessions: 4, MaxBusy: 1}
 	if got != want {
 		t.Errorf("counters = %+v, want %+v", got, want)
 	}
@@ -80,9 +82,9 @@ func TestListUsageHourlyKeepsTheHeartbeatUnderATenantFilter(t *testing.T) {
 			t.Fatalf("add: %v", err)
 		}
 	}
-	must(st.AddUsageHour(ctx, "", "", "2026-09-01T09", UsageHourCounters{Samples: 12}))
-	must(st.AddUsageHour(ctx, mem.ID, tn.ID, "2026-09-01T09", UsageHourCounters{Samples: 12, RunningSecs: 3600}))
-	must(st.AddUsageHour(ctx, omem.ID, other.ID, "2026-09-01T09", UsageHourCounters{Samples: 12, RunningSecs: 3600}))
+	must(st.AddUsageHour(ctx, "", "", "2026-09-01T09", store.UsageHourCounters{Samples: 12}))
+	must(st.AddUsageHour(ctx, mem.ID, tn.ID, "2026-09-01T09", store.UsageHourCounters{Samples: 12, RunningSecs: 3600}))
+	must(st.AddUsageHour(ctx, omem.ID, other.ID, "2026-09-01T09", store.UsageHourCounters{Samples: 12, RunningSecs: 3600}))
 
 	rows, err := st.ListUsageHourly(ctx, tn.ID, "2026-09-01T00", "2026-09-01T23")
 	if err != nil {
@@ -111,7 +113,7 @@ func TestPruneUsageHourly(t *testing.T) {
 	ctx := context.Background()
 	st, _, tn, mem, _ := usageHourFixture(t)
 	for _, h := range []string{"2026-05-01T09", "2026-09-01T09"} {
-		if err := st.AddUsageHour(ctx, mem.ID, tn.ID, h, UsageHourCounters{Samples: 1, RunningSecs: 300}); err != nil {
+		if err := st.AddUsageHour(ctx, mem.ID, tn.ID, h, store.UsageHourCounters{Samples: 1, RunningSecs: 300}); err != nil {
 			t.Fatalf("add: %v", err)
 		}
 	}
@@ -164,7 +166,7 @@ func TestSampleRecordsHourlyOccupancyAndSessionCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	var member, beat *UsageHourRow
+	var member, beat *store.UsageHourRow
 	for i := range rows {
 		if rows[i].MembershipID == mem.ID {
 			member = &rows[i]
@@ -178,7 +180,7 @@ func TestSampleRecordsHourlyOccupancyAndSessionCounts(t *testing.T) {
 	if beat == nil {
 		t.Fatal("no heartbeat row — an hour with no member row would read as unobserved rather than stopped")
 	}
-	want := UsageHourCounters{
+	want := store.UsageHourCounters{
 		Samples: 1, RunningSecs: 300, MeasuredSecs: 300,
 		SessionSecs: 3 * 300, BusySecs: 1 * 300, MaxSessions: 3, MaxBusy: 1,
 	}
@@ -203,7 +205,7 @@ func TestSampleLeavesSessionsUnmeasuredWhenTheAgentIsUnreachable(t *testing.T) {
 	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
 
 	rows, _ := st.ListUsageHourly(ctx, "", "2000-01-01T00", "2999-01-01T00")
-	var member *UsageHourRow
+	var member *store.UsageHourRow
 	for i := range rows {
 		if rows[i].MembershipID == mem.ID {
 			member = &rows[i]
@@ -238,14 +240,14 @@ func TestSampleWritesNoMemberRowForAStoppedWorkspace(t *testing.T) {
 // --- 応答の組み立て --------------------------------------------------------
 
 func TestBuildUsageHourlySeparatesHeartbeatsAndDropsSystemTenants(t *testing.T) {
-	got := buildUsageHourly([]UsageHourRow{
-		{MembershipID: "", Hour: "2026-09-01T09", UsageHourCounters: UsageHourCounters{Samples: 12}},
+	got := buildUsageHourly([]store.UsageHourRow{
+		{MembershipID: "", Hour: "2026-09-01T09", UsageHourCounters: store.UsageHourCounters{Samples: 12}},
 		{MembershipID: "m1", TenantSlug: "sales", UserKey: "w", Hour: "2026-09-01T09",
-			UsageHourCounters: UsageHourCounters{Samples: 12, RunningSecs: 3600}},
+			UsageHourCounters: store.UsageHourCounters{Samples: 12, RunningSecs: 3600}},
 		{MembershipID: "m1", TenantSlug: "sales", UserKey: "w", Hour: "2026-09-01T10",
-			UsageHourCounters: UsageHourCounters{Samples: 6, RunningSecs: 1800}},
+			UsageHourCounters: store.UsageHourCounters{Samples: 6, RunningSecs: 1800}},
 		{MembershipID: "m2", TenantSlug: systemTenantSlugs()[0], UserKey: "", Hour: "2026-09-01T09",
-			UsageHourCounters: UsageHourCounters{Samples: 12, RunningSecs: 3600}},
+			UsageHourCounters: store.UsageHourCounters{Samples: 12, RunningSecs: 3600}},
 	}, "2026-09-01", "2026-09-01", 300)
 
 	// ⚠️ 時刻だけでなく samples も載る。これがマスの分母（見ていた秒数）で、無いと
@@ -296,13 +298,13 @@ func TestMyUsageHourlyIsScopedToTheCaller(t *testing.T) {
 	other, _ := st.CreateTenant(ctx, "eng", "開発部")
 	oid, _ := st.UpsertIdentity(ctx, "e@acme.co.jp", "e-acme-co-jp", "")
 	omem, _ := st.EnsureMembership(ctx, oid.ID, other.ID, "member")
-	_ = st.AddUsageHour(ctx, "", "", "2026-09-01T09", UsageHourCounters{Samples: 12})
-	_ = st.AddUsageHour(ctx, mem.ID, tn.ID, "2026-09-01T09", UsageHourCounters{Samples: 12, RunningSecs: 3600})
-	_ = st.AddUsageHour(ctx, omem.ID, other.ID, "2026-09-01T09", UsageHourCounters{Samples: 12, RunningSecs: 3600})
+	_ = st.AddUsageHour(ctx, "", "", "2026-09-01T09", store.UsageHourCounters{Samples: 12})
+	_ = st.AddUsageHour(ctx, mem.ID, tn.ID, "2026-09-01T09", store.UsageHourCounters{Samples: 12, RunningSecs: 3600})
+	_ = st.AddUsageHour(ctx, omem.ID, other.ID, "2026-09-01T09", store.UsageHourCounters{Samples: 12, RunningSecs: 3600})
 
 	r := httptest.NewRequest(http.MethodGet, "/api/usage/me/hourly?from=2026-09-01&to=2026-09-01", nil)
 	w := httptest.NewRecorder()
-	newAdminAPI(mgr).myUsageHourly(w, r, Identity{}, MembershipView{MembershipID: mem.ID, TenantID: tn.ID, TenantSlug: tn.Slug})
+	newAdminAPI(mgr).myUsageHourly(w, r, store.Identity{}, store.MembershipView{MembershipID: mem.ID, TenantID: tn.ID, TenantSlug: tn.Slug})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}

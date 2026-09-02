@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // TestResolveWorkspaceMemBytes covers the clamp chain: unset → default (0), floor,
 // per-tenant cap, and the deployment hard ceiling.
 func TestResolveWorkspaceMemBytes(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +24,7 @@ func TestResolveWorkspaceMemBytes(t *testing.T) {
 	tn, _ := st.EnsureDefaultTenant(ctx)
 	ident, _ := st.UpsertIdentity(ctx, "a@x.com", "a-x-com", "")
 	mem, _ := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
-	ws := Workspace{MembershipID: mem.ID, TenantID: tn.ID}
+	ws := store.Workspace{MembershipID: mem.ID, TenantID: tn.ID}
 
 	m := &manager{store: st}
 
@@ -32,13 +34,13 @@ func TestResolveWorkspaceMemBytes(t *testing.T) {
 	}
 
 	// Below the floor is raised to the floor.
-	_ = st.PutUserLimit(ctx, mem.ID, UserQuota{MemLimit: 64 * mib})
+	_ = st.PutUserLimit(ctx, mem.ID, store.UserQuota{MemLimit: 64 * mib})
 	if got := m.resolveWorkspaceMemBytes(ctx, ws); got != memFloorBytes {
 		t.Errorf("floor: got %d, want %d", got, memFloorBytes)
 	}
 
 	// A normal value passes through untouched.
-	_ = st.PutUserLimit(ctx, mem.ID, UserQuota{MemLimit: 4 * gib})
+	_ = st.PutUserLimit(ctx, mem.ID, store.UserQuota{MemLimit: 4 * gib})
 	if got := m.resolveWorkspaceMemBytes(ctx, ws); got != 4*gib {
 		t.Errorf("passthrough: got %d, want %d", got, 4*gib)
 	}
@@ -63,7 +65,7 @@ func TestResolveWorkspaceMemBytes(t *testing.T) {
 // (ADR 0044 決定 1).
 func TestResolveWorkspaceSizeCPUAndDisk(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +76,7 @@ func TestResolveWorkspaceSizeCPUAndDisk(t *testing.T) {
 	tn, _ := st.EnsureDefaultTenant(ctx)
 	ident, _ := st.UpsertIdentity(ctx, "a@x.com", "a-x-com", "")
 	mem, _ := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
-	ws := Workspace{MembershipID: mem.ID, TenantID: tn.ID}
+	ws := store.Workspace{MembershipID: mem.ID, TenantID: tn.ID}
 	m := &manager{store: st}
 
 	if b, c, d := m.resolveWorkspaceSize(ctx, ws); b != 0 || c != 0 || d != 0 {
@@ -82,7 +84,7 @@ func TestResolveWorkspaceSizeCPUAndDisk(t *testing.T) {
 	}
 
 	// All three set at once and none of them interfering with the others.
-	_ = st.PutUserLimit(ctx, mem.ID, UserQuota{MemLimit: 8 * gib, CPULimit: 4096, DiskGB: 60})
+	_ = st.PutUserLimit(ctx, mem.ID, store.UserQuota{MemLimit: 8 * gib, CPULimit: 4096, DiskGB: 60})
 	if b, c, d := m.resolveWorkspaceSize(ctx, ws); b != 8*gib || c != 4096 || d != 60 {
 		t.Errorf("passthrough: got %d/%d/%d, want %d/4096/60", b, c, d, 8*gib)
 	}

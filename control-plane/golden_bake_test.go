@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // --- fakes ------------------------------------------------------------------------
@@ -252,14 +253,14 @@ type goldenFixture struct {
 	baker *goldenBaker
 	pool  *fakeGoldenPool
 	fac   *fakeGoldenFactory
-	store *sqlStore
+	store *store.SQL
 }
 
 // agentHealthy flips the fake Agent between answering /sessions and refusing.
 func newGoldenFixture(t *testing.T, agentHealthy *bool) *goldenFixture {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

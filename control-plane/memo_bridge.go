@@ -16,6 +16,8 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func memoSignKey(master32 []byte) []byte {
@@ -62,18 +64,18 @@ func verifyMemoToken(signKey []byte, token string) (membershipID string, ok bool
 // memoTokenMembership authenticates a /internal/memos request by its Bearer memo token
 // and resolves the live membership (a revoked membership -> 401). Tenant/role come from
 // the live store, never the token.
-func (a memoAPI) memoTokenMembership(r *http.Request) (MembershipView, *apiError) {
+func (a memoAPI) memoTokenMembership(r *http.Request) (store.MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	mid, ok := verifyMemoToken(memoSignKey(a.mgr.tokenSignMaster()), tok)
 	if !ok {
-		return MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid memo token"}
+		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid memo token"}
 	}
 	mv, ok, err := a.mgr.store.GetMembershipByID(r.Context(), mid)
 	if err != nil {
-		return MembershipView{}, internalErr(err)
+		return store.MembershipView{}, internalErr(err)
 	}
 	if !ok {
-		return MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "membership not active"}
+		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "membership not active"}
 	}
 	return mv, nil
 }
@@ -81,14 +83,14 @@ func (a memoAPI) memoTokenMembership(r *http.Request) (MembershipView, *apiError
 // withMemoToken adapts a membership-scoped memo handler to the internal token face —
 // the SAME handler bodies the session face uses (list/create/update/delete); only the
 // membership resolution differs.
-func (a memoAPI) withMemoToken(h func(http.ResponseWriter, *http.Request, Identity, MembershipView)) http.HandlerFunc {
+func (a memoAPI) withMemoToken(h func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		mv, aerr := a.memoTokenMembership(r)
 		if aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
-		h(w, r, Identity{}, mv)
+		h(w, r, store.Identity{}, mv)
 	}
 }
 

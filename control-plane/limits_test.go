@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func TestParseLimitsTerminalHistoryRetention(t *testing.T) {
@@ -39,7 +40,7 @@ type poollessFactory struct{}
 
 func (f *poollessFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
 
-func budgetFixture(t *testing.T, max int, quotas map[string]int) (*sqlStore, *manager) {
+func budgetFixture(t *testing.T, max int, quotas map[string]int) (*store.SQL, *manager) {
 	t.Helper()
 	ctx := context.Background()
 	st := p3Store(t)
@@ -145,7 +146,7 @@ func putLimits(mgr *manager, slug string, body string) *httptest.ResponseRecorde
 	r := httptest.NewRequest(http.MethodPut, "/api/admin/tenants/"+slug+"/limits", strings.NewReader(body))
 	r.SetPathValue("slug", slug)
 	w := httptest.NewRecorder()
-	newAdminAPI(mgr).setTenantLimits(w, r, Identity{ID: "I-boss", Role: "super_admin"})
+	newAdminAPI(mgr).setTenantLimits(w, r, store.Identity{ID: "I-boss", Role: "super_admin"})
 	return w
 }
 

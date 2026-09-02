@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 type reaperFenceRuntime struct {
@@ -24,7 +25,7 @@ type reaperFenceRuntime struct {
 }
 
 type operationFenceGateStore struct {
-	Store
+	store.Store
 	mu sync.Mutex
 }
 
@@ -65,10 +66,10 @@ func newReaperFenceRuntime(t *testing.T) *reaperFenceRuntime {
 	return r
 }
 
-func reaperLifecycleFixture(t *testing.T) (*sqlStore, Workspace, *manager) {
+func reaperLifecycleFixture(t *testing.T) (*store.SQL, store.Workspace, *manager) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,9 +80,9 @@ func reaperLifecycleFixture(t *testing.T) (*sqlStore, Workspace, *manager) {
 	tenant, _ := st.EnsureDefaultTenant(ctx)
 	identity, _ := st.UpsertIdentity(ctx, "reaper-fence@example.com", "reaper-fence", "")
 	membership, _ := st.EnsureMembership(ctx, identity.ID, tenant.ID, "member")
-	ws := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: membership.ID,
+	ws := store.Workspace{ID: store.NewID(), TenantID: tenant.ID, MembershipID: membership.ID,
 		ContainerName: "reaper-fence", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t",
-		State: "running", CreatedAt: nowTS()}
+		State: "running", CreatedAt: store.NowTS()}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestReaperStopUsesLifecycleLeaseAndRuntimeFence(t *testing.T) {
 
 	// An approved share operation owns the same distributed lease. The reaper
 	// must skip this sweep without reaching Runtime.Stop.
-	op := newID()
+	op := store.NewID()
 	now := time.Now().UTC()
 	acquired, err := st.AcquireSessionShareOwnerLease(ctx, ws.MembershipID, op, leaseTS(now), leaseTS(now.Add(time.Minute)))
 	if err != nil || !acquired {
@@ -175,20 +176,20 @@ func TestReaperStopWaitsForLocalWorkspaceOperation(t *testing.T) {
 func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
 	tests := []struct {
 		name     string
-		activate func(*manager, *reaperFenceRuntime, Workspace) error
+		activate func(*manager, *reaperFenceRuntime, store.Workspace) error
 	}{
-		{name: "connection resumed", activate: func(m *manager, _ *reaperFenceRuntime, ws Workspace) error {
+		{name: "connection resumed", activate: func(m *manager, _ *reaperFenceRuntime, ws store.Workspace) error {
 			m.conns.addConn(ws.ID, "", false)
 			return nil
 		}},
-		{name: "request touched workspace", activate: func(m *manager, _ *reaperFenceRuntime, ws Workspace) error {
+		{name: "request touched workspace", activate: func(m *manager, _ *reaperFenceRuntime, ws store.Workspace) error {
 			m.conns.touch(ws.ID)
 			return nil
 		}},
-		{name: "database activity refreshed", activate: func(m *manager, _ *reaperFenceRuntime, ws Workspace) error {
+		{name: "database activity refreshed", activate: func(m *manager, _ *reaperFenceRuntime, ws store.Workspace) error {
 			return m.store.SetWorkspaceState(context.Background(), ws.ID, "running")
 		}},
-		{name: "agent became busy", activate: func(_ *manager, rt *reaperFenceRuntime, _ Workspace) error {
+		{name: "agent became busy", activate: func(_ *manager, rt *reaperFenceRuntime, _ store.Workspace) error {
 			rt.busy.Store(true)
 			return nil
 		}},
@@ -227,15 +228,15 @@ func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
 func TestReaperObservesActivityFromAnotherControlPlane(t *testing.T) {
 	tests := []struct {
 		name     string
-		activate func(context.Context, *manager, Workspace) func()
+		activate func(context.Context, *manager, store.Workspace) func()
 	}{
-		{name: "remote request", activate: func(ctx context.Context, m *manager, ws Workspace) func() {
+		{name: "remote request", activate: func(ctx context.Context, m *manager, ws store.Workspace) func() {
 			if err := m.touchWorkspace(ctx, ws.ID); err != nil {
 				panic(err)
 			}
 			return func() {}
 		}},
-		{name: "remote live connection", activate: func(ctx context.Context, m *manager, ws Workspace) func() {
+		{name: "remote live connection", activate: func(ctx context.Context, m *manager, ws store.Workspace) func() {
 			release, err := m.trackWorkspaceConnection(ctx, ws.ID, "session-a")
 			if err != nil {
 				panic(err)
@@ -347,7 +348,7 @@ func TestExplicitStartClearsOrphanedIdleStopIntentWhileRunning(t *testing.T) {
 
 	rt := newReaperFenceRuntime(t)
 	close(rt.fenceRelease)
-	res := &resolved{rt: rt, ws: ws, mv: MembershipView{MembershipID: ws.MembershipID, TenantID: ws.TenantID}}
+	res := &resolved{rt: rt, ws: ws, mv: store.MembershipView{MembershipID: ws.MembershipID, TenantID: ws.TenantID}}
 	if aerr := newWorkspaceAPI(mgr, false).ensureWorkspaceStartedRT(ctx, res, rt); aerr != nil {
 		t.Fatalf("explicit Start reconciliation: %+v", aerr)
 	}
@@ -504,7 +505,7 @@ func (r *plainStub) Endpoint() string             { return "" }
 func (r *plainStub) Token() string                { return "" }
 func (r *plainStub) Name() string                 { return "plain-stub" }
 
-func setLastActive(t *testing.T, st *sqlStore, wsID string, at time.Time) string {
+func setLastActive(t *testing.T, st *store.SQL, wsID string, at time.Time) string {
 	t.Helper()
 	ts := at.UTC().Format(time.RFC3339)
 	if _, err := st.DB().Exec(`UPDATE workspace SET last_active_at=? WHERE id=?`, ts, wsID); err != nil {

@@ -8,6 +8,8 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // --- who is calling (docs/log/66 §66.3) -----------------------------------------
@@ -91,7 +93,7 @@ func TestParseCIDRList(t *testing.T) {
 // --- the gate ---------------------------------------------------------------
 
 // networkFixture: one tenant with a member and a tenant_admin, plus a super_admin.
-func networkFixture(t *testing.T) (*sqlStore, *manager, Tenant, MembershipView, Identity) {
+func networkFixture(t *testing.T) (*store.SQL, *manager, store.Tenant, store.MembershipView, store.Identity) {
 	t.Helper()
 	ctx := context.Background()
 	st := p3Store(t)
@@ -148,7 +150,7 @@ func TestCheckTenantIP(t *testing.T) {
 		t.Error("an unknown source address must be refused, not admitted")
 	}
 	// The operator's escape hatch: a tenant that locked itself out is fixable.
-	super := Identity{ID: member.ID, Role: "super_admin"}
+	super := store.Identity{ID: member.ID, Role: "super_admin"}
 	if aerr := mgr.checkTenantIP(ctxWithIP("198.51.100.7", true), super, mv); aerr != nil {
 		t.Errorf("super_admin must not be subject to a tenant's own rule: %v", aerr)
 	}

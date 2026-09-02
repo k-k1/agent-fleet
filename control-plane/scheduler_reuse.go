@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Scheduled execution P6 (docs/log/38 + ADR0021): long-lived session reuse. When a schedule
@@ -35,7 +37,7 @@ import (
 // the workspace is awake, the keep-alive is held, and the Agent is reachable, so it only
 // has to pick/rotate the target session and deliver the prompt. It persists the reuse
 // ledger itself (SetScheduleReuse); fireOne stamps the cron ledger afterward.
-func (f *wakeFirer) fireReuse(ctx context.Context, res *resolved, sch Schedule, slot time.Time) (string, string, error) {
+func (f *wakeFirer) fireReuse(ctx context.Context, res *resolved, sch store.Schedule, slot time.Time) (string, string, error) {
 	sessions, err := f.mgr.agentSessions(ctx, res.rt)
 	if err != nil {
 		return "", "", fmt.Errorf("list sessions: %w", err)
@@ -102,7 +104,7 @@ func (f *wakeFirer) fireReuse(ctx context.Context, res *resolved, sch Schedule, 
 // deliverReuse resolves the overlap policy against the target's live state, then sends
 // the prompt (resuming the session if it is stopped). A non-empty skipStatus means the
 // overlap policy declined to deliver this fire (recorded, not an error).
-func (f *wakeFirer) deliverReuse(ctx context.Context, rt Runtime, sch Schedule, target *sessionWire, slot time.Time) (skipStatus string, err error) {
+func (f *wakeFirer) deliverReuse(ctx context.Context, rt Runtime, sch store.Schedule, target *sessionWire, slot time.Time) (skipStatus string, err error) {
 	body := reuseSendBody(sch, slot)
 	alive := target.Alive
 	if target.Alive && sessionBusy(target.State) {
@@ -184,7 +186,7 @@ func (f *wakeFirer) resumeAndSend(ctx context.Context, rt Runtime, name, inputPa
 // createReuseSession creates the long-lived session for reuse and returns the Agent's
 // assigned session name (stored in the reuse ledger so later fires find it). title lets a
 // human recognize it in the Console; the idempotency key collapses a CP-restart re-fire.
-func (f *wakeFirer) createReuseSession(ctx context.Context, rt Runtime, sch Schedule, slot time.Time, title string) (string, error) {
+func (f *wakeFirer) createReuseSession(ctx context.Context, rt Runtime, sch store.Schedule, slot time.Time, title string) (string, error) {
 	body := buildReuseCreateBody(sch, slot, title)
 	respBody, status, err := f.agentReq(ctx, rt, http.MethodPost, "/sessions", body)
 	if err != nil {
@@ -342,7 +344,7 @@ func findSessionByName(sessions []sessionWire, name string) *sessionWire {
 func sessionBusy(state string) bool { return state == "working" || state == "question" }
 
 // reuseOverlap returns the schedule's overlap policy, defaulting to skip.
-func reuseOverlap(sch Schedule) string {
+func reuseOverlap(sch store.Schedule) string {
 	if sch.OverlapPolicy == "" {
 		return "skip"
 	}
@@ -350,7 +352,7 @@ func reuseOverlap(sch Schedule) string {
 }
 
 // reuseMissingPolicy returns the pinned-target-missing policy, defaulting to recreate.
-func reuseMissingPolicy(sch Schedule) string {
+func reuseMissingPolicy(sch store.Schedule) string {
 	if sch.MissingTargetPolicy == "" {
 		return "recreate"
 	}
@@ -360,7 +362,7 @@ func reuseMissingPolicy(sch Schedule) string {
 // reuseCreateTitle is the human-readable title for a reuse session the scheduler creates.
 // A pinned recreate adopts the operator's target name so the replacement is recognizable;
 // a managed session is titled from the label/id.
-func reuseCreateTitle(sch Schedule, pinned bool) string {
+func reuseCreateTitle(sch store.Schedule, pinned bool) string {
 	if pinned {
 		return sch.ReuseTarget
 	}
@@ -380,7 +382,7 @@ func reuseCreateTitle(sch Schedule, pinned bool) string {
 // appended to the conversation log), self-heals once, and otherwise answers
 // delivery_unconfirmed — which lands here as an error: status plus a notification,
 // never a bogus "fired".
-func reuseSendBody(sch Schedule, slot time.Time) []byte {
+func reuseSendBody(sch store.Schedule, slot time.Time) []byte {
 	b, _ := json.Marshal(map[string]any{
 		"prompt":    expandSchedulePrompt(sch, slot),
 		"report_to": scheduleReportTo(sch),
@@ -392,7 +394,7 @@ func reuseSendBody(sch Schedule, slot time.Time) []byte {
 
 // buildReuseCreateBody marshals the create_session body for a reuse session — the same
 // fields as a new-mode fire plus a title so the created session is recognizable.
-func buildReuseCreateBody(sch Schedule, slot time.Time, title string) []byte {
+func buildReuseCreateBody(sch store.Schedule, slot time.Time, title string) []byte {
 	kind := scheduleInjectKind(sch.AgentKind)
 	body := map[string]any{
 		"dir":             sch.Repo,
@@ -463,7 +465,7 @@ func validateRotation(s string) error {
 // this fire. Deterministic triggers only (v1): every_runs (fires since last rotation),
 // after (age of the current session), calendar (a boundary crossed). loc is the
 // schedule's zone so calendar boundaries align to the user's week/day.
-func rotationDue(sch Schedule, slot time.Time, loc *time.Location) bool {
+func rotationDue(sch store.Schedule, slot time.Time, loc *time.Location) bool {
 	r, err := parseRotation(sch.Rotation)
 	if err != nil || r.isEmpty() {
 		return false

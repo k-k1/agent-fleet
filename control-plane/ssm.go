@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // readAllBody reads and closes a request body. restoreBody re-attaches a body so a
@@ -55,12 +57,12 @@ type ssmHostDTO struct {
 	CreatedAt    string `json:"createdAt"`
 }
 
-func profileToDTO(p SSMProfile) ssmProfileDTO {
+func profileToDTO(p store.SSMProfile) ssmProfileDTO {
 	return ssmProfileDTO{ID: p.ID, Label: p.Label, StartURL: p.StartURL, SSORegion: p.SSORegion,
 		AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, CreatedAt: p.CreatedAt}
 }
 
-func hostToDTO(h SSMHost) ssmHostDTO {
+func hostToDTO(h store.SSMHost) ssmHostDTO {
 	return ssmHostDTO{ID: h.ID, Alias: h.Alias, ProfileID: h.ProfileID, Region: h.Region,
 		InstanceID: h.InstanceID, DocumentName: h.DocumentName, CreatedAt: h.CreatedAt}
 }
@@ -71,14 +73,14 @@ func hostToDTO(h SSMHost) ssmHostDTO {
 // インターフェースが先に使っているため避けた。
 type ssmConfigAPI struct {
 	memberAuth
-	store SSMStore
+	store store.SSMStore
 }
 
 func newSSMConfigAPI(m *manager) ssmConfigAPI { return ssmConfigAPI{memberAuth{m}, m.store} }
 
 // --- profiles (common auth bundle) -----------------------------------------------
 
-func (a ssmConfigAPI) listProfiles(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a ssmConfigAPI) listProfiles(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	rows, err := a.store.ListSSMProfiles(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -93,8 +95,8 @@ func (a ssmConfigAPI) listProfiles(w http.ResponseWriter, r *http.Request, _ Ide
 
 // validateProfile trims + checks a profile DTO. Returns a normalized SSMProfile
 // (id/created_at unset).
-func validateProfile(mv MembershipView, in ssmProfileDTO) (SSMProfile, *apiError) {
-	p := SSMProfile{
+func validateProfile(mv store.MembershipView, in ssmProfileDTO) (store.SSMProfile, *apiError) {
+	p := store.SSMProfile{
 		MembershipID: mv.MembershipID,
 		Label:        strings.TrimSpace(in.Label),
 		StartURL:     strings.TrimSpace(in.StartURL),
@@ -104,18 +106,18 @@ func validateProfile(mv MembershipView, in ssmProfileDTO) (SSMProfile, *apiError
 		Region:       strings.TrimSpace(in.Region),
 	}
 	if p.Label == "" {
-		return SSMProfile{}, &apiError{http.StatusBadRequest, "bad_label", "label is required"}
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_label", "label is required"}
 	}
 	if !httpsURLRe.MatchString(p.StartURL) {
-		return SSMProfile{}, &apiError{http.StatusBadRequest, "bad_start_url", "startUrl must be an https:// URL"}
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_start_url", "startUrl must be an https:// URL"}
 	}
 	if p.SSORegion == "" {
-		return SSMProfile{}, &apiError{http.StatusBadRequest, "bad_region", "ssoRegion is required"}
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_region", "ssoRegion is required"}
 	}
 	return p, nil
 }
 
-func (a ssmConfigAPI) createProfile(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a ssmConfigAPI) createProfile(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	var in ssmProfileDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
@@ -126,8 +128,8 @@ func (a ssmConfigAPI) createProfile(w http.ResponseWriter, r *http.Request, _ Id
 		writeAPIErr(w, aerr)
 		return
 	}
-	p.ID = newID()
-	p.CreatedAt = nowTS()
+	p.ID = store.NewID()
+	p.CreatedAt = store.NowTS()
 	if err := a.store.CreateSSMProfile(r.Context(), p); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -135,7 +137,7 @@ func (a ssmConfigAPI) createProfile(w http.ResponseWriter, r *http.Request, _ Id
 	writeJSON(w, http.StatusCreated, profileToDTO(p))
 }
 
-func (a ssmConfigAPI) updateProfile(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a ssmConfigAPI) updateProfile(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	cur, found, err := a.store.GetSSMProfile(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -164,7 +166,7 @@ func (a ssmConfigAPI) updateProfile(w http.ResponseWriter, r *http.Request, _ Id
 	writeJSON(w, http.StatusOK, profileToDTO(p))
 }
 
-func (a ssmConfigAPI) deleteProfile(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a ssmConfigAPI) deleteProfile(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	if err := a.store.DeleteSSMProfile(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -174,7 +176,7 @@ func (a ssmConfigAPI) deleteProfile(w http.ResponseWriter, r *http.Request, _ Id
 
 // --- SSM hosts -------------------------------------------------------------------
 
-func (a ssmConfigAPI) listHosts(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a ssmConfigAPI) listHosts(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	rows, err := a.store.ListSSMHosts(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -189,8 +191,8 @@ func (a ssmConfigAPI) listHosts(w http.ResponseWriter, r *http.Request, _ Identi
 
 // validateHost trims and checks a host DTO, and verifies the referenced profile
 // belongs to the caller. Returns a normalized SSMHost (id/created_at unset).
-func (a ssmConfigAPI) validateHost(ctx context.Context, mv MembershipView, in ssmHostDTO) (SSMHost, *apiError) {
-	h := SSMHost{
+func (a ssmConfigAPI) validateHost(ctx context.Context, mv store.MembershipView, in ssmHostDTO) (store.SSMHost, *apiError) {
+	h := store.SSMHost{
 		MembershipID: mv.MembershipID,
 		Alias:        strings.TrimSpace(in.Alias),
 		ProfileID:    strings.TrimSpace(in.ProfileID),
@@ -199,25 +201,25 @@ func (a ssmConfigAPI) validateHost(ctx context.Context, mv MembershipView, in ss
 		DocumentName: strings.TrimSpace(in.DocumentName),
 	}
 	if h.Alias == "" {
-		return SSMHost{}, &apiError{http.StatusBadRequest, "bad_alias", "alias is required"}
+		return store.SSMHost{}, &apiError{http.StatusBadRequest, "bad_alias", "alias is required"}
 	}
 	if h.InstanceID == "" {
-		return SSMHost{}, &apiError{http.StatusBadRequest, "bad_instance", "instanceId is required"}
+		return store.SSMHost{}, &apiError{http.StatusBadRequest, "bad_instance", "instanceId is required"}
 	}
 	if h.ProfileID == "" {
-		return SSMHost{}, &apiError{http.StatusBadRequest, "bad_profile", "profileId is required"}
+		return store.SSMHost{}, &apiError{http.StatusBadRequest, "bad_profile", "profileId is required"}
 	}
 	p, found, err := a.store.GetSSMProfile(ctx, h.ProfileID)
 	if err != nil {
-		return SSMHost{}, internalErr(err)
+		return store.SSMHost{}, internalErr(err)
 	}
 	if !found || p.MembershipID != mv.MembershipID {
-		return SSMHost{}, &apiError{http.StatusBadRequest, "bad_profile", "unknown profileId"}
+		return store.SSMHost{}, &apiError{http.StatusBadRequest, "bad_profile", "unknown profileId"}
 	}
 	return h, nil
 }
 
-func (a ssmConfigAPI) createHost(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a ssmConfigAPI) createHost(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	var in ssmHostDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
@@ -228,8 +230,8 @@ func (a ssmConfigAPI) createHost(w http.ResponseWriter, r *http.Request, _ Ident
 		writeAPIErr(w, aerr)
 		return
 	}
-	h.ID = newID()
-	h.CreatedAt = nowTS()
+	h.ID = store.NewID()
+	h.CreatedAt = store.NowTS()
 	if err := a.store.CreateSSMHost(r.Context(), h); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -237,7 +239,7 @@ func (a ssmConfigAPI) createHost(w http.ResponseWriter, r *http.Request, _ Ident
 	writeJSON(w, http.StatusCreated, hostToDTO(h))
 }
 
-func (a ssmConfigAPI) updateHost(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a ssmConfigAPI) updateHost(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	id := r.PathValue("id")
 	cur, found, err := a.store.GetSSMHost(r.Context(), id)
 	if err != nil {
@@ -267,7 +269,7 @@ func (a ssmConfigAPI) updateHost(w http.ResponseWriter, r *http.Request, _ Ident
 	writeJSON(w, http.StatusOK, hostToDTO(h))
 }
 
-func (a ssmConfigAPI) deleteHost(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a ssmConfigAPI) deleteHost(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	if err := a.store.DeleteSSMHost(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -376,10 +378,10 @@ func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *ht
 	}
 	restoreBody(r, nb)
 	// Record the intent (no secrets: instance + document + actor). Best-effort.
-	_ = a.mgr.store.InsertAudit(ctx, AuditLog{
-		ID: newID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
+	_ = a.mgr.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
 		Action: "ssm.start_session", Target: h.InstanceID,
-		Detail: "alias=" + h.Alias + " document=" + h.DocumentName, At: nowTS(),
+		Detail: "alias=" + h.Alias + " document=" + h.DocumentName, At: store.NowTS(),
 	})
 	return nil
 }

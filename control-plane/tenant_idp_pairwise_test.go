@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // P7-3 (docs/log/61 §61.17.4 (b) + 決定 41): a SECOND app registration of a directory
@@ -116,10 +118,10 @@ func TestTenantIdPPairwiseSecondRegistrationNeedsLinkClaim(t *testing.T) {
 	// same reason), and a network blip must not stop somebody saving a form.
 	dead := "http://127.0.0.1:1/unreachable"
 	seedTenantIdP(t, st, tn.ID, "ghost", "ghost.example", "active")
-	if err := st.CreateTenantIdP(ctx, TenantIdP{
-		ID: newID(), TenantID: tn.ID, Name: "dead1", Issuer: dead, ClientID: "c",
+	if err := st.CreateTenantIdP(ctx, store.TenantIdP{
+		ID: store.NewID(), TenantID: tn.ID, Name: "dead1", Issuer: dead, ClientID: "c",
 		SecretEnc: "s", Trust: trustIssuer, AllowedDomains: "sub.co.jp",
-		Status: "active", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		Status: "active", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -147,7 +149,7 @@ func TestSuspendWarnsWhenItIsSomebodysOnlyMethod(t *testing.T) {
 	if _, err := st.EnsureMembership(ctx, only.ID, tn.ID, "member"); err != nil {
 		t.Fatalf("membership: %v", err)
 	}
-	if _, _, err := st.LinkIdentity(ctx, IdentityLink{
+	if _, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: provID, Subject: "s-only", Email: "only@sub.co.jp", FallbackKey: "only-sub-co-jp",
 	}); err != nil {
 		t.Fatalf("link: %v", err)
@@ -179,10 +181,10 @@ func TestSuspendWarnsWhenItIsSomebodysOnlyMethod(t *testing.T) {
 
 	// Once that person has a second proven login, the question stops being asked —
 	// which is exactly the ordering the rule is there to enforce.
-	if err := st.SetTenantIdPStatus(ctx, tn.ID, row.ID, "active", "boss", nowTS(), nowTS()); err != nil {
+	if err := st.SetTenantIdPStatus(ctx, tn.ID, row.ID, "active", "boss", store.NowTS(), store.NowTS()); err != nil {
 		t.Fatalf("reactivate: %v", err)
 	}
-	if _, _, err := st.LinkIdentity(ctx, IdentityLink{
+	if _, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "google", Subject: "g-only", Email: "only@sub.co.jp",
 		FallbackKey: "only-sub-co-jp", EmailJoin: true,
 	}); err != nil {

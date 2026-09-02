@@ -20,6 +20,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 const (
@@ -73,7 +75,7 @@ func (a sessionHandoffAPI) seal(ctx context.Context, tenant string, body []byte)
 	return ct, tenant, err
 }
 
-func (a sessionHandoffAPI) open(ctx context.Context, o SessionHandoffOffer) string {
+func (a sessionHandoffAPI) open(ctx context.Context, o store.SessionHandoffOffer) string {
 	if o.Ciphertext == "" {
 		return ""
 	}
@@ -92,7 +94,7 @@ func (a sessionHandoffAPI) open(ctx context.Context, o SessionHandoffOffer) stri
 }
 
 // handoffOfferDTO は所有者向け（本文なし）。A の手元には元の提案があるので、台帳は状態が読めれば足りる。
-func handoffOfferDTO(o SessionHandoffOffer, recipientKey string) map[string]any {
+func handoffOfferDTO(o store.SessionHandoffOffer, recipientKey string) map[string]any {
 	return map[string]any{
 		"id": o.ID, "sessionId": o.CatalogID, "sessionName": o.SourceSessionName,
 		"recipientUserKey": recipientKey, "title": o.Title, "status": o.Status,
@@ -116,7 +118,7 @@ func handoffOfferDTO(o SessionHandoffOffer, recipientKey string) map[string]any 
 // セッションにも動的に効く**（docs/log/59 §1）ので、catalog に行が無いことは「共有されていない」
 // の証明にならない —— 省くと、共有済みの新しいセッションに「まだ誰にも共有していません」と
 // 表示してしまう。
-func (a sessionHandoffAPI) catalogForOwnedSession(r *http.Request, res *resolved, name string, exact bool) (SharedSessionCatalog, bool, *apiError) {
+func (a sessionHandoffAPI) catalogForOwnedSession(r *http.Request, res *resolved, name string, exact bool) (store.SharedSessionCatalog, bool, *apiError) {
 	if exact || !a.share.freshCatalog(res.mv.MembershipID, shareCatalogTTL) {
 		lock := a.mgr.shareLockFor(res.mv.MembershipID)
 		lock.Lock()
@@ -124,24 +126,24 @@ func (a sessionHandoffAPI) catalogForOwnedSession(r *http.Request, res *resolved
 		lock.Unlock()
 		if err != nil {
 			a.share.invalidateCatalog(res.mv.MembershipID) // 失敗した同期を「新鮮」に数えない
-			return SharedSessionCatalog{}, false, &apiError{http.StatusConflict, "workspace_not_running", "owner workspace must be running to hand off"}
+			return store.SharedSessionCatalog{}, false, &apiError{http.StatusConflict, "workspace_not_running", "owner workspace must be running to hand off"}
 		}
 	}
 	rows, err := a.mgr.store.ListSharedSessionCatalogByOwner(r.Context(), res.mv.MembershipID)
 	if err != nil {
-		return SharedSessionCatalog{}, false, internalErr(err)
+		return store.SharedSessionCatalog{}, false, internalErr(err)
 	}
 	for _, c := range rows {
 		if c.Name == name && !c.Archived {
 			return c, true, nil
 		}
 	}
-	return SharedSessionCatalog{}, false, nil
+	return store.SharedSessionCatalog{}, false, nil
 }
 
 // recipientsFor は「このセッションを見られる人」＝宛先候補。**共有 ACL の逆引き**であり、
 // テナント名簿ではない（ADR 0057 決定 2: 名簿は誰の文脈にも入れない）。
-func (a sessionHandoffAPI) recipientsFor(ctx context.Context, mv MembershipView, c SharedSessionCatalog) ([]map[string]string, error) {
+func (a sessionHandoffAPI) recipientsFor(ctx context.Context, mv store.MembershipView, c store.SharedSessionCatalog) ([]map[string]string, error) {
 	shares, err := a.mgr.store.ListSessionSharesByOwner(ctx, mv.MembershipID)
 	if err != nil {
 		return nil, err
@@ -150,11 +152,11 @@ func (a sessionHandoffAPI) recipientsFor(ctx context.Context, mv MembershipView,
 	if err != nil {
 		return nil, err
 	}
-	byID := map[string]MemberInfo{}
+	byID := map[string]store.MemberInfo{}
 	for _, m := range members {
 		byID[m.MembershipID] = m
 	}
-	byRecipient := map[string][]SessionShare{}
+	byRecipient := map[string][]store.SessionShare{}
 	for _, s := range shares {
 		byRecipient[s.RecipientMembershipID] = append(byRecipient[s.RecipientMembershipID], s)
 	}
@@ -322,8 +324,8 @@ func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *r
 	}
 	now := time.Now().UTC()
 	str := func(k string) string { s, _ := hctx[k].(string); return s }
-	o := SessionHandoffOffer{
-		ID: newID(), TenantID: res.mv.TenantID, CatalogID: c.ID,
+	o := store.SessionHandoffOffer{
+		ID: store.NewID(), TenantID: res.mv.TenantID, CatalogID: c.ID,
 		OwnerMembershipID: res.mv.MembershipID, RecipientMembershipID: recipient.MembershipID,
 		Title: in.Title, Ciphertext: ct, KeyRef: kr,
 		RepoRemote: str("remote"), Branch: str("branch"), HeadSha: str("headSha"),
@@ -340,15 +342,15 @@ func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *r
 		return
 	}
 	a.notifyOffered(o, res.mv.TenantSlug, c)
-	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: res.mv.TenantID,
+	_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: res.mv.TenantID,
 		ActorKind: "user", ActorID: res.ident.ID, Action: "session.handoff.offer", Target: c.Name,
-		Detail: "recipient=" + recipient.UserKey, HTTPStatus: http.StatusCreated, At: nowTS()})
+		Detail: "recipient=" + recipient.UserKey, HTTPStatus: http.StatusCreated, At: store.NowTS()})
 	writeJSON(w, http.StatusCreated, handoffOfferDTO(o, recipient.UserKey))
 }
 
 // listOwned — GET /api/session-handoff-offers。A の台帳。通知は流れ物なので、後から辿れる
 // 唯一の場所（docs/log/77 §77.10）。
-func (a sessionHandoffAPI) listOwned(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a sessionHandoffAPI) listOwned(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	a.expireDue(r.Context())
 	rows, err := a.mgr.store.ListSessionHandoffOffersByOwner(r.Context(), mv.MembershipID)
 	if err != nil {
@@ -366,7 +368,7 @@ func (a sessionHandoffAPI) listOwned(w http.ResponseWriter, r *http.Request, _ I
 
 // listReceived — GET /api/session-handoff-offers/received。B の受信箱。**本文を返す**のは、
 // 受け取るかどうかを決めるのに本文を読む必要があるからで、ここが唯一の本文の出口。
-func (a sessionHandoffAPI) listReceived(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a sessionHandoffAPI) listReceived(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	a.expireDue(r.Context())
 	rows, err := a.mgr.store.ListSessionHandoffOffersByRecipient(r.Context(), mv.MembershipID)
 	if err != nil {
@@ -403,7 +405,7 @@ func (a sessionHandoffAPI) userKeys(ctx context.Context, tenantID string) map[st
 // A が「待ちきれず自分で起動する」ときも Console はこれを呼ぶ。⚠️ 起動と撤回の競合
 // （同じ仕事が 2 つ走る）を閉じるのは pending → withdrawn の条件付き更新で、負けた側は
 // 409 を受けて起動をやめる（ADR 0057 決定 6）。
-func (a sessionHandoffAPI) withdraw(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a sessionHandoffAPI) withdraw(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	o, ok, err := a.mgr.store.GetSessionHandoffOffer(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -413,7 +415,7 @@ func (a sessionHandoffAPI) withdraw(w http.ResponseWriter, r *http.Request, iden
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "handoff offer not found"})
 		return
 	}
-	changed, err := a.mgr.store.TransitionSessionHandoffOffer(r.Context(), o.ID, "pending", "withdrawn", nowTS(), "")
+	changed, err := a.mgr.store.TransitionSessionHandoffOffer(r.Context(), o.ID, "pending", "withdrawn", store.NowTS(), "")
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -422,9 +424,9 @@ func (a sessionHandoffAPI) withdraw(w http.ResponseWriter, r *http.Request, iden
 		writeHandoffErr(w, http.StatusConflict, "handoff_already_decided", "the handoff was already decided", map[string]any{"status": a.statusOf(r.Context(), o.ID)})
 		return
 	}
-	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID,
+	_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: mv.TenantID,
 		ActorKind: "user", ActorID: ident.ID, Action: "session.handoff.withdraw", Target: o.SourceSessionName,
-		HTTPStatus: http.StatusOK, At: nowTS()})
+		HTTPStatus: http.StatusOK, At: store.NowTS()})
 	writeJSON(w, http.StatusOK, map[string]any{"status": "withdrawn"})
 }
 
@@ -441,7 +443,7 @@ func (a sessionHandoffAPI) statusOf(ctx context.Context, id string) string {
 // 起動そのものは B の Console が既存の POST /sessions で行う（ADR 0057 決定 3）。ここで
 // 起動を代行しないのは、そうすると CP が他人の Workspace を操作することになり、この機能が
 // 避けた構造そのものになるため。
-func (a sessionHandoffAPI) accept(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a sessionHandoffAPI) accept(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	var in struct {
 		SessionName string `json:"sessionName"`
 	}
@@ -450,11 +452,11 @@ func (a sessionHandoffAPI) accept(w http.ResponseWriter, r *http.Request, ident 
 }
 
 // decline — POST /api/session-handoff-offers/{id}/decline。理由は求めない（ADR 0057 決定 8）。
-func (a sessionHandoffAPI) decline(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a sessionHandoffAPI) decline(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	a.decide(w, r, ident, mv, "declined", "")
 }
 
-func (a sessionHandoffAPI) decide(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView, to, sessionName string) {
+func (a sessionHandoffAPI) decide(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView, to, sessionName string) {
 	o, ok, err := a.mgr.store.GetSessionHandoffOffer(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -465,7 +467,7 @@ func (a sessionHandoffAPI) decide(w http.ResponseWriter, r *http.Request, ident 
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "handoff offer not found"})
 		return
 	}
-	changed, err := a.mgr.store.TransitionSessionHandoffOffer(r.Context(), o.ID, "pending", to, nowTS(), sessionName)
+	changed, err := a.mgr.store.TransitionSessionHandoffOffer(r.Context(), o.ID, "pending", to, store.NowTS(), sessionName)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -477,16 +479,16 @@ func (a sessionHandoffAPI) decide(w http.ResponseWriter, r *http.Request, ident 
 	if to == "accepted" {
 		a.notifyAccepted(o, mv.TenantID, sessionName)
 	}
-	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID,
+	_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: mv.TenantID,
 		ActorKind: "user", ActorID: ident.ID, Action: "session.handoff." + to, Target: o.SourceSessionName,
-		HTTPStatus: http.StatusOK, At: nowTS()})
+		HTTPStatus: http.StatusOK, At: store.NowTS()})
 	writeJSON(w, http.StatusOK, map[string]any{"status": to})
 }
 
 // expireDue は期限切れを失効させ、所有者へ 1 回だけ知らせる。一覧を読むついでに回すのは、
 // この機能に専用のワーカーを増やさないため（失効が数分遅れても実害が無い）。
 func (a sessionHandoffAPI) expireDue(ctx context.Context) {
-	expired, err := a.mgr.store.ExpireSessionHandoffOffers(ctx, nowTS())
+	expired, err := a.mgr.store.ExpireSessionHandoffOffers(ctx, store.NowTS())
 	if err != nil {
 		return
 	}
@@ -502,7 +504,7 @@ func (a sessionHandoffAPI) expireDue(ctx context.Context) {
 // ⚠️ CP から直接 InsertNotification する。既存のセッション通知は Agent のアウトボックスを
 // drain する経路だが、引き継ぎは**送る側も受け取る側も Workspace が止まっている**場面が
 // 主戦場なので、その経路では届かない。
-func (a sessionHandoffAPI) notifyOffered(o SessionHandoffOffer, _ string, c SharedSessionCatalog) {
+func (a sessionHandoffAPI) notifyOffered(o store.SessionHandoffOffer, _ string, c store.SharedSessionCatalog) {
 	title := o.Title
 	if title == "" {
 		title = c.Name
@@ -512,7 +514,7 @@ func (a sessionHandoffAPI) notifyOffered(o SessionHandoffOffer, _ string, c Shar
 		map[string]any{"offerId": o.ID, "catalogId": o.CatalogID, "sessionName": o.SourceSessionName})
 }
 
-func (a sessionHandoffAPI) notifyAccepted(o SessionHandoffOffer, _ string, sessionName string) {
+func (a sessionHandoffAPI) notifyAccepted(o store.SessionHandoffOffer, _ string, sessionName string) {
 	a.notify(o.OwnerMembershipID, "handoff-accepted", "handoff-accepted-"+o.ID+"-"+o.OwnerMembershipID,
 		"session", o.SourceSessionName, o.SourceSessionKind, o.Title,
 		map[string]any{"offerId": o.ID, "sessionName": o.SourceSessionName, "acceptedSessionName": sessionName})
@@ -523,9 +525,9 @@ func (a sessionHandoffAPI) notifyAccepted(o SessionHandoffOffer, _ string, sessi
 // 片方が黙って消える）。
 func (a sessionHandoffAPI) notify(membershipID, kind, eventID, targetType, targetID, targetKind, displayName string, payload map[string]any) {
 	b, _ := json.Marshal(payload)
-	_ = a.mgr.store.InsertNotification(context.Background(), Notification{
+	_ = a.mgr.store.InsertNotification(context.Background(), store.Notification{
 		EventID: eventID, MembershipID: membershipID, Kind: kind,
 		TargetType: targetType, TargetID: targetID, TargetKind: targetKind,
-		DisplayName: displayName, Payload: string(b), CreatedAt: nowTS(),
+		DisplayName: displayName, Payload: string(b), CreatedAt: store.NowTS(),
 	})
 }

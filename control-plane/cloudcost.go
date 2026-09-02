@@ -35,6 +35,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // costMicro is the fixed-point scale for money. Amounts are integers of one millionth
@@ -178,7 +179,7 @@ func (p *cloudCostPoller) pollOnce(ctx context.Context) {
 // ⚠️ `End` is EXCLUSIVE in the Cost Explorer API. Passing today as End means today is
 // not in the answer; the window therefore runs to tomorrow so the (estimated, moving)
 // current day is included and refreshed on every pass.
-func (p *cloudCostPoller) fetch(ctx context.Context) ([]CloudCostRow, []string, error) {
+func (p *cloudCostPoller) fetch(ctx context.Context) ([]store.CloudCostRow, []string, error) {
 	now := p.now().UTC()
 	start := now.AddDate(0, 0, -(p.window - 1)).Format(usageDayFmt)
 	end := now.AddDate(0, 0, 1).Format(usageDayFmt)
@@ -194,7 +195,7 @@ func (p *cloudCostPoller) fetch(ctx context.Context) ([]CloudCostRow, []string, 
 		log.Printf("cloud cost: system memberships could not be resolved, not folding: %v", err)
 	}
 
-	var rows []CloudCostRow
+	var rows []store.CloudCostRow
 	seen := map[string]bool{}
 	var page *string
 	for {
@@ -251,12 +252,12 @@ func (p *cloudCostPoller) fetch(ctx context.Context) ([]CloudCostRow, []string, 
 // groups fold onto the same key, the second write would DELETE the first one's money
 // rather than add to it. Cost Explorer hands us the seed and the untagged shared line as
 // two separate groups of the same (day, service) all the time.
-func foldSystemMemberships(rows []CloudCostRow, system map[string]bool) []CloudCostRow {
+func foldSystemMemberships(rows []store.CloudCostRow, system map[string]bool) []store.CloudCostRow {
 	if len(system) == 0 {
 		return rows
 	}
 	type key struct{ day, membership, service string }
-	out := make([]CloudCostRow, 0, len(rows))
+	out := make([]store.CloudCostRow, 0, len(rows))
 	at := map[key]int{}
 	for _, row := range rows {
 		if system[row.MembershipID] {
@@ -287,22 +288,22 @@ func foldSystemMemberships(rows []CloudCostRow, system map[string]bool) []CloudC
 // Zero-amount groups are skipped: Cost Explorer returns a row for every service it knows
 // about, most of them 0, and keeping them would bloat the table and the response for no
 // information.
-func costRowFrom(day string, estimated bool, g cetypes.Group, tenants map[string]string) (CloudCostRow, bool) {
+func costRowFrom(day string, estimated bool, g cetypes.Group, tenants map[string]string) (store.CloudCostRow, bool) {
 	if len(g.Keys) < 2 {
-		return CloudCostRow{}, false
+		return store.CloudCostRow{}, false
 	}
 	membership := strings.TrimPrefix(g.Keys[0], ceTagMembership+"$")
 	if membership == g.Keys[0] {
 		// Not the tag key we asked for — refuse rather than guess. A silently
 		// mis-parsed key would attribute everyone's cost to one fictional member.
-		return CloudCostRow{}, false
+		return store.CloudCostRow{}, false
 	}
 	unblended, currency := costAmount(g.Metrics["UnblendedCost"])
 	amortized, _ := costAmount(g.Metrics["AmortizedCost"])
 	if unblended == 0 && amortized == 0 {
-		return CloudCostRow{}, false
+		return store.CloudCostRow{}, false
 	}
-	return CloudCostRow{
+	return store.CloudCostRow{
 		Day: day, MembershipID: membership, TenantID: tenants[membership],
 		Service: g.Keys[1], Unblended: unblended, Amortized: amortized,
 		Currency: currency, Estimated: estimated,
@@ -377,7 +378,7 @@ type cloudCostMeta struct {
 
 const cloudCostLagHours = 24
 
-func (a adminAPI) cloudCostMeta(ctx context.Context, rows []CloudCostRow) cloudCostMeta {
+func (a adminAPI) cloudCostMeta(ctx context.Context, rows []store.CloudCostRow) cloudCostMeta {
 	m := cloudCostMeta{LagHours: cloudCostLagHours, Profile: a.mgr.cloudCostProfile()}
 	if first, last, err := a.mgr.store.CloudCostDays(ctx); err == nil {
 		m.FirstDay, m.LastDay = first, last
@@ -419,7 +420,7 @@ type cloudCostService struct {
 // not included. The Console is required to label it that way (ADR 0048 決定 4), and the
 // response deliberately does not expose a deployment total that could be subtracted to
 // infer anyone else's.
-func (a adminAPI) myCloudCost(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a adminAPI) myCloudCost(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	a.oneMemberCloudCost(w, r, mv.MembershipID)
 }
 

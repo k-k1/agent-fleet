@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // docs/log/71 + ADR0052. What these pin down is the part of "the tenant owns its git OAuth
@@ -19,7 +21,7 @@ import (
 //   - one tenant's administrator cannot read or write another tenant's app
 //   - env is not a fallback: with no row, the OAuth start says not_configured
 
-func gitOAuthEnv(t *testing.T) (*sqlStore, *manager, tenantGitOAuthAPI) {
+func gitOAuthEnv(t *testing.T) (*store.SQL, *manager, tenantGitOAuthAPI) {
 	t.Helper()
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
@@ -46,7 +48,7 @@ func gitOAuthCall(api tenantGitOAuthAPI, method, slug, provider, email, body str
 }
 
 // seedGitOAuthTenant creates a tenant with one tenant_admin.
-func seedGitOAuthTenant(t *testing.T, st *sqlStore, slug, adminEmail string) Tenant {
+func seedGitOAuthTenant(t *testing.T, st *store.SQL, slug, adminEmail string) store.Tenant {
 	t.Helper()
 	ctx := context.Background()
 	tn, err := st.CreateTenant(ctx, slug, slug)

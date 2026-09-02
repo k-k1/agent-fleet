@@ -17,12 +17,14 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func newMCPServerAPITest(t *testing.T, withKey bool) (mcpServerAPI, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -196,10 +198,10 @@ func TestTargetsAndKindsEncoding(t *testing.T) {
 
 func TestMCPServerStoreIsTenantScoped(t *testing.T) {
 	a, ctx := newMCPServerAPITest(t, false)
-	row := MCPServerRow{
+	row := store.MCPServerRow{
 		ID: "s1", TenantID: "tenant-a", Name: "wiki", Transport: "http",
 		URL: "https://wiki/mcp", Targets: "assistant,session", Enabled: true,
-		CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := a.store.CreateMCPServer(ctx, row); err != nil {
 		t.Fatalf("create: %v", err)
@@ -234,11 +236,11 @@ func TestMCPServerStoreIsTenantScoped(t *testing.T) {
 
 func TestMCPServerStoreRoundTripsFlags(t *testing.T) {
 	a, ctx := newMCPServerAPITest(t, false)
-	row := MCPServerRow{
+	row := store.MCPServerRow{
 		ID: "s1", TenantID: "t", Name: "wiki", Transport: "http", URL: "https://wiki/mcp",
 		Targets: "session", Kinds: "claude,codex", TimeoutMS: 30000,
 		Enabled: false, UserSecret: true, CreatedBy: "admin@example.com",
-		CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := a.store.CreateMCPServer(ctx, row); err != nil {
 		t.Fatalf("create: %v", err)
@@ -272,7 +274,7 @@ func TestDistributeScopesAndStrips(t *testing.T) {
 	encSecret, refSecret := seal("tenant-a", map[string]string{"Authorization": ""})
 	encB, refB := seal("tenant-b", map[string]string{"Authorization": "Bearer tenant-b"})
 
-	rows := []MCPServerRow{
+	rows := []store.MCPServerRow{
 		{ID: "a1", TenantID: "tenant-a", Name: "wiki", Transport: "http", URL: "https://wiki/mcp",
 			HeadersEnc: encA, KeyRef: refA, Targets: "assistant,session", Enabled: true},
 		{ID: "a2", TenantID: "tenant-a", Name: "tickets", Transport: "http", URL: "https://tickets/mcp",
@@ -288,7 +290,7 @@ func TestDistributeScopesAndStrips(t *testing.T) {
 			HeadersEnc: encB, KeyRef: refB, Targets: "session", Enabled: true},
 	}
 	for _, r := range rows {
-		r.CreatedAt, r.UpdatedAt = nowTS(), nowTS()
+		r.CreatedAt, r.UpdatedAt = store.NowTS(), store.NowTS()
 		if err := a.store.CreateMCPServer(ctx, r); err != nil {
 			t.Fatalf("create %s: %v", r.ID, err)
 		}
@@ -296,7 +298,7 @@ func TestDistributeScopesAndStrips(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	a.distribute(rec, httptest.NewRequest(http.MethodGet, "/internal/mcp-servers", nil),
-		MembershipView{MembershipID: "m1", TenantID: "tenant-a"})
+		store.MembershipView{MembershipID: "m1", TenantID: "tenant-a"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}

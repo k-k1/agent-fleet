@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Scheduled execution — session_mode=assistant (docs/log/38 アシスタント発火): a due fire
@@ -29,7 +31,7 @@ import (
 // pause) so the Agent, not this client, is what gives up first.
 const assistantTurnTimeout = 8 * time.Minute
 
-func (f *wakeFirer) fireAssistant(ctx context.Context, res *resolved, sch Schedule, slot time.Time) (string, string, error) {
+func (f *wakeFirer) fireAssistant(ctx context.Context, res *resolved, sch store.Schedule, slot time.Time) (string, string, error) {
 	conv := strings.TrimSpace(sch.ReuseTarget)
 	if conv == "" {
 		conv = strings.TrimSpace(sch.OwnerConv)

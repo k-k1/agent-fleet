@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // MCP server (docs/decisions/0006, P3-6). A single Streamable-HTTP endpoint at
@@ -807,8 +809,8 @@ func jsonText(v any) (string, error) {
 // it.
 type adminCtx struct {
 	prin    *mcpPrincipal
-	ident   Identity
-	tenant  Tenant
+	ident   store.Identity
+	tenant  store.Tenant
 	isSuper bool
 	isAdmin bool
 }
@@ -830,7 +832,7 @@ func (a mcpAPI) adminPrincipal(ctx context.Context, prin *mcpPrincipal) (*adminC
 	if err != nil {
 		return nil, internalErr(err)
 	}
-	var mv MembershipView
+	var mv store.MembershipView
 	found := false
 	for _, x := range ms {
 		if x.MembershipID == prin.membershipID {
@@ -918,7 +920,7 @@ func adminTools() []mcpTool {
 				"slot_class":   map[string]any{"type": "string", "description": "which KIND of machine the workspace lands on, as one of the deployment's declared class ids (\"\" = the tenant default). NOT a size — mem_mib still picks the rung within the class. Only the ecs-ec2 runtime has classes; read the ids from GET /api/admin/workspace-sizing. ⚠️ Changing it changes the CPU architecture on some deployments, and the member's home reinstalls its architecture-dependent tools on the next start."},
 			}, "user_key"),
 			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
-				return a.mcpSetUserQuota(ctx, ac, argStr(args, "user_key"), UserQuota{
+				return a.mcpSetUserQuota(ctx, ac, argStr(args, "user_key"), store.UserQuota{
 					MaxSessions: argInt(args, "max_sessions"), DiskGB: argInt(args, "disk_gb"),
 					MemLimit: int64(argInt(args, "mem_mib")) * mib, CPULimit: argInt(args, "cpu_units"),
 					SlotClass: argStr(args, "slot_class"),
@@ -1028,7 +1030,7 @@ func (a mcpAPI) mcpProposeAllowlist(ctx context.Context, ac *adminCtx, entry, re
 	if entry == "" {
 		return "", fmt.Errorf("entry required")
 	}
-	e := AllowlistEntry{ID: newID(), Entry: entry, State: "proposed", Reason: reason, AddedBy: "mcp:" + ac.prin.patID, AddedAt: nowTS()}
+	e := store.AllowlistEntry{ID: store.NewID(), Entry: entry, State: "proposed", Reason: reason, AddedBy: "mcp:" + ac.prin.patID, AddedAt: store.NowTS()}
 	if err := a.mgr.store.AddAllowlist(ctx, e); err != nil {
 		return "", err
 	}
@@ -1065,27 +1067,27 @@ func (a mcpAPI) mcpTailAudit(ctx context.Context, ac *adminCtx, limit int) (stri
 // mcpResolveMember maps a user_key to its membership + workspace within the admin
 // principal's tenant (the target of an admin tool). hasWS is false when the member
 // has never started a workspace.
-func (a mcpAPI) mcpResolveMember(ctx context.Context, tenantID, key string) (Membership, Workspace, bool, error) {
+func (a mcpAPI) mcpResolveMember(ctx context.Context, tenantID, key string) (store.Membership, store.Workspace, bool, error) {
 	if strings.TrimSpace(key) == "" {
-		return Membership{}, Workspace{}, false, fmt.Errorf("user_key required")
+		return store.Membership{}, store.Workspace{}, false, fmt.Errorf("user_key required")
 	}
 	ident, ok, err := a.mgr.store.GetIdentityByUserKey(ctx, key)
 	if err != nil {
-		return Membership{}, Workspace{}, false, err
+		return store.Membership{}, store.Workspace{}, false, err
 	}
 	if !ok {
-		return Membership{}, Workspace{}, false, fmt.Errorf("%q is not a member of this tenant", key)
+		return store.Membership{}, store.Workspace{}, false, fmt.Errorf("%q is not a member of this tenant", key)
 	}
 	mem, ok, err := a.mgr.store.GetMembership(ctx, ident.ID, tenantID)
 	if err != nil {
-		return Membership{}, Workspace{}, false, err
+		return store.Membership{}, store.Workspace{}, false, err
 	}
 	if !ok {
-		return Membership{}, Workspace{}, false, fmt.Errorf("%q is not a member of this tenant", key)
+		return store.Membership{}, store.Workspace{}, false, fmt.Errorf("%q is not a member of this tenant", key)
 	}
 	ws, hasWS, err := a.mgr.store.GetWorkspaceByMembership(ctx, mem.ID)
 	if err != nil {
-		return Membership{}, Workspace{}, false, err
+		return store.Membership{}, store.Workspace{}, false, err
 	}
 	return mem, ws, hasWS, nil
 }
@@ -1093,15 +1095,15 @@ func (a mcpAPI) mcpResolveMember(ctx context.Context, tenantID, key string) (Mem
 // mcpAudit records an admin write action (best-effort: a logging failure must not
 // fail an action that already happened).
 func (a mcpAPI) mcpAudit(ctx context.Context, ac *adminCtx, action, target, detail string) {
-	_ = a.mgr.store.InsertAudit(ctx, AuditLog{
-		ID: newID(), TenantID: ac.tenant.ID, ActorKind: "mcp", ActorID: ac.prin.patID,
-		Action: action, Target: target, Detail: detail, At: nowTS(),
+	_ = a.mgr.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: ac.tenant.ID, ActorKind: "mcp", ActorID: ac.prin.patID,
+		Action: action, Target: target, Detail: detail, At: store.NowTS(),
 	})
 }
 
 // mcpMemberSessions summarizes a member's sessions (Agent-authoritative while the
 // container runs, DB mirror otherwise) — same precedence as the admin REST view.
-func (a mcpAPI) mcpMemberSessions(ctx context.Context, ws Workspace) []map[string]any {
+func (a mcpAPI) mcpMemberSessions(ctx context.Context, ws store.Workspace) []map[string]any {
 	rt := a.mgr.runtimeFor(ws, "")
 	if rt.State(ctx) == "running" {
 		if list, err := a.mgr.agentSessions(ctx, rt); err == nil {
@@ -1132,7 +1134,7 @@ var sessionLabelTagRe = regexp.MustCompile(`^\[AF(?::[A-Za-z0-9][A-Za-z0-9_-]*)?
 // sessionRowDisplay is the DB-mirror fallback for a human-readable session name (the
 // Agent supplies Session.Display live; the store row has no title). Prefer the claude
 // --name label (minus the "[AF:<name>] " tag), else the repo, else the opaque slug.
-func sessionRowDisplay(r SessionRow) string {
+func sessionRowDisplay(r store.SessionRow) string {
 	if r.Label != "" {
 		return strings.TrimSpace(sessionLabelTagRe.ReplaceAllString(r.Label, ""))
 	}
@@ -1243,7 +1245,7 @@ func (a mcpAPI) mcpStopSession(ctx context.Context, ac *adminCtx, userKey, name 
 	return text, nil
 }
 
-func (a mcpAPI) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, q UserQuota) (string, error) {
+func (a mcpAPI) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, q store.UserQuota) (string, error) {
 	mem, _, _, err := a.mcpResolveMember(ctx, ac.tenant.ID, userKey)
 	if err != nil {
 		return "", err
@@ -1253,7 +1255,7 @@ func (a mcpAPI) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey strin
 	}
 	// The size axes feed the built runtime, so drop the cached one → applied at next start.
 	a.mgr.evictMembershipCache(mem.ID)
-	ws := Workspace{MembershipID: mem.ID, TenantID: ac.tenant.ID}
+	ws := store.Workspace{MembershipID: mem.ID, TenantID: ac.tenant.ID}
 	effMem, effCPU, effDisk := a.mgr.resolveWorkspaceSize(ctx, ws)
 	effClass, classNote := a.mgr.resolveSlotClass(ctx, ws)
 	a.mcpAudit(ctx, ac, "set_user_quota", userKey, fmt.Sprintf("max_sessions=%d disk_gb=%d mem=%s cpu=%d class=%s",

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // docs/log/61 §61.9 / §61.10 (P3). What these pin down is the part of per-tenant login
@@ -17,9 +19,9 @@ import (
 // buttons, an existing membership — including a deactivated one — outranks
 // auto-join, and the super_admin role is revoked at startup rather than at login.
 
-func p3Store(t *testing.T) *sqlStore {
+func p3Store(t *testing.T) *store.SQL {
 	t.Helper()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -30,7 +32,7 @@ func p3Store(t *testing.T) *sqlStore {
 	return st
 }
 
-func p3Manager(t *testing.T, st *sqlStore) *manager {
+func p3Manager(t *testing.T, st *store.SQL) *manager {
 	t.Helper()
 	return &manager{
 		store: st, emailHeader: "X-Forwarded-Email", authMode: "oauth",
@@ -190,7 +192,7 @@ func TestAllowedProvidersIsEnforcedAtTenantResolution(t *testing.T) {
 	if err := st.SetTenantLogin(ctx, tn.ID, "entra", "", "", ""); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
-	mv := MembershipView{MembershipID: "m1", TenantID: tn.ID, TenantSlug: "sales"}
+	mv := store.MembershipView{MembershipID: "m1", TenantID: tn.ID, TenantSlug: "sales"}
 
 	entra := withLoginRef(ctx, loginRef{provider: "entra", subject: "s1"})
 	if aerr := mgr.checkTenantProvider(entra, mv); aerr != nil {
@@ -207,7 +209,7 @@ func TestAllowedProvidersIsEnforcedAtTenantResolution(t *testing.T) {
 	// A tenant with no rule accepts whatever the deployment enabled (unchanged
 	// behaviour for every existing single-IdP deployment).
 	open, _ := st.CreateTenant(ctx, "open", "Open")
-	if aerr := mgr.checkTenantProvider(github, MembershipView{TenantID: open.ID, TenantSlug: "open"}); aerr != nil {
+	if aerr := mgr.checkTenantProvider(github, store.MembershipView{TenantID: open.ID, TenantSlug: "open"}); aerr != nil {
 		t.Fatalf("an unrestricted tenant must accept any provider: %v", aerr)
 	}
 	// AUTH=proxy / AUTH=dev name no provider at all; requiring one would lock those
