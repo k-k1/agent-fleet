@@ -75,6 +75,34 @@ save_params() {  # save_params <stack> <slug>
   "${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
     --query "Stacks[0].Parameters[].join('=',[ParameterKey,ParameterValue])" \
     --output text | tr '\t' '\n' | grep -v '^$' > "$f"
+
+  # 🔴 **空の引数は、その空値が「自分で作る」分岐を選んだという意味であることがある。**
+  # その場合、作られた実体の id は引数ではなく **Output** 側にしかない。引数だけを写すと、
+  # 立て直したときに同じ空値がもう一度「作る」を選び、**前の実体は孤児になる**。
+  #
+  # 実例（2026-09-02 の一巡で踏んだ）: `NatEipAllocationId`。空なら 00-network が EIP を
+  # 自分で確保し（Retain なので撤収でも残る）、その allocation id は Output にだけ出る。
+  # 控えが引数しか持っていないと、次の stand-up が **2 本目の EIP** を取り、
+  # **顧客が許可リストに載せた egress アドレスが黙って変わる**（孤児は月 $3.6）。
+  #
+  # ★ 規則は 1 つだけ: **空で捕まえた引数と同じ名前の Output があれば、Output の値を採る。**
+  # 引数に無い名前の Output は写さない —— CFN は知らない引数を拒むし、Output の大半
+  # （VpcId など）はそもそも引数ではない。
+  local outs key val
+  outs="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
+    --query "Stacks[0].Outputs[].join('=',[OutputKey,OutputValue])" \
+    --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    key="${line%%=*}"; val="${line#*=}"
+    [ -n "$val" ] && [ "$val" != "None" ] || continue
+    grep -q "^$key=\$" "$f" || continue          # 空で捕まえた引数だけが対象
+    sed -i "s|^$key=\$|$key=$val|" "$f"
+    echo "  - $slug: $key は Output から採った（空の引数は「作る」分岐の印）"
+  done <<EOF
+$outs
+EOF
+
   chmod 600 "$f" 2>/dev/null || true
   echo "  - $slug: $(wc -l < "$f") parameters ($stack)"
 }
