@@ -82,13 +82,13 @@ func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
 	prompt, handoff := injectCarryover(c, actualAgent, prompt)
 	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 
-	reply, err := prov.send(ctx, c, prompt)
+	reply, err := prov.Send(ctx, c, prompt)
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
 		// docs/log/33 第3段: 超過検知 → 要約して畳み新セッションでリトライ。
 		prompt, pendingReports = injectPendingReports(c, text)
 		prompt, handoff = injectCarryover(c, actualAgent, prompt)
 		prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
-		reply, err = prov.send(ctx, c, prompt)
+		reply, err = prov.Send(ctx, c, prompt)
 	}
 	if err != nil {
 		if isContextOverflowErr(err) {
@@ -103,7 +103,7 @@ func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
 	if handoff {
 		c.PendingHandoff = ""
 	}
-	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.turnModel, TS: nowMs()})
+	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.TurnModel, TS: nowMs()})
 	c.ActiveAgent = actualAgent
 	markProviderSynced(c, actualAgent, len(c.Messages))
 	noteContextPressure(c)
