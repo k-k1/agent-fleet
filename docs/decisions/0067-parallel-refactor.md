@@ -83,8 +83,18 @@ the hook, wearing a different name.
 
 So the rule is:
 
-- **If you bundle them in a struct, keep the fields unexported and make an N-argument constructor
+- **With a handful of dependencies, keep the fields unexported and make an N-argument constructor
   the only way in.** Only then does the compiler count the arguments.
+- **With too many for a constructor to be practical, an exported-field struct plus a start-up
+  exhaustiveness check is fine — but pin that check with a test that fails when any one field is
+  zeroed.** A hand-written checklist **drifts the moment a field is added** (measured: on a
+  25-dependency seam, deleting one line of the check and dropping its wiring left everything
+  green). Walking the fields with reflect makes drift impossible. **A function-typed field fails
+  loudly when unwired (nil dereference); a value-typed one runs on happily as its zero value** —
+  the value-typed ones are the dangerous half.
+- So the choice is **"let the compiler count" or "let a test count", and never neither** (a
+  hand-written check alone). Pick by scale: a 25-argument constructor is unwritable, and its
+  same-typed arguments invite **a new failure mode — passing them in the wrong order.**
 - **A zero-valued struct can still be written from outside** (`pkg.Deps{}` compiles), so make that
   case **panic at run time**. Never supply a harmless default — a default turns "forgot to wire it"
   green.
