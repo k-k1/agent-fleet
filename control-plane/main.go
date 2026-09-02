@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -89,24 +90,24 @@ func main() {
 		return
 	}
 
-	portBase, _ := strconv.Atoi(envOr("WS_AGENT_PORT", "7700"))
+	portBase, _ := strconv.Atoi(envx.Or("WS_AGENT_PORT", "7700"))
 	mgr := &manager{
 		rts:         map[string]cachedRT{},
-		image:       envOr("WS_IMAGE", "agent-fleet/workspace:m3"),
-		dataRoot:    envOr("WS_DATA", "/tmp/af-data"),
-		agentHost:   envOr("WS_AGENT_HOST", "127.0.0.1"),
-		memory:      envOr("WS_MEMORY", "1g"),
+		image:       envx.Or("WS_IMAGE", "agent-fleet/workspace:m3"),
+		dataRoot:    envx.Or("WS_DATA", "/tmp/af-data"),
+		agentHost:   envx.Or("WS_AGENT_HOST", "127.0.0.1"),
+		memory:      envx.Or("WS_MEMORY", "1g"),
 		memMaxBytes: mustMemBytes(os.Getenv("AF_MAX_WORKSPACE_MEM")), // 0 = no extra hard ceiling
 
-		sessionCmd:  os.Getenv("WS_SESSION_CMD"),   // empty => claude
-		extraEnv:    splitCSV(os.Getenv("WS_ENV")), // KEY=VAL,KEY=VAL -> container -e
+		sessionCmd:  os.Getenv("WS_SESSION_CMD"),        // empty => claude
+		extraEnv:    envx.SplitCSV(os.Getenv("WS_ENV")), // KEY=VAL,KEY=VAL -> container -e
 		portBase:    portBase,
-		authMode:    envOr("AUTH", "dev"), // dev (fixed id) | proxy (oauth2-proxy header) | oauth (CP-native Google)
-		devUser:     envOr("DEV_USER", "dev"),
-		emailHeader: envOr("AUTH_EMAIL_HEADER", "X-Forwarded-Email"),
+		authMode:    envx.Or("AUTH", "dev"), // dev (fixed id) | proxy (oauth2-proxy header) | oauth (CP-native Google)
+		devUser:     envx.Or("DEV_USER", "dev"),
+		emailHeader: envx.Or("AUTH_EMAIL_HEADER", "X-Forwarded-Email"),
 		// P3-2: provisioning policy + deployment super-admins.
-		provisionMode: envOr("AF_PROVISION", "auto"), // auto | invite
-		superAdmins:   emailSet(os.Getenv("SUPER_ADMIN_EMAILS")),
+		provisionMode: envx.Or("AF_PROVISION", "auto"), // auto | invite
+		superAdmins:   envx.EmailSet(os.Getenv("SUPER_ADMIN_EMAILS")),
 		// P3-9: live activity tracking for idle-stop.
 		conns: newConnRegistry(),
 	}
@@ -133,7 +134,7 @@ func main() {
 	// default tenant without recreating containers.
 	// Postgres (AF_DATABASE_URL) is the RDS backend for a redeployable ECS CP whose
 	// state must outlive task replacement (P3-7 段3a); SQLite is the on-prem default.
-	dbPath := envOr("AF_DB", filepath.Join(mgr.dataRoot, "control-plane.db"))
+	dbPath := envx.Or("AF_DB", filepath.Join(mgr.dataRoot, "control-plane.db"))
 	var st *store.SQL
 	var err error
 	if dburl := store.PGURLFromEnv(); dburl != "" {
@@ -202,7 +203,7 @@ func main() {
 	// "local" (Docker Engine / compose, the on-prem target); "ecs" selects the AWS
 	// adapter. Built here — after extraEnv/store/defaultTenantID are finalized —
 	// because the docker factory captures those template fields by value.
-	rtProfile := envOr("AF_RUNTIME", "local")
+	rtProfile := envx.Or("AF_RUNTIME", "local")
 	rtFactory, err := newRuntimeFactory(rtProfile, mgr)
 	if err != nil {
 		log.Fatalf("runtime factory: %v", err)
@@ -225,8 +226,8 @@ func main() {
 	// 素直に読める方がよい。
 	mgr.previewDomain = strings.ToLower(strings.Trim(strings.TrimSpace(os.Getenv("AF_PREVIEW_DOMAIN")), "."))
 	cfg := config{
-		addr:          envOr("CP_ADDR", ":8080"),
-		consoleDir:    envOr("CONSOLE_DIR", "./console"),
+		addr:          envx.Or("CP_ADDR", ":8080"),
+		consoleDir:    envx.Or("CONSOLE_DIR", "./console"),
 		publicBaseURL: publicBaseURL,
 		mgr:           mgr,
 		// CP-native OIDC login (AUTH=oauth). Google's env names are unchanged.
@@ -234,9 +235,9 @@ func main() {
 		googleClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
 		cookieSecret:       decodeKey(os.Getenv("AF_COOKIE_SECRET")),
 		cookieSecure:       strings.HasPrefix(publicBaseURL, "https"),
-		sessionTTL:         parseDurationOr(os.Getenv("AF_SESSION_TTL"), 168*time.Hour),
-		allowEmails:        emailSet(os.Getenv("AF_OAUTH_ALLOWED_EMAILS")),
-		allowDomains:       domainSet(os.Getenv("AF_OAUTH_ALLOWED_DOMAINS")),
+		sessionTTL:         envx.DurationOr(os.Getenv("AF_SESSION_TTL"), 168*time.Hour),
+		allowEmails:        envx.EmailSet(os.Getenv("AF_OAUTH_ALLOWED_EMAILS")),
+		allowDomains:       envx.DomainSet(os.Getenv("AF_OAUTH_ALLOWED_DOMAINS")),
 		allowEmailsFile:    os.Getenv("AF_OAUTH_ALLOWED_EMAILS_FILE"),
 		// P3-9 auto-start (scale-to-zero counterpart): default on; AF_AUTOSTART=0
 		// disables it so a stopped workspace only starts on an explicit start click.
@@ -247,7 +248,7 @@ func main() {
 		// Whether containers are actually routed through the proxy (docs/log/48 §9).
 		egressProxyAddr: egressProxyAddr,
 		// docs/log/24 TTS: 既定は dev の docker 公開先（host loopback）。
-		voicevoxURL: envOr("AF_VOICEVOX_URL", "http://127.0.0.1:50021"),
+		voicevoxURL: envx.Or("AF_VOICEVOX_URL", "http://127.0.0.1:50021"),
 		// docs/log/81: プレビュー用サブドメインの親。空 = ホスト方式は無効（ワイルドカードの
 		// DNS も証明書も無いデプロイでは成立しない）で、従来のパス方式だけが残る。
 		previewDomain: mgr.previewDomain,
@@ -317,7 +318,7 @@ func main() {
 	// admin usage view can attribute infra occupancy per tenant/member. Non-
 	// destructive (DB writes only), so it is on by default; AF_USAGE_SAMPLE_INTERVAL=0
 	// disables it.
-	if iv := parseDurationOr(os.Getenv("AF_USAGE_SAMPLE_INTERVAL"), 5*time.Minute); iv > 0 {
+	if iv := envx.DurationOr(os.Getenv("AF_USAGE_SAMPLE_INTERVAL"), 5*time.Minute); iv > 0 {
 		// Recorded before the goroutine starts: the heatmap API divides by it, and a
 		// zero here would make every cell read as "ran the whole hour" (docs/log/83).
 		mgr.usageInterval = iv
@@ -334,7 +335,7 @@ func main() {
 	// claude session's transcript and records Write/Edit/Bash into the audit ledger
 	// (actor_kind=claude). OFF by default (AF_CLAUDE_AUDIT_INTERVAL=0) — it polls every
 	// session, so it's opt-in; enable per deployment once validated.
-	if iv := parseDurationOr(os.Getenv("AF_CLAUDE_AUDIT_INTERVAL"), 0); iv > 0 {
+	if iv := envx.DurationOr(os.Getenv("AF_CLAUDE_AUDIT_INTERVAL"), 0); iv > 0 {
 		go newClaudeAuditor(mgr, iv).run(context.Background())
 		log.Printf("claude-audit: sweeping transcripts every %s", iv)
 	}
@@ -343,8 +344,8 @@ func main() {
 	// orphaned LFS objects, sequential — cheap on the shared host. Default 24h;
 	// AF_GIT_GC_INTERVAL=0 disables it. AF_LFS_GC_GRACE (default 14d) protects
 	// recently-uploaded LFS objects from pruning so GC never races an in-flight push.
-	if iv := parseDurationOr(os.Getenv("AF_GIT_GC_INTERVAL"), 24*time.Hour); iv > 0 {
-		grace := parseDurationOr(os.Getenv("AF_LFS_GC_GRACE"), 14*24*time.Hour)
+	if iv := envx.DurationOr(os.Getenv("AF_GIT_GC_INTERVAL"), 24*time.Hour); iv > 0 {
+		grace := envx.DurationOr(os.Getenv("AF_LFS_GC_GRACE"), 14*24*time.Hour)
 		go newGitGC(mgr.store, mgr.dataRoot, iv, grace).run(context.Background())
 	}
 
@@ -357,8 +358,8 @@ func main() {
 	// schedule wakes a stopped workspace and injects a session unattended; the P2 wake
 	// firer resolves the owner, applies the wake policy, holds a reaper keep-alive for
 	// AF_SCHEDULE_SETTLE, and injects via create_session.
-	if iv := parseDurationOr(os.Getenv("AF_SCHEDULER_INTERVAL"), time.Minute); iv > 0 {
-		settle := parseDurationOr(os.Getenv("AF_SCHEDULE_SETTLE"), 5*time.Minute)
+	if iv := envx.DurationOr(os.Getenv("AF_SCHEDULER_INTERVAL"), time.Minute); iv > 0 {
+		settle := envx.DurationOr(os.Getenv("AF_SCHEDULE_SETTLE"), 5*time.Minute)
 		// How long a fire waits for the woken Agent. Defaults to agentBootBudget — the
 		// SAME window the platform already grants a boot to say "starting" — because any
 		// smaller number silently means "schedules do not fire on substrates that boot
@@ -366,14 +367,14 @@ func main() {
 		// ecs-ec2's measured wake distribution (docs/log/38 ★7 ・ docs/log/64):
 		// waking a sleeping slot is ~110s and growing the pool ~135s, so a stopped
 		// workspace's morning fire landed or dropped essentially at random.
-		ready := parseDurationOr(os.Getenv("AF_SCHEDULE_WAKE_TIMEOUT"), runtime.AgentBootBudget)
+		ready := envx.DurationOr(os.Getenv("AF_SCHEDULE_WAKE_TIMEOUT"), runtime.AgentBootBudget)
 		// Per-schedule fire jitter (★2) spreads aligned cron times (everyone at 09:00)
 		// so simultaneous wakes don't OOM the shared host. Default 2m; AF_SCHEDULE_JITTER=0
 		// disables. Set before any schedule's next_run is computed so it takes effect.
 		if strings.TrimSpace(os.Getenv("AF_SCHEDULE_JITTER")) == "0" {
 			scheduleJitterMax = 0
 		} else {
-			scheduleJitterMax = parseDurationOr(os.Getenv("AF_SCHEDULE_JITTER"), 2*time.Minute)
+			scheduleJitterMax = envx.DurationOr(os.Getenv("AF_SCHEDULE_JITTER"), 2*time.Minute)
 		}
 		firer := newWakeFirer(mgr, settle, ready)
 		schedulerRunning = true // so the operator API stops warning that fires never happen
@@ -500,7 +501,7 @@ func main() {
 // revocation pass above runs.
 func superAdminEmailList() []string {
 	var out []string
-	for e := range emailSet(os.Getenv("SUPER_ADMIN_EMAILS")) {
+	for e := range envx.EmailSet(os.Getenv("SUPER_ADMIN_EMAILS")) {
 		out = append(out, e)
 	}
 	return out
@@ -519,13 +520,6 @@ func envBool(k string, def bool) bool {
 	}
 }
 
-func envOr(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
 // decodeKey reads a cookie/HMAC key: base64 (std or url, padded or raw) if it
 // decodes, else the raw bytes. Empty => nil (oauth mode then fails the config
 // check rather than running with a zero-length key).
@@ -542,13 +536,6 @@ func decodeKey(s string) []byte {
 	return []byte(s)
 }
 
-func parseDurationOr(s string, def time.Duration) time.Duration {
-	if d, err := time.ParseDuration(strings.TrimSpace(s)); err == nil && d > 0 {
-		return d
-	}
-	return def
-}
-
 // intervalOff is parseDurationOr for the settings where an explicit "0" means OFF rather
 // than "use the default". parseDurationOr cannot say that: it falls back on anything that
 // is not a POSITIVE duration, so AF_IDLE_SWEEP_INTERVAL=0 — documented right where it is
@@ -562,41 +549,6 @@ func intervalOff(s string, def time.Duration) time.Duration {
 		return d
 	}
 	return def
-}
-
-// emailSet parses a CSV of emails into a lowercased lookup set (SUPER_ADMIN_EMAILS).
-func emailSet(s string) map[string]bool {
-	m := map[string]bool{}
-	for _, p := range strings.Split(s, ",") {
-		if p = strings.TrimSpace(strings.ToLower(p)); p != "" {
-			m[p] = true
-		}
-	}
-	return m
-}
-
-// domainSet parses a CSV of email domains into a lowercased lookup set, tolerating
-// a leading "@" on each entry (AF_OAUTH_ALLOWED_DOMAINS).
-func domainSet(s string) map[string]bool {
-	m := map[string]bool{}
-	for _, p := range strings.Split(s, ",") {
-		p = strings.TrimPrefix(strings.TrimSpace(strings.ToLower(p)), "@")
-		if p != "" {
-			m[p] = true
-		}
-	}
-	return m
-}
-
-// splitCSV parses "A=1,B=2" into ["A=1","B=2"], dropping blanks.
-func splitCSV(s string) []string {
-	var out []string
-	for _, p := range strings.Split(s, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 func logRequests(next http.Handler) http.Handler {

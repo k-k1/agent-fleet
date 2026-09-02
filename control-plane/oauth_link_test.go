@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -288,7 +289,7 @@ func TestLinkRunsTheMethodsOwnGate(t *testing.T) {
 	})
 	cfg, st := linkTestConfig(t, idp)
 	// この provider だけの許可リスト（別ドメイン）＝ この人は入れない。
-	cfg.providers[0].(*auth.OIDCProvider).AllowDomains = domainSet("sub.co.jp")
+	cfg.providers[0].(*auth.OIDCProvider).AllowDomains = envx.DomainSet("sub.co.jp")
 	me, session := seedSignedIn(t, cfg, st, email)
 
 	w := startLink(t, cfg, session, "?provider=entra")

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -96,8 +97,8 @@ func oauthTestConfig(t *testing.T, ps ...auth.LoginProvider) config {
 		cookieSecret:  []byte("0123456789abcdef0123456789abcdef"),
 		cookieSecure:  true,
 		sessionTTL:    time.Hour,
-		allowEmails:   emailSet(""),
-		allowDomains:  domainSet("acme.co.jp"),
+		allowEmails:   envx.EmailSet(""),
+		allowDomains:  envx.DomainSet("acme.co.jp"),
 		mgr:           &manager{emailHeader: "X-Forwarded-Email"},
 	}
 	for _, p := range ps {
@@ -185,7 +186,7 @@ func TestGoogleOnlyDeploymentIsUnchanged(t *testing.T) {
 	t.Setenv("AF_OIDC_PROVIDERS", "")
 	base := config{
 		googleClientID: "g-client", googleClientSecret: "g-secret",
-		allowDomains: domainSet("acme.co.jp"),
+		allowDomains: envx.DomainSet("acme.co.jp"),
 	}
 	ps, err := buildLoginProviders(base)
 	if err != nil {
@@ -472,7 +473,7 @@ func TestAuthGateRereadsAllowlistFileEveryRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified))
-	cfg.allowDomains = domainSet("") // only the file decides
+	cfg.allowDomains = envx.DomainSet("") // only the file decides
 	cfg.allowEmailsFile = file
 	// The provider captured the pre-file config's method value, so rebind it.
 	cfg.providers[0].(*auth.OIDCProvider).DeployAllowed = cfg.emailAllowed
@@ -502,7 +503,7 @@ func TestAuthGateRereadsAllowlistFileEveryRequest(t *testing.T) {
 func TestProviderAllowlistOverridesTheDeploymentOne(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
 	p := stubProvider("entra", idp, auth.TrustIssuer)
-	p.AllowDomains = domainSet("sales.acme.co.jp")
+	p.AllowDomains = envx.DomainSet("sales.acme.co.jp")
 	oauthTestConfig(t, p) // binds the deployment-wide fallback list (@acme.co.jp)
 	for _, tc := range []struct {
 		email string

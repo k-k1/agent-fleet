@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -51,7 +52,7 @@ func TestEntryGateAdmitsAnInvitedPersonWithNoDeploymentAllowlist(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
-	cfg := config{mgr: mgr, allowEmails: emailSet(""), allowDomains: domainSet("")}
+	cfg := config{mgr: mgr, allowEmails: envx.EmailSet(""), allowDomains: envx.DomainSet("")}
 
 	// No allowlist anywhere, so the provider's only remaining term is the database.
 	p := &auth.OIDCProvider{ProviderID: "entra", DeployAllowed: cfg.emailAllowed, DBAllowed: cfg.tenantEmailAllowed}
@@ -91,7 +92,7 @@ func TestEntryGateAdmitsAnAutoJoinDomain(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
-	cfg := config{mgr: mgr, allowEmails: emailSet(""), allowDomains: domainSet("")}
+	cfg := config{mgr: mgr, allowEmails: envx.EmailSet(""), allowDomains: envx.DomainSet("")}
 	p := &auth.OIDCProvider{ProviderID: "entra", DeployAllowed: cfg.emailAllowed, DBAllowed: cfg.tenantEmailAllowed}
 
 	tn, _ := st.CreateTenant(ctx, "acme", "Acme")
@@ -116,10 +117,10 @@ func TestProviderOwnAllowlistStillReplacesTheDeploymentWideOne(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
-	cfg := config{mgr: mgr, allowEmails: emailSet(""), allowDomains: domainSet("acme.co.jp")}
+	cfg := config{mgr: mgr, allowEmails: envx.EmailSet(""), allowDomains: envx.DomainSet("acme.co.jp")}
 
 	narrowed := &auth.OIDCProvider{
-		ProviderID: "entra_sub", AllowDomains: domainSet("sub.acme.co.jp"),
+		ProviderID: "entra_sub", AllowDomains: envx.DomainSet("sub.acme.co.jp"),
 		DeployAllowed: cfg.emailAllowed, DBAllowed: cfg.tenantEmailAllowed,
 	}
 	if ok, _ := narrowed.Allowed(ctx, auth.Principal{Email: "someone@acme.co.jp"}); ok {
@@ -150,7 +151,7 @@ func TestMembershipDoesNotBypassTheGitHubOrgGate(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
-	cfg := config{mgr: mgr, allowEmails: emailSet(""), allowDomains: domainSet("")}
+	cfg := config{mgr: mgr, allowEmails: envx.EmailSet(""), allowDomains: envx.DomainSet("")}
 
 	tn, _ := st.CreateTenant(ctx, "sales", "営業部")
 	ident, _ := st.UpsertIdentity(ctx, "outsider@acme.co.jp", "outsider-acme-co-jp", "")
@@ -160,7 +161,7 @@ func TestMembershipDoesNotBypassTheGitHubOrgGate(t *testing.T) {
 
 	gh := &auth.GitHubProvider{
 		ProviderID: auth.GithubProviderID, AllowedOrgs: []string{"acme"},
-		AllowDomains: domainSet("acme.co.jp"),
+		AllowDomains: envx.DomainSet("acme.co.jp"),
 		DBAllowed:    cfg.tenantEmailAllowed,
 		TTL:          auth.GithubDefaultTTL, Grace: auth.GithubDefaultGrace,
 	}
@@ -433,7 +434,7 @@ func TestAllowedDomainsGuardsInvitesOnly(t *testing.T) {
 func TestSuperAdminWithNoMembershipStillGetsTheTenantList(t *testing.T) {
 	st := p3Store(t)
 	mgr := p3Manager(t, st) // invite mode: the documented "can't bootstrap" trap
-	mgr.superAdmins = emailSet("boss@acme.co.jp")
+	mgr.superAdmins = envx.EmailSet("boss@acme.co.jp")
 
 	tn := newTenantAPI(mgr)
 	get := func(email string) *httptest.ResponseRecorder {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -88,7 +89,7 @@ func TestTenantProviderGateDoesNotFallBackToTheDeployment(t *testing.T) {
 	mgr := p4Manager(t, st)
 
 	// A deployment that admits the parent company, and a colleague on some roster.
-	cfg := config{mgr: mgr, allowDomains: domainSet("acme.co.jp"), allowEmails: emailSet("")}
+	cfg := config{mgr: mgr, allowDomains: envx.DomainSet("acme.co.jp"), allowEmails: envx.EmailSet("")}
 	tn, _ := st.CreateTenant(ctx, "sub", "子会社")
 	ident, _ := st.UpsertIdentity(ctx, "member@acme.co.jp", "member-acme-co-jp", "")
 	if _, err := st.EnsureMembership(ctx, ident.ID, tn.ID, "member"); err != nil {

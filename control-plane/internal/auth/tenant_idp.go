@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -294,7 +295,7 @@ func BuildTenantProvider(row store.TenantIdP, tn store.TenantRef, secret string)
 	if !ValidIssuerURL(row.Issuer) {
 		return nil, fmt.Errorf("issuer %q is not an https URL", row.Issuer)
 	}
-	tids := emailSet(row.AllowedTIDs)
+	tids := envx.EmailSet(row.AllowedTIDs)
 	if MultiTenantIssuer(row.Issuer) && len(tids) == 0 {
 		return nil, fmt.Errorf("issuer %q is a multi-tenant endpoint and no allowed_tids are set", row.Issuer)
 	}
@@ -303,7 +304,7 @@ func BuildTenantProvider(row store.TenantIdP, tn store.TenantRef, secret string)
 	default:
 		return nil, fmt.Errorf("trust must be %q or %q", TrustEmailVerified, TrustIssuer)
 	}
-	domains := domainSet(row.AllowedDomains)
+	domains := envx.DomainSet(row.AllowedDomains)
 	if len(domains) == 0 {
 		return nil, errors.New("allowed_domains is empty, which would admit every address this issuer asserts")
 	}

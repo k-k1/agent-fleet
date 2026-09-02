@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"io"
 	"log"
 	"net"
@@ -40,7 +41,7 @@ type egressProxy struct {
 }
 
 func runEgressProxy() {
-	listen := envOr("AF_EGRESS_LISTEN", ":3128")
+	listen := envx.Or("AF_EGRESS_LISTEN", ":3128")
 	// Static seed: built-in defaults + optional file + AF_EGRESS_ENFORCE. When a CP
 	// policy URL is configured it overrides this on first poll (docs/log/20 M3).
 	entries := append([]string(nil), defaultEgressAllowlist...)

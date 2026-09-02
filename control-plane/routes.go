@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -277,7 +278,7 @@ func registerPATRoutes(mux *http.ServeMux, cfg config) {
 func registerMCPRoutes(mux *http.ServeMux, cfg config) {
 	exemptExact("/mcp")
 	exemptPrefix("/mcp/")
-	if envOr("AF_MCP_ENABLED", "") == "true" {
+	if envx.Or("AF_MCP_ENABLED", "") == "true" {
 		mux.HandleFunc("/mcp", newMCPAPI(cfg.mgr).handleMCP)
 		log.Printf("MCP endpoint enabled at /mcp")
 	}

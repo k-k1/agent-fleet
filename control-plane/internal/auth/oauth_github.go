@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -461,7 +462,7 @@ func (p *GitHubProvider) Allowed(ctx context.Context, pr Principal) (bool, error
 func NewGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.Context, string) bool, deployHasList bool) *GitHubProvider {
 	clientID := firstNonEmpty(os.Getenv("AF_GITHUB_LOGIN_CLIENT_ID"), os.Getenv("GITHUB_OAUTH_CLIENT_ID"))
 	clientSecret := firstNonEmpty(os.Getenv("AF_GITHUB_LOGIN_CLIENT_SECRET"), os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"))
-	orgs := splitCSV(os.Getenv("AF_GITHUB_ALLOWED_ORGS"))
+	orgs := envx.SplitCSV(os.Getenv("AF_GITHUB_ALLOWED_ORGS"))
 	switch {
 	case len(orgs) == 0 && clientSecret == "":
 		return nil // nothing here asks for a GitHub login: stay quiet
@@ -480,18 +481,18 @@ func NewGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.C
 	}
 	p := &GitHubProvider{
 		ProviderID:    GithubProviderID,
-		LabelJA:       envOr("AF_GITHUB_LABEL_JA", "GitHub でサインイン"),
-		LabelEN:       envOr("AF_GITHUB_LABEL_EN", "Sign in with GitHub"),
+		LabelJA:       envx.Or("AF_GITHUB_LABEL_JA", "GitHub でサインイン"),
+		LabelEN:       envx.Or("AF_GITHUB_LABEL_EN", "Sign in with GitHub"),
 		ClientID:      clientID,
 		ClientSecret:  clientSecret,
 		AllowedOrgs:   orgs,
-		AllowEmails:   emailSet(os.Getenv("AF_GITHUB_ALLOWED_EMAILS")),
-		AllowDomains:  domainSet(os.Getenv("AF_GITHUB_ALLOWED_DOMAINS")),
+		AllowEmails:   envx.EmailSet(os.Getenv("AF_GITHUB_ALLOWED_EMAILS")),
+		AllowDomains:  envx.DomainSet(os.Getenv("AF_GITHUB_ALLOWED_DOMAINS")),
 		DeployAllowed: deployAllowed,
 		DBAllowed:     dbAllowed,
 		DeployHasList: deployHasList,
-		TTL:           parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_TTL"), GithubDefaultTTL),
-		Grace:         parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_GRACE"), GithubDefaultGrace),
+		TTL:           envx.DurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_TTL"), GithubDefaultTTL),
+		Grace:         envx.DurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_GRACE"), GithubDefaultGrace),
 		cache:         map[string]*githubMembership{},
 	}
 	if len(p.AllowEmails) == 0 && len(p.AllowDomains) == 0 && !deployHasList {
@@ -528,14 +529,14 @@ func newTenantGitHubProvider(row store.TenantIdP, tn store.TenantRef, secret str
 	if row.ClientID == "" || secret == "" {
 		return nil, errors.New("client_id / client_secret are required")
 	}
-	orgs := splitCSV(row.AllowedOrgs)
+	orgs := envx.SplitCSV(row.AllowedOrgs)
 	for i, o := range orgs {
 		orgs[i] = strings.ToLower(o)
 	}
 	if len(orgs) == 0 {
 		return nil, errors.New("allowed_orgs is empty, and membership in one of those organizations is what authorizes a GitHub sign-in")
 	}
-	domains := domainSet(row.AllowedDomains)
+	domains := envx.DomainSet(row.AllowedDomains)
 	if len(domains) == 0 {
 		return nil, errors.New("allowed_domains is empty, which would admit every address this organization's members carry")
 	}
@@ -546,10 +547,10 @@ func newTenantGitHubProvider(row store.TenantIdP, tn store.TenantRef, secret str
 	// a row that declared its own label wins, as before.
 	labelJA, labelEN := row.LabelJA, row.LabelEN
 	if labelJA == "" {
-		labelJA = TenantLabelSuffix(envOr("AF_GITHUB_LABEL_JA", "GitHub でサインイン"), tn, "ja")
+		labelJA = TenantLabelSuffix(envx.Or("AF_GITHUB_LABEL_JA", "GitHub でサインイン"), tn, "ja")
 	}
 	if labelEN == "" {
-		labelEN = TenantLabelSuffix(envOr("AF_GITHUB_LABEL_EN", "Sign in with GitHub"), tn, "en")
+		labelEN = TenantLabelSuffix(envx.Or("AF_GITHUB_LABEL_EN", "Sign in with GitHub"), tn, "en")
 	}
 	return &GitHubProvider{
 		ProviderID:   TenantProviderID(tn.Slug, row.Name),
@@ -562,8 +563,8 @@ func newTenantGitHubProvider(row store.TenantIdP, tn store.TenantRef, secret str
 		// The TTL and grace stay deployment-level: they are about how long CP may
 		// trust a cached answer from GitHub, which is an operational property of this
 		// installation and not something a tenant should be able to stretch.
-		TTL:   parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_TTL"), GithubDefaultTTL),
-		Grace: parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_GRACE"), GithubDefaultGrace),
+		TTL:   envx.DurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_TTL"), GithubDefaultTTL),
+		Grace: envx.DurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_GRACE"), GithubDefaultGrace),
 		cache: map[string]*githubMembership{},
 	}, nil
 }
