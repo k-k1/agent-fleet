@@ -19,8 +19,9 @@ import { useT } from "../../lib/i18n/index.ts";
 import { speakText } from "../chat/tts.ts";
 import { DrawioView, type DrawioState } from "./DrawioView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
-import { dismissSoftKeyboard, escapeHtml, lineRangeOfSelection } from "./parts/fileDom.ts";
+import { dismissSoftKeyboard, escapeHtml } from "./parts/fileDom.ts";
 import { useFileContent, type FileData } from "./parts/useFileContent.ts";
+import { useSelectionPill } from "./parts/useSelectionPill.ts";
 import {
   editorStatusText,
   externalNoteText,
@@ -41,8 +42,6 @@ import { EditorResolutionPanel } from "./parts/EditorResolutionPanel.tsx";
 import { FileViewerShell } from "./parts/FileViewerShell.tsx";
 import { EditorSuggestPanel } from "./parts/EditorSuggestPanel.tsx";
 import { CodeEditor, type CodeEditorHandle } from "../editor/CodeEditor.tsx";
-import type { EditorSelectionReport } from "../editor/selection.ts";
-import { editorPill, type SelectionPill } from "./selectionPill.ts";
 import { useFileEditor } from "../editor/useFileEditor.ts";
 import { useExternalChangeProbe } from "../editor/probe.ts";
 import { getEditableFile, type EditableFile, type FileProbeResult } from "../editor/api.ts";
@@ -121,9 +120,6 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // うちは作らない —— ソースだけ見て閉じる人に図の取得をさせない。
   const [diagramMounted, setDiagramMounted] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
-  // `origin` keeps the two capture paths (the read-only grid's DOM walk and the
-  // editor's own report) from clearing each other's pill (docs/log/44 §1.8).
-  const [sel, setSel] = useState<SelectionPill | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
   // Keyed by the loaded file so a new document re-picks its starting mode. The
   // stored mode is the user's intent; what renders is derived from it below.
@@ -563,66 +559,13 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     }
   };
 
-  // After a mouse selection in the code/source view, surface a floating "送る" pill by
-  // the selection. Scoped to CodeView because it queries that view's <code> element
-  // (absent in md-preview / slides / image), so it stays inert elsewhere.
-  const captureSelection = () => {
-    // While the send modal is open, ignore mouseups — React portals bubble events through
-    // the React tree, so a click inside the (body-portaled) modal reaches this handler and
-    // would clear `sel` (the modal is gated on it), closing the modal on the first click.
-    if (sendOpen) return;
-    // A selection inside CodeMirror belongs to the editing surface, which reports
-    // it from its own document (docs/log/44 §1.8). Walking the DOM for it would read
-    // a virtualised, possibly truncated copy of the same selection.
-    const editorEl = bodyRef.current?.querySelector(".file-editor-cm");
-    const live = window.getSelection();
-    if (editorEl && live?.anchorNode && editorEl.contains(live.anchorNode)) return;
-    // Only one pill at a time: a selection outside the editor supersedes the
-    // editor's, even when there is no code grid here to select in (a preview).
-    const codeEl = bodyRef.current?.querySelector(".codeview .codegrid");
-    const r = codeEl ? lineRangeOfSelection(codeEl) : null;
-    if (!r) {
-      setSel(null);
-      return;
-    }
-    const rect = live!.getRangeAt(0).getBoundingClientRect();
-    setSel({ ...r, x: Math.round(rect.left), y: Math.round(rect.top - 34), origin: "view" });
-  };
-
-  // The editing surface reports its own selection: line numbers and the quote
-  // come from the CodeMirror document, and the pill is placed from coordsAtPos.
-  const captureEditorSelection = (selection: EditorSelectionReport | null) => {
-    if (sendOpen) return;
-    setSel((prev) => editorPill(prev, selection, surfaces.editor));
-  };
-
-  // Leaving the editing surface drops its pill: the selection survives in the
-  // editor state, but it is no longer on screen to send from.
-  useEffect(() => {
-    if (surfaces.editor) return;
-    setSel((prev) => (prev?.origin === "editor" ? null : prev));
-  }, [surfaces.editor]);
-
-  // Touch text-selection (long-press + drag handles on mobile) does NOT fire mouseup/
-  // keyup, so the pill never appeared on phones. `selectionchange` fires for touch too;
-  // debounce it (selection updates continuously while dragging the handles) and reuse the
-  // same capture. Keep a ref so the mount-once listener always calls the latest closure
-  // (captureSelection closes over sendOpen). captureSelection itself is scoped to this
-  // view's codegrid, so selections elsewhere just clear our pill.
-  const captureRef = useRef(captureSelection);
-  captureRef.current = captureSelection;
-  useEffect(() => {
-    let t: ReturnType<typeof setTimeout> | null = null;
-    const onSelChange = () => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => captureRef.current(), 250);
-    };
-    document.addEventListener("selectionchange", onSelChange);
-    return () => {
-      document.removeEventListener("selectionchange", onSelChange);
-      if (t) clearTimeout(t);
-    };
-  }, []);
+  // 選択範囲に浮くピル（parts/useSelectionPill）。2 つの取り込み口と、
+  // それを止める effect 2 つはここが持つ。
+  const { sel, setSel, captureSelection, captureEditorSelection } = useSelectionPill({
+    bodyRef,
+    sendOpen,
+    editorSurface: surfaces.editor,
+  });
 
   // 朗読ビュー（docs/log/24）を開く。読み上げ＋縦書き閲覧は専用の ReaderView（kind="read"）に集約。
   const openReader = () => openTarget({ content: { kind: "read", filePath } });
