@@ -783,11 +783,11 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := m.Dir
-	if !isGitRepo(dir) {
+	if !gitx.IsGitRepo(dir) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "session working copy is not a git repo")
 		return
 	}
-	var req renameBranchReq
+	var req gitx.RenameBranchReq
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
@@ -797,8 +797,8 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_ref", "branch name is required and must not start with '-'")
 		return
 	}
-	if cur, _ := gitStatus(dir); newName != cur.Branch {
-		if local, remote := branchNameStatus(dir, newName); local || remote {
+	if cur, _ := gitx.GitStatus(dir); newName != cur.Branch {
+		if local, remote := gitx.BranchNameStatus(dir, newName); local || remote {
 			where := "ローカル"
 			if !local {
 				where = "リモート"

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -23,9 +24,9 @@ func lockMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
 	mux.HandleFunc("POST /sessions/{name}/archive", handleArchiveSession)
 	mux.HandleFunc("DELETE /sessions/{name}", handleDeleteSession)
-	mux.HandleFunc("GET /repos", handleListRepos)
+	mux.HandleFunc("GET /repos", gitx.HandleListRepos)
 	mux.HandleFunc("POST /repos/{name}/lock", handleRepoLock)
-	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
+	mux.HandleFunc("DELETE /repos/{name}", gitx.HandleDeleteRepo)
 	mux.HandleFunc("POST /chat/conversations/{id}/lock", handleChatLock)
 	mux.HandleFunc("DELETE /chat/conversations/{id}", chatx.HandleChatDelete)
 	return mux
@@ -162,7 +163,7 @@ func TestRepoLockRefusesDelete(t *testing.T) {
 	gitInit(t, dir)
 
 	do(t, srv, "POST", "/repos/app/lock", map[string]any{"locked": true}, http.StatusOK, nil)
-	var list struct{ Repos []Repo }
+	var list struct{ Repos []gitx.Repo }
 	do(t, srv, "GET", "/repos", nil, http.StatusOK, &list)
 	if len(list.Repos) != 1 || !list.Repos[0].Locked {
 		t.Fatalf("repo list = %+v, want locked=true", list.Repos)
@@ -236,7 +237,7 @@ func TestWorktreeLockBlocksAutoPrune(t *testing.T) {
 	if err := setRepoLock(wt, true); err != nil {
 		t.Fatal(err)
 	}
-	maybePruneWorktree(wt)
+	gitx.MaybePruneWorktree(wt)
 	if !session.DirExists(wt) {
 		t.Fatal("locked worktree was auto-pruned")
 	}
@@ -244,7 +245,7 @@ func TestWorktreeLockBlocksAutoPrune(t *testing.T) {
 	if err := setRepoLock(wt, false); err != nil {
 		t.Fatal(err)
 	}
-	maybePruneWorktree(wt)
+	gitx.MaybePruneWorktree(wt)
 	if session.DirExists(wt) {
 		t.Fatal("unlocked clean worktree should have been pruned")
 	}

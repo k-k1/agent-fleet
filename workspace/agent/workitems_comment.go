@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -91,7 +92,7 @@ func parseGitHubIssueKey(key string) (repo string, number int, ok bool) {
 	}
 	repo = key[:i]
 	n, err := strconv.Atoi(key[i+1:])
-	if err != nil || n <= 0 || !validRemoteRepo(repo) {
+	if err != nil || n <= 0 || !gitx.ValidRemoteRepo(repo) {
 		return "", 0, false
 	}
 	return repo, n, true
@@ -103,12 +104,12 @@ func githubPostIssueComment(token, key, body string) (string, error) {
 		return "", fmt.Errorf("cannot post to %q (expected owner/name#number)", key)
 	}
 	payload, _ := json.Marshal(map[string]string{"body": body})
-	u := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments", escapeRepoPath(repo), number)
+	u := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments", gitx.EscapeRepoPath(repo), number)
 	req, err := http.NewRequest("POST", u, bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}
-	githubHeaders(req, token)
+	gitx.GithubHeaders(req, token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := workItemHTTPClient.Do(req)
 	if err != nil {

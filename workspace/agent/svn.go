@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -125,7 +126,7 @@ func runSvnAuthedSink(ctx context.Context, sink *repoJobSink, creds *secrets.SVN
 	// makes the progress line read "bigdocs/sub/f1.bin" instead of leaking whatever
 	// directory the Agent happened to start in. Every path we pass is absolute, so the
 	// CWD changes nothing else.
-	if root := reposRoot(); root != "" {
+	if root := gitx.ReposRoot(); root != "" {
 		if _, err := os.Stat(root); err == nil {
 			cmd.Dir = root
 		}
@@ -264,11 +265,11 @@ func svnDirty(dir string) bool {
 
 // svnRepoEntry builds the list-view representation of an SVN working copy for
 // handleListRepos. Git-only fields (branch/ahead/behind/worktree) stay zero.
-func svnRepoEntry(name, dir string) Repo {
+func svnRepoEntry(name, dir string) gitx.Repo {
 	rev, url := svnInfo(dir)
-	return Repo{
+	return gitx.Repo{
 		Name:          name,
-		WorkingCopyID: workingCopyID(dir),
+		WorkingCopyID: gitx.WorkingCopyID(dir),
 		Path:          dir,
 		Vcs:           "svn",
 		Revision:      rev,
@@ -436,7 +437,7 @@ func handleSvnCheckout(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = deriveSvnName(full)
 	}
-	dir, ok := resolveRepoDir(name)
+	dir, ok := gitx.ResolveRepoDir(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "name must start with a letter or number, may contain letters/numbers plus . _ @ -, and be at most 96 characters")
 		return
@@ -445,7 +446,7 @@ func handleSvnCheckout(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "exists", "repo already exists: "+name)
 		return
 	}
-	if err := os.MkdirAll(reposRoot(), 0o755); err != nil {
+	if err := os.MkdirAll(gitx.ReposRoot(), 0o755); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
 		return
 	}
@@ -504,7 +505,7 @@ func handleSvnCheckout(w http.ResponseWriter, r *http.Request) {
 
 // svnDirFromPath validates {name} and ensures it is an SVN working copy.
 func svnDirFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
-	dir, ok := resolveRepoDir(r.PathValue("name"))
+	dir, ok := gitx.ResolveRepoDir(r.PathValue("name"))
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid repo name")
 		return "", false

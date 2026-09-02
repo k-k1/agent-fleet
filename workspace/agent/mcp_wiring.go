@@ -10,6 +10,7 @@ package main
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -54,7 +55,7 @@ func init() {
 		ReadUIPrefs:                uiprefs.Read,
 		EnsureClaudeSettingsWiring: ensureClaudeSettingsWiring,
 
-		RepoAnyDirFromPath: repoAnyDirFromPath,
+		RepoAnyDirFromPath: gitx.RepoAnyDirFromPath,
 
 		ReadBuildPins:      readBuildPins,
 		AgentFleetShareDir: agentFleetShareDir,

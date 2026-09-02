@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -179,20 +180,20 @@ func handleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Worktrees under ~/repos: linked worktrees whose work may be done.
-	entries, _ := os.ReadDir(reposRoot())
+	entries, _ := os.ReadDir(gitx.ReposRoot())
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		dir := filepath.Join(reposRoot(), e.Name())
-		if !isGitRepo(dir) || !isLinkedWorktree(dir) {
+		dir := filepath.Join(gitx.ReposRoot(), e.Name())
+		if !gitx.IsGitRepo(dir) || !gitx.IsLinkedWorktree(dir) {
 			continue
 		}
 		liveCount := len(liveSessionsInDir(dir))
-		st, _ := gitStatus(dir)
+		st, _ := gitx.GitStatus(dir)
 		relation := ""
-		if parent := worktreeParent(dir); parent != "" {
-			relation = gitWorktreeIntegration(parent, dir, gitCurrentBranch(parent)).Relation
+		if parent := gitx.WorktreeParent(dir); parent != "" {
+			relation = gitx.GitWorktreeIntegration(parent, dir, gitx.GitCurrentBranch(parent)).Relation
 		}
 		// 削除ロック済みセッション（stopped/archived 含む）が居る WT は削除も 403 で
 		// 拒まれる — handleDeleteRepo と同じ判定（lockedSessionsInDir）で先に keep にする。
@@ -213,11 +214,11 @@ func handleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 		if !e.IsDir() {
 			continue
 		}
-		dir := filepath.Join(reposRoot(), e.Name())
-		if !isGitRepo(dir) || isLinkedWorktree(dir) {
+		dir := filepath.Join(gitx.ReposRoot(), e.Name())
+		if !gitx.IsGitRepo(dir) || gitx.IsLinkedWorktree(dir) {
 			continue
 		}
-		for _, b := range mergedLocalBranches(dir) {
+		for _, b := range gitx.MergedLocalBranches(dir) {
 			out = append(out, cleanupCandidate{
 				Type: "branch", Action: "delete_branch", ID: e.Name(), Repo: e.Name(), Branch: b,
 				Safety: "safe", ReasonKey: cleanReasonBranchMerged, Reason: cleanupReasonText(cleanReasonBranchMerged),

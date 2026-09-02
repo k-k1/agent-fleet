@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -212,7 +213,7 @@ func handleSessionKeepAwake(w http.ResponseWriter, r *http.Request) {
 // a linked worktree) against deletion — including the automatic prune that drops a
 // clean worktree once its last session goes away.
 func handleRepoLock(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoAnyDirFromPath(w, r)
+	dir, ok := gitx.RepoAnyDirFromPath(w, r)
 	if !ok {
 		return
 	}

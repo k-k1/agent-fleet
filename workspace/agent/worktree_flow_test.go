@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -35,10 +36,10 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	mux.HandleFunc("GET /sessions", handleListSessions)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
-	mux.HandleFunc("GET /repos", handleListRepos)
-	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
+	mux.HandleFunc("GET /repos", gitx.HandleListRepos)
+	mux.HandleFunc("POST /repos/{name}/checkout", gitx.HandleRepoCheckout)
 	mux.HandleFunc("POST /sessions/{name}/rename-branch", handleSessionRenameBranch)
-	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
+	mux.HandleFunc("DELETE /repos/{name}", gitx.HandleDeleteRepo)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -56,14 +57,14 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	if created.Branch != "feat-x" {
 		t.Fatalf("session start branch = %q, want feat-x", created.Branch)
 	}
-	if !isGitRepo(wantDir) {
+	if !gitx.IsGitRepo(wantDir) {
 		t.Fatalf("worktree not created at %s", wantDir)
 	}
 
 	// #2 badge: the repo list marks app@feat-x as a worktree of parent "app".
-	var repoList struct{ Repos []Repo }
+	var repoList struct{ Repos []gitx.Repo }
 	do(t, srv, "GET", "/repos", nil, http.StatusOK, &repoList)
-	var wtRepo *Repo
+	var wtRepo *gitx.Repo
 	for i := range repoList.Repos {
 		if repoList.Repos[i].Name == "app@feat-x" {
 			wtRepo = &repoList.Repos[i]
@@ -135,7 +136,7 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 		t.Fatalf("worktree dir still exists after stopping its last session (auto-prune failed)")
 	}
 	// The parent is untouched by the auto-prune.
-	if !isGitRepo(parent) {
+	if !gitx.IsGitRepo(parent) {
 		t.Fatalf("parent working copy damaged by worktree prune")
 	}
 }

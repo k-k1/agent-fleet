@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -85,12 +86,12 @@ func bitbucketSearchWorkItems(s *secrets.Data, queryID, query string) ([]workIte
 	if err != nil {
 		return nil, err
 	}
-	auth, err := bitbucketAuthHeader(s)
+	auth, err := gitx.BitbucketAuthHeader(s)
 	if err != nil {
 		return nil, err
 	}
 	rows, err := bitbucketFetchPullRequests(auth, q, queryID)
-	err = refreshBitbucketAndRetry(s, err, func(a string) error {
+	err = gitx.RefreshBitbucketAndRetry(s, err, func(a string) error {
 		var e error
 		rows, e = bitbucketFetchPullRequests(a, q, queryID)
 		return e
@@ -136,7 +137,7 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 	if filter != "" {
 		params.Set("q", filter)
 	}
-	body, status, err := bitbucketGetStatus(workItemHTTPClient, auth, endpoint+"?"+params.Encode())
+	body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, endpoint+"?"+params.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("could not reach %s", bitbucketAPIBase)
 	}
@@ -156,10 +157,10 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 // add it, instead of the generic "re-connect" that would send them round a loop
 // (docs/log/80 §80.19.3).
 func bitbucketWorkItemError(status int, body []byte, q bitbucketWorkItemQuery) error {
-	text := bitbucketErrText(body)
+	text := gitx.BitbucketErrText(body)
 	switch status {
 	case http.StatusUnauthorized:
-		return errBitbucketUnauthorized
+		return gitx.ErrBitbucketUnauthorized
 	case http.StatusForbidden:
 		return fmt.Errorf("bitbucket refused this read — the connection is missing the pull request permission " +
 			"(`pullrequest` on the OAuth consumer, `read:pullrequest:bitbucket` on an API token). " +
@@ -295,15 +296,15 @@ func bitbucketSelfUUID(auth string) (string, error) {
 	if bbSelfCache.auth == auth && bbSelfCache.uuid != "" {
 		return bbSelfCache.uuid, nil
 	}
-	body, status, err := bitbucketGetStatus(workItemHTTPClient, auth, bitbucketAPIBase+"/2.0/user")
+	body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, bitbucketAPIBase+"/2.0/user")
 	if err != nil {
 		return "", fmt.Errorf("could not reach %s", bitbucketAPIBase)
 	}
 	if status != http.StatusOK {
 		if status == http.StatusUnauthorized {
-			return "", errBitbucketUnauthorized
+			return "", gitx.ErrBitbucketUnauthorized
 		}
-		return "", fmt.Errorf("bitbucket would not say who this connection is (%d): %s", status, bitbucketErrText(body))
+		return "", fmt.Errorf("bitbucket would not say who this connection is (%d): %s", status, gitx.BitbucketErrText(body))
 	}
 	var u struct {
 		UUID string `json:"uuid"`

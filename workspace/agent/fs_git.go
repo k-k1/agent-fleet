@@ -30,7 +30,7 @@ type fileChange struct {
 // ~/repos, returning home-relative paths so the Console can show "changed files
 // only" alongside the home tree.
 func handleFSChanges(w http.ResponseWriter, r *http.Request) {
-	root := reposRoot()
+	root := gitx.ReposRoot()
 	ents, err := os.ReadDir(root)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": []fileChange{}})
@@ -46,7 +46,7 @@ func handleFSChanges(w http.ResponseWriter, r *http.Request) {
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 			continue // not a git working copy
 		}
-		cs, err := gitChanges(dir)
+		cs, err := gitx.GitChanges(dir)
 		if err != nil {
 			continue
 		}
@@ -80,7 +80,7 @@ func handleFSLineMarks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo, inrepo := parts[1], parts[2]
-	dir := filepath.Join(reposRoot(), repo)
+	dir := filepath.Join(gitx.ReposRoot(), repo)
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, emptyMarks())
 		return
