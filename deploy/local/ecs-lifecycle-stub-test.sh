@@ -80,6 +80,14 @@ case "$args" in
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='Url']"*) echo "https://af.example.test" ;;
+  # capture-env.sh 用: 引数と Output の一覧（join 形式）。★ NatEipAllocationId は
+  # **引数では空・Output には実体**という、今回踏んだ形そのものを再現する。
+  # ⚠️ スタック名は --query より前に出る。グロブの順序を取り違えると全部この下の
+  # 総称枝に落ちて、テストが「何も起きない」形で嘘をつく。
+  *"t-network"*"Parameters[].join"*) printf 'VpcCidr=10.20.0.0/16\nNatEipAllocationId=\n' ;;
+  *"t-network"*"Outputs[].join"*)    printf 'NatEipAllocationId=eipalloc-REAL\nVpcId=vpc-1\n' ;;
+  *"Parameters[].join"*)             printf 'Fqdn=af.example.test\n' ;;
+  *"Outputs[].join"*)                printf '\n' ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
   *"ParameterKey=='NetworkStackName'"*) echo "t-network" ;;
   *"ParameterKey=='DataStackName'"*) echo "t-data" ;;
@@ -253,6 +261,22 @@ echo "== case 3c: 撤収は 20-platform を消す前にバケットを空にす�
 : > "$LOG"
 "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3c" </dev/null
 order "s3 rm s3://t-cfn-bucket --recursive" "cloudformation delete-stack --stack-name t-platform"
+
+echo "== case 3d: capture は Output にしか無い値を取り落とさない =="
+#
+# 🔴 空の引数は「自分で作る」分岐を選んだ印であることがあり、作られた実体の id は
+# Output 側にしかない。引数だけ写すと、立て直しで同じ空値がもう一度「作る」を選び、
+# **前の実体（Retain の EIP）が孤児になる**＝顧客が許可リストに載せた egress アドレスが
+# 黙って変わる。2026-09-02 の実機一巡で実際に踏んだ形。
+: > "$LOG"
+CAPOUT="$WORK/capture"; rm -rf "$CAPOUT"
+AF_DEPLOY_STATE_DIR="$CAPOUT" "$ECS/capture-env.sh" --profile p --region ap-northeast-1 --stack t-ingress > "$WORK/out3d" </dev/null
+CAPFILE="$CAPOUT/p.ap-northeast-1.t-ingress/params/00-network"
+[ -r "$CAPFILE" ] || fail "capture が 00-network を書いていない"
+grep -q "^NatEipAllocationId=eipalloc-REAL$" "$CAPFILE" \
+  || fail "空の引数が Output の実体で埋まっていない（立て直しで EIP が孤児になる）: $(grep NatEip "$CAPFILE" || echo '<行が無い>')"
+# 引数に無い Output まで写してはいけない（CFN は知らない引数を拒む）
+if grep -q "^VpcId=" "$CAPFILE"; then fail "引数ではない Output まで控えに写している"; fi
 
 echo "== case 4: pause stops the control plane LAST =="
 : > "$LOG"
