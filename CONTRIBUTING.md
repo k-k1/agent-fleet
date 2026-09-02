@@ -104,7 +104,8 @@ Co-Authored-By: <model name> <noreply@<vendor>>   ← trailer, separated by a bl
 - **body**: for bug fixes and behaviour changes, record **root cause → fix →
   verification (how you actually checked)**. This project is verified against a live
   fleet, and the commit history is the only design record of that.
-- **migration**: schema changes (`control-plane/migrations/`) must be forward
+- **migration**: schema changes (`control-plane/internal/store/migrations/`, and
+  `migrations-pg/` beside it for Postgres) must be forward
   compatible, and say so in the body — the embedded migrator applies them
   automatically at Control Plane startup and there is no downgrade path.
 

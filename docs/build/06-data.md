@@ -1,6 +1,6 @@
 ---
 audience: "someone touching the schema or a migration"
-source_of_truth: "`control-plane/migrations/*.sql` (this is a reading of them, as of 0001–0028)"
+source_of_truth: "`control-plane/internal/store/migrations/*.sql` (this is a reading of them, as of 0001–0028)"
 updated: "2026-07"
 ---
 
