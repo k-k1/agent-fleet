@@ -178,11 +178,11 @@ func memoryTarAdd(tw *tar.Writer, name string, b []byte, now time.Time) error {
 	return err
 }
 
-// handleMemoryExport は bundle / tar.gz を生成して DL させる（?format=&ack=）。
+// HandleMemoryExport は bundle / tar.gz を生成して DL させる（?format=&ack=）。
 //
 // secret 検出時は 409 + findings を返し、Console はそれを見せてから ack=1 で叩き直す。
 // findings に生の秘密は入らない（memory_secrets.go）。
-func handleMemoryExport(w http.ResponseWriter, r *http.Request) {
+func HandleMemoryExport(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	format := strings.TrimSpace(q.Get("format"))
 	if format == "" {

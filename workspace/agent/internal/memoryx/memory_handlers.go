@@ -50,9 +50,9 @@ func memoryWriteErr(w http.ResponseWriter, err error, fallback string) {
 	httpx.WriteErr(w, http.StatusInternalServerError, fallback, err.Error())
 }
 
-// handleMemoryRoots はこの環境で有効なメモリルートと、その中身の概況を返す。
+// HandleMemoryRoots はこの環境で有効なメモリルートと、その中身の概況を返す。
 // codex は ~/.codex/memories が存在するときだけ現れる（memories 機能は既定 OFF）。
-func handleMemoryRoots(w http.ResponseWriter, r *http.Request) {
+func HandleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 	roots := memoryRoots()
 	busy := memoryBusyKinds()
 	views := make([]memoryRootView, 0, len(roots))
@@ -103,9 +103,9 @@ func handleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// handleMemorySettings は自動 snapshot の ON/OFF トグル（docs/log/39 決着 #1）。
+// HandleMemorySettings は自動 snapshot の ON/OFF トグル（docs/log/39 決着 #1）。
 // 環境変数による強制 OFF は上書きできない。
-func handleMemorySettings(w http.ResponseWriter, r *http.Request) {
+func HandleMemorySettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Auto *bool `json:"auto"`
 	}
@@ -123,8 +123,8 @@ func handleMemorySettings(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"auto": memoryAutoEnabled(), "autoLocked": memoryAutoLocked()})
 }
 
-// handleMemorySnapshots は snapshot 履歴を新しい順に返す（?limit=&before=）。
-func handleMemorySnapshots(w http.ResponseWriter, r *http.Request) {
+// HandleMemorySnapshots は snapshot 履歴を新しい順に返す（?limit=&before=）。
+func HandleMemorySnapshots(w http.ResponseWriter, r *http.Request) {
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -142,9 +142,9 @@ func handleMemorySnapshots(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"snapshots": list})
 }
 
-// handleMemorySnapshotCreate は手動 snapshot（docs/log/39 ②）。変更が無ければ committed=false
+// HandleMemorySnapshotCreate は手動 snapshot（docs/log/39 ②）。変更が無ければ committed=false
 // を返すだけで、空コミットは積まない。
-func handleMemorySnapshotCreate(w http.ResponseWriter, r *http.Request) {
+func HandleMemorySnapshotCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Trigger string `json:"trigger"`
 	}
@@ -164,9 +164,9 @@ func handleMemorySnapshotCreate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// handleMemoryDiff は 2 時点間の unified diff を返す（?from=&to=&at=&path=）。
+// HandleMemoryDiff は 2 時点間の unified diff を返す（?from=&to=&at=&path=）。
 // from 省略で「to が入れた変更」、path 省略で全体。at は「その時刻以前の直近 snapshot」。
-func handleMemoryDiff(w http.ResponseWriter, r *http.Request) {
+func HandleMemoryDiff(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if !memoryHasCommits() {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeMemoryNoSnapshots, "no snapshots yet")
@@ -197,10 +197,10 @@ func handleMemoryDiff(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"from": from, "to": to, "path": path, "diff": diff})
 }
 
-// handleMemoryTree は「その時点に何が入っていたか」を返す（?rev=|at=）。restore の
+// HandleMemoryTree は「その時点に何が入っていたか」を返す（?rev=|at=）。restore の
 // スコープ選択はこれを見る — 現在の roots を選択肢にすると、既に消えたプロジェクトを
 // 選べず「誤って消したメモリを戻す」という本命が成立しないため（memory_restore.go）。
-func handleMemoryTree(w http.ResponseWriter, r *http.Request) {
+func HandleMemoryTree(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	rev := q.Get("rev")
 	if rev == "" {
@@ -214,9 +214,9 @@ func handleMemoryTree(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"rev": sha, "kinds": kinds, "projects": projects})
 }
 
-// handleMemoryRestore は指定時点への巻き戻し（docs/log/39 ④）。履歴は書き換えず、
+// HandleMemoryRestore は指定時点への巻き戻し（docs/log/39 ④）。履歴は書き換えず、
 // pre-restore snapshot → live へ適用 → restore commit の 3 つを積む。
-func handleMemoryRestore(w http.ResponseWriter, r *http.Request) {
+func HandleMemoryRestore(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Rev   string             `json:"rev"`
 		At    string             `json:"at"`
@@ -233,10 +233,10 @@ func handleMemoryRestore(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// handleMemoryImport は bundle / tar.gz を受領し、refs/imports/<id> へ独立系譜として
+// HandleMemoryImport は bundle / tar.gz を受領し、refs/imports/<id> へ独立系譜として
 // 取り込んで preview を返す（docs/log/39 ⑤）。この時点では live に一切触れない — 何を
 // 適用するかは利用者が preview を見て決める。
-func handleMemoryImport(w http.ResponseWriter, r *http.Request) {
+func HandleMemoryImport(w http.ResponseWriter, r *http.Request) {
 	if err := memoryEnsureRepo(); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMemoryImportFailed, err.Error())
 		return
@@ -298,12 +298,12 @@ func handleMemoryImport(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, pv)
 }
 
-// handleMemoryImportApply は取り込んだ系譜から、選んだプロジェクト / kind だけを live へ
+// HandleMemoryImportApply は取り込んだ系譜から、選んだプロジェクト / kind だけを live へ
 // 適用する（置き換え = 新しい commit。3-way merge はしない — ADR 0022 決定 5）。
 // mode="migrate" は移設 = 内容に加えて**履歴も**取り込んだ系譜へ入れ替える（範囲は全体固定）。
 // 経路を増やさず 1 キーで分けるのは、REST を足すと CP 側の許可リスト登録漏れという既知の
 // 罠（memory_handlers.go 冒頭の ⚠️）を踏むため。
-func handleMemoryImportApply(w http.ResponseWriter, r *http.Request) {
+func HandleMemoryImportApply(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ImportID string             `json:"importId"`
 		Scope    memoryRestoreScope `json:"scope"`
