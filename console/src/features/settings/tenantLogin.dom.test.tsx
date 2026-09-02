@@ -22,14 +22,8 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
-import {
-  SignInMethodRegister,
-  TenantSignInMethods,
-  acceptedIds,
-  ruleLocks,
-  ruleStateFor,
-  toggleRule,
-} from "./tenantLogin.tsx";
+import { SignInMethodRegister, TenantSignInMethods } from "./tenantSignInMethods.tsx";
+import { acceptedIds, ruleLocks, ruleStateFor, toggleRule } from "./tenantLoginRules.tsx";
 
 const ROW = {
   id: "idp1",

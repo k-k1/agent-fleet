@@ -20,7 +20,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
-import { MemberView } from "./tenantMembers.tsx";
+import { MemberView } from "./tenantMemberDetail.tsx";
 
 const MEMBER = {
   user_key: "a-x-com",

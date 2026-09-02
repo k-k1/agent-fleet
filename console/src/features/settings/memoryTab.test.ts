@@ -10,7 +10,14 @@ import { en } from "../../lib/i18n/locales/en.ts";
 //   ② 叩く REST が CP の許可リストに載っていること（載せ忘れ = FE から 404。既知の罠）
 //   ③ 使う i18n キーが ja/en 双方にあること（動的な mem.trigger_* を含む）
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-const tab = read("./MemoryTab.tsx");
+// ★ この検査はソース本文を読むので、**タブが何ファイルに分かれているか**に依存する。
+// メモリタブは MemoryTab（器・ルート概況・履歴）／memoryRestore（戻し）／
+// memoryTransfer（持ち出し・取り込み）に分かれているので、家系を連結したものを 1 つの
+// 「タブの本文」として見る。ファイルを増やしたらここに足すこと —— 足し忘れると、
+// REST の登録漏れを見張っているはずの検査が**黙って対象外**になる。
+const tab = ["./MemoryTab.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx"]
+  .map(read)
+  .join("\n");
 const dialog = read("./SettingsDialog.tsx");
 const cpRoutes = read("../../../../control-plane/routes.go");
 const agentRoutes = read("../../../../workspace/agent/routes.go");

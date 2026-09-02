@@ -3469,7 +3469,7 @@
   padding: 0 5px;
 }
 /* The two per-row toggles on the sign-in method list (docs/log/61 §61.17.5 ·
-   tenantLogin.tsx TenantSignInMethods): "accept" and "show button". They lead the
+   tenantSignInMethods.tsx TenantSignInMethods): "accept" and "show button". They lead the
    row because they are the only part of it this tenant decides — the rest (who the
    issuer is, whether it is approved) is stated, not chosen.
 
