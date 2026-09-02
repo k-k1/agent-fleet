@@ -22,6 +22,13 @@ import { registerPaneViewActions } from "./paneViewActions.ts";
 import { dismissSoftKeyboard, escapeHtml, lineRangeOfSelection } from "./parts/fileDom.ts";
 import { useFileContent, type FileData } from "./parts/useFileContent.ts";
 import {
+  editorStatusText,
+  externalNoteText,
+  isEditorAlert,
+  suggestErrText,
+  validationErrText,
+} from "./parts/fileStatusText.ts";
+import {
   FileDiagramControls,
   FileEditControls,
   FileHeadMeta,
@@ -487,38 +494,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   htmlRef.current = html;
 
   const onEditorValidationError = (error: BufferValidationError) => {
-    const messages: Record<BufferValidationError["code"], string> = {
-      too_large: tr("editor.validation.too_large"),
-      binary_not_supported: tr("editor.validation.binary_not_supported"),
-      unsupported_newline: tr("editor.validation.unsupported_newline"),
-      invalid_unicode: tr("editor.validation.invalid_unicode"),
-    };
-    setEditorNotice(messages[error.code]);
-  };
-
-  // AI 提案の失敗/棄却コード → 表示文言（docs/log/44 §3.4: `suggestion_stale` は
-  // HTTP ではなく Console 側の安定 UI code）。buffer validator のコードは既存の
-  // editor.validation.* を再利用する。
-  const suggestErrText = (code: string): string => {
-    switch (code) {
-      case "suggestion_stale":
-        return tr("editor.suggestion.stale");
-      case "suggestion_invalid":
-        return tr("editor.suggestion.invalid");
-      case "selection_too_large":
-        return tr("editor.suggestion.selection_too_large");
-      case "instruction_invalid":
-        return tr("editor.suggestion.instruction_invalid");
-      case "io_timeout":
-        return tr("editor.suggestion.timeout");
-      case "too_large":
-      case "binary_not_supported":
-      case "unsupported_newline":
-      case "invalid_unicode":
-        return tr(`editor.validation.${code}`);
-      default:
-        return tr("editor.suggestion.failed");
-    }
+    setEditorNotice(validationErrText(tr, error.code));
   };
 
   // 選択範囲＋指示文で生成を依頼する。選択が空（カーソルのみ）なら全文を対象にする。
@@ -529,7 +505,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     if (range.from === range.to) range = { from: 0, to: model.content.length };
     setEditorNotice("");
     void editor.requestSuggestion(suggestInstruction, range).then((code) => {
-      if (code) setEditorNotice(suggestErrText(code));
+      if (code) setEditorNotice(suggestErrText(tr, code));
       else setSuggestInstruction("");
     });
   };
@@ -539,7 +515,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     const code = editor.acceptSuggestion(
       editorHandleRef.current ? (edit) => editorHandleRef.current!.applyEdit(edit) : undefined,
     );
-    if (code) setEditorNotice(suggestErrText(code));
+    if (code) setEditorNotice(suggestErrText(tr, code));
     else setSuggestOpen(false);
   };
 
@@ -654,45 +630,10 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   if (!filePath) return <div className="fileview" />;
 
   const phase = editor.model?.phase;
-  const editorStatus =
-    editorNotice ||
-    (phase === "dirty" && editor.model?.message) ||
-    (phase === "saving"
-      ? tr("editor.status.saving")
-      : phase === "saved"
-        ? tr("editor.status.saved")
-        : phase === "clean_risk_accepted"
-          ? tr("editor.status.risk_accepted")
-          : phase === "save_state_unknown"
-            ? tr("editor.status.unknown")
-            : phase === "conflict"
-              ? tr("editor.status.conflict")
-              : phase === "conflict_remote_unavailable"
-                ? tr("editor.status.remote_unavailable")
-                : editor.model?.dirty
-                  ? editor.model.riskAccepted
-                    ? tr("editor.status.dirty_risk")
-                    : tr("editor.status.dirty")
-                  : tr("editor.status.clean"));
-  const editorAlert =
-    phase === "save_state_unknown" ||
-    phase === "conflict" ||
-    phase === "conflict_remote_unavailable";
-  // The probe's advisory (docs/log/44 §7.3): a polite status-line note, never an
-  // alert, and never a phase change. The resolution panels already speak for
-  // the alert phases, so the note yields to them.
+  const editorStatus = editorStatusText(tr, editor.model, editorNotice);
+  const editorAlert = isEditorAlert(phase);
   const externalObs = !editorAlert ? (editor.model?.externalObservation ?? null) : null;
-  const externalNote = externalObs
-    ? externalObs.kind === "changed"
-      ? tr("editor.external.changed")
-      : externalObs.kind === "same_as_buffer"
-        ? tr("editor.external.same_as_buffer")
-        : externalObs.kind === "missing"
-          ? tr("editor.external.missing")
-          : externalObs.kind === "uneditable"
-            ? tr("editor.external.uneditable")
-            : tr("editor.external.boundary")
-    : "";
+  const externalNote = externalNoteText(tr, externalObs);
 
   const viewerStyle = {
     "--viewer-font": fontStack(settings.viewerFont),
