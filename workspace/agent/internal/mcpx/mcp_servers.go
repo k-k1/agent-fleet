@@ -1,4 +1,4 @@
-package main
+package mcpx
 
 // MCP レジストリの REST 面（docs/log/48 P0 / ADR0031）。ユーザースコープの CRUD と接続テスト。
 // テナント配布（CP 由来）と組み込み連携は読み取り専用で一覧に混ざり、無効化だけができる。
@@ -8,7 +8,7 @@ package main
 //
 // ⚠️ ここに足したパスは control-plane/routes.go にも登録が要る（CP は明示許可リスト方式）。
 //
-// 変更のたびに materializeMCPAll() を呼ぶ（docs/log/48 §8.3）。セッション起動時にも書くので
+// 変更のたびに MaterializeAll() を呼ぶ（docs/log/48 §8.3）。セッション起動時にも書くので
 // 冗長に見えるが、こちらが「登録した瞬間に各 CLI の設定へ反映される」を担保する — 利用者が
 // Console を閉じて手でターミナルから CLI を叩く経路には起動フックが無い。
 
@@ -40,8 +40,8 @@ func mcpInvalidCode(ve *mcpreg.ValidationError) string {
 	return errCodeMCPInvalid
 }
 
-// handleMCPServersGet returns the effective registry with every secret masked.
-func handleMCPServersGet(w http.ResponseWriter, r *http.Request) {
+// HandleServersGet returns the effective registry with every secret masked.
+func HandleServersGet(w http.ResponseWriter, r *http.Request) {
 	reg, err := mcpreg.Load()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
@@ -74,7 +74,7 @@ func wireMCPServer(d mcpreg.ServerDef) mcpServerWire {
 	}
 }
 
-func handleMCPServerCreate(w http.ResponseWriter, r *http.Request) {
+func HandleServerCreate(w http.ResponseWriter, r *http.Request) {
 	var in mcpreg.ServerDef
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
@@ -84,11 +84,11 @@ func handleMCPServerCreate(w http.ResponseWriter, r *http.Request) {
 		writeMCPErr(w, err)
 		return
 	}
-	materializeMCPAll()
+	MaterializeAll()
 	httpx.WriteJSON(w, http.StatusOK, wireMCPServer(out))
 }
 
-func handleMCPServerUpdate(w http.ResponseWriter, r *http.Request) {
+func HandleServerUpdate(w http.ResponseWriter, r *http.Request) {
 	var in mcpreg.ServerDef
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
@@ -98,16 +98,16 @@ func handleMCPServerUpdate(w http.ResponseWriter, r *http.Request) {
 		writeMCPErr(w, err)
 		return
 	}
-	materializeMCPAll()
+	MaterializeAll()
 	httpx.WriteJSON(w, http.StatusOK, wireMCPServer(out))
 }
 
-func handleMCPServerDelete(w http.ResponseWriter, r *http.Request) {
+func HandleServerDelete(w http.ResponseWriter, r *http.Request) {
 	if err := mcpreg.Delete(r.PathValue("id")); err != nil {
 		writeMCPErr(w, err)
 		return
 	}
-	materializeMCPAll()
+	MaterializeAll()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("id")})
 }
 
@@ -115,9 +115,9 @@ type mcpEnabledReq struct {
 	Enabled bool `json:"enabled"`
 }
 
-// handleMCPServerEnabled is the one edit a member has over a tenant-distributed
+// HandleServerEnabled is the one edit a member has over a tenant-distributed
 // server: turn it off locally (docs/log/48 §4). For user rows it is just the flag.
-func handleMCPServerEnabled(w http.ResponseWriter, r *http.Request) {
+func HandleServerEnabled(w http.ResponseWriter, r *http.Request) {
 	var req mcpEnabledReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -126,11 +126,11 @@ func handleMCPServerEnabled(w http.ResponseWriter, r *http.Request) {
 		writeMCPErr(w, err)
 		return
 	}
-	materializeMCPAll()
-	handleMCPServersGet(w, r)
+	MaterializeAll()
+	HandleServersGet(w, r)
 }
 
-// handleMCPServerTest runs the handshake (docs/log/48 §10). The body is a definition:
+// HandleServerTest runs the handshake (docs/log/48 §10). The body is a definition:
 // with an id it is resolved against the stored one first, so masked secrets are
 // filled in — which lets the Console test a saved server AND an unsaved edit through
 // the same call.
@@ -139,7 +139,7 @@ func handleMCPServerEnabled(w http.ResponseWriter, r *http.Request) {
 // behind the CP↔Agent token and only the member's own workspace is reachable through
 // it, and the member already has a terminal in that container (ADR0031 決定 2 — what
 // must never be possible is a TENANT-distributed command, which the store refuses).
-func handleMCPServerTest(w http.ResponseWriter, r *http.Request) {
+func HandleServerTest(w http.ResponseWriter, r *http.Request) {
 	var in mcpreg.ServerDef
 	if !httpx.DecodeJSON(w, r, &in) {
 		return

@@ -1,4 +1,4 @@
-package main
+package mcpx
 
 // ローカル stdio MCP の版契約（docs/log/49 + ADR0032）。CP の /mcp と同じく両 era を
 // 同時に serve するが、stdio には HTTP ステータスもヘッダも無いので、判別材料は
