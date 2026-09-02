@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -127,7 +128,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 // A workspace mid-start, or one whose Agent is wedged, is exactly the case where the
 // count is unknown, and "0 sessions" would draw a cold cell over a busy hour — the same
 // 0-vs-unmeasured confusion the usage ledger keeps re-teaching.
-func (u *usageSampler) counters(ctx context.Context, rt Runtime, secs int) store.UsageHourCounters {
+func (u *usageSampler) counters(ctx context.Context, rt runtime.Runtime, secs int) store.UsageHourCounters {
 	c := store.UsageHourCounters{Samples: 1, RunningSecs: secs}
 	sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
 	defer cancel()

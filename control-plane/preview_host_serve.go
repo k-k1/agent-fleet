@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -480,7 +481,7 @@ var previewProxyTransport = newAgentTransport()
 // httputil.ReverseProxy — which is what makes WebSocket (Vite / Next HMR, Spring STOMP)
 // and streaming responses work at all (ADR 0062 決定 10). The old hand-rolled
 // http.Client round trip could do neither.
-func relayPreview(w http.ResponseWriter, r *http.Request, rt Runtime, o previewRelayOptions) {
+func relayPreview(w http.ResponseWriter, r *http.Request, rt runtime.Runtime, o previewRelayOptions) {
 	target, err := url.Parse(rt.Endpoint())
 	if err != nil || target.Host == "" {
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)

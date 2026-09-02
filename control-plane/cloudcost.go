@@ -35,6 +35,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -48,8 +49,8 @@ const costMicro = 1_000_000
 // Explorer wants them for GroupBy (bare key) and returns them in results
 // ("af-membership$<value>", with an empty value for everything untagged).
 const (
-	ceTagMembership = ec2TagMembership
-	ceTagTenant     = ec2TagTenant
+	ceTagMembership = runtime.EC2TagMembership
+	ceTagTenant     = runtime.EC2TagTenant
 )
 
 // costExplorerAPI is the one call this file makes, as a port so the poller is testable
@@ -125,7 +126,7 @@ func startCloudCostPoller(ctx context.Context, mgr *manager) {
 		log.Printf("cloud cost: no AWS config, cost view will stay empty: %v", err)
 		return
 	}
-	p := newCloudCostPoller(mgr, costexplorer.NewFromConfig(ac), iv, envInt("AF_CLOUD_COST_WINDOW_DAYS", 7))
+	p := newCloudCostPoller(mgr, costexplorer.NewFromConfig(ac), iv, runtime.EnvInt("AF_CLOUD_COST_WINDOW_DAYS", 7))
 	mgr.costPoller = p
 	go p.run(ctx)
 }

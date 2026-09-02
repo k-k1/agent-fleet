@@ -173,7 +173,7 @@ func (m *manager) poolBudget(ctx context.Context, overrideTenantID string, overr
 	if err != nil {
 		return poolBudget{}, true, err
 	}
-	b := poolBudget{MaxSlots: cap.MaxSlots(), Reserved: bakeReservedSlots}
+	b := poolBudget{MaxSlots: cap.MaxSlots(), Reserved: runtime.BakeReservedSlots}
 	b.Capacity = b.MaxSlots - b.Reserved
 	for _, t := range ts {
 		// A suspended tenant runs nothing, so counting it would make an operator lower

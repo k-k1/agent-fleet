@@ -42,7 +42,7 @@ type manager struct {
 
 	// rtFactory is the profile-selected Runtime adapter builder (Docker locally,
 	// ECS on AWS; P3-7). Every runtime is constructed through it — see runtimeFor.
-	rtFactory RuntimeFactory
+	rtFactory runtime.RuntimeFactory
 
 	// costPoller is the Cost Explorer poller when this deployment has an AWS bill and
 	// the credentials to read it (docs/log/67, ADR 0048), else nil. Held only so the API can
@@ -166,14 +166,14 @@ func internalErr(err error) *apiError {
 
 // cachedRT memoizes a built runtime + its workspace record per membership.
 type cachedRT struct {
-	rt Runtime
+	rt runtime.Runtime
 	ws store.Workspace
 }
 
 // resolved is the full per-request resolution: runtime + workspace record +
 // identity + selected membership. Handlers needing tenant/quota context use this.
 type resolved struct {
-	rt    Runtime
+	rt    runtime.Runtime
 	ws    store.Workspace
 	ident store.Identity
 	mv    store.MembershipView
@@ -204,7 +204,7 @@ func (m *manager) rootedDataDir(ws store.Workspace) string {
 // factory (Docker locally, ECS on AWS). It is the one construction call the rest
 // of the CP uses; the state/stop-only sites below also route through it (secretKey
 // "") so no concrete adapter leaks into manager.
-func (m *manager) runtimeFor(ws store.Workspace, secretKey string, extraEnv ...string) Runtime {
+func (m *manager) runtimeFor(ws store.Workspace, secretKey string, extraEnv ...string) runtime.Runtime {
 	// The conversion is the seam: the adapters declare their own copy of this record
 	// (internal/runtime/deps.go) so they need not import the store while it is being
 	// moved in parallel. Field-for-field identical, so a divergence stops compiling here.

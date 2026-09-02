@@ -14,13 +14,13 @@ import (
 // the interface).
 type versionFakeFactory struct{ image string }
 
-func (f *versionFakeFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
-func (f *versionFakeFactory) WorkspaceImage() string                          { return f.image }
+func (f *versionFakeFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
+func (f *versionFakeFactory) WorkspaceImage() string                                  { return f.image }
 
 // versionPlainFactory has no image to declare (docker / native).
 type versionPlainFactory struct{}
 
-func (f *versionPlainFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
+func (f *versionPlainFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
 
 // resetCPImageCache clears the process-wide cache so each test probes for itself.
 func resetCPImageCache(t *testing.T) {

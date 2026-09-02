@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -31,16 +32,16 @@ func has(list []string, want string) bool {
 // export (CUR / Cost Explorer / invoice CSVs) — permanently, since past bills are not
 // rewritten. It must never be in the set the CP acts on.
 func TestCostTagAllowListExcludesThePersonalDataTag(t *testing.T) {
-	if has(costTagKeys, ec2TagWorkspace) {
+	if has(costTagKeys, runtime.EC2TagWorkspace) {
 		t.Fatal("af-workspace must never be activated: its value is derived from a member's email address")
 	}
-	for _, k := range []string{ec2TagMembership, ec2TagTenant} {
+	for _, k := range []string{runtime.EC2TagMembership, runtime.EC2TagTenant} {
 		if !has(costTagKeys, k) {
 			t.Errorf("%s is the axis this feature exists for and must be activated", k)
 		}
 	}
 	// Operational state tags churn constantly and answer no billing question.
-	for _, k := range []string{ec2TagClaim, ec2TagIdleSince, ec2TagHibernating, ec2TagBackupAt} {
+	for _, k := range []string{runtime.EC2TagClaim, runtime.EC2TagIdleSince, runtime.EC2TagHibernating, runtime.EC2TagBackupAt} {
 		if has(costTagKeys, k) {
 			t.Errorf("%s is operational state, not a billing axis", k)
 		}
@@ -80,19 +81,19 @@ func TestEnsureCostTagsLeavesADeliberatelyDisabledKeyAlone(t *testing.T) {
 	for _, k := range costTagKeys {
 		ce.setTag(k, cetypes.CostAllocationTagStatusInactive, "")
 	}
-	ce.setTag(ec2TagSlotSize, cetypes.CostAllocationTagStatusInactive, "2026-08-10T00:00:00Z") // switched off by a person
+	ce.setTag(runtime.EC2TagSlotSize, cetypes.CostAllocationTagStatusInactive, "2026-08-10T00:00:00Z") // switched off by a person
 
 	st := tagPoller(t, ce).ensureCostTagsActive(context.Background())
-	if !has(st.Declined, ec2TagSlotSize) {
+	if !has(st.Declined, runtime.EC2TagSlotSize) {
 		t.Fatalf("af-slot-size was turned off deliberately and must be left alone; state = %+v", st)
 	}
 	for _, asked := range ce.activated {
-		if has(asked, ec2TagSlotSize) {
+		if has(asked, runtime.EC2TagSlotSize) {
 			t.Error("the CP re-enabled a tag a human had switched off")
 		}
 	}
 	// The rest still get done — one declined key must not stall the others.
-	if !has(st.Active, ec2TagMembership) {
+	if !has(st.Active, runtime.EC2TagMembership) {
 		t.Errorf("the other keys should still be activated; state = %+v", st)
 	}
 }
@@ -102,14 +103,14 @@ func TestEnsureCostTagsLeavesADeliberatelyDisabledKeyAlone(t *testing.T) {
 func TestEnsureCostTagsRetriesAnUndiscoveredKey(t *testing.T) {
 	ce := &fakeCE{}
 	for _, k := range costTagKeys {
-		if k == ec2TagTenant {
+		if k == runtime.EC2TagTenant {
 			continue // brand new: the CP only just started stamping it
 		}
 		ce.setTag(k, cetypes.CostAllocationTagStatusInactive, "")
 	}
 	p := tagPoller(t, ce)
 	st := p.ensureCostTagsActive(context.Background())
-	if !has(st.Pending, ec2TagTenant) {
+	if !has(st.Pending, runtime.EC2TagTenant) {
 		t.Fatalf("an undiscovered key must be pending, not dropped; state = %+v", st)
 	}
 	if st.settled() {
@@ -117,9 +118,9 @@ func TestEnsureCostTagsRetriesAnUndiscoveredKey(t *testing.T) {
 	}
 
 	// Next tick, after AWS has discovered it.
-	ce.setTag(ec2TagTenant, cetypes.CostAllocationTagStatusInactive, "")
+	ce.setTag(runtime.EC2TagTenant, cetypes.CostAllocationTagStatusInactive, "")
 	st = p.ensureCostTagsActive(context.Background())
-	if !has(st.Active, ec2TagTenant) || !st.settled() {
+	if !has(st.Active, runtime.EC2TagTenant) || !st.settled() {
 		t.Fatalf("the retry should have landed it; state = %+v", st)
 	}
 
@@ -136,18 +137,18 @@ func TestEnsureCostTagsRetriesAnUndiscoveredKey(t *testing.T) {
 // alone would log "activated" for a key that was refused, and nobody would find out
 // until they wondered why a column was missing months later.
 func TestEnsureCostTagsReadsPerEntryErrors(t *testing.T) {
-	ce := &fakeCE{updRefuse: map[string]string{ec2TagTenant: "Tag keys not found: af-tenant"}}
+	ce := &fakeCE{updRefuse: map[string]string{runtime.EC2TagTenant: "Tag keys not found: af-tenant"}}
 	for _, k := range costTagKeys {
 		ce.setTag(k, cetypes.CostAllocationTagStatusInactive, "")
 	}
 	st := tagPoller(t, ce).ensureCostTagsActive(context.Background())
-	if has(st.Active, ec2TagTenant) {
+	if has(st.Active, runtime.EC2TagTenant) {
 		t.Fatal("a refused key must not be reported as active")
 	}
-	if !has(st.Pending, ec2TagTenant) {
+	if !has(st.Pending, runtime.EC2TagTenant) {
 		t.Errorf("a refused key must stay pending so it is retried; state = %+v", st)
 	}
-	if !has(st.Active, ec2TagMembership) {
+	if !has(st.Active, runtime.EC2TagMembership) {
 		t.Errorf("the keys that succeeded in the same call are still active; state = %+v", st)
 	}
 }
@@ -179,7 +180,7 @@ func TestEnsureCostTagsSurfacesAccessDenied(t *testing.T) {
 // silent no-op against the real API.
 func TestEnsureCostTagsAsksForActive(t *testing.T) {
 	ce := &fakeCE{}
-	ce.setTag(ec2TagMembership, cetypes.CostAllocationTagStatusInactive, "")
+	ce.setTag(runtime.EC2TagMembership, cetypes.CostAllocationTagStatusInactive, "")
 	for _, k := range costTagKeys[1:] {
 		ce.setTag(k, cetypes.CostAllocationTagStatusActive, "2026-08-01T00:00:00Z")
 	}
@@ -187,11 +188,11 @@ func TestEnsureCostTagsAsksForActive(t *testing.T) {
 	if ce.updateCalls != 1 {
 		t.Fatalf("update calls = %d, want exactly the one key that needed it", ce.updateCalls)
 	}
-	if len(ce.activated[0]) != 1 || ce.activated[0][0] != ec2TagMembership {
+	if len(ce.activated[0]) != 1 || ce.activated[0][0] != runtime.EC2TagMembership {
 		t.Fatalf("asked for %v, want only af-membership", ce.activated[0])
 	}
 	for _, tg := range ce.tags {
-		if aws.ToString(tg.TagKey) == ec2TagMembership && tg.Status != cetypes.CostAllocationTagStatusActive {
+		if aws.ToString(tg.TagKey) == runtime.EC2TagMembership && tg.Status != cetypes.CostAllocationTagStatusActive {
 			t.Error("af-membership did not end up Active")
 		}
 	}
@@ -224,10 +225,10 @@ func TestCostTagsInferActivationFromTheBillWhenUnreadable(t *testing.T) {
 	// 値が来た＝按分は効いている。
 	p.noteAttribution([]store.CloudCostRow{{Day: "2026-08-25", MembershipID: "m-1", Service: "AmazonEC2"}})
 	st = p.costTags()
-	if !has(st.Attributed, ec2TagMembership) {
-		t.Fatalf("the bill proved %s is on; state = %+v", ec2TagMembership, st)
+	if !has(st.Attributed, runtime.EC2TagMembership) {
+		t.Fatalf("the bill proved %s is on; state = %+v", runtime.EC2TagMembership, st)
 	}
-	if has(st.Attributed, ec2TagTenant) {
+	if has(st.Attributed, runtime.EC2TagTenant) {
 		t.Error("only the axis the poller groups by can be proven — do not claim the others")
 	}
 	if len(st.Pending) != 0 {

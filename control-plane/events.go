@@ -26,6 +26,8 @@ import (
 	"math"
 	"net/http"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 const (
@@ -62,7 +64,7 @@ func registerEventsRoutes(mux *http.ServeMux, cfg config) {
 // （docs/log/63 §63.9）。ecs-ec2 の State() は DescribeVolumes + DescribeServices の
 // 実 API 呼び出しで、購読者 1 人 × 4 秒ごとに走る——同じ tick の中で 2 度引けば
 // その AWS 呼び出しも 2 倍になる。値は同じなのだから 1 回でよい。
-func statsPayload(ctx context.Context, m *manager, rt Runtime, state string) map[string]any {
+func statsPayload(ctx context.Context, m *manager, rt runtime.Runtime, state string) map[string]any {
 	return roundStats(workspaceStats(ctx, m, rt, func() string { return state }))
 }
 

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -1078,7 +1079,7 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident s
 	writeJSON(w, 200, map[string]any{"status": "approved"})
 }
 
-func agentShareOperation(ctx context.Context, rt Runtime, path string, body []byte, operationID string) error {
+func agentShareOperation(ctx context.Context, rt runtime.Runtime, path string, body []byte, operationID string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rt.Endpoint()+path, strings.NewReader(string(body)))
 	if err != nil {
 		return err
@@ -1100,7 +1101,7 @@ func agentShareOperation(ctx context.Context, rt Runtime, path string, body []by
 	return nil
 }
 
-func lookupAgentShareOperation(rt Runtime, operationID string) (string, int) {
+func lookupAgentShareOperation(rt runtime.Runtime, operationID string) (string, int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/share-operations/"+url.PathEscape(operationID), nil)

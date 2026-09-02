@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -132,9 +133,9 @@ func TestSchedulerNonRetryableErrorIsFinal(t *testing.T) {
 // than this". The per-session input-readiness wait must NOT follow it up: that one runs
 // against a container that is already answering.
 func TestScheduleWakeBudgets(t *testing.T) {
-	f := newWakeFirer(nil, 5*time.Minute, agentBootBudget)
-	if f.readyTimeout != agentBootBudget {
-		t.Fatalf("readyTimeout = %v, want %v", f.readyTimeout, agentBootBudget)
+	f := newWakeFirer(nil, 5*time.Minute, runtime.AgentBootBudget)
+	if f.readyTimeout != runtime.AgentBootBudget {
+		t.Fatalf("readyTimeout = %v, want %v", f.readyTimeout, runtime.AgentBootBudget)
 	}
 	if f.sessionReadyTimeout != scheduleSessionReadyWait {
 		t.Fatalf("sessionReadyTimeout = %v, want %v", f.sessionReadyTimeout, scheduleSessionReadyWait)
@@ -146,7 +147,7 @@ func TestScheduleWakeBudgets(t *testing.T) {
 	// The measured ecs-ec2 wake distribution (docs/log/64: ~110s for a sleeping slot,
 	// ~135s to grow the pool, 131s observed end to end on acrt) must fit inside the
 	// budget — that is the whole point of the number.
-	if agentBootBudget < 150*time.Second {
-		t.Fatalf("boot budget %v is below the measured ecs-ec2 wake times", agentBootBudget)
+	if runtime.AgentBootBudget < 150*time.Second {
+		t.Fatalf("boot budget %v is below the measured ecs-ec2 wake times", runtime.AgentBootBudget)
 	}
 }

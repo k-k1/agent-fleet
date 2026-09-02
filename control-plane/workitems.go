@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -322,7 +323,7 @@ type agentWorkItemsResp struct {
 // fetchWorkItemsFromAgent asks the running Agent to resolve the queries. Returns the rows
 // per query id and the per-query error messages; a transport-level failure comes back as
 // the error (the caller then keeps the previous fetched_at, see refreshNow).
-func fetchWorkItemsFromAgent(ctx context.Context, rt Runtime, queries []store.WorkItemQuery) (map[string][]store.WorkItem, map[string]string, error) {
+func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []store.WorkItemQuery) (map[string][]store.WorkItem, map[string]string, error) {
 	in := agentWorkItemsReq{Queries: make([]agentWorkItemQuery, 0, len(queries))}
 	for _, q := range queries {
 		in.Queries = append(in.Queries, agentWorkItemQuery{ID: q.ID, Provider: q.Provider, Query: q.Query})

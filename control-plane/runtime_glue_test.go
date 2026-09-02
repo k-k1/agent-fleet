@@ -79,7 +79,7 @@ func TestEnsureWorkspaceReadyAnswersStartingInsteadOfFailing(t *testing.T) {
 // noPoolFactory is a runtime that has no pool — every profile but ecs-ec2.
 type noPoolFactory struct{}
 
-func (noPoolFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
+func (noPoolFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
 
 // fakePoolFactory answers PoolStatus with a canned reply, standing in for the ecs-ec2
 // adapter. The adapter's own half of the answer is tested in internal/runtime; what is
@@ -91,18 +91,18 @@ func (noPoolFactory) New(runtime.Workspace, string, []string) Runtime { return n
 // returns ok=false and the Budget branch never runs, which would leave the sentence
 // above describing something the test does not do.
 type fakePoolFactory struct {
-	st       ec2PoolStatus
+	st       runtime.EC2PoolStatus
 	maxSlots int
 }
 
-func (fakePoolFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
+func (fakePoolFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
 
 func (f fakePoolFactory) MaxSlots() int { return f.maxSlots }
 
 // The reply is rebuilt per call, like the adapter's: manager.poolStatus rewrites
 // Goldens[i].Phase in place, so a fake handing out the same backing array twice would
 // let the first call's rewrite leak into the second.
-func (f fakePoolFactory) PoolStatus(context.Context) (ec2PoolStatus, error) {
+func (f fakePoolFactory) PoolStatus(context.Context) (runtime.EC2PoolStatus, error) {
 	st := f.st
 	st.Goldens = append([]runtime.EC2GoldenView(nil), f.st.Goldens...)
 	return st, nil
@@ -117,9 +117,9 @@ func poolStatusFixture(t *testing.T, maxSlots int, quotas map[string]int) *manag
 	st := p3Store(t)
 	m := p3Manager(t, st)
 	m.rtFactory = fakePoolFactory{
-		st: ec2PoolStatus{
+		st: runtime.EC2PoolStatus{
 			Runtime: "ecs-ec2",
-			Goldens: []runtime.EC2GoldenView{{Arch: ec2ArchX86, Phase: ec2BakePhaseIdle}},
+			Goldens: []runtime.EC2GoldenView{{Arch: runtime.EC2ArchX86, Phase: runtime.EC2BakePhaseIdle}},
 		},
 		maxSlots: maxSlots,
 	}
@@ -155,7 +155,7 @@ func TestPoolStatusSaysWhenAutoBakeIsOff(t *testing.T) {
 	if !ok || err != nil {
 		t.Fatalf("poolStatus = (ok=%v, err=%v)", ok, err)
 	}
-	if st.AutoBake || st.Goldens[0].Phase != ec2BakePhaseOff {
+	if st.AutoBake || st.Goldens[0].Phase != runtime.EC2BakePhaseOff {
 		t.Errorf("auto_bake=%v phase=%q, want the screen to say the baker is switched off",
 			st.AutoBake, st.Goldens[0].Phase)
 	}
@@ -164,7 +164,7 @@ func TestPoolStatusSaysWhenAutoBakeIsOff(t *testing.T) {
 	if st, _, err = m.poolStatus(ctx); err != nil {
 		t.Fatalf("poolStatus: %v", err)
 	}
-	if !st.AutoBake || st.Goldens[0].Phase != ec2BakePhaseIdle {
+	if !st.AutoBake || st.Goldens[0].Phase != runtime.EC2BakePhaseIdle {
 		t.Errorf("auto_bake=%v phase=%q, want a bake to be expected", st.AutoBake, st.Goldens[0].Phase)
 	}
 }
@@ -204,7 +204,7 @@ func TestPoolStatusCarriesTheTenantBudgetOnlyWhenItDoesNotFit(t *testing.T) {
 
 // awsConfigFor has to reach runtime.AWSConfigFor at CALL time, not bind to it once.
 //
-// It is the only name alias_runtime.go borrows whose far side is a variable, and it is a
+// It is the only name runtime_seam.go borrows whose far side is a variable, and it is a
 // variable precisely so the live AWS harness can point a whole run at a test account
 // (docs/log/64 §64.23). Bound once with `var awsConfigFor = runtime.AWSConfigFor`, the
 // swap would reach the four adapters — they read the variable from inside its own package

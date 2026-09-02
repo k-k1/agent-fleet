@@ -72,7 +72,7 @@ const (
 // goldenBaker drives the series above. One per CP; the reaper ticks it.
 type goldenBaker struct {
 	mgr   *manager
-	pool  goldenBakePool
+	pool  runtime.GoldenBakePool
 	wsAPI workspaceAPI
 	// seedBudget bounds "the seed should have booted by now" and probeBudget the same
 	// for the probe. Generous on purpose: the number they are compared against is a
@@ -88,7 +88,7 @@ type goldenBaker struct {
 	warned map[string]string
 }
 
-func newGoldenBaker(mgr *manager, pool goldenBakePool) *goldenBaker {
+func newGoldenBaker(mgr *manager, pool runtime.GoldenBakePool) *goldenBaker {
 	return &goldenBaker{
 		mgr:         mgr,
 		pool:        pool,
@@ -106,7 +106,7 @@ func goldenBakerFor(mgr *manager, enabled bool) *goldenBaker {
 	if !enabled {
 		return nil
 	}
-	pool, ok := mgr.rtFactory.(goldenBakePool)
+	pool, ok := mgr.rtFactory.(runtime.GoldenBakePool)
 	if !ok {
 		return nil
 	}
@@ -156,7 +156,7 @@ var archKey = runtime.ArchKey
 func (b *goldenBaker) step(ctx context.Context) {
 	arches := b.pool.BakeArches()
 	if len(arches) == 0 {
-		arches = []string{ec2ArchX86}
+		arches = []string{runtime.EC2ArchX86}
 	}
 	for _, arch := range arches {
 		b.stepArch(ctx, arch)
@@ -169,7 +169,7 @@ func (b *goldenBaker) stepArch(ctx context.Context, arch string) {
 	// 1. Already published and current? Then the only thing left is to make sure a
 	//    previous round did not leave its seed or probe behind (a CP that died between
 	//    "promote" and "destroy" would otherwise pay for two homes forever).
-	if _, ok, err := b.pool.GoldenFor(ctx, ec2RoleGolden, arch); err != nil {
+	if _, ok, err := b.pool.GoldenFor(ctx, runtime.EC2RoleGolden, arch); err != nil {
 		log.Printf("golden[%s]: reading the published golden failed: %v", arch, err)
 		return
 	} else if ok {
@@ -187,7 +187,7 @@ func (b *goldenBaker) stepArch(ctx context.Context, arch string) {
 		return
 	}
 
-	cand, haveCand, err := b.pool.GoldenFor(ctx, ec2RoleGoldenCandidate, arch)
+	cand, haveCand, err := b.pool.GoldenFor(ctx, runtime.EC2RoleGoldenCandidate, arch)
 	if err != nil {
 		log.Printf("golden[%s]: reading the candidate failed: %v", arch, err)
 		return
@@ -230,7 +230,7 @@ func (b *goldenBaker) bake(ctx context.Context, image, arch string) {
 			return
 		}
 	}
-	seed, ok := seedRes.rt.(goldenSeedRuntime)
+	seed, ok := seedRes.rt.(runtime.GoldenSeedRuntime)
 	if !ok {
 		return // not ecs-ec2 after all; goldenBakerFor should have prevented this
 	}
@@ -302,7 +302,7 @@ func (b *goldenBaker) bake(ctx context.Context, image, arch string) {
 
 // --- verifying ------------------------------------------------------------------
 
-func (b *goldenBaker) verify(ctx context.Context, cand goldenSnap, image, arch string) {
+func (b *goldenBaker) verify(ctx context.Context, cand runtime.GoldenSnap, image, arch string) {
 	if cand.Failed {
 		b.reject(ctx, cand, "the snapshot itself failed", arch)
 		return
@@ -329,7 +329,7 @@ func (b *goldenBaker) verify(ctx context.Context, cand goldenSnap, image, arch s
 	// with seedRole cleared. A probe that silently read the published golden — or, with
 	// none published, an empty home — would come up perfectly and prove nothing, which
 	// is the same "looks fine, tested nothing" shape this phase exists to remove.
-	seed, ok := probeRes.rt.(goldenSeedRuntime)
+	seed, ok := probeRes.rt.(runtime.GoldenSeedRuntime)
 	if !ok {
 		return
 	}
@@ -352,8 +352,8 @@ func (b *goldenBaker) verify(ctx context.Context, cand goldenSnap, image, arch s
 	}
 }
 
-func (b *goldenBaker) publish(ctx context.Context, cand goldenSnap, image, arch string) {
-	if err := b.pool.SetGoldenRole(ctx, cand.ID, ec2RoleGolden, ""); err != nil {
+func (b *goldenBaker) publish(ctx context.Context, cand runtime.GoldenSnap, image, arch string) {
+	if err := b.pool.SetGoldenRole(ctx, cand.ID, runtime.EC2RoleGolden, ""); err != nil {
 		log.Printf("golden[%s]: publishing %s failed: %v", arch, cand.ID, err)
 		return
 	}
@@ -369,14 +369,14 @@ func (b *goldenBaker) publish(ctx context.Context, cand goldenSnap, image, arch 
 // reject leaves the candidate in place under a role nothing seeds from. It is not
 // deleted: it is the answer to "why does this deployment have no golden", and the CP
 // log line scrolls away long before an operator goes looking.
-func (b *goldenBaker) reject(ctx context.Context, cand goldenSnap, reason, arch string) {
-	if err := b.pool.SetGoldenRole(ctx, cand.ID, ec2RoleGoldenRejected, reason); err != nil {
+func (b *goldenBaker) reject(ctx context.Context, cand runtime.GoldenSnap, reason, arch string) {
+	if err := b.pool.SetGoldenRole(ctx, cand.ID, runtime.EC2RoleGoldenRejected, reason); err != nil {
 		log.Printf("golden[%s]: rejecting %s failed: %v", arch, cand.ID, err)
 		return
 	}
 	log.Printf("golden[%s]: REJECTED the candidate %s — %s. New %s homes stay empty (slow first start, "+
 		"nothing broken) until this is looked at; the reason is on the snapshot as %s.",
-		arch, cand.ID, reason, arch, ec2TagBakeReason)
+		arch, cand.ID, reason, arch, runtime.EC2TagBakeReason)
 	b.tidy(ctx, arch)
 }
 

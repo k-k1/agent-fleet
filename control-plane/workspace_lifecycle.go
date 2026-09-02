@@ -30,7 +30,7 @@ func (m *manager) createWorkspace(ctx context.Context, mv store.MembershipView, 
 	createWorkspaceMu.Lock()
 	defer createWorkspaceMu.Unlock()
 	name, network, dataDir := m.workspaceNames(mv.TenantSlug, userKey)
-	port := dockerPublishedPort(name)
+	port := runtime.DockerPublishedPort(name)
 	if port == "" {
 		mx, err := m.store.MaxAgentPort(ctx)
 		if err != nil {
@@ -42,7 +42,7 @@ func (m *manager) createWorkspace(ctx context.Context, mv store.MembershipView, 
 		}
 		port = strconv.Itoa(next)
 	}
-	token := dockerEnvValue(name, "AGENT_TOKEN")
+	token := runtime.DockerEnvValue(name, "AGENT_TOKEN")
 	if token == "" {
 		token = randHex(24)
 	}
@@ -199,7 +199,7 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 	if err := lease.checkpoint(ctx); err != nil {
 		return err
 	}
-	if err := cleanHomeContext(lease.Context(), m.rootedDataDir(ws)); err != nil {
+	if err := runtime.CleanHomeContext(lease.Context(), m.rootedDataDir(ws)); err != nil {
 		return err
 	}
 	if err := lease.checkpoint(ctx); err != nil {
@@ -233,7 +233,7 @@ const unattendedStartEnv = runtime.UnattendedStartEnv
 // before Start). The result is intentionally NOT written to the runtime cache: only
 // this one start differs, and every later call (state/exec/endpoint) is unaffected by
 // container env.
-func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (Runtime, error) {
+func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (runtime.Runtime, error) {
 	dekHex, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
 	if err != nil {
 		return nil, err
@@ -253,7 +253,7 @@ func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (Runt
 // 組んだ runtime はこの起動の slug をまだ知らない。「URL は発行したが、コンテナの中の
 // アプリはそれを知らない」は、Next.js のように自分の公開 URL を env から読む作りでは
 // 半分壊れた状態そのものになる。
-func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEnv []string) Runtime {
+func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEnv []string) runtime.Runtime {
 	if m.previewDomain == "" {
 		return nil
 	}
@@ -565,7 +565,7 @@ func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID
 	if err := lease.checkpoint(ctx); err != nil {
 		return nil, err
 	}
-	leftovers, err := destroyRuntime(lease.Context(), rt)
+	leftovers, err := runtime.DestroyRuntime(lease.Context(), rt)
 	if err != nil {
 		return nil, err
 	}
@@ -583,14 +583,14 @@ func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID
 // Everything else in the product is per-workspace, so there is nothing to show — and the
 // admin UI hides the screen rather than showing an empty one.
 type runtimePoolStatuser interface {
-	PoolStatus(context.Context) (ec2PoolStatus, error)
+	PoolStatus(context.Context) (runtime.EC2PoolStatus, error)
 }
 
 // poolStatus reports the EC2 slot pool, or ok=false on every other runtime profile.
-func (m *manager) poolStatus(ctx context.Context) (ec2PoolStatus, bool, error) {
+func (m *manager) poolStatus(ctx context.Context) (runtime.EC2PoolStatus, bool, error) {
 	p, ok := m.rtFactory.(runtimePoolStatuser)
 	if !ok {
-		return ec2PoolStatus{}, false, nil
+		return runtime.EC2PoolStatus{}, false, nil
 	}
 	st, err := p.PoolStatus(ctx)
 	st.AutoBake = m.autoBakeGolden
@@ -609,8 +609,8 @@ func (m *manager) poolStatus(ctx context.Context) (ec2PoolStatus, bool, error) {
 	if !st.AutoBake {
 		for i := range st.Goldens {
 			switch st.Goldens[i].Phase {
-			case ec2BakePhaseIdle, ec2BakePhaseBlocked:
-				st.Goldens[i].Phase, st.Goldens[i].SlotsInUse = ec2BakePhaseOff, 0
+			case runtime.EC2BakePhaseIdle, runtime.EC2BakePhaseBlocked:
+				st.Goldens[i].Phase, st.Goldens[i].SlotsInUse = runtime.EC2BakePhaseOff, 0
 			}
 		}
 	}

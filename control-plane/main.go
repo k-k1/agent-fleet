@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -287,11 +288,11 @@ func main() {
 		// AF_ECS_EC2_* namespace and in seconds because that is where it started life, as
 		// a setting of the pool sweeper; the trigger moved up here so a tenant can override
 		// it (ADR 0045 決定 13-2). Still 0 = off by default.
-		hibDef := time.Duration(envInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second
+		hibDef := time.Duration(runtime.EnvInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second
 		// Tier 4 (ecs-ec2 only): the deployment default for how often a home is copied
 		// somewhere its AZ is not. Also 0 = off — a backup is cheap but not free, and a
 		// deployment that has not thought about retention should not be paying for it.
-		backupDef := time.Duration(envInt("AF_ECS_EC2_BACKUP_EVERY_SEC", 0)) * time.Second
+		backupDef := time.Duration(runtime.EnvInt("AF_ECS_EC2_BACKUP_EVERY_SEC", 0)) * time.Second
 		go newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef).run(context.Background())
 	}
 
@@ -308,7 +309,7 @@ func main() {
 		// Recorded, not re-read later: the pool screen has to say "switched off" rather
 		// than leave "there is no golden and nothing is happening" unexplained (§64.30).
 		mgr.autoBakeGolden = true
-		go b.run(context.Background(), time.Duration(envInt("AF_ECS_EC2_GOLDEN_BAKE_SEC", 60))*time.Second)
+		go b.run(context.Background(), time.Duration(runtime.EnvInt("AF_ECS_EC2_GOLDEN_BAKE_SEC", 60))*time.Second)
 	}
 
 	// Showback usage sampler (P3-9): credits running-seconds per workspace so the
@@ -364,7 +365,7 @@ func main() {
 		// ecs-ec2's measured wake distribution (docs/log/38 ★7 ・ docs/log/64):
 		// waking a sleeping slot is ~110s and growing the pool ~135s, so a stopped
 		// workspace's morning fire landed or dropped essentially at random.
-		ready := parseDurationOr(os.Getenv("AF_SCHEDULE_WAKE_TIMEOUT"), agentBootBudget)
+		ready := parseDurationOr(os.Getenv("AF_SCHEDULE_WAKE_TIMEOUT"), runtime.AgentBootBudget)
 		// Per-schedule fire jitter (★2) spreads aligned cron times (everyone at 09:00)
 		// so simultaneous wakes don't OOM the shared host. Default 2m; AF_SCHEDULE_JITTER=0
 		// disables. Set before any schedule's next_run is computed so it takes effect.

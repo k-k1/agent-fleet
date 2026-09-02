@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -321,7 +322,7 @@ func containerStats(ctx context.Context, name string) map[string]any {
 // events tick. Callers that already know the state pass a closure over it; the rest
 // pass a memoized one so it is paid at most once, and only when the local read
 // already failed.
-func workspaceStats(ctx context.Context, m *manager, rt Runtime, state func() string) map[string]any {
+func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state func() string) map[string]any {
 	out := containerStats(ctx, rt.Name())
 	if out["running"] != true {
 		// ⚠️ The Console disables 強制停止 on exactly this field, so a docker read that

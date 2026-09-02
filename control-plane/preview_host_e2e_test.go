@@ -17,7 +17,7 @@ import (
 // Agent, so the relay can be exercised without docker.
 type previewHostFactory struct{ endpoint string }
 
-func (f previewHostFactory) New(ws runtime.Workspace, secretKey string, extraEnv []string) Runtime {
+func (f previewHostFactory) New(ws runtime.Workspace, secretKey string, extraEnv []string) runtime.Runtime {
 	return previewTestRuntime{endpoint: f.endpoint, token: "tok-" + ws.ID}
 }
 

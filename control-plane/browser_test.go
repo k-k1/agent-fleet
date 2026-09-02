@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -41,7 +42,7 @@ type browserTestEnv struct {
 	workspace store.Workspace
 }
 
-func newBrowserTestEnv(t *testing.T, rt Runtime) browserTestEnv {
+func newBrowserTestEnv(t *testing.T, rt runtime.Runtime) browserTestEnv {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))

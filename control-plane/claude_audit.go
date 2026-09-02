@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -166,7 +167,7 @@ func (a *claudeAuditor) cleanupCursors(ctx context.Context, liveWS, checked, liv
 	}
 }
 
-func (a *claudeAuditor) auditSession(ctx context.Context, ws store.Workspace, rt Runtime, name string) {
+func (a *claudeAuditor) auditSession(ctx context.Context, ws store.Workspace, rt runtime.Runtime, name string) {
 	key := claudeAuditCursorPrefix + ws.ID + ":" + name
 	cur, _ := a.mgr.store.GetSetting(ctx, key)
 	firstTime := cur == ""

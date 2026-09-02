@@ -35,13 +35,13 @@ type destroyingFactory struct {
 	err       error
 }
 
-func (f *destroyingFactory) New(runtime.Workspace, string, []string) Runtime {
+func (f *destroyingFactory) New(runtime.Workspace, string, []string) runtime.Runtime {
 	return destroyingRuntime{destroyed: &f.destroyed, leftovers: f.leftovers, err: f.err}
 }
 
 // setup for the destroy tests: a tenant with an admin and a member who already has a
 // workspace row.
-func destroyFixture(t *testing.T, f RuntimeFactory) (*store.SQL, *manager, store.Identity, store.Tenant) {
+func destroyFixture(t *testing.T, f runtime.RuntimeFactory) (*store.SQL, *manager, store.Identity, store.Tenant) {
 	t.Helper()
 	ctx := context.Background()
 	st := p3Store(t)

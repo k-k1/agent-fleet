@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -1271,7 +1272,7 @@ func (a mcpAPI) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey strin
 
 // agentText performs an authenticated CP→Agent request and returns the body as
 // text (the Agent already returns JSON; we pass it through to the model).
-func agentText(ctx context.Context, rt Runtime, method, path string, body []byte) (string, error) {
+func agentText(ctx context.Context, rt runtime.Runtime, method, path string, body []byte) (string, error) {
 	var r io.Reader
 	if body != nil {
 		r = bytes.NewReader(body)

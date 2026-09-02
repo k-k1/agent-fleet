@@ -35,6 +35,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -50,11 +51,11 @@ import (
 //     shared account, but it is only on instances (the launch template sets it), not on
 //     volumes or EFS, so it cannot actually draw that line.
 var costTagKeys = []string{
-	ec2TagMembership, // who — the axis this whole feature exists for
-	ec2TagTenant,     // which tenant (slug, so Cost Explorer is readable without the CP)
-	ec2TagRole,       // home / slot / golden / backup — what KIND of resource
-	ec2TagPool,       // which deployment, when an account hosts more than one
-	ec2TagSlotSize,   // which instance size, for reading the pool's shape
+	runtime.EC2TagMembership, // who — the axis this whole feature exists for
+	runtime.EC2TagTenant,     // which tenant (slug, so Cost Explorer is readable without the CP)
+	runtime.EC2TagRole,       // home / slot / golden / backup — what KIND of resource
+	runtime.EC2TagPool,       // which deployment, when an account hosts more than one
+	runtime.EC2TagSlotSize,   // which instance size, for reading the pool's shape
 }
 
 // costTagState is what the API reports so a reader can tell "nothing was spent" apart

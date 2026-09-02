@@ -19,8 +19,8 @@ import (
 // fakeGoldenPool is the AWS side of the bake, as a map of snapshots.
 type fakeGoldenPool struct {
 	image    string
-	snaps    map[string]*goldenSnap // id -> snap
-	roles    map[string]string      // id -> role
+	snaps    map[string]*runtime.GoldenSnap // id -> snap
+	roles    map[string]string              // id -> role
 	reasons  map[string]string
 	blocked  bool
 	blockWhy string
@@ -43,7 +43,7 @@ type fakeGoldenPool struct {
 func newFakeGoldenPool() *fakeGoldenPool {
 	return &fakeGoldenPool{
 		image:   "img:1",
-		snaps:   map[string]*goldenSnap{},
+		snaps:   map[string]*runtime.GoldenSnap{},
 		roles:   map[string]string{},
 		reasons: map[string]string{},
 		// Real time, not a fixed date: the baker also dates a seed from its WORKSPACE
@@ -51,7 +51,7 @@ func newFakeGoldenPool() *fakeGoldenPool {
 		// with the real clock. A frozen fake clock hours away from it would make every
 		// seed look expired the moment it was created.
 		now:      time.Now().UTC(),
-		arches:   []string{ec2ArchX86},
+		arches:   []string{runtime.EC2ArchX86},
 		snapArch: map[string]string{},
 		orphans:  map[string][]string{},
 	}
@@ -69,8 +69,8 @@ func (f *fakeGoldenPool) SeedClassFor(arch string) string {
 	return "class-" + arch
 }
 
-func (f *fakeGoldenPool) GoldenFor(_ context.Context, role, arch string) (goldenSnap, bool, error) {
-	var best goldenSnap
+func (f *fakeGoldenPool) GoldenFor(_ context.Context, role, arch string) (runtime.GoldenSnap, bool, error) {
+	var best runtime.GoldenSnap
 	found := false
 	for id, r := range f.roles {
 		if r != role || f.archOf(id) != arch {
@@ -94,14 +94,14 @@ func (f *fakeGoldenPool) archOf(id string) string {
 	if a := f.snapArch[id]; a != "" {
 		return a
 	}
-	return ec2ArchX86
+	return runtime.EC2ArchX86
 }
 
 func (f *fakeGoldenPool) SnapshotHome(_ context.Context, volumeID, _, arch string) (string, error) {
 	f.nextID++
 	id := "snap-" + string(rune('a'+f.nextID-1))
-	f.snaps[id] = &goldenSnap{ID: id, Started: f.now}
-	f.roles[id] = ec2RoleGoldenCandidate
+	f.snaps[id] = &runtime.GoldenSnap{ID: id, Started: f.now}
+	f.roles[id] = runtime.EC2RoleGoldenCandidate
 	f.snapArch[id] = arch
 	f.baked = append(f.baked, volumeID)
 	return id, nil
@@ -117,7 +117,7 @@ func (f *fakeGoldenPool) SetGoldenRole(_ context.Context, id, role, reason strin
 
 func (f *fakeGoldenPool) DropSupersededGoldens(_ context.Context, keepID, arch string) error {
 	for id, r := range f.roles {
-		if id == keepID || f.archOf(id) != arch || (r != ec2RoleGolden && r != ec2RoleGoldenCandidate) {
+		if id == keepID || f.archOf(id) != arch || (r != runtime.EC2RoleGolden && r != runtime.EC2RoleGoldenCandidate) {
 			continue
 		}
 		f.deleted = append(f.deleted, id)
@@ -146,7 +146,7 @@ func (f *fakeGoldenPool) SweepOrphans(_ context.Context, workspace string) ([]st
 func (f *fakeGoldenPool) RejectedAttempts(_ context.Context, arch string) (int, error) {
 	n := 0
 	for id, r := range f.roles {
-		if r == ec2RoleGoldenRejected && f.archOf(id) == arch {
+		if r == runtime.EC2RoleGoldenRejected && f.archOf(id) == arch {
 			n++
 		}
 	}
@@ -159,7 +159,7 @@ func (f *fakeGoldenPool) complete(id string) { f.snaps[id].Completed = true }
 // completeAnyCandidate is what EBS does on its own between two ticks.
 func (f *fakeGoldenPool) completeAnyCandidate() {
 	for id, r := range f.roles {
-		if r == ec2RoleGoldenCandidate {
+		if r == runtime.EC2RoleGoldenCandidate {
 			f.snaps[id].Completed = true
 		}
 	}
@@ -169,7 +169,7 @@ func (f *fakeGoldenPool) completeAnyCandidate() {
 type fakeSeedRuntime struct {
 	name           string
 	state          string
-	home           goldenHome
+	home           runtime.GoldenHome
 	endpoint       string
 	seededFromCand bool
 	released       bool
@@ -187,7 +187,7 @@ func (r *fakeSeedRuntime) Start(context.Context) error {
 	}
 	r.state = "running"
 	if r.home.VolumeID == "" {
-		r.home = goldenHome{VolumeID: "vol-" + r.name, Created: time.Now().UTC()}
+		r.home = runtime.GoldenHome{VolumeID: "vol-" + r.name, Created: time.Now().UTC()}
 	}
 	return nil
 }
@@ -198,7 +198,7 @@ func (r *fakeSeedRuntime) Token() string                { return "" }
 func (r *fakeSeedRuntime) Name() string                 { return r.name }
 
 func (r *fakeSeedRuntime) SeedFromCandidate() { r.seededFromCand = true }
-func (r *fakeSeedRuntime) HomeForBake(context.Context) (goldenHome, error) {
+func (r *fakeSeedRuntime) HomeForBake(context.Context) (runtime.GoldenHome, error) {
 	return r.home, nil
 }
 func (r *fakeSeedRuntime) MarkHomeBaked(_ context.Context, _ string) error {
@@ -218,7 +218,7 @@ func (r *fakeSeedRuntime) ReleaseForBake(context.Context) error {
 func (r *fakeSeedRuntime) Destroy(context.Context) ([]string, error) {
 	r.destroys++
 	r.state = "none"
-	r.home = goldenHome{}
+	r.home = runtime.GoldenHome{}
 	r.seededFromCand = false
 	return nil, nil
 }
@@ -231,7 +231,7 @@ type fakeGoldenFactory struct {
 	image string
 }
 
-func (f *fakeGoldenFactory) New(ws runtime.Workspace, _ string, _ []string) Runtime {
+func (f *fakeGoldenFactory) New(ws runtime.Workspace, _ string, _ []string) runtime.Runtime {
 	if rt, ok := f.rts[ws.ContainerName]; ok {
 		return rt
 	}
@@ -245,7 +245,7 @@ func (f *fakeGoldenFactory) WorkspaceImage() string { return f.image }
 // interface — the capability goldenBakerFor gates on.
 type poolCapableFactory struct{ *fakeGoldenPool }
 
-func (*poolCapableFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
+func (*poolCapableFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
 
 // --- fixture ----------------------------------------------------------------------
 
@@ -309,7 +309,7 @@ func (f *goldenFixture) role(id string) string { return f.pool.roles[id] }
 func (f *goldenFixture) candidateID(t *testing.T) string {
 	t.Helper()
 	for id, r := range f.pool.roles {
-		if r == ec2RoleGoldenCandidate {
+		if r == runtime.EC2RoleGoldenCandidate {
 			return id
 		}
 	}
@@ -389,12 +389,12 @@ func TestGoldenBakeRunsToPublication(t *testing.T) {
 	if !probe.seededFromCand {
 		t.Fatal("the probe did not ask for the CANDIDATE — it would have proven nothing")
 	}
-	if f.role(candID) != ec2RoleGoldenCandidate {
+	if f.role(candID) != runtime.EC2RoleGoldenCandidate {
 		t.Fatal("published the candidate before the probe came up")
 	}
 
 	f.baker.step(ctx) // 8: probe healthy -> publish
-	if f.role(candID) != ec2RoleGolden {
+	if f.role(candID) != runtime.EC2RoleGolden {
 		t.Fatalf("candidate was not promoted, role = %q", f.role(candID))
 	}
 	// And both reserved workspaces are gone, so no slot and no volume is left behind.
@@ -423,16 +423,16 @@ func TestGoldenBakeRejectsACandidateThatWillNotBoot(t *testing.T) {
 	healthy = false
 	f.baker.step(ctx) // create + start the probe
 	f.baker.step(ctx) // still not healthy — inside the budget, so keep waiting
-	if f.role(candID) != ec2RoleGoldenCandidate {
+	if f.role(candID) != runtime.EC2RoleGoldenCandidate {
 		t.Fatalf("gave up (or published) too early: role = %q", f.role(candID))
 	}
 
 	f.pool.now = f.pool.now.Add(f.baker.probeBudget + time.Minute)
 	f.baker.step(ctx)
-	if f.role(candID) != ec2RoleGoldenRejected {
+	if f.role(candID) != runtime.EC2RoleGoldenRejected {
 		t.Fatalf("a probe that never came up must reject the candidate, got %q", f.role(candID))
 	}
-	if _, ok, _ := f.pool.GoldenFor(ctx, ec2RoleGolden, ec2ArchX86); ok {
+	if _, ok, _ := f.pool.GoldenFor(ctx, runtime.EC2RoleGolden, runtime.EC2ArchX86); ok {
 		t.Fatal("published a golden despite the probe failing")
 	}
 	if !strings.Contains(f.pool.reasons[candID], "did not come up") {
@@ -447,8 +447,8 @@ func TestGoldenBakeGivesUpAfterTwoRejections(t *testing.T) {
 	healthy := false
 	f := newGoldenFixture(t, &healthy)
 	for _, id := range []string{"snap-x", "snap-y"} {
-		f.pool.snaps[id] = &goldenSnap{ID: id, Completed: true, Started: f.pool.now}
-		f.pool.roles[id] = ec2RoleGoldenRejected
+		f.pool.snaps[id] = &runtime.GoldenSnap{ID: id, Completed: true, Started: f.pool.now}
+		f.pool.roles[id] = runtime.EC2RoleGoldenRejected
 	}
 
 	f.baker.step(ctx)
@@ -499,7 +499,7 @@ func TestGoldenBakeTearsDownASeedThatNeverBoots(t *testing.T) {
 	if f.hasWorkspace(t, goldenSeedKey) {
 		t.Fatal("a seed that never booted was left holding its slot")
 	}
-	if n, _ := f.pool.RejectedAttempts(ctx, ec2ArchX86); n != 0 {
+	if n, _ := f.pool.RejectedAttempts(ctx, runtime.EC2ArchX86); n != 0 {
 		t.Fatalf("a seed that never booted burned a rejection attempt (%d) — that is evidence about the slot, not the image", n)
 	}
 }
@@ -516,8 +516,8 @@ func TestGoldenBakeTidiesUpWhenAGoldenIsAlreadyPublished(t *testing.T) {
 		t.Fatal("no seed workspace was created")
 	}
 
-	f.pool.snaps["snap-g"] = &goldenSnap{ID: "snap-g", Completed: true, Started: f.pool.now}
-	f.pool.roles["snap-g"] = ec2RoleGolden
+	f.pool.snaps["snap-g"] = &runtime.GoldenSnap{ID: "snap-g", Completed: true, Started: f.pool.now}
+	f.pool.roles["snap-g"] = runtime.EC2RoleGolden
 	f.baker.step(ctx)
 	if f.hasWorkspace(t, goldenSeedKey) {
 		t.Fatal("left a seed behind although the golden is already published")
@@ -529,8 +529,8 @@ func TestGoldenBakeStartsOverWhenTheImageMoves(t *testing.T) {
 	ctx := context.Background()
 	healthy := true
 	f := newGoldenFixture(t, &healthy)
-	f.pool.snaps["snap-old"] = &goldenSnap{ID: "snap-old", Completed: true, Started: f.pool.now}
-	f.pool.roles["snap-old"] = ec2RoleGolden
+	f.pool.snaps["snap-old"] = &runtime.GoldenSnap{ID: "snap-old", Completed: true, Started: f.pool.now}
+	f.pool.roles["snap-old"] = runtime.EC2RoleGolden
 	f.baker.step(ctx)
 	if len(f.fac.rts) != 0 {
 		t.Fatal("baked although a current golden exists")
@@ -557,13 +557,13 @@ func TestGoldenBakeProbeStillReadsTheCandidateOnASecondRound(t *testing.T) {
 		f.baker.step(ctx)
 		f.pool.completeAnyCandidate()
 	}
-	if _, ok, _ := f.pool.GoldenFor(ctx, ec2RoleGolden, ec2ArchX86); !ok {
+	if _, ok, _ := f.pool.GoldenFor(ctx, runtime.EC2RoleGolden, runtime.EC2ArchX86); !ok {
 		t.Fatal("the first round did not publish a golden")
 	}
 
 	// The image moves: nothing baked for the old one counts any more.
 	f.pool.roles = map[string]string{}
-	f.pool.snaps = map[string]*goldenSnap{}
+	f.pool.snaps = map[string]*runtime.GoldenSnap{}
 	f.pool.image, f.fac.image = "img:2", "img:2"
 
 	// Stop one step SHORT of publication: the fake's Destroy resets the flag, exactly as
@@ -608,7 +608,7 @@ func TestGoldenBakeTearsDownASeedWhoseStartNeverGotAVolume(t *testing.T) {
 	f.baker.step(ctx) // creates the workspace row; the Start below will fail from now on
 	seed := f.rt(t, goldenSeedKey)
 	seed.failStart = true
-	seed.state, seed.home = "none", goldenHome{}
+	seed.state, seed.home = "none", runtime.GoldenHome{}
 	if !f.hasWorkspace(t, goldenSeedKey) {
 		t.Fatal("no seed workspace was created")
 	}
@@ -636,30 +636,30 @@ func TestGoldenBakeKeepsOneGoldenPerArch(t *testing.T) {
 	ctx := context.Background()
 	healthy := true
 	f := newGoldenFixture(t, &healthy)
-	f.pool.arches = []string{ec2ArchX86, ec2ArchArm}
+	f.pool.arches = []string{runtime.EC2ArchX86, runtime.EC2ArchArm}
 
 	// An x86_64 golden that some earlier round already published, with NO af-arch tag —
 	// exactly what a deployment upgrading into this change has.
-	f.pool.snaps["snap-old"] = &goldenSnap{ID: "snap-old", Completed: true, Started: f.pool.now}
-	f.pool.roles["snap-old"] = ec2RoleGolden
+	f.pool.snaps["snap-old"] = &runtime.GoldenSnap{ID: "snap-old", Completed: true, Started: f.pool.now}
+	f.pool.roles["snap-old"] = runtime.EC2RoleGolden
 
 	// Drive the arm64 bake to publication. Each step also runs the x86_64 machine,
 	// which finds its golden already published and only tidies.
 	for i := 0; i < 12; i++ {
 		f.baker.step(ctx)
 		for id, r := range f.pool.roles {
-			if r == ec2RoleGoldenCandidate {
+			if r == runtime.EC2RoleGoldenCandidate {
 				f.pool.complete(id)
 			}
 		}
 	}
 
-	if f.role("snap-old") != ec2RoleGolden {
+	if f.role("snap-old") != runtime.EC2RoleGolden {
 		t.Fatalf("the pre-existing x86_64 golden was %s — publishing arm64 must not touch it", f.role("snap-old"))
 	}
 	armGolden := ""
 	for id, r := range f.pool.roles {
-		if r == ec2RoleGolden && f.pool.archOf(id) == ec2ArchArm {
+		if r == runtime.EC2RoleGolden && f.pool.archOf(id) == runtime.EC2ArchArm {
 			armGolden = id
 		}
 	}
@@ -670,7 +670,7 @@ func TestGoldenBakeKeepsOneGoldenPerArch(t *testing.T) {
 	// default — otherwise the "arm64 golden" would be an x86_64 home under a new tag.
 	sawArm := false
 	for _, a := range f.pool.seedArch {
-		if a == ec2ArchArm {
+		if a == runtime.EC2ArchArm {
 			sawArm = true
 		}
 	}
@@ -683,13 +683,13 @@ func TestGoldenBakeKeepsOneGoldenPerArch(t *testing.T) {
 // af-golden-seed membership (and its home volume) of every deployment that has ever
 // baked a golden — a workspace nobody can see and nothing will clean up.
 func TestGoldenArchKeysAreStableForX86(t *testing.T) {
-	if got := archKey(goldenSeedKey, ec2ArchX86); got != goldenSeedKey {
+	if got := archKey(goldenSeedKey, runtime.EC2ArchX86); got != goldenSeedKey {
 		t.Errorf("x86_64 seed key = %q, want the original %q", got, goldenSeedKey)
 	}
 	if got := archKey(goldenSeedKey, ""); got != goldenSeedKey {
 		t.Errorf("an unset arch = %q, want the original %q", got, goldenSeedKey)
 	}
-	if got := archKey(goldenProbeKey, ec2ArchArm); got != goldenProbeKey+"-arm64" {
+	if got := archKey(goldenProbeKey, runtime.EC2ArchArm); got != goldenProbeKey+"-arm64" {
 		t.Errorf("arm64 probe key = %q", got)
 	}
 }
@@ -722,8 +722,8 @@ func TestGoldenBakeSweepsAWSLeftoversTheDatabaseForgot(t *testing.T) {
 	f.pool.orphans[seedName] = []string{"service " + seedName, "volume vol-seed"}
 
 	// A published golden puts the next tick on the tidy path.
-	f.pool.snaps["snap-g"] = &goldenSnap{ID: "snap-g", Completed: true, Started: f.pool.now}
-	f.pool.roles["snap-g"] = ec2RoleGolden
+	f.pool.snaps["snap-g"] = &runtime.GoldenSnap{ID: "snap-g", Completed: true, Started: f.pool.now}
+	f.pool.roles["snap-g"] = runtime.EC2RoleGolden
 	f.baker.step(ctx)
 
 	if _, still := f.pool.orphans[seedName]; still {
@@ -750,8 +750,8 @@ func TestGoldenBakeDoesNotSweepAWorkspaceItStillHasARowFor(t *testing.T) {
 
 	f.baker.step(ctx) // makes the seed workspace
 	seedName, _, _ := f.baker.mgr.workspaceNames(goldenTenantSlug, goldenSeedKey)
-	f.pool.snaps["snap-g"] = &goldenSnap{ID: "snap-g", Completed: true, Started: f.pool.now}
-	f.pool.roles["snap-g"] = ec2RoleGolden
+	f.pool.snaps["snap-g"] = &runtime.GoldenSnap{ID: "snap-g", Completed: true, Started: f.pool.now}
+	f.pool.roles["snap-g"] = runtime.EC2RoleGolden
 
 	f.baker.step(ctx) // tidy: destroys the seed through its row
 	if f.hasWorkspace(t, goldenSeedKey) {

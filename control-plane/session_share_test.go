@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -868,7 +869,7 @@ func TestLifecycleLeaseHeartbeatAndFencingCheckpoint(t *testing.T) {
 	if err := os.WriteFile(fencedFile, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeAllContext(old.Context(), fencedDir); err == nil {
+	if err := runtime.RemoveAllContext(old.Context(), fencedDir); err == nil {
 		old.Close()
 		t.Fatal("fenced holder entered cancellable wipe")
 	}
