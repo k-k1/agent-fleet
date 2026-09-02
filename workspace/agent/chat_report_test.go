@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -230,7 +231,7 @@ func TestInjectPendingReports(t *testing.T) {
 func TestRunReportAutoTurnCapNotifiesOnce(t *testing.T) {
 	withTempHome(t)
 	conv := &chatConversation{
-		ID: randUUID(), Agent: "claude", Tools: toolsAFWrite,
+		ID: randUUID(), Agent: "claude", Tools: assistants.ToolsAFWrite,
 		AutoTurns: defaultAutoTurns, // unattended budget already spent
 		Messages:  []chatMessage{{Role: "report", Content: "レポートA", Session: "slot01"}},
 	}

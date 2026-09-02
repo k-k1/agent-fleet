@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -224,9 +225,9 @@ func (c *chatConversation) noteTurnModel(model string) { c.turnModel = strings.T
 // AFTools.
 func (c *chatConversation) afToolsEnabled() bool {
 	switch c.Tools {
-	case toolsAFRead, toolsAFWrite:
+	case assistants.ToolsAFRead, assistants.ToolsAFWrite:
 		return true
-	case toolsNone:
+	case assistants.ToolsNone:
 		return false
 	default: // legacy conversations created before assistants had no Tools field
 		return c.AFTools
@@ -235,7 +236,7 @@ func (c *chatConversation) afToolsEnabled() bool {
 
 // afWriteEnabled reports whether the write tools (send_to_session …) are exposed to this
 // chat — only when the assistant granted af_write (docs/log/19 Q2 opt-in).
-func (c *chatConversation) afWriteEnabled() bool { return c.Tools == toolsAFWrite }
+func (c *chatConversation) afWriteEnabled() bool { return c.Tools == assistants.ToolsAFWrite }
 
 // chatOutputRule is appended to every chat's system prompt. The file/shell tools are hard-
 // disallowed (chatToolLimits), so a write attempt just fails — this steers the model away

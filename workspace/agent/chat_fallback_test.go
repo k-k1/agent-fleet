@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -36,7 +37,7 @@ func TestCodexMCPArgsForwardAgentAndMemoCredentials(t *testing.T) {
 // afWriteConv is a conversation with the af_write grant and no registry servers —
 // the shape these af-plumbing assertions have always described.
 func afWriteConv() *chatConversation {
-	return &chatConversation{ID: "00000000-0000-4000-8000-000000000000", Tools: toolsAFWrite}
+	return &chatConversation{ID: "00000000-0000-4000-8000-000000000000", Tools: assistants.ToolsAFWrite}
 }
 
 func containsString(xs []string, want string) bool {

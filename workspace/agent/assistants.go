@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -50,11 +51,11 @@ func ensureBuiltinKnowledge() string {
 // --- HTTP handlers ---
 
 func handleAssistantsList(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"assistants": listAssistants()})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"assistants": assistants.List(assistantDeps())})
 }
 
 func handleAssistantGet(w http.ResponseWriter, r *http.Request) {
-	a, err := getAssistant(r.PathValue("id"))
+	a, err := assistants.Get(r.PathValue("id"), assistantDeps())
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeAssistantNotFound, "assistant not found")
 		return
@@ -77,7 +78,7 @@ type assistantInput struct {
 }
 
 // applyInput validates the input and folds it onto a (new or existing) assistant.
-func applyInput(a *assistant, in assistantInput) error {
+func applyInput(a *assistants.Assistant, in assistantInput) error {
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
 		return errors.New("名前を入力してください")
@@ -87,9 +88,9 @@ func applyInput(a *assistant, in assistantInput) error {
 	}
 	tools := in.Tools
 	if tools == "" {
-		tools = toolsNone
+		tools = assistants.ToolsNone
 	}
-	if !validToolGrant(tools) {
+	if !assistants.ValidToolGrant(tools) {
 		return errors.New("未対応のツール指定です")
 	}
 	integrations := []string{}
@@ -98,7 +99,7 @@ func applyInput(a *assistant, in assistantInput) error {
 		if id == "" {
 			continue
 		}
-		if !validIntegration(id) {
+		if !assistants.ValidIntegration(id) {
 			return errors.New("未対応の連携です: " + id)
 		}
 		integrations = appendUniqueStr(integrations, id)
@@ -122,12 +123,12 @@ func handleAssistantCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := nowMs()
-	a := &assistant{ID: randUUID(), Builtin: false, CreatedAt: now, UpdatedAt: now}
+	a := &assistants.Assistant{ID: randUUID(), Builtin: false, CreatedAt: now, UpdatedAt: now}
 	if err := applyInput(a, in); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
-	if err := saveUserAssistant(a); err != nil {
+	if err := assistants.SaveUser(a); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "save", err.Error())
 		return
 	}
@@ -136,11 +137,11 @@ func handleAssistantCreate(w http.ResponseWriter, r *http.Request) {
 
 func handleAssistantUpdate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if isBuiltinID(id) {
+	if assistants.IsBuiltinID(id, assistantDeps()) {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeAssistantBuiltinEdit, "builtin assistants cannot be edited")
 		return
 	}
-	a, err := loadUserAssistant(id)
+	a, err := assistants.LoadUser(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeAssistantNotFound, "assistant not found")
 		return
@@ -154,7 +155,7 @@ func handleAssistantUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.UpdatedAt = nowMs()
-	if err := saveUserAssistant(a); err != nil {
+	if err := assistants.SaveUser(a); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "save", err.Error())
 		return
 	}
@@ -163,7 +164,7 @@ func handleAssistantUpdate(w http.ResponseWriter, r *http.Request) {
 
 func handleAssistantDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if isBuiltinID(id) {
+	if assistants.IsBuiltinID(id, assistantDeps()) {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeAssistantBuiltinDelete, "builtin assistants cannot be deleted")
 		return
 	}
@@ -171,9 +172,24 @@ func handleAssistantDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
 		return
 	}
-	if err := os.Remove(assistantPath(id)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(assistants.PathFor(id)); err != nil && !os.IsNotExist(err) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete", err.Error())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// assistantDeps は main にしか置けない 2 つ（//go:embed のナレッジと chat 家系の
+// 既定エージェント）を internal/assistants へ**引数で**渡す唯一の場所。
+//
+// 🔥 最初はパッケージ変数のフックに init で代入していたが、レビューの変異試験で
+// **その 2 行を消しても main のテストが全部緑**になった（develop ではコンパイラが強制していた
+// 依存が、移送で「無言で外せる実行時代入」に化けていた）。公開フィールドの struct でも同じで、
+// **片方を書き落としてコンパイルが通る**。引数 2 つの NewDeps にして初めて、渡し忘れが
+// コンパイルエラーになる。**この関数を経由しない assistants 呼び出しを増やさないこと。**
+func assistantDeps() assistants.Deps {
+	return assistants.NewDeps(
+		ensureBuiltinKnowledge, // //go:embed が main に残るため
+		preferredHeadlessAgent, // chat 家系にあるため
+	)
 }

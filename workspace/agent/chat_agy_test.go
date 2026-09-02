@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 )
 
 func agyCatalog(names ...string) []agents.ModelChoice {
@@ -59,14 +60,14 @@ func TestAgyChatArgsFlagsBeforePrompt(t *testing.T) {
 }
 
 func TestAgyChatAllowRulesFollowToolGrant(t *testing.T) {
-	none := agyChatAllowRules(&chatConversation{Tools: toolsNone})
+	none := agyChatAllowRules(&chatConversation{Tools: assistants.ToolsNone})
 	if containsString(none, "mcp(af/*)") {
 		t.Fatalf("tools=none rules = %q, must not allow af", none)
 	}
 	if !containsString(none, "read_file") {
 		t.Fatalf("tools=none rules = %q, read tools missing", none)
 	}
-	read := agyChatAllowRules(&chatConversation{Tools: toolsAFRead})
+	read := agyChatAllowRules(&chatConversation{Tools: assistants.ToolsAFRead})
 	if !containsString(read, "mcp(af/*)") {
 		t.Fatalf("tools=af_read rules = %q, mcp(af/*) missing", read)
 	}
@@ -76,7 +77,7 @@ func TestAgyChatAllowRulesFollowToolGrant(t *testing.T) {
 }
 
 func TestAgyChatServersCarryWriteConv(t *testing.T) {
-	c := &chatConversation{ID: "00000000-0000-4000-8000-000000000001", Tools: toolsAFWrite}
+	c := &chatConversation{ID: "00000000-0000-4000-8000-000000000001", Tools: assistants.ToolsAFWrite}
 	servers := agyChatServers(c)
 	af, ok := servers["af"].(map[string]any)
 	if !ok {
@@ -96,14 +97,14 @@ func TestAgyChatServersCarryWriteConv(t *testing.T) {
 	if env["HOME"] != homeDir() {
 		t.Fatalf("af env HOME = %v, want real home %q (isolated-HOME leak)", env["HOME"], homeDir())
 	}
-	if s := agyChatServers(&chatConversation{Tools: toolsNone}); len(s) != 0 {
+	if s := agyChatServers(&chatConversation{Tools: assistants.ToolsNone}); len(s) != 0 {
 		t.Fatalf("tools=none servers = %v, want empty", s)
 	}
 }
 
 func TestChatAgyHomeWritesIsolatedConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	c := &chatConversation{ID: "00000000-0000-4000-8000-000000000002", Tools: toolsAFRead}
+	c := &chatConversation{ID: "00000000-0000-4000-8000-000000000002", Tools: assistants.ToolsAFRead}
 	home, wd, err := chatAgyHome(c)
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +165,7 @@ func TestAgyChatSendLive(t *testing.T) {
 	prevExe := agyChatExe
 	agyChatExe = func() string { return "/usr/local/bin/workspace-agent" }
 	t.Cleanup(func() { agyChatExe = prevExe })
-	c := &chatConversation{ID: randUUID(), Agent: "agy", Model: defaultAgyChatModel, Tools: toolsAFRead}
+	c := &chatConversation{ID: randUUID(), Agent: "agy", Model: defaultAgyChatModel, Tools: assistants.ToolsAFRead}
 	t.Cleanup(func() {
 		_ = os.RemoveAll(filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "agy-"+c.ID))
 	})

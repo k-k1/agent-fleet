@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -145,7 +146,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	case req.AssistantID != "":
 		// Snapshot the assistant's settings onto the conversation (docs/log/19 Q2): later edits
 		// to the assistant leave existing threads untouched.
-		a, err := getAssistant(req.AssistantID)
+		a, err := assistants.Get(req.AssistantID, assistantDeps())
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadRequest, errCodeChatAssistantNotFound, "assistant not found")
 			return
@@ -165,7 +166,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		c.Agent = preferredHeadlessAgent()
 		c.Model = resolveChatModel(c.Agent, "")
 		c.Persona = verbPersona(req.SeedVerb, lang)
-		c.Tools = toolsNone
+		c.Tools = assistants.ToolsNone
 		c.SeedVerb = req.SeedVerb
 	default:
 		// Legacy path: plain agent + optional model, generic persona, read-only fleet tools
@@ -177,9 +178,9 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		c.Agent = req.Agent
 		c.Model = resolveChatModel(req.Agent, req.Model)
 		if req.Agent == session.KindClaude {
-			c.Tools = toolsAFRead
+			c.Tools = assistants.ToolsAFRead
 		} else {
-			c.Tools = toolsNone
+			c.Tools = assistants.ToolsNone
 		}
 	}
 
@@ -229,7 +230,7 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatPromptEmpty, "prompt is empty")
 		return
 	}
-	a, err := resolveAssistant(strings.TrimSpace(req.Assistant))
+	a, err := assistants.Resolve(strings.TrimSpace(req.Assistant), assistantDeps())
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatAssistantNotFound, "assistant not found")
 		return
@@ -238,7 +239,7 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	// but NO tools (advisory only).
 	c := &chatConversation{
 		ID: randUUID(), Agent: a.Agent, Model: resolveChatModel(a.Agent, a.Model),
-		Persona: a.Persona, Tools: toolsNone, Knowledge: a.Knowledge,
+		Persona: a.Persona, Tools: assistants.ToolsNone, Knowledge: a.Knowledge,
 	}
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)

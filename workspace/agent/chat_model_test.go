@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -113,7 +114,7 @@ func TestTurnModelRecordedPerMessage(t *testing.T) {
 	stubChatProvider(t, session.KindClaude, modelChatProv{reply: "了解", model: "claude-sonnet-5-20260501"})
 	conv := &chatConversation{
 		ID: randUUID(), Agent: session.KindClaude, Model: "sonnet",
-		Tools: toolsAFWrite, AssistantID: "operator",
+		Tools: assistants.ToolsAFWrite, AssistantID: "operator",
 	}
 	if err := saveConv(conv); err != nil {
 		t.Fatal(err)
@@ -142,7 +143,7 @@ func TestTurnModelBlankWhenUnknown(t *testing.T) {
 	stubChatProvider(t, session.KindClaude, modelChatProv{reply: "了解"})
 	conv := &chatConversation{
 		ID: randUUID(), Agent: session.KindClaude, Model: "sonnet",
-		Tools: toolsAFWrite, AssistantID: "operator",
+		Tools: assistants.ToolsAFWrite, AssistantID: "operator",
 	}
 	if err := saveConv(conv); err != nil {
 		t.Fatal(err)

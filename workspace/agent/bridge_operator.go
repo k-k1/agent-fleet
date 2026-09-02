@@ -18,6 +18,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -117,7 +118,7 @@ func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
 // built-in "operator" assistant — snapshotting its persona/tools/knowledge exactly like
 // handleChatCreate so af_write MCP attaches (a bare conversation would get no tools).
 func createOperatorConversation() (string, error) {
-	a, err := getAssistant("operator")
+	a, err := assistants.Get("operator", assistantDeps())
 	if err != nil {
 		return "", err
 	}
