@@ -45,7 +45,7 @@ workspace を同じタグに置く → `update.sh`**。順番と前提を知っ�
    （CP だけ焼いて workspace は再タグする）ので、放っておくとデプロイのたびに 10 分を払う。
    - 指紋は再起動バッジと**同じ関数**（`imageFingerprint` ＝ プラットフォーム毎の manifest
      digest の集合）を使い、EC2 のタグ値に収まるよう `sha256:` へ畳む。
-     ⚠️ **2 辺を別の関数で作らない**は [`runtime_ecs_stale.go`](../../control-plane/runtime_ecs_stale.go)
+     ⚠️ **2 辺を別の関数で作らない**は [`runtime_ecs_stale.go`](../../control-plane/internal/runtime/runtime_ecs_stale.go)
      の注記そのままで、そこでは実測で踏んでいる。
    - ⚠️ **逆向きの穴も同時に塞がる**: 可変タグ（`:dev`）へ新しい内容を push すると文字列は
      一致したままなので、**新規メンバーだけが古いイメージで焼かれた home を配られる**。
