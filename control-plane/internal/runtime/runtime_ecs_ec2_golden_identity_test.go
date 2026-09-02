@@ -29,10 +29,10 @@ const (
 // answer (and the second one's fake ECR would never be called).
 func withFreshCache(t *testing.T) {
 	t.Helper()
-	orig := freshness
-	t.Cleanup(func() { freshness = orig })
+	orig := Freshness
+	t.Cleanup(func() { Freshness = orig })
 	now := time.Unix(1000, 0)
-	freshness = &ttlCache{m: map[string]ttlEntry{}, now: func() time.Time { return now }}
+	Freshness = &TTLCache{m: map[string]TTLEntry{}, now: func() time.Time { return now }}
 }
 
 // addGoldenIdentity puts a completed x86_64 golden in the fake world with both stamps —
@@ -139,9 +139,9 @@ func TestGoldenCaptureStampsBothIdentities(t *testing.T) {
 	f.base.ecr = reg
 	f.base.cfg.workspaceImage = goldenImgNewTag
 
-	id, err := f.snapshotHome(ctx, "vol-1", "af-ws-acme-alice", ec2ArchX86)
+	id, err := f.SnapshotHome(ctx, "vol-1", "af-ws-acme-alice", EC2ArchX86)
 	if err != nil {
-		t.Fatalf("snapshotHome: %v", err)
+		t.Fatalf("SnapshotHome: %v", err)
 	}
 	snap := h.ec2.snapshots[id]
 	if snap == nil {

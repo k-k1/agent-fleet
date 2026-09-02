@@ -46,7 +46,7 @@ func TestECSEC2LiveStartDeployments(t *testing.T) {
 	}
 	ctx := context.Background()
 	useCPTaskRole(t)
-	factory, err := newECSEC2Factory(&manager{})
+	factory, err := newECSEC2Factory(Config{})
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestECSFargateLiveStartDeployments(t *testing.T) {
 	}
 	ctx := context.Background()
 	useCPTaskRole(t)
-	factory, err := newECSFactory(&manager{})
+	factory, err := newECSFactory(Config{})
 	if err != nil {
 		t.Fatalf("fargate factory: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestECSEC2LiveDeploymentConfig(t *testing.T) {
 	}
 	ctx := context.Background()
 	useCPTaskRole(t)
-	factory, err := newECSEC2Factory(&manager{})
+	factory, err := newECSEC2Factory(Config{})
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestECSEC2LivePreUpgradeService(t *testing.T) {
 	}
 	ctx := context.Background()
 	useCPTaskRole(t)
-	factory, err := newECSEC2Factory(&manager{})
+	factory, err := newECSEC2Factory(Config{})
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}

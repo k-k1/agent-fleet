@@ -14,38 +14,38 @@ import (
 // profile builds the AWS skeleton, and an unknown profile fails fast at boot
 // rather than silently defaulting.
 func TestNewRuntimeFactory(t *testing.T) {
-	m := &manager{
-		image:      "agent-fleet/workspace:test",
-		agentHost:  "127.0.0.1",
-		memory:     "1g",
-		sessionCmd: "",
-		dataRoot:   "/srv/data",
+	m := Config{
+		Image:      "agent-fleet/workspace:test",
+		AgentHost:  "127.0.0.1",
+		Memory:     "1g",
+		SessionCmd: "",
 		// defaultTenantID unset: the test workspace is a non-default tenant, so
-		// rootedDataDir keeps <slug>/<key>.
+		// the re-basing keeps <slug>/<key>.
+		RootDataDir: StaticRootDataDir("/srv/data", ""),
 	}
 
 	for _, profile := range []string{"", "local", "docker"} {
-		f, err := newRuntimeFactory(profile, m)
+		f, err := NewFactory(profile, m)
 		if err != nil {
-			t.Fatalf("newRuntimeFactory(%q): unexpected error %v", profile, err)
+			t.Fatalf("NewFactory(%q): unexpected error %v", profile, err)
 		}
 		if _, ok := f.(*dockerFactory); !ok {
-			t.Fatalf("newRuntimeFactory(%q): got %T, want *dockerFactory", profile, f)
+			t.Fatalf("NewFactory(%q): got %T, want *dockerFactory", profile, f)
 		}
 	}
 
 	for _, profile := range []string{"ecs", "aws"} {
-		f, err := newRuntimeFactory(profile, m)
+		f, err := NewFactory(profile, m)
 		if err != nil {
-			t.Fatalf("newRuntimeFactory(%q): unexpected error %v", profile, err)
+			t.Fatalf("NewFactory(%q): unexpected error %v", profile, err)
 		}
 		if _, ok := f.(*ecsFactory); !ok {
-			t.Fatalf("newRuntimeFactory(%q): got %T, want *ecsFactory", profile, f)
+			t.Fatalf("NewFactory(%q): got %T, want *ecsFactory", profile, f)
 		}
 	}
 
-	if _, err := newRuntimeFactory("kubernetes", m); err == nil {
-		t.Fatal("newRuntimeFactory(unknown profile): expected error, got nil")
+	if _, err := NewFactory("kubernetes", m); err == nil {
+		t.Fatal("NewFactory(unknown profile): expected error, got nil")
 	}
 }
 
@@ -54,9 +54,9 @@ func TestNewRuntimeFactory(t *testing.T) {
 // (snapped up, CPU bumped when needed). MemBytes 0 falls back to the deployment
 // default the factory captured.
 func TestFactoryMemoryOverride(t *testing.T) {
-	m := &manager{image: "img", agentHost: "127.0.0.1", memory: "1g", dataRoot: "/srv/data"}
+	m := Config{Image: "img", AgentHost: "127.0.0.1", Memory: "1g", RootDataDir: StaticRootDataDir("/srv/data", "")}
 
-	dockerF, _ := newRuntimeFactory("local", m)
+	dockerF, _ := NewFactory("local", m)
 	if d := dockerF.New(Workspace{ContainerName: "c", MemBytes: 2 * gib}, "", nil).(*dockerRuntime); d.memory != "2147483648" {
 		t.Errorf("docker override: memory=%q, want 2147483648", d.memory)
 	}
@@ -64,7 +64,7 @@ func TestFactoryMemoryOverride(t *testing.T) {
 		t.Errorf("docker default: memory=%q, want 1g", d.memory)
 	}
 
-	ecsF, _ := newRuntimeFactory("ecs", m) // cfg defaults: cpu 1024 / memory 2048
+	ecsF, _ := NewFactory("ecs", m) // cfg defaults: cpu 1024 / memory 2048
 	if e := ecsF.New(Workspace{ContainerName: "c", MemBytes: 10 * gib}, "", nil).(*ecsRuntime); e.cpu != "2048" || e.memory != "10240" {
 		t.Errorf("ecs override: cpu=%q memory=%q, want 2048/10240", e.cpu, e.memory)
 	}
@@ -78,9 +78,9 @@ func TestFactoryMemoryOverride(t *testing.T) {
 // ephemeral storage — and past Fargate's 200 GiB ephemeral ceiling as a managed EBS
 // volume instead (ADR 0044 決定 2).
 func TestFactoryCPUAndDiskOverride(t *testing.T) {
-	m := &manager{image: "img", agentHost: "127.0.0.1", memory: "1g", dataRoot: "/srv/data"}
+	m := Config{Image: "img", AgentHost: "127.0.0.1", Memory: "1g", RootDataDir: StaticRootDataDir("/srv/data", "")}
 
-	dockerF, _ := newRuntimeFactory("local", m)
+	dockerF, _ := NewFactory("local", m)
 	if d := dockerF.New(Workspace{ContainerName: "c", CPUUnits: 2048}, "", nil).(*dockerRuntime); d.cpus != "2" {
 		t.Errorf("docker cpus=%q, want 2", d.cpus)
 	}
@@ -92,7 +92,7 @@ func TestFactoryCPUAndDiskOverride(t *testing.T) {
 		t.Errorf("docker default cpus=%q, want empty", d.cpus)
 	}
 
-	ecsF, _ := newRuntimeFactory("ecs", m) // cfg defaults: cpu 1024 / memory 2048
+	ecsF, _ := NewFactory("ecs", m) // cfg defaults: cpu 1024 / memory 2048
 	// CPU alone still yields a VALID pair: 4 vCPU cannot run with the 2048 default.
 	e := ecsF.New(Workspace{ContainerName: "c", CPUUnits: 4096}, "", nil).(*ecsRuntime)
 	if e.cpu != "4096" || e.memory != "8192" {
@@ -109,7 +109,7 @@ func TestFactoryCPUAndDiskOverride(t *testing.T) {
 	}
 	// An explicit 0 is still "free tier": a deployment can opt out of paying for disk.
 	t.Setenv("AF_ECS_WS_DISK_GB", "0")
-	ecsFree, _ := newRuntimeFactory("ecs", m)
+	ecsFree, _ := NewFactory("ecs", m)
 	if e := ecsFree.New(Workspace{ContainerName: "c"}, "", nil).(*ecsRuntime); e.diskGiB != 0 || e.ebsGiB != 0 {
 		t.Errorf("ecs disk opt-out: ephemeral=%d ebs=%d, want 0/0", e.diskGiB, e.ebsGiB)
 	}
@@ -151,11 +151,11 @@ func TestStopGraceSec(t *testing.T) {
 // into the concrete dockerRuntime, and re-root the data dir via the manager's
 // closure — otherwise a restored/moved deployment would mount the wrong home.
 func TestDockerFactoryNew(t *testing.T) {
-	m := &manager{
-		image: "img:1", agentHost: "127.0.0.1", memory: "2g",
-		dataRoot: "/srv/data", defaultTenantID: "T-default",
+	m := Config{
+		Image: "img:1", AgentHost: "127.0.0.1", Memory: "2g",
+		RootDataDir: StaticRootDataDir("/srv/data", "T-default"),
 	}
-	f, err := newRuntimeFactory("local", m)
+	f, err := NewFactory("local", m)
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}

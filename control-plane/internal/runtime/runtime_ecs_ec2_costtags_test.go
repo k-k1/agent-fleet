@@ -41,10 +41,10 @@ func TestECSEC2StartStampsTheSlotOwner(t *testing.T) {
 	if err := h.rt.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if got := instTag(h, "i-hot", ec2TagMembership); got != "M-1" {
+	if got := instTag(h, "i-hot", EC2TagMembership); got != "M-1" {
 		t.Errorf("instance af-membership = %q, want M-1", got)
 	}
-	if got := instTag(h, "i-hot", ec2TagTenant); got != "acme" {
+	if got := instTag(h, "i-hot", EC2TagTenant); got != "acme" {
 		t.Errorf("instance af-tenant = %q, want acme", got)
 	}
 }
@@ -63,11 +63,11 @@ func TestECSEC2SlotOwnerOmitsAnUnknownTenant(t *testing.T) {
 	if err := h.rt.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if got := instTag(h, "i-hot", ec2TagMembership); got != "M-1" {
+	if got := instTag(h, "i-hot", EC2TagMembership); got != "M-1" {
 		t.Errorf("instance af-membership = %q, want M-1", got)
 	}
 	for _, tg := range h.ec2.instances["i-hot"].Tags {
-		if aws.ToString(tg.Key) == ec2TagTenant {
+		if aws.ToString(tg.Key) == EC2TagTenant {
 			t.Errorf("af-tenant must be absent, not empty; got %q", aws.ToString(tg.Value))
 		}
 	}
@@ -88,10 +88,10 @@ func TestECSEC2ReleaseClearsTheSlotOwner(t *testing.T) {
 	if err := h.rt.releaseSlot(ctx); err != nil {
 		t.Fatalf("releaseSlot: %v", err)
 	}
-	if got := instTag(h, "i-hot", ec2TagMembership); got != "" {
+	if got := instTag(h, "i-hot", EC2TagMembership); got != "" {
 		t.Errorf("af-membership survived the release: %q", got)
 	}
-	if got := instTag(h, "i-hot", ec2TagTenant); got != "" {
+	if got := instTag(h, "i-hot", EC2TagTenant); got != "" {
 		t.Errorf("af-tenant survived the release: %q", got)
 	}
 }
@@ -110,10 +110,10 @@ func TestECSEC2QuarantineClearsTheSlotOwner(t *testing.T) {
 
 	h.rt.quarantineSlot(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-bad"}, context.DeadlineExceeded)
 
-	if got := instTag(h, "i-bad", ec2TagRole); got != ec2RoleQuarantined {
+	if got := instTag(h, "i-bad", EC2TagRole); got != ec2RoleQuarantined {
 		t.Fatalf("af-role = %q, want quarantined", got)
 	}
-	if got := instTag(h, "i-bad", ec2TagMembership); got != "" {
+	if got := instTag(h, "i-bad", EC2TagMembership); got != "" {
 		t.Errorf("a quarantined slot still bills %q", got)
 	}
 }
@@ -135,10 +135,10 @@ func TestECSEC2NewHomeVolumeCarriesTheTenantTag(t *testing.T) {
 	if vol == nil {
 		t.Fatalf("volume %q not in the fake", aws.ToString(created.VolumeId))
 	}
-	if got := ec2TagValue(vol.Tags, ec2TagTenant); got != "acme" {
+	if got := ec2TagValue(vol.Tags, EC2TagTenant); got != "acme" {
 		t.Errorf("home volume af-tenant = %q, want acme", got)
 	}
-	if got := ec2TagValue(vol.Tags, ec2TagMembership); got != "M-1" {
+	if got := ec2TagValue(vol.Tags, EC2TagMembership); got != "M-1" {
 		t.Errorf("home volume af-membership = %q, want M-1", got)
 	}
 }
@@ -155,13 +155,13 @@ func TestECSEC2SweepRepairsSlotOwnerTags(t *testing.T) {
 	// i-stale: tagged for M-1, but M-1's home is not on it (a release that half-finished).
 	h.ec2.addSlot("i-stale", "ap-northeast-1a", "m7i.large", true, false)
 	h.ec2.instances["i-stale"].Tags = append(h.ec2.instances["i-stale"].Tags,
-		ec2Tag(ec2TagMembership, "M-1"), ec2Tag(ec2TagTenant, "acme"))
+		ec2Tag(EC2TagMembership, "M-1"), ec2Tag(EC2TagTenant, "acme"))
 
 	// i-unstamped: actually holding M-2's home, but never stamped (a crash mid-attach,
 	// or a box that predates this code).
 	h.ec2.addSlot("i-unstamped", "ap-northeast-1a", "m7i.large", true, false)
 	v2 := h.ec2.addHomeVolume("vol-2", "M-2", "af-ws-acme-bob", "ap-northeast-1a")
-	v2.Tags = append(v2.Tags, ec2Tag(ec2TagTenant, "acme"))
+	v2.Tags = append(v2.Tags, ec2Tag(EC2TagTenant, "acme"))
 	h.ec2.attach("vol-2", "i-unstamped", time.Now())
 
 	// i-free: no home, no tags. Must be left alone (and must not provoke a DeleteTags).
@@ -171,19 +171,19 @@ func TestECSEC2SweepRepairsSlotOwnerTags(t *testing.T) {
 		t.Fatalf("sweep: %v", err)
 	}
 
-	if got := instTag(h, "i-stale", ec2TagMembership); got != "" {
+	if got := instTag(h, "i-stale", EC2TagMembership); got != "" {
 		t.Errorf("i-stale still bills %q", got)
 	}
-	if got := instTag(h, "i-stale", ec2TagTenant); got != "" {
+	if got := instTag(h, "i-stale", EC2TagTenant); got != "" {
 		t.Errorf("i-stale still carries tenant %q", got)
 	}
-	if got := instTag(h, "i-unstamped", ec2TagMembership); got != "M-2" {
+	if got := instTag(h, "i-unstamped", EC2TagMembership); got != "M-2" {
 		t.Errorf("i-unstamped af-membership = %q, want M-2", got)
 	}
-	if got := instTag(h, "i-unstamped", ec2TagTenant); got != "acme" {
+	if got := instTag(h, "i-unstamped", EC2TagTenant); got != "acme" {
 		t.Errorf("i-unstamped af-tenant = %q, want acme (copied from the volume)", got)
 	}
-	if got := instTag(h, "i-free", ec2TagMembership); got != "" {
+	if got := instTag(h, "i-free", EC2TagMembership); got != "" {
 		t.Errorf("a free slot got stamped with %q", got)
 	}
 }

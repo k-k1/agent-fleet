@@ -43,17 +43,17 @@ func useCPTaskRole(t *testing.T) {
 			"harness setup.sh to get AF_HARNESS_CP_PROFILE / AF_HARNESS_CP_CONFIG.")
 		return
 	}
-	prev := awsConfigFor
-	awsConfigFor = func(ctx context.Context, region string) (aws.Config, error) {
+	prev := AWSConfigFor
+	AWSConfigFor = func(ctx context.Context, region string) (aws.Config, error) {
 		return awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region),
 			awscfg.WithSharedConfigFiles([]string{cfgFile}),
 			awscfg.WithSharedConfigProfile(prof))
 	}
-	t.Cleanup(func() { awsConfigFor = prev })
+	t.Cleanup(func() { AWSConfigFor = prev })
 	// Prove the assume happens BEFORE the first product call. An unusable profile must
 	// not degrade quietly into "ran as the deployer again" — that is the failure this
 	// whole path exists to make impossible.
-	ac, err := awsConfigFor(context.Background(), os.Getenv("AF_ECS_REGION"))
+	ac, err := AWSConfigFor(context.Background(), os.Getenv("AF_ECS_REGION"))
 	if err != nil {
 		t.Fatalf("loading the CP-role profile %s from %s: %v", prof, cfgFile, err)
 	}
@@ -93,7 +93,7 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	}
 	ctx := context.Background()
 	useCPTaskRole(t)
-	factory, err := newECSEC2Factory(&manager{})
+	factory, err := newECSEC2Factory(Config{})
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
@@ -541,8 +541,8 @@ func (l *liveEC2) poolSize(f *ecsEC2Factory) int {
 	l.t.Helper()
 	out, err := l.ec2.DescribeInstances(l.ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
-			{Name: aws.String("tag:" + ec2TagPool), Values: []string{f.pool.pool}},
-			{Name: aws.String("tag:" + ec2TagRole), Values: []string{ec2RoleSlot}},
+			{Name: aws.String("tag:" + EC2TagPool), Values: []string{f.pool.pool}},
+			{Name: aws.String("tag:" + EC2TagRole), Values: []string{ec2RoleSlot}},
 			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
 		},
 	})
@@ -692,7 +692,7 @@ func TestECSEC2LiveScale(t *testing.T) {
 	}
 	ctx := context.Background()
 	useCPTaskRole(t)
-	factory, err := newECSEC2Factory(&manager{})
+	factory, err := newECSEC2Factory(Config{})
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
@@ -1016,7 +1016,7 @@ func TestECSEC2LiveKeep(t *testing.T) {
 	}
 	ctx := context.Background()
 	useCPTaskRole(t)
-	factory, err := newECSEC2Factory(&manager{})
+	factory, err := newECSEC2Factory(Config{})
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
