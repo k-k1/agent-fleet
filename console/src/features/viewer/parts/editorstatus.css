@@ -1,0 +1,130 @@
+/* 外部変更のadvisory通知 (docs/log/44 §7.3): 状態行の中の控えめな注記＋差分確認ボタン。 */
+.file-external-note {
+  margin-left: 10px;
+  color: var(--warning, #d29922);
+}
+.file-external-note button {
+  margin-left: 6px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 16px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentcolor;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.file-editor-resolution {
+  position: absolute;
+  z-index: 8;
+  inset: auto 10px 10px 10px;
+  max-height: min(70%, 620px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--warning, #d29922);
+  border-radius: 8px;
+  background: var(--surface, var(--bg));
+  box-shadow: 0 8px 28px rgb(0 0 0 / 35%);
+}
+.file-editor-resolution.collapsed {
+  inset: auto 10px 10px auto;
+  padding: 6px;
+}
+.file-editor-resolution h4,
+.file-editor-resolution p {
+  margin: 0 0 8px;
+}
+.file-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.file-mine-remote-diff {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  max-height: 300px;
+}
+.file-diff-column {
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.file-diff-column > strong {
+  display: block;
+  position: sticky;
+  top: 0;
+  padding: 4px 8px;
+  background: var(--surface, var(--bg));
+}
+.file-diff-column pre,
+.file-merge-reference pre {
+  margin: 0;
+  padding: 6px 8px;
+  font: 12px/1.45 var(--mono);
+  white-space: pre;
+}
+.file-diff-column span {
+  display: block;
+}
+.file-diff-column .diff-mine {
+  background: rgb(248 81 73 / 14%);
+}
+.file-diff-column .diff-remote {
+  background: rgb(63 185 80 / 14%);
+}
+/* AI提案パネル（docs/log/44 Phase 4）: 競合パネルの器を流用し、警告色ではなく
+   通常のボーダーで「エラーではない」ことを示す。 */
+.file-editor-suggest {
+  border-color: var(--border);
+}
+.file-editor-suggest textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  font: 13px/1.5 var(--sans, inherit);
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  resize: vertical;
+}
+.file-suggest-diff {
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.file-suggest-diff pre {
+  margin: 0;
+  padding: 6px 8px;
+  font: 12px/1.45 var(--mono);
+  white-space: pre;
+}
+.file-suggest-diff span {
+  display: block;
+}
+.file-suggest-diff .diff-mine {
+  background: rgb(248 81 73 / 14%);
+}
+.file-suggest-diff .diff-remote {
+  background: rgb(63 185 80 / 14%);
+}
+.file-merge-reference {
+  max-height: 30%;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 90%, var(--fg));
+}
+.file-merge-reference > strong {
+  display: block;
+  padding: 4px 8px;
+}
+@container paneview (max-width: 600px) {
+  .file-mine-remote-diff {
+    grid-template-columns: 1fr;
+  }
+}
+

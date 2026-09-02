@@ -1,0 +1,127 @@
+/* Per-code-block actions, pinned to the visible bottom-right of the block. The
+   wrapper (non-scrolling) holds them so they don't scroll away with wide code. */
+.md-pre-wrap {
+  position: relative;
+}
+.md-code-actions {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 4px;
+}
+.md-code-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--panel2) 82%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.md-pre-wrap:hover .md-code-action,
+.md-code-action:focus-visible {
+  opacity: 1;
+}
+.md-code-action:hover {
+  color: var(--fg);
+  background: var(--panel2);
+}
+.md-copy.copied {
+  color: var(--ok, #4ec97a);
+  opacity: 1;
+}
+/* Quotes have no scroll surface, so their copy action sits in the top-right. Keep
+   space for it so quoted prose cannot run underneath the button. */
+.markdown blockquote.md-quote-copy {
+  position: relative;
+  padding-right: 42px;
+}
+.md-quote-copy-button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+.markdown blockquote.md-quote-copy:hover .md-code-action,
+.markdown blockquote.md-quote-copy .md-code-action:focus-visible {
+  opacity: 1;
+}
+/* The toggle only changes this code block. pre-wrap preserves indentation and
+   newlines, while overflow-wrap handles unbroken URLs and generated minified code. */
+.markdown pre.md-code-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
+}
+/* Blinking caret at the tail of a streaming render (MarkdownView streaming mode). */
+.markdown .md-stream-caret {
+  margin-left: 1px;
+  color: var(--muted);
+  animation: md-stream-caret 1s steps(1) infinite;
+}
+@keyframes md-stream-caret {
+  50% {
+    opacity: 0;
+  }
+}
+.markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.markdown blockquote {
+  border-left: 3px solid var(--border);
+  margin-left: 0;
+  padding: 0.2em 1em;
+  /* var(--muted) alone (#888 on dark) reads too low-contrast for quoted prose;
+     mix it toward --fg so it stays visually "muted" but is actually legible. */
+  color: color-mix(in srgb, var(--fg) 55%, var(--muted) 45%);
+}
+.markdown table {
+  border-collapse: collapse;
+  display: block;
+  overflow: auto;
+}
+.markdown th,
+.markdown td {
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+}
+.markdown th {
+  background: var(--panel2);
+}
+.markdown img {
+  max-width: 100%;
+}
+.markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5em 0;
+}
+.markdown ul,
+.markdown ol {
+  padding-left: 1.6em;
+}
+.mermaid-diagram {
+  margin: 1em 0;
+  padding: 12px;
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  overflow: auto;
+  text-align: center;
+}
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+

@@ -1,0 +1,106 @@
+/* drawio の図の面（docs/log/65）。フレームはペインいっぱいに置く —— 図の収まりは
+   フレームの中のビューアが自分で計算するので、こちら側は寸法を与えるだけ。
+   畳むときは display:none（外さない）—— 作り直すと 4MB のビューアを読み直す。 */
+.file-diagram-shell[hidden] {
+  display: none;
+}
+.file-diagram-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+}
+.drawioview {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+}
+.drawio-frame {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  display: block;
+  background: var(--bg);
+}
+/* 読み込み中・読めなかったときの一行。図の上に重ねる（フレームは残したままにして
+   おきたい —— 作り直すと 4MB のビューアを読み直すことになる）。 */
+.drawio-note {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 90%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.file-viewer-shell,
+.file-editor-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.file-viewer-shell[hidden],
+.file-editor-shell[hidden] {
+  display: none;
+}
+.file-viewer-shell > .codeview-wrap,
+.file-viewer-shell > .md-scroll,
+.file-viewer-shell > .filebody {
+  flex: 1;
+  min-height: 0;
+}
+.file-editor-cm {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.file-editor-cm .cm-editor {
+  height: 100%;
+  color: var(--fg);
+}
+.file-editor-cm .cm-gutters {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--viewer-bg, var(--bg)) 94%, var(--fg));
+  border-color: var(--border);
+}
+.file-editor-cm .cm-activeLine,
+.file-editor-cm .cm-activeLineGutter {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.file-editor-cm .cm-focused {
+  outline: none;
+}
+.file-mode-tabs {
+  flex: 0 0 auto;
+}
+.file-save-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.file-editor-status {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.file-editor-status.is-alert {
+  color: var(--warning, #d29922);
+  font-weight: 600;
+}

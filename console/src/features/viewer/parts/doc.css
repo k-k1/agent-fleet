@@ -1,0 +1,26 @@
+/* ---- Office 文書の簡易プレビュー (docs/log/82 §82.4) ---- */
+.docpreview {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.docpreview-status {
+  margin: 16px;
+  font: 12px var(--mono);
+}
+/* 「これは簡易プレビューである」は、読み始める前に必ず目に入る位置に置く
+   （書式の落ちた表を原本と思われる方が危ない）。 */
+.docpreview-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bar);
+  color: var(--muted);
+  font-size: 11px;
+}
+
