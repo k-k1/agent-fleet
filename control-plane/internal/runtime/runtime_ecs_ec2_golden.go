@@ -7,7 +7,7 @@
 // in the CP (ADR 0012). A bake is a series of steps, each of which is a no-op when it
 // has already happened, so a CP that dies half way through resumes on the next tick
 // instead of stranding a slot, a volume or a snapshot nobody will ever look at again.
-package main
+package runtime
 
 import (
 	"context"

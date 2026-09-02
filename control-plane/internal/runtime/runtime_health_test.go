@@ -5,7 +5,7 @@
 // 踏み、しかも数秒後には普通に使えていた。起動は最初から成功していて、CP が「15 秒で
 // /healthz が 200 を返さなければ失敗」と決めていただけ（自己更新 opt-in が ON の人
 // だけ 300 秒だったので「一部の人だけ」に見えた）。docs/log/38 ★6 の定時実行障害と同根。
-package main
+package runtime
 
 import (
 	"context"

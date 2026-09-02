@@ -19,7 +19,7 @@
 //
 // なので予算の数字をいじるのではなく、予算の**意味**を変える: 予算は「同期で待って
 // あげる猶予」であって期限ではない。超えたら starting を名乗り、ポーラーが収束させる。
-package main
+package runtime
 
 import (
 	"context"

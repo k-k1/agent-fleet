@@ -1,7 +1,7 @@
 // runtime_ecs_stale_test.go — ECS 系の「要再起動」判定の契約テスト。
 // docker で二度踏んだ罠（二辺比較・digest 比較）を ECS でも踏み直さないことと、
 // 判らないときは黙ることを固定する。
-package main
+package runtime
 
 import (
 	"context"

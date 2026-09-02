@@ -10,7 +10,7 @@
 //     導入済みであること（Dockerfile / entrypoint.sh 相当の初期化はしない）。rootfs
 //     モード（AF_NATIVE_ROOTFS — docs/log/35 §35.7.2）は workspace イメージの rootfs を
 //     bwrap で read-only 実行し、entrypoint 初期化・ピン止めが docker と同等に働く。
-package main
+package runtime
 
 import (
 	"bufio"

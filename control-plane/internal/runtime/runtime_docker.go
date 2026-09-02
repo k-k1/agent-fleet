@@ -1,6 +1,6 @@
 // runtime_docker.go — ローカル Docker アダプタ（dockerRuntime / dockerFactory）。
 // runtime.go からの機械的分割（docs/log/23 P2-W1）。
-package main
+package runtime
 
 import (
 	"context"
