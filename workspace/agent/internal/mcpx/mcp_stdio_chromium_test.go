@@ -1,4 +1,4 @@
-package main
+package mcpx
 
 import (
 	"encoding/base64"

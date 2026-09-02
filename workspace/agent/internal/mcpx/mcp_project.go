@@ -1,4 +1,4 @@
-package main
+package mcpx
 
 // docs/log/56 P0: read-only view of one working copy's project-scope MCP servers
 // (internal/mcpproj). This is the "management axis" (docs/log/57 §0) — deliberately

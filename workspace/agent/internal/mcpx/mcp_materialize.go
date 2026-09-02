@@ -1,4 +1,4 @@
-package main
+package mcpx
 
 // セッションへの MCP 配線（docs/log/48 P3 → P5 で全 kind）。実効レジストリのうち `targets.session` の
 // 定義を、各 CLI 自身のグローバル設定へ書き出す（materialize）。書き出しの中身は

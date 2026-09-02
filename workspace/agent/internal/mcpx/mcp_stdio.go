@@ -1,4 +1,4 @@
-package main
+package mcpx
 
 // Local stdio MCP server (docs/log/19 Q1). Spawned by the assistant chat's
 // `claude -p --mcp-config` as `workspace-agent mcp-stdio`, it exposes READ-ONLY

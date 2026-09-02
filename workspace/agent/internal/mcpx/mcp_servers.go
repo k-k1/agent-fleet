@@ -1,4 +1,4 @@
-package main
+package mcpx
 
 // MCP レジストリの REST 面（docs/log/48 P0 / ADR0031）。ユーザースコープの CRUD と接続テスト。
 // テナント配布（CP 由来）と組み込み連携は読み取り専用で一覧に混ざり、無効化だけができる。

@@ -1,4 +1,4 @@
-package main
+package mcpx
 
 // テナント配布 MCP の取得契機（docs/log/48 §6 / P4）。定義の取得そのものは
 // internal/mcpreg/tenant.go にあり、本ファイルは「いつ引くか」だけを持つ
