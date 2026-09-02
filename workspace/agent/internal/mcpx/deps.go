@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"reflect"
+	"sort"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -95,40 +97,33 @@ type Deps struct {
 
 var deps Deps
 
-// Configure は起動時に 1 回だけ呼ぶ（main の alias_mcp.go / mcpx のテストの TestMain）。
+// Configure は起動時に 1 回だけ呼ぶ（main の alias_mcp.go / mcpx のテストの init）。
 // 欠けたまま動かさない —— 承認ゲートやセッション件名の上限が「たまたま零値」で動くと、
 // 壊れていることが誰にも見えない形の穴になる。
+//
+// 🔥 **網羅は reflect で取る。手書きの一覧にしない。** 以前はフィールド名を並べた map で
+// 検査していたが、それは**フィールドが増えたときに漏れる**（そして漏れても何も起きない）。
+// 危ないのは**値型**である: 関数型なら未配線は nil 参照で落ちるが、`SessionTitleMaxRunes`
+// のような値型は**零値のまま静かに走る**——件名の上限が 0 になっても誰も気付かない。
+// この構造体は既に値型を 3 つ持っており、増える側である。
+//
+// 例外を作るときは**フィールドに `mcpx:"optional"` と書く**（一覧を別に持たない。
+// 例外が見えるのは常に宣言のところ）。
 func Configure(d Deps) {
 	var missing []string
-	req := map[string]bool{
-		"CleanTitle":                 d.CleanTitle == nil,
-		"SessionTitleMaxRunes":       d.SessionTitleMaxRunes <= 0,
-		"PeerIntentNames":            len(d.PeerIntentNames) == 0,
-		"PeerReachableSessions":      d.PeerReachableSessions == nil,
-		"ReportKindSelfReport":       d.ReportKindSelfReport == "",
-		"ApprovalGate":               d.ApprovalGate == nil,
-		"ApprovalLabel":              d.ApprovalLabel == nil,
-		"ShellCreateTarget":          d.ShellCreateTarget == nil,
-		"ShellSendTarget":            d.ShellSendTarget == nil,
-		"SessionIsShell":             d.SessionIsShell == nil,
-		"ReadUIPrefs":                d.ReadUIPrefs == nil,
-		"EnsureClaudeSettingsWiring": d.EnsureClaudeSettingsWiring == nil,
-		"RepoAnyDirFromPath":         d.RepoAnyDirFromPath == nil,
-		"ReadBuildPins":              d.ReadBuildPins == nil,
-		"AgentFleetShareDir":         d.AgentFleetShareDir == nil,
-		"InstallGrafanaMCP":          d.InstallGrafanaMCP == nil,
-		"WriteSSMConfig":             d.WriteSSMConfig == nil,
-		"WriteEnabled":               d.WriteEnabled == nil || d.SetWriteEnabled == nil,
-		"SelfReportOnly":             d.SelfReportOnly == nil || d.SetSelfReportOnly == nil,
-		"SessionChromiumEnabled":     d.SessionChromiumEnabled == nil || d.SetSessionChromiumEnabled == nil,
-		"ConvID":                     d.ConvID == nil || d.SetConvID == nil,
-	}
-	for name, bad := range req {
-		if bad {
-			missing = append(missing, name)
+	v := reflect.ValueOf(d)
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.Tag.Get("mcpx") == "optional" {
+			continue
+		}
+		if unwired(v.Field(i)) {
+			missing = append(missing, f.Name)
 		}
 	}
 	if len(missing) > 0 {
+		sort.Strings(missing)
 		panic(fmt.Sprintf("mcpx.Configure: 配線されていない依存がある: %v", missing))
 	}
 	deps = d
@@ -136,6 +131,28 @@ func Configure(d Deps) {
 	peerIntentNames = d.PeerIntentNames
 	reportKindSelfReport = d.ReportKindSelfReport
 }
+
+// unwired は「配線されていない」の判定。零値に加えて、**中身の無いスライス**と
+// **0 以下の数**も配線漏れとして扱う（`[]string{}` や `-1` は零値ではないが、
+// 依存としては未配線と同じ意味になる）。
+func unwired(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Slice:
+		return v.Len() == 0
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return v.Int() <= 0
+	default:
+		return v.IsZero()
+	}
+}
+
+// Wired は現在の配線を返す。**呼び出し側が「配線が生きているか」を通しで検査する**ための
+// 読み出し口で、mcpx 自身は使わない。
+//
+// 🔥 Configure が捕まえるのは**未配線**だけで、**間違った配線**は捕まえられない。
+// `ApprovalGate` を「常に承認」にしても、`ConvID` を空文字を返す関数にしても静かに通る
+// ——しかも配線は 1 行なので、将来の整理で一番触られやすい場所である。
+func Wired() Deps { return deps }
 
 // 値で受け取るもの。Configure が 1 回だけ書く（以後は読むだけ）。
 var (
