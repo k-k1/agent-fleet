@@ -129,7 +129,7 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 			sites++
 		}
 		if uses && !falls {
-			t.Errorf("%s: usageModelRows を使っているのに fallbackTotals が無い"+
+			t.Errorf("%s: chatx.UsageModelRows を使っているのに fallbackTotals が無い"+
 				"（modelUsage の来ない停止・異常終了で消費が 0 になる）", fn.Name.Name)
 		}
 	}
@@ -138,7 +138,7 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 	// uses が永久に false になり、**縮退を全部消しても緑のまま通る**。
 	// 守っているのは「modelUsage の来ない停止・異常終了で消費が 0 になる」＝課金の取りこぼし。
 	if sites == 0 {
-		t.Fatal("usageModelRows を呼ぶ関数が 1 つも見つからない＝この検査が無言化している" +
+		t.Fatal("chatx.UsageModelRows を呼ぶ関数が 1 つも見つからない＝この検査が無言化している" +
 			"（識別子が変わった / 移送された場合は、この検査の走査条件も一緒に直すこと）")
 	}
 }

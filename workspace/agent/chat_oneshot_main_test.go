@@ -24,7 +24,7 @@ func TestUsageLedgerLive(t *testing.T) {
 	if _, err := chatx.OneShotHeadless(ctx, titleSuggestPersona("ja"),
 		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します",
 		titleModel()); err != nil {
-		t.Fatalf("oneShotHeadless: %v", err)
+		t.Fatalf("chatx.OneShotHeadless: %v", err)
 	}
 	rows := usagex.ReadRows()
 	if len(rows) == 0 {
@@ -65,7 +65,7 @@ func TestBranchSuggestLive(t *testing.T) {
 
 	reply, err := chatx.OneShotHeadless(ctx, branchSuggestPersona, branchSuggestPrompt(oneShotLiveTurns()), titleModel())
 	if err != nil {
-		t.Fatalf("oneShotHeadless: %v", err)
+		t.Fatalf("chatx.OneShotHeadless: %v", err)
 	}
 	name := cleanBranchName(reply)
 	if name == "" {
@@ -83,7 +83,7 @@ func TestReplySuggestLive(t *testing.T) {
 
 	reply, err := chatx.OneShotHeadless(ctx, replySuggestPersona("ja"), replySuggestPrompt(oneShotLiveTurns(), "ja"), replySuggestModel())
 	if err != nil {
-		t.Fatalf("oneShotHeadless: %v", err)
+		t.Fatalf("chatx.OneShotHeadless: %v", err)
 	}
 	list := cleanSuggestedReplies(reply)
 	if len(list) == 0 {

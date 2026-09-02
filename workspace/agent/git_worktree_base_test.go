@@ -52,7 +52,7 @@ func TestFastForwardNewWorktreeToOrigin(t *testing.T) {
 
 	wt, err := gitx.EnsureWorktree(parent, "main", "temp/fresh", "wip-fresh")
 	if err != nil {
-		t.Fatalf("ensureWorktree: %v", err)
+		t.Fatalf("gitx.EnsureWorktree: %v", err)
 	}
 	if got := gitRev(t, wt, "HEAD"); got != stale {
 		t.Fatalf("worktree started at %s, want the parent's local main %s (fixture)", got, stale)
@@ -108,7 +108,7 @@ func TestFastForwardNewWorktreeKeepsDivergedLocalBase(t *testing.T) {
 
 	wt, err := gitx.EnsureWorktree(parent, "main", "temp/diverged", "wip-diverged")
 	if err != nil {
-		t.Fatalf("ensureWorktree: %v", err)
+		t.Fatalf("gitx.EnsureWorktree: %v", err)
 	}
 	gitx.FastForwardNewWorktreeToOrigin(wt, "main")
 
@@ -129,7 +129,7 @@ func TestFastForwardNewWorktreeWithoutOrigin(t *testing.T) {
 	gitInit(t, parent) // remote 無し
 	wt, err := gitx.EnsureWorktree(parent, "main", "temp/local", "wip-local")
 	if err != nil {
-		t.Fatalf("ensureWorktree: %v", err)
+		t.Fatalf("gitx.EnsureWorktree: %v", err)
 	}
 	before := gitRev(t, wt, "HEAD")
 	gitx.FastForwardNewWorktreeToOrigin(wt, "main")
