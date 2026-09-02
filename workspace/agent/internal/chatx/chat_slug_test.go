@@ -44,13 +44,13 @@ func TestConvSlugBackfillAndResolve(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	// A pre-slug conversation on disk (written directly, as old code did).
-	old := &chatConversation{ID: randUUID(), Title: "old", Messages: []chatMessage{}}
-	if err := saveConv(old); err != nil {
+	old := &ChatConversation{ID: RandUUID(), Title: "old", Messages: []ChatMessage{}}
+	if err := SaveConv(old); err != nil {
 		t.Fatal(err)
 	}
-	backfillConvSlugs()
+	BackfillConvSlugs()
 
-	c, err := loadConv(old.ID)
+	c, err := LoadConv(old.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,28 +59,28 @@ func TestConvSlugBackfillAndResolve(t *testing.T) {
 	}
 
 	// resolveConvRef: slug → id, id → id, garbage → miss.
-	if id, ok := resolveConvRef(c.Slug); !ok || id != old.ID {
+	if id, ok := ResolveConvRef(c.Slug); !ok || id != old.ID {
 		t.Fatalf("resolve by slug = (%q,%v), want (%q,true)", id, ok, old.ID)
 	}
-	if id, ok := resolveConvRef(old.ID); !ok || id != old.ID {
+	if id, ok := ResolveConvRef(old.ID); !ok || id != old.ID {
 		t.Fatalf("resolve by uuid = (%q,%v), want (%q,true)", id, ok, old.ID)
 	}
-	if _, ok := resolveConvRef("a999999"); ok {
+	if _, ok := ResolveConvRef("a999999"); ok {
 		t.Fatal("unknown slug must not resolve")
 	}
-	if _, ok := resolveConvRef("not-a-ref"); ok {
+	if _, ok := ResolveConvRef("not-a-ref"); ok {
 		t.Fatal("garbage must not resolve")
 	}
 
 	// Backfill is idempotent: a second run keeps the assigned slug.
-	backfillConvSlugs()
-	c2, _ := loadConv(old.ID)
+	BackfillConvSlugs()
+	c2, _ := LoadConv(old.ID)
 	if c2.Slug != c.Slug {
 		t.Fatalf("backfill must be idempotent: %q -> %q", c.Slug, c2.Slug)
 	}
 
 	// The list surface carries the slug (Console / schedule tooling reads it there).
-	metas, err := listConvs()
+	metas, err := ListConvs()
 	if err != nil {
 		t.Fatal(err)
 	}

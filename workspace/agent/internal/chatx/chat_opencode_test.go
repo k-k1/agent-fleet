@@ -49,7 +49,7 @@ func mcpCommand(t *testing.T, cfg map[string]any) []string {
 func TestOpencodeChatConfigCarriesConv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const id = "ce4f94b9-2854-44ee-8425-61859128d669"
-	c := &chatConversation{ID: id, Tools: assistants.ToolsAFWrite}
+	c := &ChatConversation{ID: id, Tools: assistants.ToolsAFWrite}
 
 	path := opencodeChatConfig(c)
 	if path == "" {
@@ -79,7 +79,7 @@ func TestOpencodeChatConfigCarriesConv(t *testing.T) {
 // 読み取り grant には --conv を渡さない（report_to は書き込み側の配線）。
 func TestOpencodeChatConfigReadGrantHasNoConv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	c := &chatConversation{ID: "ce4f94b9-2854-44ee-8425-61859128d669", Tools: assistants.ToolsAFRead}
+	c := &ChatConversation{ID: "ce4f94b9-2854-44ee-8425-61859128d669", Tools: assistants.ToolsAFRead}
 	path := opencodeChatConfig(c)
 	if path == "" {
 		t.Fatal("af_read の会話で設定が生成されない")
@@ -93,7 +93,7 @@ func TestOpencodeChatConfigReadGrantHasNoConv(t *testing.T) {
 // ツール無しの会話には設定を書かない（余計なファイルを残さない）。
 func TestOpencodeChatConfigSkippedWithoutGrant(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	c := &chatConversation{ID: "ce4f94b9-2854-44ee-8425-61859128d669", Tools: assistants.ToolsNone}
+	c := &ChatConversation{ID: "ce4f94b9-2854-44ee-8425-61859128d669", Tools: assistants.ToolsNone}
 	if path := opencodeChatConfig(c); path != "" {
 		t.Fatalf("ツール無しで設定が生成された: %q", path)
 	}
@@ -107,7 +107,7 @@ func TestOpencodeChatConfigSkippedWithoutGrant(t *testing.T) {
 func TestOpencodeChatDirHasNoMCP(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	c := &chatConversation{ID: "ce4f94b9-2854-44ee-8425-61859128d669", Tools: assistants.ToolsAFWrite}
+	c := &ChatConversation{ID: "ce4f94b9-2854-44ee-8425-61859128d669", Tools: assistants.ToolsAFWrite}
 	dir := opencodeChatDir(c)
 	if filepath.Base(dir) != "opencode-write" {
 		t.Fatalf("dir = %q, want …/opencode-write（grant 別の据え置き）", dir)
@@ -126,7 +126,7 @@ func TestOpencodeChatDirHasNoMCP(t *testing.T) {
 func TestChatDeleteRemovesOpencodeConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const id = "ce4f94b9-2854-44ee-8425-61859128d669"
-	path := opencodeChatConfig(&chatConversation{ID: id, Tools: assistants.ToolsAFWrite})
+	path := opencodeChatConfig(&ChatConversation{ID: id, Tools: assistants.ToolsAFWrite})
 	if path == "" {
 		t.Fatal("設定が生成されない")
 	}

@@ -37,13 +37,13 @@ func TestSessionReportDetectsAbortWithoutMarker(t *testing.T) {
 	withTestReconciler(t, 20*time.Millisecond)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /chat/report", handleChatReport)
+	mux.HandleFunc("POST /chat/report", HandleChatReport)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	t.Setenv("AGENT_ADDR", strings.TrimPrefix(srv.URL, "http://"))
 
-	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
-	if err := saveConv(conv); err != nil {
+	conv := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
+	if err := SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 	m := session.Meta{Name: "slot55", Dir: t.TempDir(), Kind: session.KindClaude, Title: "中断検知"}
@@ -66,16 +66,16 @@ func TestSessionReportDetectsAbortWithoutMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	addInstruction(m.Name, conv.ID, turnSourceOperator)
+	AddInstruction(m.Name, conv.ID, "operator")
 
-	reports := func() []chatMessage {
-		unlock := lockConv(conv.ID)
+	reports := func() []ChatMessage {
+		unlock := LockConv(conv.ID)
 		defer unlock()
-		c, err := loadConv(conv.ID)
+		c, err := LoadConv(conv.ID)
 		if err != nil {
 			return nil
 		}
-		var out []chatMessage
+		var out []ChatMessage
 		for i := range c.Messages {
 			if c.Messages[i].Role == "report" {
 				out = append(out, c.Messages[i])
@@ -127,13 +127,13 @@ func TestSessionReportHeldWhileAutoResuming(t *testing.T) {
 	withTestReconciler(t, 20*time.Millisecond)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /chat/report", handleChatReport)
+	mux.HandleFunc("POST /chat/report", HandleChatReport)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	t.Setenv("AGENT_ADDR", strings.TrimPrefix(srv.URL, "http://"))
 
-	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
-	if err := saveConv(conv); err != nil {
+	conv := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
+	if err := SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 	m := session.Meta{Name: "slot56", Dir: t.TempDir(), Kind: session.KindClaude, Title: "自動再開中"}
@@ -151,14 +151,18 @@ func TestSessionReportHeldWhileAutoResuming(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 再開の途中（1回送って次を待っている）— この間は報告しない。
-	_ = abortResumeStates.Write(m.Name, abortResumeState{At: at, Attempts: 1, LastTry: at})
+	// 移送前は main の abortResumeStates に状態を直接書いて、**本物の** abortResumeHolds に
+	// true を返させていた。chatx からは main の var に届かないので、**同じ入力（＝この
+	// セッションは自動再開の最中）を継ぎ目に注入する**形へ置き換える。判定そのものは
+	// main の abort_resume_test.go が持つ（責務の切れ目はここ）。
+	stubAbortResumeHolds(t, m.Name, true)
 
-	addInstruction(m.Name, conv.ID, turnSourceOperator)
+	AddInstruction(m.Name, conv.ID, "operator")
 
 	reports := func() int {
-		unlock := lockConv(conv.ID)
+		unlock := LockConv(conv.ID)
 		defer unlock()
-		c, err := loadConv(conv.ID)
+		c, err := LoadConv(conv.ID)
 		if err != nil {
 			return 0
 		}
@@ -177,9 +181,8 @@ func TestSessionReportHeldWhileAutoResuming(t *testing.T) {
 	}
 
 	// 打ち切り → 同じ転写のまま報告が出る。
-	_ = abortResumeStates.Write(m.Name, abortResumeState{
-		At: at, Attempts: maxAutoResumeAttempts, LastTry: at, GaveUp: abortGaveUpCapped,
-	})
+	// 打ち切り済み（GaveUp=capped）＝もう保持しない、を継ぎ目へ注入する。
+	stubAbortResumeHolds(t, m.Name, false)
 	deadline := time.Now().Add(3 * time.Second)
 	for reports() == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)

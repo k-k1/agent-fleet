@@ -19,27 +19,27 @@ type stubProvider struct {
 	prompts []string
 }
 
-func (s *stubProvider) send(_ context.Context, _ *chatConversation, prompt string) (string, error) {
+func (s *stubProvider) Send(_ context.Context, _ *ChatConversation, prompt string) (string, error) {
 	s.prompts = append(s.prompts, prompt)
 	return s.reply, s.err
 }
 
 func TestCompactConversation(t *testing.T) {
 	withTempHome(t)
-	c := &chatConversation{
-		ID: randUUID(), Agent: "claude",
+	c := &ChatConversation{
+		ID: RandUUID(), Agent: "claude",
 		ClaudeSessionID: "old-claude", CodexSessionID: "old-codex", OpencodeSessionID: "old-oc",
 		AgyConversationID: "old-agy",
 		Context:           &usagex.ContextUsage{Tokens: 170000, Window: 200000, Pct: 85},
 		CtxWarned:         true,
-		Messages:          []chatMessage{{Role: "user", Content: "hi", TS: 1}},
+		Messages:          []ChatMessage{{Role: "user", Content: "hi", TS: 1}},
 	}
 	prov := &stubProvider{reply: "要約テキスト"}
-	if err := compactConversation(context.Background(), c, prov, compactReasonManual); err != nil {
+	if err := compactConversation(context.Background(), c, prov, CompactReasonManual); err != nil {
 		t.Fatal(err)
 	}
 	if len(prov.prompts) != 1 || !strings.Contains(prov.prompts[0], providerSyncPreamble) ||
-		!strings.HasSuffix(prov.prompts[0], compactSummaryPromptFor("ja")) {
+		!strings.HasSuffix(prov.prompts[0], CompactSummaryPromptFor("ja")) {
 		t.Fatalf("summary prompt not sent: %+v", prov.prompts)
 	}
 	if c.ClaudeSessionID != "" || c.CodexSessionID != "" || c.OpencodeSessionID != "" || c.AgyConversationID != "" {
@@ -62,8 +62,8 @@ func TestCompactConversationFailuresLeaveStateIntact(t *testing.T) {
 		"provider error": {err: errors.New("boom")},
 		"empty summary":  {reply: "  \n"},
 	} {
-		c := &chatConversation{ID: randUUID(), Agent: "claude", ClaudeSessionID: "old", CtxWarned: true}
-		if err := compactConversation(context.Background(), c, prov, compactReasonManual); err == nil {
+		c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old", CtxWarned: true}
+		if err := compactConversation(context.Background(), c, prov, CompactReasonManual); err == nil {
 			t.Fatalf("%s: expected error", name)
 		}
 		if c.ClaudeSessionID != "old" || c.PendingHandoff != "" || !c.CtxWarned {
@@ -73,16 +73,16 @@ func TestCompactConversationFailuresLeaveStateIntact(t *testing.T) {
 }
 
 func TestInjectHandoff(t *testing.T) {
-	c := &chatConversation{}
-	if p, carried := injectHandoff(c, "こんにちは"); carried || p != "こんにちは" {
+	c := &ChatConversation{}
+	if p, carried := InjectHandoff(c, "こんにちは"); carried || p != "こんにちは" {
 		t.Fatalf("no-pending: (%q, %v)", p, carried)
 	}
 	c.PendingHandoff = "前回の要約"
-	p, carried := injectHandoff(c, "こんにちは")
+	p, carried := InjectHandoff(c, "こんにちは")
 	if !carried {
 		t.Fatal("pending handoff not carried")
 	}
-	if !strings.HasPrefix(p, handoffPreambleFor("ja")) || !strings.Contains(p, "前回の要約") || !strings.HasSuffix(p, "こんにちは") {
+	if !strings.HasPrefix(p, HandoffPreambleFor("ja")) || !strings.Contains(p, "前回の要約") || !strings.HasSuffix(p, "こんにちは") {
 		t.Fatalf("prompt shape wrong: %q", p)
 	}
 	// クリアは呼び出し側の成功時責務（失敗ターンで再注入させるため）。
@@ -94,18 +94,18 @@ func TestInjectHandoff(t *testing.T) {
 func TestHandleChatCompactGuards(t *testing.T) {
 	withTempHome(t)
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /chat/conversations/{id}/compact", handleChatCompact)
+	mux.HandleFunc("POST /chat/conversations/{id}/compact", HandleChatCompact)
 
 	// 存在しない会話 → 404。
 	rr := httptest.NewRecorder()
-	mux.ServeHTTP(rr, httptest.NewRequest("POST", "/chat/conversations/"+randUUID()+"/compact", nil))
+	mux.ServeHTTP(rr, httptest.NewRequest("POST", "/chat/conversations/"+RandUUID()+"/compact", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("unknown conv: code = %d", rr.Code)
 	}
 
 	// プロバイダセッションが無い会話 → 400 chat_nothing_to_compact（プロバイダ解決前に返る）。
-	c := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
-	if err := saveConv(c); err != nil {
+	c := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
+	if err := SaveConv(c); err != nil {
 		t.Fatal(err)
 	}
 	rr = httptest.NewRecorder()
@@ -117,32 +117,32 @@ func TestHandleChatCompactGuards(t *testing.T) {
 
 func TestMaybeAutoCompact(t *testing.T) {
 	withTempHome(t)
-	base := func(pct float64) *chatConversation {
-		return &chatConversation{
-			ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
+	base := func(pct float64) *ChatConversation {
+		return &ChatConversation{
+			ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
 			Context:  &usagex.ContextUsage{Tokens: int(pct * 2000), Window: 200000, Pct: pct},
-			Messages: []chatMessage{},
+			Messages: []ChatMessage{},
 		}
 	}
 
 	// 閾値未満 → no-op（プロバイダ未呼び出し）。
 	c := base(50)
 	prov := &stubProvider{reply: "要約"}
-	if maybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
+	if MaybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
 		t.Fatal("compacted below the threshold")
 	}
 
 	// 閾値以上 → 圧縮（reason=auto の notice・ハンドルクリア・PendingHandoff）。
 	c = base(95)
 	prov = &stubProvider{reply: "自動要約"}
-	if !maybeAutoCompact(context.Background(), c, prov) {
+	if !MaybeAutoCompact(context.Background(), c, prov) {
 		t.Fatal("did not compact at 95%")
 	}
 	if c.ClaudeSessionID != "" || c.PendingHandoff != "自動要約" {
 		t.Fatalf("compaction not applied: %+v", c)
 	}
 	last := c.Messages[len(c.Messages)-1]
-	if last.Role != "notice" || !strings.Contains(last.Content, compactReasonAuto) {
+	if last.Role != "notice" || !strings.Contains(last.Content, CompactReasonAuto) {
 		t.Fatalf("auto reason missing from notice: %+v", last)
 	}
 
@@ -150,27 +150,27 @@ func TestMaybeAutoCompact(t *testing.T) {
 	c = base(95)
 	c.PendingHandoff = "前回の要約"
 	prov = &stubProvider{reply: "要約"}
-	if maybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
+	if MaybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
 		t.Fatal("compacted despite an undelivered handoff")
 	}
 
 	// プロバイダセッションが無い → no-op。
 	c = base(95)
 	c.ClaudeSessionID = ""
-	if maybeAutoCompact(context.Background(), c, &stubProvider{reply: "要約"}) {
+	if MaybeAutoCompact(context.Background(), c, &stubProvider{reply: "要約"}) {
 		t.Fatal("compacted with no provider session")
 	}
 
 	// Context 未捕捉 → no-op。
 	c = base(95)
 	c.Context = nil
-	if maybeAutoCompact(context.Background(), c, &stubProvider{reply: "要約"}) {
+	if MaybeAutoCompact(context.Background(), c, &stubProvider{reply: "要約"}) {
 		t.Fatal("compacted with no context snapshot")
 	}
 
 	// 圧縮失敗 → false・状態不変（ターン自体は続行される想定）。
 	c = base(95)
-	if maybeAutoCompact(context.Background(), c, &stubProvider{err: errors.New("boom")}) {
+	if MaybeAutoCompact(context.Background(), c, &stubProvider{err: errors.New("boom")}) {
 		t.Fatal("reported success though the summary turn failed")
 	}
 	if c.ClaudeSessionID != "old" || c.PendingHandoff != "" {
@@ -187,12 +187,12 @@ func TestMaybeAutoCompactDisabledBySetting(t *testing.T) {
 		[]byte(`{"assistantAutoCompact": false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c := &chatConversation{
-		ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
+	c := &ChatConversation{
+		ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
 		Context: &usagex.ContextUsage{Tokens: 190000, Window: 200000, Pct: 95},
 	}
 	prov := &stubProvider{reply: "要約"}
-	if maybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
+	if MaybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
 		t.Fatal("compacted though the setting is OFF")
 	}
 }
@@ -202,13 +202,13 @@ func TestMaybeAutoCompactAbsoluteTokenThreshold(t *testing.T) {
 	// 1M ウィンドウで使用率 20% — 相対閾値(90%)には遠いが、絶対量が 150k を超えて
 	// いるので圧縮する（費用防衛の閾値。実測でこの帯のターンは cache 書き直しだけで
 	// $1 級になる）。
-	c := &chatConversation{
-		ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
+	c := &ChatConversation{
+		ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
 		Context:  &usagex.ContextUsage{Tokens: 200000, Window: 1000000, Pct: 20},
-		Messages: []chatMessage{},
+		Messages: []ChatMessage{},
 	}
 	prov := &stubProvider{reply: "自動要約"}
-	if !maybeAutoCompact(context.Background(), c, prov) {
+	if !MaybeAutoCompact(context.Background(), c, prov) {
 		t.Fatal("did not compact at 200k tokens on a 1M window")
 	}
 	if c.PendingHandoff != "自動要約" {
@@ -216,37 +216,37 @@ func TestMaybeAutoCompactAbsoluteTokenThreshold(t *testing.T) {
 	}
 
 	// 絶対閾値未満・相対閾値未満 → no-op。
-	c = &chatConversation{
-		ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
+	c = &ChatConversation{
+		ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
 		Context: &usagex.ContextUsage{Tokens: 120000, Window: 1000000, Pct: 12},
 	}
 	prov = &stubProvider{reply: "要約"}
-	if maybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
+	if MaybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
 		t.Fatal("compacted below both thresholds")
 	}
 
 	// 環境変数で絶対閾値を引き上げれば同じ 200k でも発火しない。
 	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "500000")
-	c = &chatConversation{
-		ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
+	c = &ChatConversation{
+		ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
 		Context: &usagex.ContextUsage{Tokens: 200000, Window: 1000000, Pct: 20},
 	}
-	if maybeAutoCompact(context.Background(), c, &stubProvider{reply: "要約"}) {
+	if MaybeAutoCompact(context.Background(), c, &stubProvider{reply: "要約"}) {
 		t.Fatal("compacted despite the raised token threshold")
 	}
 }
 
 func TestChatAutoCompactTokenThresholdEnvOverride(t *testing.T) {
 	writeUIPrefs(t, `{}`) // HOME を隔離（設定が env より優先のため）
-	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokens {
+	if got := ChatAutoCompactTokenThreshold(); got != ChatCtxAutoCompactTokens {
 		t.Fatalf("default token threshold = %v", got)
 	}
 	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "80000")
-	if got := chatAutoCompactTokenThreshold(); got != 80000 {
+	if got := ChatAutoCompactTokenThreshold(); got != 80000 {
 		t.Fatalf("env token threshold = %v", got)
 	}
 	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "junk")
-	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokens {
+	if got := ChatAutoCompactTokenThreshold(); got != ChatCtxAutoCompactTokens {
 		t.Fatalf("invalid env must fall back: %v", got)
 	}
 }

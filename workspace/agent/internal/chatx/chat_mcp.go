@@ -27,7 +27,7 @@ import (
 // backend kind actually driving the turn. Unknown, disabled, not-ready and
 // out-of-scope ids drop out silently — the pre-registry contract for a builtin whose
 // connection was missing, now applied to every origin.
-func (c *chatConversation) mcpServersFor(kind string) []mcpreg.ServerDef {
+func (c *ChatConversation) mcpServersFor(kind string) []mcpreg.ServerDef {
 	if len(c.Integrations) == 0 {
 		return nil
 	}
@@ -53,11 +53,11 @@ func (c *chatConversation) mcpServersFor(kind string) []mcpreg.ServerDef {
 // --conv hands the server its owning conversation id so create_session /
 // send_to_session auto-attach report_to (docs/log/30) — the report link is tool-side
 // plumbing, never something the model has to carry.
-func (c *chatConversation) afServerArgs() ([]string, bool) {
+func (c *ChatConversation) afServerArgs() ([]string, bool) {
 	if !c.afToolsEnabled() {
 		return nil, false
 	}
-	if c.afWriteEnabled() {
+	if c.AFWriteEnabled() {
 		return []string{"mcp-stdio", "--write", "--conv", c.ID}, true
 	}
 	return []string{"mcp-stdio"}, true
@@ -99,7 +99,7 @@ func removeChatMCPConfig(convID string) {
 // for --mcp-config. If the file cannot be written we fall back to inline JSON with
 // the secret-bearing servers dropped — the af tools keep working, and no credential
 // is smuggled into argv by a failure path.
-func (c *chatConversation) mcpConfigArgs() []string {
+func (c *ChatConversation) mcpConfigArgs() []string {
 	exe := paths.ExePath()
 	servers := mcpreg.ClaudeServers(c.mcpServersFor(session.KindClaude))
 	if sargs, ok := c.afServerArgs(); ok {

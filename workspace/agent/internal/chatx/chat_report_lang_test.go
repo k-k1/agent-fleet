@@ -22,11 +22,11 @@ func reportCases() []reportView {
 		return reportView{kind: kind, reason: reason, args: args}
 	}
 	return []reportView{
-		base(reportKindAnswerReady, "", nil),
-		base(reportKindAnswerReady, reportReasonTurnFailed, nil),
-		base(reportKindAnswerReady, reportReasonTurnFailed, map[string]string{"resume_at": "1754000000000"}),
-		base(reportKindAnswerReady, reportReasonTurnAborted, map[string]string{"attempts": "1"}),
-		base(reportKindAnswerReady, reportReasonTurnAborted, map[string]string{"attempts": "9"}), // 上限超え
+		base(ReportKindAnswerReady, "", nil),
+		base(ReportKindAnswerReady, ReportReasonTurnFailed, nil),
+		base(ReportKindAnswerReady, ReportReasonTurnFailed, map[string]string{"resume_at": "1754000000000"}),
+		base(ReportKindAnswerReady, ReportReasonTurnAborted, map[string]string{"attempts": "1"}),
+		base(ReportKindAnswerReady, ReportReasonTurnAborted, map[string]string{"attempts": "9"}), // 上限超え
 		base("question", "", nil),
 		base("plan-approval", "", nil),
 		base("permission-request", "", nil),
@@ -36,7 +36,7 @@ func reportCases() []reportView {
 		base("exit", "crashed", nil),
 		base("exit", "とても新しい理由", nil), // 未知の理由は生のまま出る
 		base("なにか新しい kind", "", nil),
-		base(reportKindAnswerReady, "", map[string]string{"fold_n": "2", "fold_ats": "a / b"}),
+		base(ReportKindAnswerReady, "", map[string]string{"fold_n": "2", "fold_ats": "a / b"}),
 	}
 }
 
@@ -76,8 +76,8 @@ func TestReportTextEnglishHasNoJapanese(t *testing.T) {
 		if r := firstJapaneseRune(card); r != 0 {
 			t.Errorf("%s/%s: 英語カードに日本語 %q が混入:\n%s", v.kind, v.reason, string(r), card)
 		}
-		m := chatMessage{Role: "report", ReportKind: v.kind, ReportReason: v.reason, NoticeArgs: v.args}
-		prompt := reportPromptFor(m, "en")
+		m := ChatMessage{Role: "report", ReportKind: v.kind, ReportReason: v.reason, NoticeArgs: v.args}
+		prompt := ReportPromptFor(m, "en")
 		if r := firstJapaneseRune(prompt); r != 0 {
 			t.Errorf("%s/%s: 英語プロンプトに日本語 %q が混入:\n%s", v.kind, v.reason, string(r), prompt)
 		}
@@ -97,15 +97,15 @@ func TestReportTextEnglishHasNoJapanese(t *testing.T) {
 // プロンプトは配信時ではなく**組む瞬間**の表示言語に従う（保留のまま言語を切り替えた報告も
 // 新しい言語で届く）。
 func TestReportPromptFollowsUILocaleAtInjection(t *testing.T) {
-	m := chatMessage{
-		Role: "report", ReportKind: reportKindAnswerReady, ReportReason: reportReasonTurnFailed,
+	m := ChatMessage{
+		Role: "report", ReportKind: ReportKindAnswerReady, ReportReason: ReportReasonTurnFailed,
 		Content:    "（保存時の日本語本文）",
 		NoticeArgs: map[string]string{"display": "d", "name": "s7"},
 	}
-	c := &chatConversation{Messages: []chatMessage{m}}
+	c := &ChatConversation{Messages: []ChatMessage{m}}
 
 	writeUIPrefs(t, `{"locale":"en"}`)
-	prompt, pending := injectPendingReports(c, "go on")
+	prompt, pending := InjectPendingReports(c, "go on")
 	if len(pending) != 1 {
 		t.Fatalf("pending = %d, want 1", len(pending))
 	}
@@ -117,7 +117,7 @@ func TestReportPromptFollowsUILocaleAtInjection(t *testing.T) {
 	}
 
 	writeUIPrefs(t, `{"locale":"ja"}`)
-	if prompt, _ = injectPendingReports(c, "続けて"); !strings.Contains(prompt, "get_session_output でエラー本文") {
+	if prompt, _ = InjectPendingReports(c, "続けて"); !strings.Contains(prompt, "get_session_output でエラー本文") {
 		t.Fatalf("日本語ロケールで従来の指示文が出ない:\n%s", prompt)
 	}
 }
@@ -125,8 +125,8 @@ func TestReportPromptFollowsUILocaleAtInjection(t *testing.T) {
 // P6 より前の報告（ReportKind 無し）は当時の本文をそのまま使う。当時の Content は指示込みで
 // 書かれているので、それを捨てるとオペレーターが何をすべきか分からなくなる。
 func TestLegacyReportFallsBackToStoredContent(t *testing.T) {
-	legacy := chatMessage{Role: "report", Content: "セッション「x」(s1) からの報告: 応答が完了し、入力待ちになりました。"}
-	if got := reportPromptFor(legacy, "en"); got != legacy.Content {
+	legacy := ChatMessage{Role: "report", Content: "セッション「x」(s1) からの報告: 応答が完了し、入力待ちになりました。"}
+	if got := ReportPromptFor(legacy, "en"); got != legacy.Content {
 		t.Fatalf("旧レコードの本文が使われていない: %q", got)
 	}
 }

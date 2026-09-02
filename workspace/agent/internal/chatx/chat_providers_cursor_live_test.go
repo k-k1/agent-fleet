@@ -30,8 +30,8 @@ func TestCursorChatLive(t *testing.T) {
 	defer cancel()
 
 	// 1) 第1ターン: 純テキスト回答が返り、resume ハンドルと usage が捕捉される。
-	c := &chatConversation{ID: "cursor-live", Agent: "cursor"}
-	reply, err := cursorChat{}.send(ctx, c, "Reply with exactly the single word: PONG")
+	c := &ChatConversation{ID: "cursor-live", Agent: "cursor"}
+	reply, err := cursorChat{}.Send(ctx, c, "Reply with exactly the single word: PONG")
 	if err != nil {
 		t.Fatalf("send #1: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestCursorChatLive(t *testing.T) {
 	firstSID := c.CursorSessionID
 
 	// 2) 第2ターン: 同じ会話を --resume で継続し、文脈（前ターンの語）が残る。
-	reply2, err := cursorChat{}.send(ctx, c, "What exact single word did I ask you to reply with a moment ago? Answer with just that word.")
+	reply2, err := cursorChat{}.Send(ctx, c, "What exact single word did I ask you to reply with a moment ago? Answer with just that word.")
 	if err != nil {
 		t.Fatalf("send #2 (resume): %v", err)
 	}
@@ -62,8 +62,8 @@ func TestCursorChatLive(t *testing.T) {
 	//    プロセスは hang せずクリーンな応答で返る（チャット契約＝ホスト非改変）。
 	probe := filepath.Join(chatWorkdir(), "livetest_probe.txt")
 	_ = os.Remove(probe)
-	c3 := &chatConversation{ID: "cursor-live-ro", Agent: "cursor"}
-	_, err = cursorChat{}.send(ctx, c3, "Create a file named livetest_probe.txt containing the word hello in the current directory using your tools, then tell me DONE.")
+	c3 := &ChatConversation{ID: "cursor-live-ro", Agent: "cursor"}
+	_, err = cursorChat{}.Send(ctx, c3, "Create a file named livetest_probe.txt containing the word hello in the current directory using your tools, then tell me DONE.")
 	if err != nil {
 		t.Fatalf("send #3 (read-only): %v", err)
 	}

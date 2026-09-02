@@ -28,11 +28,11 @@ func TestChatCreateAdHocVerb(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /chat/conversations", handleChatCreate)
+	mux.HandleFunc("POST /chat/conversations", HandleChatCreate)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	create := func(t *testing.T, verb string) chatConversation {
+	create := func(t *testing.T, verb string) ChatConversation {
 		t.Helper()
 		body, _ := json.Marshal(chatCreateReq{SeedVerb: verb, AttachPath: "manual.md"})
 		res, err := http.Post(srv.URL+"/chat/conversations", "application/json", bytes.NewReader(body))
@@ -43,7 +43,7 @@ func TestChatCreateAdHocVerb(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("verb %q: status = %d, want 200", verb, res.StatusCode)
 		}
-		var c chatConversation
+		var c ChatConversation
 		if err := json.NewDecoder(res.Body).Decode(&c); err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +78,7 @@ func TestChatCreateAdHocVerb(t *testing.T) {
 			t.Errorf("Knowledge = %v, want it to include %q", c.Knowledge, home)
 		}
 		// Reload from disk: the ad-hoc verb must persist (Seed is transient and must NOT).
-		got, err := loadConv(c.ID)
+		got, err := LoadConv(c.ID)
 		if err != nil {
 			t.Fatal(err)
 		}

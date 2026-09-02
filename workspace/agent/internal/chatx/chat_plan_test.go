@@ -60,7 +60,7 @@ func TestParseCompactOutputEmptySummaryFallsBackToPlan(t *testing.T) {
 }
 
 func TestSetPlanReportsChangeOnly(t *testing.T) {
-	c := &chatConversation{}
+	c := &ChatConversation{}
 	if !setPlan(c, "## これからやること\n- A") {
 		t.Fatal("first plan must count as a change")
 	}
@@ -81,7 +81,7 @@ func TestSetPlanReportsChangeOnly(t *testing.T) {
 
 func TestClampPlanCaps(t *testing.T) {
 	long := strings.Repeat("あ", planMaxRunes+500)
-	c := &chatConversation{}
+	c := &ChatConversation{}
 	setPlan(c, long)
 	if len([]rune(c.Plan)) > planMaxRunes+40 {
 		t.Fatalf("plan not clamped: %d runes", len([]rune(c.Plan)))
@@ -91,29 +91,29 @@ func TestClampPlanCaps(t *testing.T) {
 // injectPlan は「新しいネイティブセッションが始まるターン」だけに載せる。resume が
 // 生きているターンで載せると同じ計画の入力トークンを毎回二重に払う。
 func TestInjectPlanOnlyOnFreshSession(t *testing.T) {
-	c := &chatConversation{Plan: "## これからやること\n- Lane A"}
-	p, carried := injectPlan(c, "claude", "続けて")
-	if !carried || !strings.HasPrefix(p, planPreambleFor("ja")) || !strings.HasSuffix(p, "続けて") {
-		t.Fatalf("fresh session: (%q, %v)", p, carried)
+	c := &ChatConversation{Plan: "## これからやること\n- Lane A"}
+	p, carried := InjectPlan(c, "claude", "続けて")
+	if !carried || !strings.HasPrefix(p, PlanPreambleFor("ja")) || !strings.HasSuffix(p, "続けて") {
+		t.Fatalf("fresh Session: (%q, %v)", p, carried)
 	}
 	c.ClaudeSessionID = "live"
-	if p, carried = injectPlan(c, "claude", "続けて"); carried || p != "続けて" {
-		t.Fatalf("resumable session: (%q, %v)", p, carried)
+	if p, carried = InjectPlan(c, "claude", "続けて"); carried || p != "続けて" {
+		t.Fatalf("resumable Session: (%q, %v)", p, carried)
 	}
 	// 別バックエンドへ切り替わるターンは、そちらにとっては新セッション。
-	if _, carried = injectPlan(c, "codex", "続けて"); !carried {
+	if _, carried = InjectPlan(c, "codex", "続けて"); !carried {
 		t.Fatal("switching backend must carry the plan")
 	}
 	c.Plan = ""
-	if _, carried = injectPlan(c, "codex", "続けて"); carried {
+	if _, carried = InjectPlan(c, "codex", "続けて"); carried {
 		t.Fatal("no plan, nothing to carry")
 	}
 }
 
 // 並びは「要約 → 計画 → 本題」。計画は今まさに従わせたい指示なので本題の直前に置く。
 func TestInjectCarryoverOrder(t *testing.T) {
-	c := &chatConversation{Plan: "計画本文", PendingHandoff: "要約本文"}
-	p, carried := injectCarryover(c, "claude", "本題")
+	c := &ChatConversation{Plan: "計画本文", PendingHandoff: "要約本文"}
+	p, carried := InjectCarryover(c, "claude", "本題")
 	if !carried {
 		t.Fatal("handoff must be reported as carried")
 	}
@@ -130,25 +130,25 @@ func TestInjectCarryoverOrder(t *testing.T) {
 }
 
 func TestCompactPromptCarriesExistingPlanForDiffUpdate(t *testing.T) {
-	c := &chatConversation{}
-	if strings.Contains(compactPrompt(c), planUpdateInstructionFor("ja")) {
+	c := &ChatConversation{}
+	if strings.Contains(CompactPrompt(c), PlanUpdateInstructionFor("ja")) {
 		t.Fatal("no plan yet: must not ask for a diff update")
 	}
 	c.Plan = "## これからやること\n- Lane A"
-	p := compactPrompt(c)
-	if !strings.Contains(p, planUpdateInstructionFor("ja")) || !strings.Contains(p, "Lane A") {
+	p := CompactPrompt(c)
+	if !strings.Contains(p, PlanUpdateInstructionFor("ja")) || !strings.Contains(p, "Lane A") {
 		t.Fatalf("existing plan not offered for diff update: %q", p)
 	}
-	if !strings.Contains(p, compactSummaryPromptFor("ja")) {
+	if !strings.Contains(p, CompactSummaryPromptFor("ja")) {
 		t.Fatal("summary instruction lost")
 	}
 }
 
 func TestCompactConversationStoresPlanAndNotices(t *testing.T) {
-	c := &chatConversation{ID: randUUID(), Agent: "claude", ClaudeSessionID: "old"}
+	c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old"}
 	prov := &stubProvider{reply: planMarker + "\n## これからやること\n- Lane A を起こす\n" +
 		summaryMarker + "\n統括会話の背景。"}
-	if err := compactConversation(context.Background(), c, prov, compactReasonAuto); err != nil {
+	if err := compactConversation(context.Background(), c, prov, CompactReasonAuto); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(c.Plan, "Lane A を起こす") {
@@ -168,11 +168,11 @@ func TestCompactConversationStoresPlanAndNotices(t *testing.T) {
 
 // 2回目の圧縮で計画が変わらなければ、計画カードは積まない（本当に動いた1枚が埋もれる）。
 func TestCompactConversationSilentWhenPlanUnchanged(t *testing.T) {
-	c := &chatConversation{ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
+	c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
 		Plan: "## これからやること\n- Lane A を起こす"}
 	prov := &stubProvider{reply: planMarker + "\n## これからやること\n- Lane A を起こす\n" +
 		summaryMarker + "\n背景。"}
-	if err := compactConversation(context.Background(), c, prov, compactReasonAuto); err != nil {
+	if err := compactConversation(context.Background(), c, prov, CompactReasonAuto); err != nil {
 		t.Fatal(err)
 	}
 	for _, k := range noticeKeys(c) {
@@ -184,10 +184,10 @@ func TestCompactConversationSilentWhenPlanUnchanged(t *testing.T) {
 
 // 崩れた出力で圧縮しても、運用中の計画は生き残る（第5段の最重要縮退）。
 func TestCompactConversationKeepsPlanOnMalformedOutput(t *testing.T) {
-	c := &chatConversation{ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
+	c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
 		Plan: "## これからやること\n- Lane A を起こす"}
 	prov := &stubProvider{reply: "区切りを無視した要約だけの出力。"}
-	if err := compactConversation(context.Background(), c, prov, compactReasonManual); err != nil {
+	if err := compactConversation(context.Background(), c, prov, CompactReasonManual); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(c.Plan, "Lane A を起こす") {
@@ -199,9 +199,9 @@ func TestCompactConversationKeepsPlanOnMalformedOutput(t *testing.T) {
 }
 
 func TestCompactConversationFailureKeepsPlan(t *testing.T) {
-	c := &chatConversation{ID: randUUID(), Agent: "claude", ClaudeSessionID: "old", Plan: "計画"}
+	c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old", Plan: "計画"}
 	if err := compactConversation(context.Background(), c, &stubProvider{err: errors.New("boom")},
-		compactReasonManual); err == nil {
+		CompactReasonManual); err == nil {
 		t.Fatal("expected error")
 	}
 	if c.Plan != "計画" {
@@ -210,7 +210,7 @@ func TestCompactConversationFailureKeepsPlan(t *testing.T) {
 }
 
 func TestPlanRefreshPromptShape(t *testing.T) {
-	c := &chatConversation{Messages: []chatMessage{
+	c := &ChatConversation{Messages: []ChatMessage{
 		{Role: "user", Content: "Wave 2 は Lane 2 を先に回して"},
 		{Role: "notice", Content: "コンテキストを圧縮しました"},
 		{Role: "report", Content: "セッション完了"},
@@ -223,7 +223,7 @@ func TestPlanRefreshPromptShape(t *testing.T) {
 	if strings.Contains(p, "コンテキストを圧縮しました") || strings.Contains(p, "セッション完了") {
 		t.Fatal("notice/report must stay out of the plan context window")
 	}
-	if !strings.Contains(p, planShapeFor("ja")) {
+	if !strings.Contains(p, PlanShapeFor("ja")) {
 		t.Fatal("plan shape missing")
 	}
 	c.Plan = "## これからやること\n- 旧順序"
@@ -233,9 +233,9 @@ func TestPlanRefreshPromptShape(t *testing.T) {
 }
 
 func TestPlanContextTurnsWindow(t *testing.T) {
-	var msgs []chatMessage
+	var msgs []ChatMessage
 	for i := 0; i < planTailTurns+5; i++ {
-		msgs = append(msgs, chatMessage{Role: "user", Content: "m"})
+		msgs = append(msgs, ChatMessage{Role: "user", Content: "m"})
 	}
 	if got := len(planContextTurns(msgs)); got != planTailTurns {
 		t.Fatalf("window = %d", got)
@@ -245,7 +245,7 @@ func TestPlanContextTurnsWindow(t *testing.T) {
 	}
 }
 
-func noticeKeys(c *chatConversation) []string {
+func noticeKeys(c *ChatConversation) []string {
 	var out []string
 	for _, m := range c.Messages {
 		if m.Role == "notice" {
@@ -259,21 +259,21 @@ func noticeKeys(c *chatConversation) []string {
 
 func planMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /chat/conversations/{id}/plan", handleChatPlanGet)
-	mux.HandleFunc("PUT /chat/conversations/{id}/plan", handleChatPlanSet)
+	mux.HandleFunc("GET /chat/conversations/{id}/plan", HandleChatPlanGet)
+	mux.HandleFunc("PUT /chat/conversations/{id}/plan", HandleChatPlanSet)
 	return mux
 }
 
 func TestHandleChatPlanGetSetRoundTrip(t *testing.T) {
 	withTempHome(t)
 	mux := planMux()
-	c := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
-	if err := saveConv(c); err != nil {
+	c := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
+	if err := SaveConv(c); err != nil {
 		t.Fatal(err)
 	}
 
 	rr := httptest.NewRecorder()
-	mux.ServeHTTP(rr, httptest.NewRequest("GET", "/chat/conversations/"+randUUID()+"/plan", nil))
+	mux.ServeHTTP(rr, httptest.NewRequest("GET", "/chat/conversations/"+RandUUID()+"/plan", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("unknown conv: code = %d", rr.Code)
 	}
@@ -314,11 +314,11 @@ func TestHandleChatPlanSetNoticeOnlyWhenAsked(t *testing.T) {
 		"via mcp":   {`{"plan":"## これからやること\n- A","notice":true}`, true},
 		"unchanged": {`{"plan":"## これからやること\n- A"}`, false},
 	} {
-		c := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
+		c := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
 		if name == "unchanged" {
 			c.Plan = "## これからやること\n- A"
 		}
-		if err := saveConv(c); err != nil {
+		if err := SaveConv(c); err != nil {
 			t.Fatal(err)
 		}
 		rr := httptest.NewRecorder()
@@ -326,7 +326,7 @@ func TestHandleChatPlanSetNoticeOnlyWhenAsked(t *testing.T) {
 		if rr.Code != http.StatusOK {
 			t.Fatalf("%s: code = %d", name, rr.Code)
 		}
-		saved, err := loadConv(c.ID)
+		saved, err := LoadConv(c.ID)
 		if err != nil {
 			t.Fatal(err)
 		}

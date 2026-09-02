@@ -23,8 +23,8 @@ import (
 
 // --- HTTP handlers ---
 
-func handleChatList(w http.ResponseWriter, r *http.Request) {
-	metas, err := listConvs()
+func HandleChatList(w http.ResponseWriter, r *http.Request) {
+	metas, err := ListConvs()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_list", err.Error())
 		return
@@ -53,7 +53,7 @@ type chatCreateReq struct {
 // docs/log/28 P6: 生成物（訳文・要約）を読むのは利用者なので、persona は表示言語で書く。翻訳の
 // 言語ペアは表示言語と無関係に日本語↔英語のままにしてある — 「訳す方向」は入力から決まる話で、
 // Console の表示言語で決めるものではない（languageRule も translate だけ除外している）。
-func verbPersona(verb, lang string) string {
+func VerbPersona(verb, lang string) string {
 	en := lang == "en"
 	switch verb {
 	case "translate":
@@ -83,7 +83,7 @@ func verbPersona(verb, lang string) string {
 // used verbatim so the assistant's Read (scoped by --add-dir) resolves it directly.
 // 会話の 1 通目としてそのまま表示される（利用者が自分で打ったように見える）ので、persona と
 // 同じく表示言語で書く。
-func seedFor(verb, abs string, isDir bool, lang string) string {
+func SeedFor(verb, abs string, isDir bool, lang string) string {
 	if lang == "en" {
 		switch verb {
 		case "translate":
@@ -113,14 +113,14 @@ func seedFor(verb, abs string, isDir bool, lang string) string {
 // chatDefaultTitle is the fallback name for a conversation created without one. The
 // Console sends its own (catalog "chat.new_title"), so this covers the other creators —
 // MCP / schedules / the bridge — and follows the display language for the same reason.
-func chatDefaultTitle(lang string) string {
+func ChatDefaultTitle(lang string) string {
 	if lang == "en" {
 		return "New chat"
 	}
 	return "新しいチャット"
 }
 
-func appendUniqueStr(ss []string, v string) []string {
+func AppendUniqueStr(ss []string, v string) []string {
 	for _, s := range ss {
 		if s == v {
 			return ss
@@ -129,7 +129,7 @@ func appendUniqueStr(ss []string, v string) []string {
 	return append(ss, v)
 }
 
-func handleChatCreate(w http.ResponseWriter, r *http.Request) {
+func HandleChatCreate(w http.ResponseWriter, r *http.Request) {
 	var req chatCreateReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -137,11 +137,11 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	lang := uiprefs.Locale()
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
-		title = chatDefaultTitle(lang)
+		title = ChatDefaultTitle(lang)
 	}
-	now := nowMs()
-	c := &chatConversation{
-		ID: randUUID(), Slug: newConvSlug(), Title: title, CreatedAt: now, UpdatedAt: now, Messages: []chatMessage{},
+	now := NowMs()
+	c := &ChatConversation{
+		ID: RandUUID(), Slug: NewConvSlug(), Title: title, CreatedAt: now, UpdatedAt: now, Messages: []ChatMessage{},
 	}
 
 	switch {
@@ -155,30 +155,30 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		c.AssistantID = a.ID
 		c.Agent = a.Agent
-		c.Model = resolveChatModel(a.Agent, a.Model)
+		c.Model = ResolveChatModel(a.Agent, a.Model)
 		c.Persona = a.Persona
 		c.Tools = a.Tools
 		c.Knowledge = a.Knowledge
 		c.Integrations = a.Integrations
-	case verbPersona(req.SeedVerb, lang) != "":
+	case VerbPersona(req.SeedVerb, lang) != "":
 		// Ad-hoc persona-embedded verb (docs/log/30 ②): a Files 翻訳/要約 opens a standalone chat
 		// carrying the verb persona directly — no standing 翻訳/汎用 assistant to point at.
 		// Read-only (the attached file arrives via knowledge --add-dir below); SeedVerb is
 		// persisted so languageRule() keeps a translate thread language-agnostic.
-		c.Agent = preferredHeadlessAgent()
-		c.Model = resolveChatModel(c.Agent, "")
-		c.Persona = verbPersona(req.SeedVerb, lang)
+		c.Agent = PreferredHeadlessAgent()
+		c.Model = ResolveChatModel(c.Agent, "")
+		c.Persona = VerbPersona(req.SeedVerb, lang)
 		c.Tools = assistants.ToolsNone
 		c.SeedVerb = req.SeedVerb
 	default:
 		// Legacy path: plain agent + optional model, generic persona, read-only fleet tools
 		// for claude (mirrors the pre-assistant default).
-		if _, ok := chatProviders[req.Agent]; !ok {
+		if _, ok := ChatProviders[req.Agent]; !ok {
 			httpx.WriteErr(w, http.StatusBadRequest, errCodeChatAgentUnsupported, "unsupported agent")
 			return
 		}
 		c.Agent = req.Agent
-		c.Model = resolveChatModel(req.Agent, req.Model)
+		c.Model = ResolveChatModel(req.Agent, req.Model)
 		if req.Agent == session.KindClaude {
 			c.Tools = assistants.ToolsAFRead
 		} else {
@@ -196,13 +196,13 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 				if !fi.IsDir() {
 					dir = filepath.Dir(full)
 				}
-				c.Knowledge = appendUniqueStr(c.Knowledge, dir)
-				seed = seedFor(req.SeedVerb, full, fi.IsDir(), lang)
+				c.Knowledge = AppendUniqueStr(c.Knowledge, dir)
+				seed = SeedFor(req.SeedVerb, full, fi.IsDir(), lang)
 			}
 		}
 	}
 
-	if err := saveConv(c); err != nil {
+	if err := SaveConv(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return
 	}
@@ -222,7 +222,7 @@ type chatAskReq struct {
 // attaches no MCP, so it cannot write to sessions and cannot itself call ask_assistant —
 // recursion and privilege-escalation are ruled out by construction (single hop, advice
 // only). Reached only via the local Agent REST (mcp_stdio → localhost); not CP-exposed.
-func handleChatAsk(w http.ResponseWriter, r *http.Request) {
+func HandleChatAsk(w http.ResponseWriter, r *http.Request) {
 	var req chatAskReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -239,16 +239,16 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	// Ephemeral, non-persisted conversation carrying the assistant's persona/model/knowledge
 	// but NO tools (advisory only).
-	c := &chatConversation{
-		ID: randUUID(), Agent: a.Agent, Model: resolveChatModel(a.Agent, a.Model),
+	c := &ChatConversation{
+		ID: RandUUID(), Agent: a.Agent, Model: ResolveChatModel(a.Agent, a.Model),
 		Persona: a.Persona, Tools: assistants.ToolsNone, Knowledge: a.Knowledge,
 	}
-	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
+	prov := ChatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
 	// 使用量台帳（ADR 0029 §3）。会話は非永続なので ref は空 — 束ねる先が無い。
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureAssistantAsk, Trigger: usagex.TriggerUser})
-	reply, err := prov.send(ctx, c, prompt)
+	reply, err := prov.Send(ctx, c, prompt)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
 		return
@@ -256,14 +256,14 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"assistant": a.Name, "reply": reply})
 }
 
-func handleChatGet(w http.ResponseWriter, r *http.Request) {
+func HandleChatGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	c, err := loadConv(id)
+	c, err := LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
 	}
-	c.InProgress = turnInFlight(id) // transient: lets a reloaded client poll for a still-running reply
+	c.InProgress = TurnInFlight(id) // transient: lets a reloaded client poll for a still-running reply
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
@@ -271,7 +271,7 @@ func handleChatGet(w http.ResponseWriter, r *http.Request) {
 // The streaming turn is detached from its request connection, so aborting the SSE fetch
 // no longer stops it — this explicit cancel does. Idempotent: reports whether a running
 // turn was found, but always succeeds.
-func handleChatStop(w http.ResponseWriter, r *http.Request) {
+func HandleChatStop(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatConversationNotFnd, "invalid conversation id")
@@ -296,7 +296,7 @@ type chatPatchReq struct {
 //     ので、進行中の会話を別 CLI へ移す明示的な入口がここ。切替そのものは会話ファイルの
 //     ピン留めを差し替えるだけで、次の送信で syncProviderPrompt が「新バックエンドがまだ
 //     知らない履歴」を再生する（認証フォールバックと同じ経路 — chat_provider_context.go）。
-func handleChatPatch(w http.ResponseWriter, r *http.Request) {
+func HandleChatPatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req chatPatchReq
 	if !httpx.DecodeJSON(w, r, &req) {
@@ -316,22 +316,22 @@ func handleChatPatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Agent != nil {
-		if _, ok := chatProviders[*req.Agent]; !ok {
+		if _, ok := ChatProviders[*req.Agent]; !ok {
 			httpx.WriteErr(w, http.StatusBadRequest, errCodeChatAgentUnsupported, "unsupported agent")
 			return
 		}
 		// 実行中のターンは切替の対象外（handleChatDelete と同じ作法）。ストリームは会話
 		// ロックをターン全体で握るので、待たせると数分ブロックしたうえ、走っている
 		// プロバイダと保存されるピン留めが食い違ったまま終わる。
-		if turnInFlight(id) {
+		if TurnInFlight(id) {
 			httpx.WriteErr(w, http.StatusConflict, "conversation_busy",
 				"a turn is in progress — stop it before switching the agent")
 			return
 		}
 	}
-	unlock := lockConv(id) // serialize with an in-flight turn's load-modify-save
+	unlock := LockConv(id) // serialize with an in-flight turn's load-modify-save
 	defer unlock()
-	c, err := loadConv(id)
+	c, err := LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
@@ -342,8 +342,8 @@ func handleChatPatch(w http.ResponseWriter, r *http.Request) {
 	if req.Agent != nil {
 		switchChatAgent(c, *req.Agent)
 	}
-	c.UpdatedAt = nowMs()
-	if err := saveConv(c); err != nil {
+	c.UpdatedAt = NowMs()
+	if err := SaveConv(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return
 	}
@@ -359,18 +359,18 @@ func handleChatPatch(w http.ResponseWriter, r *http.Request) {
 // 元のエージェントへ戻したときに、そのエージェントの native セッションを続きから使え、
 // 空いた分だけが再生される。ActiveAgent も更新して、次のターンを待たずにヘッダが
 // 切替後のエージェントを映すようにする（明示的な選択は最後のターンより新しい事実）。
-func switchChatAgent(c *chatConversation, kind string) {
+func switchChatAgent(c *ChatConversation, kind string) {
 	if c.Agent == kind {
 		return
 	}
 	c.Agent = kind
 	c.ActiveAgent = kind
-	c.Model = resolveChatModel(kind, "")
+	c.Model = ResolveChatModel(kind, "")
 	c.Messages = append(c.Messages, newNotice(noticeKeyAgentSwitched, map[string]string{"agent": kind},
 		"エージェントを "+kind+" に切り替えました。これまでの会話はそのまま引き継がれます。"))
 }
 
-func handleChatDelete(w http.ResponseWriter, r *http.Request) {
+func HandleChatDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
@@ -379,16 +379,16 @@ func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 	// 実行中ターンと直列化: ロック無しで消すと、ターン末尾の saveConv が削除済み
 	// 会話（と資格情報入りの会話別 MCP config）を再作成してゾンビ化する。実行中は
 	// 数分待たせるより 409 で先に止めてもらう（Stop してから削除）。
-	if turnInFlight(id) {
+	if TurnInFlight(id) {
 		httpx.WriteErr(w, http.StatusConflict, "conversation_busy",
 			"a turn is in progress — stop it before deleting")
 		return
 	}
-	unlock := lockConv(id)
+	unlock := LockConv(id)
 	defer unlock()
 	// 削除ロック（docs/log/45）: ロック中の会話は消さない。読めない会話は素通り
 	// （下の os.Remove が not-exist を許容するのと同じで、掃除は続けたい）。
-	if c, err := loadConv(id); err == nil && c.Locked {
+	if c, err := LoadConv(id); err == nil && c.Locked {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
 			"conversation is locked against deletion; unlock it first")
 		return
@@ -417,7 +417,7 @@ type chatSendReq struct {
 	Content string `json:"content"`
 }
 
-func handleChatSend(w http.ResponseWriter, r *http.Request) {
+func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req chatSendReq
 	if !httpx.DecodeJSON(w, r, &req) {
@@ -429,63 +429,63 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	unlock := lockConv(id)
+	unlock := LockConv(id)
 	defer unlock()
 
-	c, err := loadConv(id)
+	c, err := LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
 	}
-	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
-	actualAgent := chatProviderKind(c, prov)
+	prov := ChatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
+	actualAgent := ChatProviderKind(c, prov)
 
-	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
+	c.Messages = append(c.Messages, ChatMessage{Role: "user", Content: content, TS: NowMs()})
 	// docs/log/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（成功
 	// すれば直後の injectHandoff がその要約を乗せる）。
-	maybeAutoCompact(r.Context(), c, prov)
+	MaybeAutoCompact(r.Context(), c, prov)
 	// docs/log/30: reports that never got their own auto turn ride the next prompt, and a
 	// user message resets the unattended auto-turn budget.
-	prompt, pendingReports := injectPendingReports(c, content)
+	prompt, pendingReports := InjectPendingReports(c, content)
 	// docs/log/33: a compaction summary rides the NEW session's first prompt, outermost.
-	prompt, handoff := injectCarryover(c, actualAgent, prompt)
-	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
+	prompt, handoff := InjectCarryover(c, actualAgent, prompt)
+	prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 	c.AutoTurns, c.AutoPausedNotified = 0, false
 
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, chatTurnUsageTag(c, usagex.TriggerUser)) // 使用量台帳（ADR 0029 §3）
-	reply, err := prov.send(ctx, c, prompt)
-	if err != nil && recoverForRetry(ctx, c, prov, err) {
+	reply, err := prov.Send(ctx, c, prompt)
+	if err != nil && RecoverForRetry(ctx, c, prov, err) {
 		// docs/log/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
 		// リトライ。reports は未配信なので再注入され、要約も前置される。
-		prompt, pendingReports = injectPendingReports(c, content)
-		prompt, handoff = injectCarryover(c, actualAgent, prompt)
-		prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
-		reply, err = prov.send(ctx, c, prompt)
+		prompt, pendingReports = InjectPendingReports(c, content)
+		prompt, handoff = InjectCarryover(c, actualAgent, prompt)
+		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
+		reply, err = prov.Send(ctx, c, prompt)
 	}
 	if err != nil {
-		if isContextOverflowErr(err) {
-			noteContextOverflow(c) // black hole を塞ぐ（圧縮も不能だった）
+		if IsContextOverflowErr(err) {
+			NoteContextOverflow(c) // black hole を塞ぐ（圧縮も不能だった）
 		}
 		// Persist the user turn + resume handle even on failure so a retry continues.
-		c.UpdatedAt = nowMs()
-		_ = saveConv(c)
+		c.UpdatedAt = NowMs()
+		_ = SaveConv(c)
 		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
 		return
 	}
-	markReportsDelivered(pendingReports)
+	MarkReportsDelivered(pendingReports)
 	if handoff {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
 
-	assistant := chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.turnModel, TS: nowMs()}
+	assistant := ChatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.TurnModel, TS: NowMs()}
 	c.Messages = append(c.Messages, assistant)
 	c.ActiveAgent = actualAgent
-	markProviderSynced(c, actualAgent, len(c.Messages))
-	noteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）
-	c.UpdatedAt = nowMs()
-	if err := saveConv(c); err != nil {
+	MarkProviderSynced(c, actualAgent, len(c.Messages))
+	NoteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）
+	c.UpdatedAt = NowMs()
+	if err := SaveConv(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return
 	}
@@ -500,7 +500,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 //	data: {"done":true,"message":…,"conversation":…} — final turn saved
 //
 // Providers without a streaming variant fall back to a single delta (the full reply).
-func handleChatStream(w http.ResponseWriter, r *http.Request) {
+func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req chatSendReq
 	if !httpx.DecodeJSON(w, r, &req) {
@@ -512,18 +512,18 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	unlock := lockConv(id)
+	unlock := LockConv(id)
 	defer unlock()
 
-	c, err := loadConv(id)
+	c, err := LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
 	}
-	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
-	actualAgent := chatProviderKind(c, prov)
+	prov := ChatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
+	actualAgent := ChatProviderKind(c, prov)
 
-	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
+	c.Messages = append(c.Messages, ChatMessage{Role: "user", Content: content, TS: NowMs()})
 	c.AutoTurns, c.AutoPausedNotified = 0, false
 
 	// From here the response is an SSE stream; per-frame errors ride the stream body.
@@ -550,7 +550,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), chatTimeout)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, chatTurnUsageTag(c, usagex.TriggerUser)) // 使用量台帳（ADR 0029 §3）
-	deregister := registerLiveTurn(id, cancel)
+	deregister := RegisterLiveTurn(id, cancel)
 	defer deregister()
 
 	var reply string
@@ -558,7 +558,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	runTurn := func(p string) {
 		steps = nil
 		if sp, ok := prov.(streamingProvider); ok {
-			reply, steps, err = sp.sendStream(ctx, c, p, func(ev chatStreamEvent) {
+			reply, steps, err = sp.SendStream(ctx, c, p, func(ev ChatStreamEvent) {
 				if ev.Step != nil {
 					emit(map[string]any{"step": ev.Step}) // a completed 作業過程 item
 				} else if ev.Delta != "" {
@@ -566,7 +566,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 				}
 			})
 		} else {
-			reply, err = prov.send(ctx, c, p)
+			reply, err = prov.Send(ctx, c, p)
 			if err == nil {
 				emit(map[string]string{"delta": reply})
 			}
@@ -575,41 +575,41 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// docs/log/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（detached
 	// ctx 上なのでリロードでも中断されない）。成功すれば下の injectHandoff が要約を
 	// 乗せる。プロンプト構築は圧縮の後（PendingHandoff 反映後）でなければならない。
-	maybeAutoCompact(ctx, c, prov)
+	MaybeAutoCompact(ctx, c, prov)
 	// docs/log/30: undelivered session reports ride this prompt; docs/log/33: a compaction
 	// summary rides the NEW session's first prompt, outermost.
-	prompt, pendingReports := injectPendingReports(c, content)
-	prompt, handoff := injectCarryover(c, actualAgent, prompt)
-	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
+	prompt, pendingReports := InjectPendingReports(c, content)
+	prompt, handoff := InjectCarryover(c, actualAgent, prompt)
+	prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 	runTurn(prompt)
-	if err != nil && recoverForRetry(ctx, c, prov, err) {
+	if err != nil && RecoverForRetry(ctx, c, prov, err) {
 		// docs/log/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
 		// リトライ。超過エラーは初回送信直後の 400 なので delta 未発火＝二重表示なし。
-		prompt, pendingReports = injectPendingReports(c, content)
-		prompt, handoff = injectCarryover(c, actualAgent, prompt)
-		prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
+		prompt, pendingReports = InjectPendingReports(c, content)
+		prompt, handoff = InjectCarryover(c, actualAgent, prompt)
+		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 		runTurn(prompt)
 	}
 	if err != nil {
-		if isContextOverflowErr(err) {
-			noteContextOverflow(c) // black hole を塞ぐ（圧縮も不能だった）
+		if IsContextOverflowErr(err) {
+			NoteContextOverflow(c) // black hole を塞ぐ（圧縮も不能だった）
 		}
-		c.UpdatedAt = nowMs()
-		_ = saveConv(c) // persist the user turn + resume handle so a retry continues
+		c.UpdatedAt = NowMs()
+		_ = SaveConv(c) // persist the user turn + resume handle so a retry continues
 		emit(map[string]any{"error": err.Error()})
 		return
 	}
-	markReportsDelivered(pendingReports)
+	MarkReportsDelivered(pendingReports)
 	if handoff {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
 
-	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, Agent: actualAgent, Model: c.turnModel, TS: nowMs()}
+	assistant := ChatMessage{Role: "assistant", Content: reply, Steps: steps, Agent: actualAgent, Model: c.TurnModel, TS: NowMs()}
 	c.Messages = append(c.Messages, assistant)
 	c.ActiveAgent = actualAgent
-	markProviderSynced(c, actualAgent, len(c.Messages))
-	noteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）— done の conversation で届く
-	c.UpdatedAt = nowMs()
-	_ = saveConv(c)
+	MarkProviderSynced(c, actualAgent, len(c.Messages))
+	NoteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）— done の conversation で届く
+	c.UpdatedAt = NowMs()
+	_ = SaveConv(c)
 	emit(map[string]any{"done": true, "message": assistant, "conversation": c})
 }

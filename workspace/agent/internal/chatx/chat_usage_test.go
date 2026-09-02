@@ -32,7 +32,7 @@ func TestClaudeCtxObserveResultUsesLastIteration(t *testing.T) {
 	}
 	tr := claudeCtx{model: "claude-sonnet-5"}
 	tr.observeResult(r.Usage, r.ModelUsage)
-	c := &chatConversation{}
+	c := &ChatConversation{}
 	tr.apply(c)
 	if c.Context == nil {
 		t.Fatal("no context captured")
@@ -70,7 +70,7 @@ func TestClaudeCtxStreamAssistantEvents(t *testing.T) {
 			tr.observeResult(sl.Usage, sl.ModelUsage)
 		}
 	}
-	c := &chatConversation{}
+	c := &ChatConversation{}
 	tr.apply(c)
 	if got, want := c.Context.Tokens, 12+100+28700; got != want {
 		t.Fatalf("tokens = %d, want %d (last assistant snapshot)", got, want)
@@ -97,7 +97,7 @@ func TestParseCodexExecEventsUsage(t *testing.T) {
 		t.Fatalf("usage = %+v", usage)
 	}
 	// input は cached を含む → fresh は差分、合計は input のまま。
-	c := &chatConversation{Agent: "codex", Model: "gpt-5.6-luna"}
+	c := &ChatConversation{Agent: "codex", Model: "gpt-5.6-luna"}
 	setChatContext(c, usage.InputTokens-usage.CachedInputTokens, usage.CachedInputTokens, 0, 0, chatCtxModelFor(c, "codex"))
 	if c.Context.Tokens != 14502 || c.Context.Read != 8960 || c.Context.Fresh != 14502-8960 {
 		t.Fatalf("context = %+v", c.Context)
@@ -127,7 +127,7 @@ func TestParseOpencodeRunEventsUsage(t *testing.T) {
 }
 
 func TestSetChatContextKeepsPreviousOnEmpty(t *testing.T) {
-	c := &chatConversation{}
+	c := &ChatConversation{}
 	setChatContext(c, 100, 200, 0, 0, "claude-sonnet-5")
 	if c.Context == nil {
 		t.Fatal("no context captured")
@@ -142,7 +142,7 @@ func TestSetChatContextKeepsPreviousOnEmpty(t *testing.T) {
 
 func TestNoteContextPressureOncePerCrossing(t *testing.T) {
 	withTempHome(t)
-	c := &chatConversation{ID: randUUID(), Messages: []chatMessage{}}
+	c := &ChatConversation{ID: RandUUID(), Messages: []ChatMessage{}}
 
 	notices := func() int {
 		n := 0
@@ -156,25 +156,25 @@ func TestNoteContextPressureOncePerCrossing(t *testing.T) {
 
 	// 閾値未満: 何も追記しない。
 	setChatContext(c, 1000, 0, 0, 200000, "claude-sonnet-5")
-	noteContextPressure(c)
+	NoteContextPressure(c)
 	if notices() != 0 || c.CtxWarned {
 		t.Fatal("warned below the threshold")
 	}
 	// 超過: 1回だけ追記。
 	setChatContext(c, 170000, 0, 0, 200000, "claude-sonnet-5")
-	noteContextPressure(c)
-	noteContextPressure(c)
+	NoteContextPressure(c)
+	NoteContextPressure(c)
 	if notices() != 1 || !c.CtxWarned {
 		t.Fatalf("notices = %d (CtxWarned=%v), want exactly 1", notices(), c.CtxWarned)
 	}
 	// コンパクション等で下回る → フラグが戻る → 再超過でもう1回。
 	setChatContext(c, 50000, 0, 0, 200000, "claude-sonnet-5")
-	noteContextPressure(c)
+	NoteContextPressure(c)
 	if c.CtxWarned {
 		t.Fatal("CtxWarned not reset after falling under the threshold")
 	}
 	setChatContext(c, 190000, 0, 0, 200000, "claude-sonnet-5")
-	noteContextPressure(c)
+	NoteContextPressure(c)
 	if notices() != 2 {
 		t.Fatalf("notices = %d, want 2 after a re-crossing", notices())
 	}

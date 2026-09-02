@@ -1,4 +1,4 @@
-package chatx
+package main
 
 import (
 	"bytes"

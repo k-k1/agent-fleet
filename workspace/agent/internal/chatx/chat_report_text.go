@@ -49,7 +49,7 @@ type reportView struct {
 	args   map[string]string
 }
 
-func reportViewOf(m chatMessage) reportView {
+func reportViewOf(m ChatMessage) reportView {
 	return reportView{kind: m.ReportKind, reason: m.ReportReason, args: m.NoticeArgs}
 }
 
@@ -58,18 +58,18 @@ func (v reportView) arg(k string) string { return v.args[k] }
 // resumeCapped: 自動再開の上限に達したか。attempts は「この報告を配ったあとの値」。
 func (v reportView) resumeCapped() bool {
 	n, _ := strconv.Atoi(v.arg("attempts"))
-	return n > maxAutoResumeAttempts
+	return n > MaxAutoResumeAttempts
 }
 
 // reportDisplayKey は表示カタログキー。exit の理由ラベルや訂正の対象時刻のような可変部は
 // 引数（NoticeArgs）で渡す。
 func (v reportView) displayKey() string {
 	switch v.kind {
-	case reportKindAnswerReady:
+	case ReportKindAnswerReady:
 		switch v.reason {
-		case reportReasonTurnFailed:
+		case ReportReasonTurnFailed:
 			return reportKeyTurnFailed
-		case reportReasonTurnAborted:
+		case ReportReasonTurnAborted:
 			if v.resumeCapped() {
 				return reportKeyTurnAbortedCapped
 			}
@@ -141,9 +141,9 @@ func (v reportView) fact(lang string) string {
 		}
 		if v.resumeCapped() {
 			if en {
-				b.WriteString(" [The automatic-resume limit (" + strconv.Itoa(maxAutoResumeAttempts) + ") has been reached]")
+				b.WriteString(" [The automatic-resume limit (" + strconv.Itoa(MaxAutoResumeAttempts) + ") has been reached]")
 			} else {
-				b.WriteString("【自動再開の上限（" + strconv.Itoa(maxAutoResumeAttempts) + "回）に達しています】")
+				b.WriteString("【自動再開の上限（" + strconv.Itoa(MaxAutoResumeAttempts) + "回）に達しています】")
 			}
 		}
 		return b.String()
@@ -423,7 +423,7 @@ func reportHeadFor(kind, reason string, resumeAttempts int, lang string) string 
 // reportPromptFor は provider へ渡す本文（事実＋オペレーターへの指示）。保存しない。
 // P6 より前に書かれた報告（ReportKind が無い）は Content をそのまま使う — 当時の本文は
 // 指示込みで書かれているので、それが正しい振る舞い。
-func reportPromptFor(m chatMessage, lang string) string {
+func ReportPromptFor(m ChatMessage, lang string) string {
 	if m.ReportKind == "" {
 		return m.Content
 	}

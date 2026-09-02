@@ -11,7 +11,7 @@ import (
 func TestLiveTurnRegistry(t *testing.T) {
 	const id = "conv-1"
 
-	if turnInFlight(id) {
+	if TurnInFlight(id) {
 		t.Fatal("no turn registered yet, want not in flight")
 	}
 	if cancelLiveTurn(id) {
@@ -19,9 +19,9 @@ func TestLiveTurnRegistry(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	deregister := registerLiveTurn(id, cancel)
+	deregister := RegisterLiveTurn(id, cancel)
 
-	if !turnInFlight(id) {
+	if !TurnInFlight(id) {
 		t.Fatal("turn registered, want in flight")
 	}
 
@@ -36,12 +36,12 @@ func TestLiveTurnRegistry(t *testing.T) {
 
 	// A turn is still in flight until it deregisters (cancel != deregister), so a stopped
 	// turn keeps in_progress true until it winds down and saves — the poller keeps waiting.
-	if !turnInFlight(id) {
+	if !TurnInFlight(id) {
 		t.Fatal("cancel alone must not deregister; want still in flight until turn ends")
 	}
 
 	deregister()
-	if turnInFlight(id) {
+	if TurnInFlight(id) {
 		t.Fatal("after deregister, want not in flight")
 	}
 }

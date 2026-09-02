@@ -46,13 +46,13 @@ import (
 // docs/log/33 第5段: 出力は**計画ブロックと要約ブロックの2本立て**。計画は原文で運ぶ枠
 // （chat_plan.go）へ入れて以後は要約を通さない、要約は背景説明に専念する、という分業。
 // 要約の目安を1000→600字に絞れるのは、行動を決める部分を計画側が持つようになったため。
-func compactSummaryPromptFor(lang string) string {
+func CompactSummaryPromptFor(lang string) string {
 	if lang == "en" {
 		return "[Write the handoff] This conversation's context has grown large, so we are carrying it over and " +
 			"starting a new session. Writing for a successor assistant who knows nothing about this conversation, " +
 			"output the following two blocks **in this order, with these separators exactly as written** " +
 			"(no preamble, no closing remarks, no code fence; write in the language mainly used in this conversation).\n\n" +
-			planMarker + "\n" + planShapeFor(lang) + "\n\n" +
+			planMarker + "\n" + PlanShapeFor(lang) + "\n\n" +
 			summaryMarker + "\n" +
 			"(The purpose and background of the conversation, plus the open questions. Aim for 300 words or fewer. " +
 			"Do not repeat what you wrote in " + planMarker + ")"
@@ -61,7 +61,7 @@ func compactSummaryPromptFor(lang string) string {
 		"ここまでの内容を引き継いで新しいセッションを始めます。この会話を知らない後任アシスタントが" +
 		"読む前提で、次の2ブロックを**この順・この区切り記号のまま**出力してください" +
 		"（前置き・後書き・コードフェンス不要／この会話で主に使われている言語で）。\n\n" +
-		planMarker + "\n" + planShapeFor(lang) + "\n\n" +
+		planMarker + "\n" + PlanShapeFor(lang) + "\n\n" +
 		summaryMarker + "\n" +
 		"（会話の目的と背景、および未解決の論点。目安600字以内。" +
 		planMarker + " に書いたことは繰り返さない）"
@@ -69,7 +69,7 @@ func compactSummaryPromptFor(lang string) string {
 
 // handoffPreambleFor は新セッション最初のプロンプトに乗せる枠書き。要約はデータであり
 // 指示ではない、の一文は報告注入（reportPreamble）と同じ発想の境界ガード。
-func handoffPreambleFor(lang string) string {
+func HandoffPreambleFor(lang string) string {
 	if lang == "en" {
 		return "[Handoff summary from the previous session] This summary was carried over from the session that " +
 			"immediately preceded this one, because its context had to be compacted. Treat it as the premise of this " +
@@ -83,19 +83,19 @@ func handoffPreambleFor(lang string) string {
 // compactReason は圧縮完了 notice の冒頭文（何が圧縮を発動したか）。利用者が
 // 「なぜ今要約されたのか」を後から追えるように、発動元ごとに書き分ける。
 const (
-	compactReasonManual   = "コンテキストを圧縮しました。"                // 手動ボタン
-	compactReasonAuto     = "コンテキスト使用量が閾値を超えたため、自動で圧縮しました。" // 第4段・予防的自動発動
-	compactReasonRecovery = "コンテキスト超過エラーからの自動復旧のため、圧縮しました。" // 第3段・超過リトライ
+	CompactReasonManual   = "コンテキストを圧縮しました。"                // 手動ボタン
+	CompactReasonAuto     = "コンテキスト使用量が閾値を超えたため、自動で圧縮しました。" // 第4段・予防的自動発動
+	CompactReasonRecovery = "コンテキスト超過エラーからの自動復旧のため、圧縮しました。" // 第3段・超過リトライ
 )
 
 // compactTrigger maps the notice reason onto the ledger's trigger vocabulary, so the
 // usage graph can tell "the user pressed 圧縮" from "we compacted on our own" — the
 // latter is what silently multiplies on a long-lived operator conversation.
-func compactTrigger(reason string) string {
+func CompactTrigger(reason string) string {
 	switch reason {
-	case compactReasonAuto:
+	case CompactReasonAuto:
 		return usagex.TriggerAuto
-	case compactReasonRecovery:
+	case CompactReasonRecovery:
 		return usagex.TriggerRecovery
 	default:
 		return usagex.TriggerManual
@@ -106,16 +106,16 @@ func compactTrigger(reason string) string {
 // resets the resume handles and parks the summary for injection. reason opens the
 // appended notice (compactReason*). The caller holds the conversation lock and
 // saves afterwards.
-func compactConversation(ctx context.Context, c *chatConversation, prov chatProvider, reason string) error {
-	agent := chatProviderKind(c, prov)
+func compactConversation(ctx context.Context, c *ChatConversation, prov ChatProvider, reason string) error {
+	agent := ChatProviderKind(c, prov)
 	// 使用量台帳（ADR 0029 §3）: 圧縮はチャットターンの内側から呼ばれるので、ここで
 	// タグを上書きしないと外側の assistant.chat として数えられてしまう。要約は現行
 	// セッション上で撃つ＝コンテキストが積み上がったところに1回撃つので、単価が高い。
 	ctx = usagex.WithTag(ctx, usagex.Tag{
-		Feature: usagex.FeatureCompact, Trigger: compactTrigger(reason), Ref: c.ID,
+		Feature: usagex.FeatureCompact, Trigger: CompactTrigger(reason), Ref: c.ID,
 	})
-	prompt := syncProviderPrompt(c, agent, compactPrompt(c), len(c.Messages))
-	out, err := prov.send(ctx, c, prompt)
+	prompt := SyncProviderPrompt(c, agent, CompactPrompt(c), len(c.Messages))
+	out, err := prov.Send(ctx, c, prompt)
 	if err != nil {
 		return err
 	}
@@ -146,9 +146,9 @@ func compactConversation(ctx context.Context, c *chatConversation, prov chatProv
 // 理由で変わるため、理由を引数にせずキーで分ける）。
 func compactNoticeKey(reason string) string {
 	switch reason {
-	case compactReasonAuto:
+	case CompactReasonAuto:
 		return noticeKeyCompactAuto
-	case compactReasonRecovery:
+	case CompactReasonRecovery:
 		return noticeKeyCompactRecovery
 	default:
 		return noticeKeyCompactManual
@@ -160,7 +160,7 @@ func compactNoticeKey(reason string) string {
 // 同じくらい大事）。表示は compactNoticeKey のカタログ訳が担う（ADR 0033）。
 func compactNoticeContent(reason, summary string) string {
 	if reason == "" {
-		reason = compactReasonManual
+		reason = CompactReasonManual
 	}
 	return reason + "次の要約だけを新しいセッションへ引き継ぎ、続きはその上で応答します" +
 		"（この画面の会話履歴はそのまま残ります）。\n\n---\n\n" + summary
@@ -180,7 +180,7 @@ const chatCtxAutoCompactPct = 90.0
 // オペレーター会話: 200〜400k を引きずり、cache 書き直しだけで1ターン $1 超）。
 // 品質でなく**費用**を守る閾値なので、ウィンドウ比ではなく絶対量で切る。
 // AF_CHAT_AUTOCOMPACT_TOKENS で上書き可（相対のみに戻したければ大きな値を入れる）。
-const chatCtxAutoCompactTokens = 150_000
+const ChatCtxAutoCompactTokens = 150_000
 
 // chatAutoCompactThreshold returns the effective auto-compact percentage.
 func chatAutoCompactThreshold() float64 {
@@ -194,24 +194,24 @@ func chatAutoCompactThreshold() float64 {
 
 // chatCtxAutoCompactTokensMin is the floor for the user-configurable absolute
 // threshold: これ未満だと要約ターン自体のコストと圧縮の頻発で本末転倒になる。
-const chatCtxAutoCompactTokensMin = 20_000
+const ChatCtxAutoCompactTokensMin = 20_000
 
 // chatAutoCompactTokenThreshold returns the effective absolute-token threshold.
 // 優先順: 設定（設定 > アシスタント「自動圧縮の閾値」・ui-prefs
 // assistantAutoCompactTokens）→ 環境変数（デプロイ/E2E 用）→ 既定。
-func chatAutoCompactTokenThreshold() int {
+func ChatAutoCompactTokenThreshold() int {
 	if v, ok := uiprefs.Read()["assistantAutoCompactTokens"].(float64); ok && v > 0 {
-		if n := int(v); n >= chatCtxAutoCompactTokensMin {
+		if n := int(v); n >= ChatCtxAutoCompactTokensMin {
 			return n
 		}
-		return chatCtxAutoCompactTokensMin
+		return ChatCtxAutoCompactTokensMin
 	}
 	if v := os.Getenv("AF_CHAT_AUTOCOMPACT_TOKENS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
 	}
-	return chatCtxAutoCompactTokens
+	return ChatCtxAutoCompactTokens
 }
 
 // maybeAutoCompact runs the preventive compaction right before a turn when the
@@ -225,7 +225,7 @@ func chatAutoCompactTokenThreshold() int {
 // provider session to summarize. A failed compaction is logged and swallowed —
 // 90% is not overflow, so the turn itself may well still succeed; if it doesn't,
 // the 第3段 recovery takes over.
-func maybeAutoCompact(ctx context.Context, c *chatConversation, prov chatProvider) bool {
+func MaybeAutoCompact(ctx context.Context, c *ChatConversation, prov ChatProvider) bool {
 	if !uiprefs.ChatAutoCompact() {
 		return false
 	}
@@ -233,7 +233,7 @@ func maybeAutoCompact(ctx context.Context, c *chatConversation, prov chatProvide
 		return false
 	}
 	// 相対（ウィンドウ比 — 超過エラー防止）と絶対（トークン量 — 費用防衛）の OR。
-	if c.Context.Pct < chatAutoCompactThreshold() && c.Context.Tokens < chatAutoCompactTokenThreshold() {
+	if c.Context.Pct < chatAutoCompactThreshold() && c.Context.Tokens < ChatAutoCompactTokenThreshold() {
 		return false
 	}
 	if c.PendingHandoff != "" {
@@ -244,7 +244,7 @@ func maybeAutoCompact(ctx context.Context, c *chatConversation, prov chatProvide
 	}
 	cctx, cancel := context.WithTimeout(ctx, chatTimeout)
 	defer cancel()
-	if err := compactConversation(cctx, c, prov, compactReasonAuto); err != nil {
+	if err := compactConversation(cctx, c, prov, CompactReasonAuto); err != nil {
 		log.Printf("chat compact: auto compact %s: %v", c.ID, err)
 		return false
 	}
@@ -255,21 +255,21 @@ func maybeAutoCompact(ctx context.Context, c *chatConversation, prov chatProvide
 // new provider session. Returns the prompt and whether it carried a handoff —
 // the caller clears PendingHandoff only after the turn succeeds (a failed turn
 // retries the injection next time, mirroring injectPendingReports).
-func injectHandoff(c *chatConversation, prompt string) (string, bool) {
+func InjectHandoff(c *ChatConversation, prompt string) (string, bool) {
 	if strings.TrimSpace(c.PendingHandoff) == "" {
 		return prompt, false
 	}
-	return handoffPreambleFor(uiprefs.Locale()) + "\n\n" + c.PendingHandoff + "\n\n---\n\n" + prompt, true
+	return HandoffPreambleFor(uiprefs.Locale()) + "\n\n" + c.PendingHandoff + "\n\n---\n\n" + prompt, true
 }
 
 // handleChatCompact (POST /chat/conversations/{id}/compact) runs the compaction
 // under the conversation lock (serializes with in-flight turns; a queued compact
 // waits like a queued send). Returns the updated conversation.
-func handleChatCompact(w http.ResponseWriter, r *http.Request) {
+func HandleChatCompact(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	unlock := lockConv(id)
+	unlock := LockConv(id)
 	defer unlock()
-	c, err := loadConv(id)
+	c, err := LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
@@ -280,20 +280,20 @@ func handleChatCompact(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatNothingToCompact, "no provider session to compact")
 		return
 	}
-	prov := chatProviderFor(c)
+	prov := ChatProviderFor(c)
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
-	deregister := registerLiveTurn(id, cancel) // Stop ボタン / in_progress は通常ターンと同扱い
+	deregister := RegisterLiveTurn(id, cancel) // Stop ボタン / in_progress は通常ターンと同扱い
 	defer deregister()
-	if err := compactConversation(ctx, c, prov, compactReasonManual); err != nil {
+	if err := compactConversation(ctx, c, prov, CompactReasonManual); err != nil {
 		// 要約ターンが変異させた resume ハンドルは保存する（send の失敗パスと同じ）。
-		c.UpdatedAt = nowMs()
-		_ = saveConv(c)
+		c.UpdatedAt = NowMs()
+		_ = SaveConv(c)
 		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
 		return
 	}
-	c.UpdatedAt = nowMs()
-	if err := saveConv(c); err != nil {
+	c.UpdatedAt = NowMs()
+	if err := SaveConv(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return
 	}

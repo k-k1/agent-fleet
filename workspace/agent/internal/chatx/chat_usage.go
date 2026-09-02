@@ -31,18 +31,18 @@ const chatCtxWarnPct = 80.0
 // message.usage 共通の形）。iterations は 1 ターン内の API 呼び出し毎のスナップ
 // ショット（実測: 最後の要素が最終的なコンテキスト占有。ツール多段ターンでも
 // トップレベルの合算値ではなく末尾要素を使えば正確）。
-type claudeUsage struct {
+type ClaudeUsage struct {
 	InputTokens              int `json:"input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	// OutputTokens はコンテキスト占有には効かない（出力は次ターンの入力として戻る）が、
 	// 使用量台帳の spend には要る（docs/log/46 §2）。実測で存在を確認済み。
 	OutputTokens int           `json:"output_tokens"`
-	Iterations   []claudeUsage `json:"iterations,omitempty"`
+	Iterations   []ClaudeUsage `json:"iterations,omitempty"`
 }
 
 // contextTokens は入力側スナップショットの合計 = コンテキスト占有量。
-func (u claudeUsage) contextTokens() int {
+func (u ClaudeUsage) contextTokens() int {
 	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
@@ -50,7 +50,7 @@ func (u claudeUsage) contextTokens() int {
 // 縮退用**で、モデル別の内訳は失われるが総量は残る。トップレベルの値を使うのは、台帳が
 // 見たいのが「この呼び出しで実際に課金された量」だから — コンテキスト占有（iterations
 // 末尾のスナップショット）とは別の量。
-func (u claudeUsage) ledgerTokens() usagex.Tokens {
+func (u ClaudeUsage) LedgerTokens() usagex.Tokens {
 	return usagex.Tokens{
 		In: u.InputTokens, Out: u.OutputTokens,
 		CacheRead: u.CacheReadInputTokens, CacheCreate: u.CacheCreationInputTokens,
@@ -63,7 +63,7 @@ func (u claudeUsage) ledgerTokens() usagex.Tokens {
 // contextWindow はモデルの実ウィンドウ（recorded として使える）。トークン4種と CostUSD は
 // 使用量台帳のモデル別行（ADR 0029 §1）。claude は1呼び出しが複数モデルに割れることが
 // あるので、ここが唯一「モデル毎の内訳」を実測で持つ経路。全フィールド実測確認済み。
-type claudeModelUsage struct {
+type ClaudeModelUsage struct {
 	ContextWindow            int     `json:"contextWindow"`
 	InputTokens              int     `json:"inputTokens"`
 	OutputTokens             int     `json:"outputTokens"`
@@ -76,7 +76,7 @@ type claudeModelUsage struct {
 // usageModelRows は modelUsage を台帳のモデル別行へ変換する。キー（生 id）を model_raw、
 // canonicalModel を系列キーにする。順序はキー昇順に固定 — マップ反復順のままだと同じ
 // 呼び出しでも行順が揺れ、テストと台帳の読み口が不安定になる。
-func usageModelRows(mu map[string]claudeModelUsage) []usagex.ModelRow {
+func UsageModelRows(mu map[string]ClaudeModelUsage) []usagex.ModelRow {
 	if len(mu) == 0 {
 		return nil
 	}
@@ -103,14 +103,14 @@ func usageModelRows(mu map[string]claudeModelUsage) []usagex.ModelRow {
 // stream では assistant イベント毎の message.usage を、非 stream では result の
 // usage.iterations 末尾を最終スナップショットとして採る。
 type claudeCtx struct {
-	snap   claudeUsage
+	snap   ClaudeUsage
 	window int
 	model  string
 }
 
 // observeAssistant は stream の assistant イベント（message.usage）を反映する。
 // 同一メッセージのイベントは同じ usage を重複して運ぶので、単純に最後勝ちでよい。
-func (t *claudeCtx) observeAssistant(model string, u claudeUsage) {
+func (t *claudeCtx) observeAssistant(model string, u ClaudeUsage) {
 	if u.contextTokens() <= 0 {
 		return
 	}
@@ -122,7 +122,7 @@ func (t *claudeCtx) observeAssistant(model string, u claudeUsage) {
 
 // observeResult は result イベントの usage / modelUsage を反映する。iterations が
 // あれば末尾が最終スナップショット（assistant イベント由来の値とも一致する）。
-func (t *claudeCtx) observeResult(u claudeUsage, modelUsage map[string]claudeModelUsage) {
+func (t *claudeCtx) observeResult(u ClaudeUsage, modelUsage map[string]ClaudeModelUsage) {
 	if n := len(u.Iterations); n > 0 {
 		t.snap = u.Iterations[n-1]
 	} else if t.snap.contextTokens() == 0 {
@@ -147,7 +147,7 @@ func (t *claudeCtx) observeResult(u claudeUsage, modelUsage map[string]claudeMod
 // apply は追跡結果を会話へ格納する（成功ターンの saveConv 前に呼ぶ）。claude は
 // イベントに実モデルを載せる数少ないプロバイダなので、ここがそのターンのモデル
 // （--model に渡したエイリアスではなく API が名乗った版込み id）の記録点でもある。
-func (t *claudeCtx) apply(c *chatConversation) {
+func (t *claudeCtx) apply(c *ChatConversation) {
 	setChatContext(c, t.snap.InputTokens, t.snap.CacheReadInputTokens,
 		t.snap.CacheCreationInputTokens, t.window, t.model)
 	c.noteTurnModel(t.model)
@@ -157,7 +157,7 @@ func (t *claudeCtx) apply(c *chatConversation) {
 // cached_input_tokens を含む（rollout の token_count と同じ流儀）。ターン合算値
 // なので、ツール多段ターンではコンテキスト占有として過大側の近似になる — チャット
 // の大半（ツールなし 1 呼び出し）では正確で、警告用途には安全側。
-type codexUsage struct {
+type CodexUsage struct {
 	InputTokens       int `json:"input_tokens"`
 	CachedInputTokens int `json:"cached_input_tokens"`
 	// 使用量台帳向け（docs/log/46 §2）。実測（codex-cli 0.144.x）で turn.completed が
@@ -169,7 +169,7 @@ type codexUsage struct {
 
 // ledgerTokens は codex のターン合算 usage を台帳の内訳へ写す。input_tokens は cached を
 // 含む（rollout の token_count と同じ流儀）ので、fresh = input - cached。
-func (u codexUsage) ledgerTokens() usagex.Tokens {
+func (u CodexUsage) LedgerTokens() usagex.Tokens {
 	fresh := u.InputTokens - u.CachedInputTokens
 	if fresh < 0 {
 		fresh = 0
@@ -194,14 +194,14 @@ type opencodeUsage struct {
 }
 
 // ledgerTokens は opencode の内訳を台帳の形へ写す（input はキャッシュ分を含まない）。
-func (u opencodeUsage) ledgerTokens() usagex.Tokens {
+func (u opencodeUsage) LedgerTokens() usagex.Tokens {
 	return usagex.Tokens{In: u.Input, Out: u.Output, CacheRead: u.Cache.Read, CacheCreate: u.Cache.Write}
 }
 
 // setChatContext は共通の格納口。スナップショットが空のターン（usage の取れない
 // プロバイダ経路・空応答）では何もせず前回値を残す。window が取れなければモデル名
 // から推定する（contextWindowGuess — get_session_usage と同じ）。
-func setChatContext(c *chatConversation, fresh, read, create, window int, model string) {
+func setChatContext(c *ChatConversation, fresh, read, create, window int, model string) {
 	if fresh < 0 {
 		fresh = 0
 	}
@@ -227,7 +227,7 @@ func setChatContext(c *chatConversation, fresh, read, create, window int, model 
 // 基準で解決した固定値があればそれ（chatModelFor — 認証フォールバックや途中切替では会話の
 // ピン留めと別 CLI が回るので、kind を渡さないと他 CLI のモデル名でウィンドウを推定して
 // しまう）、なければバックエンド毎の既定。
-func chatCtxModelFor(c *chatConversation, kind string) string {
+func chatCtxModelFor(c *ChatConversation, kind string) string {
 	if m := chatModelFor(c, kind); m != "" {
 		return m
 	}
@@ -244,7 +244,7 @@ func chatCtxModelFor(c *chatConversation, kind string) string {
 // （自動ターン中＝会話を開いていない時でも気づけるように）。閾値を下回ったら
 // （プロバイダ側のコンパクション等で占有が減った場合）フラグを戻し、次の超過で
 // 改めて1回知らせる。呼び出し側が会話ロックを保持し、直後に saveConv すること。
-func noteContextPressure(c *chatConversation) {
+func NoteContextPressure(c *ChatConversation) {
 	u := c.Context
 	if u == nil || u.Pct < chatCtxWarnPct {
 		c.CtxWarned = false

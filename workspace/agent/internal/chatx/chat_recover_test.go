@@ -16,7 +16,7 @@ func TestIsContextOverflowErr(t *testing.T) {
 		"context_length_exceeded",
 	}
 	for _, m := range overflow {
-		if !isContextOverflowErr(errors.New(m)) {
+		if !IsContextOverflowErr(errors.New(m)) {
 			t.Fatalf("should detect overflow: %q", m)
 		}
 	}
@@ -27,19 +27,19 @@ func TestIsContextOverflowErr(t *testing.T) {
 		"context deadline exceeded", // Go の ctx タイムアウト — 超過エラーではない
 	}
 	for _, m := range notOverflow {
-		if isContextOverflowErr(errors.New(m)) {
+		if IsContextOverflowErr(errors.New(m)) {
 			t.Fatalf("should NOT detect overflow: %q", m)
 		}
 	}
-	if isContextOverflowErr(nil) {
+	if IsContextOverflowErr(nil) {
 		t.Fatal("nil must be false")
 	}
 }
 
 func TestRecoverForRetryNonOverflowIsNoop(t *testing.T) {
-	c := &chatConversation{ID: randUUID(), Agent: "claude", ClaudeSessionID: "old"}
+	c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old"}
 	prov := &stubProvider{reply: "要約"} // 呼ばれないはず
-	if recoverForRetry(context.Background(), c, prov, errors.New("some network blip")) {
+	if RecoverForRetry(context.Background(), c, prov, errors.New("some network blip")) {
 		t.Fatal("non-overflow error triggered recovery")
 	}
 	if len(prov.prompts) != 0 {
@@ -52,10 +52,10 @@ func TestRecoverForRetryNonOverflowIsNoop(t *testing.T) {
 
 func TestRecoverForRetryCompactsOnOverflow(t *testing.T) {
 	withTempHome(t)
-	c := &chatConversation{ID: randUUID(), Agent: "claude", ClaudeSessionID: "old", CtxWarned: true}
+	c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old", CtxWarned: true}
 	prov := &stubProvider{reply: "引き継ぎ要約"}
 	overflow := errors.New("claude returned an error: Prompt is too long")
-	if !recoverForRetry(context.Background(), c, prov, overflow) {
+	if !RecoverForRetry(context.Background(), c, prov, overflow) {
 		t.Fatal("overflow did not trigger recovery")
 	}
 	// compactConversation が走った証跡: ハンドルクリア＋PendingHandoff。
@@ -65,10 +65,10 @@ func TestRecoverForRetryCompactsOnOverflow(t *testing.T) {
 }
 
 func TestRecoverForRetryFailsWhenSummaryAlsoOverflows(t *testing.T) {
-	c := &chatConversation{ID: randUUID(), Agent: "claude", ClaudeSessionID: "old"}
+	c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old"}
 	// 既にウィンドウ超過 → 要約ターン自体も失敗するケース。
 	prov := &stubProvider{err: errors.New("Prompt is too long")}
-	if recoverForRetry(context.Background(), c, prov, errors.New("Prompt is too long")) {
+	if RecoverForRetry(context.Background(), c, prov, errors.New("Prompt is too long")) {
 		t.Fatal("recovery reported success though the summary turn failed")
 	}
 	if c.PendingHandoff != "" || c.ClaudeSessionID != "old" {
@@ -78,8 +78,8 @@ func TestRecoverForRetryFailsWhenSummaryAlsoOverflows(t *testing.T) {
 
 func TestNoteContextOverflow(t *testing.T) {
 	withTempHome(t)
-	c := &chatConversation{ID: randUUID(), Messages: []chatMessage{}}
-	noteContextOverflow(c)
+	c := &ChatConversation{ID: RandUUID(), Messages: []ChatMessage{}}
+	NoteContextOverflow(c)
 	if len(c.Messages) != 1 || c.Messages[0].Role != "notice" {
 		t.Fatalf("no notice appended: %+v", c.Messages)
 	}

@@ -39,7 +39,7 @@ func TestAgyChatModelDropsStalePin(t *testing.T) {
 }
 
 func TestAgyChatArgsFlagsBeforePrompt(t *testing.T) {
-	c := &chatConversation{Model: "", AgyConversationID: "u-1"}
+	c := &ChatConversation{Model: "", AgyConversationID: "u-1"}
 	got, model := agyChatArgs(c, "PROMPT")
 	want := []string{"--conversation", "u-1", "-p", "PROMPT"}
 	if !reflect.DeepEqual(got, want) {
@@ -49,7 +49,7 @@ func TestAgyChatArgsFlagsBeforePrompt(t *testing.T) {
 	if model != "" {
 		t.Fatalf("unpinned turn model = %q, want empty", model)
 	}
-	first := &chatConversation{}
+	first := &ChatConversation{}
 	got, _ = agyChatArgs(first, "PROMPT")
 	if len(got) < 2 || got[len(got)-2] != "-p" || got[len(got)-1] != "PROMPT" {
 		t.Fatalf("first-turn args = %q, want trailing -p PROMPT", got)
@@ -60,14 +60,14 @@ func TestAgyChatArgsFlagsBeforePrompt(t *testing.T) {
 }
 
 func TestAgyChatAllowRulesFollowToolGrant(t *testing.T) {
-	none := agyChatAllowRules(&chatConversation{Tools: assistants.ToolsNone})
+	none := agyChatAllowRules(&ChatConversation{Tools: assistants.ToolsNone})
 	if containsString(none, "mcp(af/*)") {
 		t.Fatalf("tools=none rules = %q, must not allow af", none)
 	}
 	if !containsString(none, "read_file") {
 		t.Fatalf("tools=none rules = %q, read tools missing", none)
 	}
-	read := agyChatAllowRules(&chatConversation{Tools: assistants.ToolsAFRead})
+	read := agyChatAllowRules(&ChatConversation{Tools: assistants.ToolsAFRead})
 	if !containsString(read, "mcp(af/*)") {
 		t.Fatalf("tools=af_read rules = %q, mcp(af/*) missing", read)
 	}
@@ -77,7 +77,7 @@ func TestAgyChatAllowRulesFollowToolGrant(t *testing.T) {
 }
 
 func TestAgyChatServersCarryWriteConv(t *testing.T) {
-	c := &chatConversation{ID: "00000000-0000-4000-8000-000000000001", Tools: assistants.ToolsAFWrite}
+	c := &ChatConversation{ID: "00000000-0000-4000-8000-000000000001", Tools: assistants.ToolsAFWrite}
 	servers := agyChatServers(c)
 	af, ok := servers["af"].(map[string]any)
 	if !ok {
@@ -97,14 +97,14 @@ func TestAgyChatServersCarryWriteConv(t *testing.T) {
 	if env["HOME"] != homeDir() {
 		t.Fatalf("af env HOME = %v, want real home %q (isolated-HOME leak)", env["HOME"], homeDir())
 	}
-	if s := agyChatServers(&chatConversation{Tools: assistants.ToolsNone}); len(s) != 0 {
+	if s := agyChatServers(&ChatConversation{Tools: assistants.ToolsNone}); len(s) != 0 {
 		t.Fatalf("tools=none servers = %v, want empty", s)
 	}
 }
 
 func TestChatAgyHomeWritesIsolatedConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	c := &chatConversation{ID: "00000000-0000-4000-8000-000000000002", Tools: assistants.ToolsAFRead}
+	c := &ChatConversation{ID: "00000000-0000-4000-8000-000000000002", Tools: assistants.ToolsAFRead}
 	home, wd, err := chatAgyHome(c)
 	if err != nil {
 		t.Fatal(err)
@@ -165,14 +165,15 @@ func TestAgyChatSendLive(t *testing.T) {
 	prevExe := agyChatExe
 	agyChatExe = func() string { return "/usr/local/bin/workspace-agent" }
 	t.Cleanup(func() { agyChatExe = prevExe })
-	c := &chatConversation{ID: randUUID(), Agent: "agy", Model: defaultAgyChatModel, Tools: assistants.ToolsAFRead}
+	c := &ChatConversation{ID: RandUUID(), Agent: "agy", Model: defaultAgyChatModel, Tools: assistants.ToolsAFRead}
 	t.Cleanup(func() {
 		_ = os.RemoveAll(filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "agy-"+c.ID))
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*chatTimeout)
 	defer cancel()
-	reply, err := agyChat{}.send(ctx, c,
+	reply, err := agyChat{}.Send(ctx, c,
 		"MCPツール list_my_sessions を実際に呼び出してください。呼び出しに成功したら「TOOL_OK <セッション件数>」、失敗したら「TOOL_FAIL <理由>」という形式だけで返答してください。")
+
 	if err != nil {
 		t.Fatalf("first turn: %v", err)
 	}
@@ -183,7 +184,7 @@ func TestAgyChatSendLive(t *testing.T) {
 		t.Fatal("conversation UUID not captured from the isolated home")
 	}
 	uuid := c.AgyConversationID
-	reply2, err := agyChat{}.send(ctx, c, "直前のあなたの返答をそのまま繰り返してください。")
+	reply2, err := agyChat{}.Send(ctx, c, "直前のあなたの返答をそのまま繰り返してください。")
 	if err != nil {
 		t.Fatalf("resume turn: %v", err)
 	}

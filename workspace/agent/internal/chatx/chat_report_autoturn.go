@@ -33,18 +33,18 @@ import (
 // 届く — 窓はそれを1ターンに畳める長さにする。設定（設定 > アシスタント「自動応答の
 // 束ね時間」・ui-prefs assistantAutoTurnDelay 秒）または AF_CHAT_AUTOTURN_DELAY（秒）
 // で上書き可、0 で即時（従来挙動）。
-const chatAutoTurnDelayDefault = 60 * time.Second
+const ChatAutoTurnDelayDefault = 60 * time.Second
 
 // chatAutoTurnDelayMax caps the configurable window: これ以上遅らせても束ね効果は
 // 頭打ちで、報告への追撃だけが遅くなる。
-const chatAutoTurnDelayMax = 10 * time.Minute
+const ChatAutoTurnDelayMax = 10 * time.Minute
 
 // chatAutoTurnDelay returns the effective bundling window（設定 → env → 既定）。
-func chatAutoTurnDelay() time.Duration {
+func ChatAutoTurnDelay() time.Duration {
 	if v, ok := uiprefs.Read()["assistantAutoTurnDelay"].(float64); ok && v >= 0 {
 		d := time.Duration(v) * time.Second
-		if d > chatAutoTurnDelayMax {
-			return chatAutoTurnDelayMax
+		if d > ChatAutoTurnDelayMax {
+			return ChatAutoTurnDelayMax
 		}
 		return d
 	}
@@ -53,7 +53,7 @@ func chatAutoTurnDelay() time.Duration {
 			return time.Duration(n) * time.Second
 		}
 	}
-	return chatAutoTurnDelayDefault
+	return ChatAutoTurnDelayDefault
 }
 
 // autoTurnScheduler runs one deferred turn per conversation per window.
@@ -72,7 +72,7 @@ func newAutoTurnScheduler(delay func() time.Duration, run func(convID string)) *
 // reportAutoTurns is the process-wide scheduler (プロセスが落ちれば窓は消えるが、
 // 未配信の報告は次のターン投入時に injectPendingReports が拾う — 即時起動時代の
 // go runReportAutoTurn が失われるのと同じ縮退で、消失にはならない)。
-var reportAutoTurns = newAutoTurnScheduler(chatAutoTurnDelay, runReportAutoTurn)
+var reportAutoTurns = newAutoTurnScheduler(ChatAutoTurnDelay, runReportAutoTurn)
 
 // schedule requests one operator turn for the conversation after the bundling
 // window. 窓は最初の報告が開き、以後の報告は同じ発火に相乗りする（届くたびの

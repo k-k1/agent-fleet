@@ -39,7 +39,7 @@ type chatStep struct {
 }
 
 // chatMessage is one turn in a conversation.
-type chatMessage struct {
+type ChatMessage struct {
 	Role    string `json:"role"` // "user" | "assistant" | "report" (docs/log/30 セッション報告) | "notice" (システム通知)
 	Content string `json:"content"`
 	TS      int64  `json:"ts"` // unix millis
@@ -89,7 +89,7 @@ type chatMessage struct {
 }
 
 // chatConversation is the persisted record (one JSON file per conversation).
-type chatConversation struct {
+type ChatConversation struct {
 	ID string `json:"id"`
 	// Slug is the conversation's short addressable identity ("a"+6 base32 — the
 	// assistant twin of session slugs "s…"), used wherever a human or an automation
@@ -106,7 +106,7 @@ type chatConversation struct {
 	Model       string        `json:"model,omitempty"`
 	CreatedAt   int64         `json:"created_at"`
 	UpdatedAt   int64         `json:"updated_at"`
-	Messages    []chatMessage `json:"messages"`
+	Messages    []ChatMessage `json:"messages"`
 	// Provider-native resume handles so each turn continues the CLI's own
 	// conversation (context + caching) instead of re-feeding the whole history.
 	ClaudeSessionID   string `json:"claude_session_id,omitempty"`
@@ -198,7 +198,7 @@ type chatConversation struct {
 	// Console: it is scratch for one turn, while chatMessage.Model is the record.
 	// Every provider clears it on entry and sets it only on success, so a failed or
 	// non-answering call can never lend its model to the next appended message.
-	turnModel string
+	TurnModel string
 	// modelOverride swaps the model for the NEXT provider call only (unexported =
 	// never persisted). 自動ターン専用モデル（設定 > アシスタント）が使う: 報告処理の
 	// 定型ターンだけを軽量モデルで回し、利用者ターン・圧縮の要約ターンは会話本来の
@@ -214,16 +214,16 @@ type chatConversation struct {
 // send/sendStream — including the ones that end up not reporting a model at all, so a
 // previous call in the same request (an auto-compaction turn, a retry after recovery)
 // cannot leak its model into this turn's message.
-func (c *chatConversation) startTurn() { c.turnModel = "" }
+func (c *ChatConversation) startTurn() { c.TurnModel = "" }
 
 // noteTurnModel records the model that actually drove this turn. Providers call it at
 // their success point only.
-func (c *chatConversation) noteTurnModel(model string) { c.turnModel = strings.TrimSpace(model) }
+func (c *ChatConversation) noteTurnModel(model string) { c.TurnModel = strings.TrimSpace(model) }
 
 // afToolsEnabled reports whether the fleet MCP tools attach to this chat at all (read
 // or write grant). New conversations set Tools; pre-assistant conversations only have
 // AFTools.
-func (c *chatConversation) afToolsEnabled() bool {
+func (c *ChatConversation) afToolsEnabled() bool {
 	switch c.Tools {
 	case assistants.ToolsAFRead, assistants.ToolsAFWrite:
 		return true
@@ -236,7 +236,7 @@ func (c *chatConversation) afToolsEnabled() bool {
 
 // afWriteEnabled reports whether the write tools (send_to_session …) are exposed to this
 // chat — only when the assistant granted af_write (docs/log/19 Q2 opt-in).
-func (c *chatConversation) afWriteEnabled() bool { return c.Tools == assistants.ToolsAFWrite }
+func (c *ChatConversation) AFWriteEnabled() bool { return c.Tools == assistants.ToolsAFWrite }
 
 // chatOutputRule is appended to every chat's system prompt. The file/shell tools are hard-
 // disallowed (chatToolLimits), so a write attempt just fails — this steers the model away
@@ -287,7 +287,7 @@ const (
 // Console, "translate this into Japanese" or "summarize this Japanese article in
 // Japanese" no longer fights a forced-English directive. Whoever wants the reply pinned
 // regardless of input still has 設定 > 回答言語 (ja / en), which wins over everything here.
-func (c *chatConversation) languageRule() string {
+func (c *ChatConversation) languageRule() string {
 	if c.SeedVerb == "translate" || c.AssistantID == "translate" {
 		return ""
 	}
@@ -303,9 +303,9 @@ func (c *chatConversation) languageRule() string {
 // personaOf is the system prompt for this conversation: the assistant snapshot's persona
 // (or the generic chat persona), followed by the global output rule and, when the user
 // pinned an output language, a language directive.
-func (c *chatConversation) personaOf() string {
+func (c *ChatConversation) personaOf() string {
 	lang := uiprefs.Locale()
-	base := chatPersonaFor(lang)
+	base := ChatPersonaFor(lang)
 	if strings.TrimSpace(c.Persona) != "" {
 		base = c.Persona
 	}
@@ -318,7 +318,7 @@ func (c *chatConversation) personaOf() string {
 
 // knowledgeArgs returns --add-dir flags for each knowledge dir that currently exists.
 // Builtin knowledge is re-materialized first so a container rebuild self-heals.
-func (c *chatConversation) knowledgeArgs() []string {
+func (c *ChatConversation) knowledgeArgs() []string {
 	var args []string
 	for _, d := range c.knowledgeDirs() {
 		args = append(args, "--add-dir", d)
@@ -329,7 +329,7 @@ func (c *chatConversation) knowledgeArgs() []string {
 // knowledgeDirs returns the existing knowledge dirs (re-materializing builtin
 // knowledge first). claude passes them as --add-dir; codex/opencode get them listed
 // in the prompt preamble (their read tools can open the paths directly).
-func (c *chatConversation) knowledgeDirs() []string {
+func (c *ChatConversation) knowledgeDirs() []string {
 	if len(c.Knowledge) == 0 {
 		return nil
 	}
@@ -363,7 +363,7 @@ type chatMeta struct {
 // summarize, answer) rather than reaching for file edits or bash on its own.
 // docs/log/28 P6: 表示言語で書く（アシスタントを選ばない会話の唯一のペルソナなので、ここが
 // 日本語のままだと英語 Console でも回答が日本語に倒れる）。
-func chatPersonaFor(lang string) string {
+func ChatPersonaFor(lang string) string {
 	if lang == "en" {
 		return "You assist an Agent Fleet user with their work. " +
 			"Handle what you are asked — translating or summarizing Markdown documents, answering questions — concisely. " +
@@ -398,7 +398,7 @@ const defaultOpencodeChatModel = "opencode/nemotron-3-ultra-free"
 // upstream degrades to agy's own default instead of a hard error.
 const defaultAgyChatModel = "Gemini 3.5 Flash (Medium)"
 
-const assistantRecommendedModel = "recommended"
+const AssistantRecommendedModel = "recommended"
 
 func recommendedCatalogModel(ids []string, target, fallback string) string {
 	if slices.Contains(ids, target) {
@@ -431,13 +431,13 @@ func recommendedAssistantModel(agent string) string {
 // resolveChatModel applies an agent-specific default only when the assistant did not
 // pin a model. The resolved value is snapshotted onto a new conversation, so an
 // existing thread keeps its prior model selection.
-func resolveChatModel(agent, model string) string {
+func ResolveChatModel(agent, model string) string {
 	if model = strings.TrimSpace(model); model != "" {
 		return model
 	}
 	if model, ok := assistantChatModelPref(agent); ok {
 		model = strings.TrimSpace(model)
-		if model != assistantRecommendedModel {
+		if model != AssistantRecommendedModel {
 			return model
 		}
 	}
@@ -447,7 +447,7 @@ func resolveChatModel(agent, model string) string {
 // chatModel resolves the --model for a conversation: a per-call override first
 // (自動ターン専用モデル — modelOverride のコメント参照), then its own model if set,
 // else the deployment default (AF_CHAT_MODEL or defaultChatModel).
-func chatModel(c *chatConversation) string {
+func chatModel(c *ChatConversation) string {
 	if c.modelOverride != "" {
 		return c.modelOverride
 	}
@@ -464,12 +464,12 @@ func chatModel(c *chatConversation) string {
 // ターンでは設定「アシスタントのモデル」の当該 CLI 行から解決し直す — 設定画面の説明
 // （「優先順位で別の CLI に切り替わった場合も、その CLI の行で選んだモデルを使います」）が
 // 実装上の契約。プロバイダは自分の kind を渡すだけでよい。
-func chatModelFor(c *chatConversation, kind string) string {
+func chatModelFor(c *ChatConversation, kind string) string {
 	if c.modelOverride != "" {
 		return c.modelOverride // 自動ターン専用モデル（呼び出し側が claude ターンだけに立てる）
 	}
 	if c.Agent != "" && kind != c.Agent {
-		return resolveChatModel(kind, "")
+		return ResolveChatModel(kind, "")
 	}
 	if kind == session.KindClaude {
 		return chatModel(c) // 旧来の AF_CHAT_MODEL 既定を保つ

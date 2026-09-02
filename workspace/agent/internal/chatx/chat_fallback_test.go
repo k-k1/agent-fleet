@@ -36,8 +36,8 @@ func TestCodexMCPArgsForwardAgentAndMemoCredentials(t *testing.T) {
 
 // afWriteConv is a conversation with the af_write grant and no registry servers —
 // the shape these af-plumbing assertions have always described.
-func afWriteConv() *chatConversation {
-	return &chatConversation{ID: "00000000-0000-4000-8000-000000000000", Tools: assistants.ToolsAFWrite}
+func afWriteConv() *ChatConversation {
+	return &ChatConversation{ID: "00000000-0000-4000-8000-000000000000", Tools: assistants.ToolsAFWrite}
 }
 
 func containsString(xs []string, want string) bool {
@@ -50,7 +50,7 @@ func containsString(xs []string, want string) bool {
 }
 
 func TestChatMessageRecordsActualFallbackAgent(t *testing.T) {
-	b, err := json.Marshal(chatMessage{Role: "assistant", Content: "ok", Agent: "codex", TS: 1})
+	b, err := json.Marshal(ChatMessage{Role: "assistant", Content: "ok", Agent: "codex", TS: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,10 +64,10 @@ func TestChatMessageRecordsActualFallbackAgent(t *testing.T) {
 }
 
 func TestNormalizeLegacyMessagesAtCodexFallback(t *testing.T) {
-	c := &chatConversation{
+	c := &ChatConversation{
 		Agent:          "claude",
 		CodexSessionID: "019f7ea6-65e0-7341-be2f-4bb8721460a8", // 1784536262112 ms
-		Messages: []chatMessage{
+		Messages: []ChatMessage{
 			{Role: "assistant", Content: "before", TS: 1784536262000},
 			{Role: "assistant", Content: "fallback", TS: 1784536263000},
 			{Role: "assistant", Content: "explicit switch-back", Agent: "claude", TS: 1784536264000},
@@ -89,9 +89,9 @@ func TestNormalizeLegacyMessagesAtCodexFallback(t *testing.T) {
 }
 
 func TestSyncProviderPromptReplaysFallbackDeltaOnLegacyClaudeResume(t *testing.T) {
-	c := &chatConversation{
+	c := &ChatConversation{
 		Agent: "claude", ClaudeSessionID: "old-claude", CodexSessionID: "old-codex",
-		Messages: []chatMessage{
+		Messages: []ChatMessage{
 			{Role: "user", Content: "古い依頼"},
 			{Role: "assistant", Content: "古い完了", Agent: "claude"},
 			{Role: "user", Content: "停止中の対象へ送って"},
@@ -99,7 +99,7 @@ func TestSyncProviderPromptReplaysFallbackDeltaOnLegacyClaudeResume(t *testing.T
 			{Role: "user", Content: "今度こそ送って"}, // current turn: supplied separately
 		},
 	}
-	got := syncProviderPrompt(c, "claude", "今度こそ送って", len(c.Messages)-1)
+	got := SyncProviderPrompt(c, "claude", "今度こそ送って", len(c.Messages)-1)
 	if strings.Contains(got, "古い依頼") || strings.Contains(got, "古い完了") {
 		t.Fatalf("already-known Claude history was replayed: %q", got)
 	}
@@ -114,9 +114,9 @@ func TestSyncProviderPromptReplaysFallbackDeltaOnLegacyClaudeResume(t *testing.T
 }
 
 func TestSyncProviderPromptUsesCursorAfterSuccessfulTurn(t *testing.T) {
-	c := &chatConversation{
+	c := &ChatConversation{
 		Agent: "claude", ClaudeSessionID: "claude", ClaudeMessageCursor: 4,
-		Messages: []chatMessage{
+		Messages: []ChatMessage{
 			{Role: "user", Content: "u1"},
 			{Role: "assistant", Content: "a1", Agent: "claude"},
 			{Role: "user", Content: "u2"},
@@ -124,16 +124,16 @@ func TestSyncProviderPromptUsesCursorAfterSuccessfulTurn(t *testing.T) {
 			{Role: "user", Content: "u3"},
 		},
 	}
-	got := syncProviderPrompt(c, "claude", "u3", 4)
+	got := SyncProviderPrompt(c, "claude", "u3", 4)
 	if got != "u3" {
 		t.Fatalf("prompt with no missing turns = %q, want current prompt only", got)
 	}
 }
 
 func TestSyncProviderPromptRepairsLegacyGapEvenAfterSwitchBack(t *testing.T) {
-	c := &chatConversation{
+	c := &ChatConversation{
 		Agent: "claude", ClaudeSessionID: "old-claude", CodexSessionID: "old-codex",
-		Messages: []chatMessage{
+		Messages: []ChatMessage{
 			{Role: "user", Content: "最初"},
 			{Role: "assistant", Content: "Claude初回", Agent: "claude"},
 			{Role: "user", Content: "フォールバック中の依頼"},
@@ -143,7 +143,7 @@ func TestSyncProviderPromptRepairsLegacyGapEvenAfterSwitchBack(t *testing.T) {
 			{Role: "user", Content: "今回"},
 		},
 	}
-	got := syncProviderPrompt(c, "claude", "今回", len(c.Messages)-1)
+	got := SyncProviderPrompt(c, "claude", "今回", len(c.Messages)-1)
 	for _, want := range []string{"フォールバック中の依頼", "Codex応答", "Claude復帰後の応答"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("legacy gap repair = %q, missing %q", got, want)

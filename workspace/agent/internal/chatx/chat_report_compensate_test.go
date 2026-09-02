@@ -96,7 +96,7 @@ func TestReportResumedEvidence(t *testing.T) {
 			reportSignals{MarkerState: "idle", MarkerTurnEnd: true, MarkerAfterArm: true,
 				TranscriptBusy: true, PaneBusy: true}, false},
 		{"報告後にそのターンが中断で終わった＝再開ではない",
-			reportSignals{Abort: true, TailAborted: true, AbortReason: reportReasonTurnAborted,
+			reportSignals{Abort: true, TailAborted: true, AbortReason: ReportReasonTurnAborted,
 				TranscriptBusy: true}, false},
 		// 報告が中断より**後**に出るのは自動再開（docs/log/47 §4-6）の普通の姿: 再送を 2 回
 		// 試してから打ち切って報告するので、中断レコードは報告時刻より古い。時刻の下限で
@@ -122,7 +122,7 @@ func TestReportResumedEvidence(t *testing.T) {
 func reportedFixture(t *testing.T, name string, ago time.Duration) (session.Meta, string, string, string) {
 	t.Helper()
 	m, sid, conv := ledgerFixture(t, name)
-	id := addInstructionAt(m.Name, conv, turnSourceOperator, time.Now().Add(-10*time.Minute))
+	id := addInstructionAt(m.Name, conv, "operator", time.Now().Add(-10*time.Minute))
 	markInstrReported(m.Name, []string{id}, time.Now().Add(-ago))
 	return m, sid, conv, id
 }
@@ -136,7 +136,7 @@ func stillReported(t *testing.T, name, id string, ago time.Duration) {
 
 func rowByID(t *testing.T, name, id string) instrRow {
 	t.Helper()
-	for _, r := range readInstrRows(name) {
+	for _, r := range ReadInstrRows(name) {
 		if r.ID == id {
 			return r
 		}
@@ -174,7 +174,7 @@ func TestReportCompensationReopensOnBusyReturn(t *testing.T) {
 	if r.ReportedAt != "" {
 		t.Fatalf("reopen した行に報告時刻が残っている: %q", r.ReportedAt)
 	}
-	if !sessionReportPending(m.Name) {
+	if !SessionReportPending(m.Name) {
 		t.Fatal("開き直した行は未報告として扱われるべき（本完了で改めて報告する）")
 	}
 	// 開き直しは1回だけ。行は reopened なので、次の観測ではもう候補にならない。
@@ -192,7 +192,7 @@ func TestReportCompensationSkipsWhenNewInstruction(t *testing.T) {
 	var cs countingSink
 	rc := newIdleReconciler(cs.sink)
 
-	addInstructionAt(m.Name, conv, turnSourceOperator, time.Now().Add(-10*time.Second))
+	addInstructionAt(m.Name, conv, "operator", time.Now().Add(-10*time.Second))
 	status.Persist(sid, "working")
 
 	rc.compensate(m.Name, time.Now())
@@ -234,7 +234,7 @@ func TestReportCompensationStopsAtCap(t *testing.T) {
 	if r.State != instrReported || r.ReopenCount != instrReopenMax {
 		t.Fatalf("上限を超えて開き直した: %+v", r)
 	}
-	if sessionReportPending(m.Name) {
+	if SessionReportPending(m.Name) {
 		t.Fatal("打ち切った行が未報告のまま残っている")
 	}
 }
@@ -249,8 +249,8 @@ func TestReportCompensationCorrectionIsIdempotent(t *testing.T) {
 	rc := newIdleReconciler(deliverReportCard)
 
 	// 先に「早計だった完了報告」を会話へ置く（訂正はこれを指す）。
-	first := readInstrRows(m.Name)
-	if res := deliverReportCard(m.Name, conv, reportKindAnswerReady, "", first); res != reportSinkOK {
+	first := ReadInstrRows(m.Name)
+	if res := deliverReportCard(m.Name, conv, ReportKindAnswerReady, "", first); res != reportSinkOK {
 		t.Fatalf("完了報告の配送 = %v", res)
 	}
 	status.Persist(sid, "working")
@@ -271,7 +271,7 @@ func TestReportCompensationCorrectionIsIdempotent(t *testing.T) {
 
 	// 訂正は配ったが reopen する前に落ちた、を再現して再試行する。
 	stillReported(t, m.Name, id, 30*time.Second)
-	rows := readInstrRows(m.Name)
+	rows := ReadInstrRows(m.Name)
 	for i := range rows {
 		rows[i].ReopenCount = 0 // 世代も巻き戻す＝完全な再試行
 	}
@@ -289,7 +289,7 @@ func TestReportCompensationCorrectionIsIdempotent(t *testing.T) {
 	if len(reopened) != 1 {
 		t.Fatalf("開き直した行が1件ではない: %+v", reopened)
 	}
-	if res := deliverReportCard(m.Name, conv, reportKindAnswerReady, "", reopened); res != reportSinkOK {
+	if res := deliverReportCard(m.Name, conv, ReportKindAnswerReady, "", reopened); res != reportSinkOK {
 		t.Fatalf("本完了の配送 = %v", res)
 	}
 	if n := countReportCards(t, conv); n != 3 {
@@ -300,9 +300,9 @@ func TestReportCompensationCorrectionIsIdempotent(t *testing.T) {
 // lastReportCard returns the newest report card's body.
 func lastReportCard(t *testing.T, convID string) string {
 	t.Helper()
-	unlock := lockConv(convID)
+	unlock := LockConv(convID)
 	defer unlock()
-	c, err := loadConv(convID)
+	c, err := LoadConv(convID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestSelfReportKickWiresHintSeam(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/chat/report",
 		strings.NewReader(`{"name":"slot74","kind":"self-report"}`))
 	rec := httptest.NewRecorder()
-	handleChatReport(rec, req)
+	HandleChatReport(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
@@ -444,8 +444,8 @@ func TestSelfReportIsIdleEvidenceWithoutMarker(t *testing.T) {
 	// 申告**だけ**で settle するには「申告から selfReportSettleDelay 以上経っている」
 	// ことが要る（早呼び対策）。ここは申告が唯一の証拠になる筋なので、十分に古い申告で組む。
 	selfAt := time.Now().Add(-selfReportSettleDelay - time.Minute)
-	id1 := addInstructionAt(m.Name, conv, turnSourceOperator, selfAt.Add(-60*time.Second))
-	id2 := addInstructionAt(m.Name, conv, turnSourceOperator, selfAt.Add(2*time.Second))
+	id1 := addInstructionAt(m.Name, conv, "operator", selfAt.Add(-60*time.Second))
+	id2 := addInstructionAt(m.Name, conv, "operator", selfAt.Add(2*time.Second))
 
 	var cs countingSink
 	rc, _ := newFakeReconciler(t, reportTickDefault, cs.sink)
@@ -474,25 +474,25 @@ func TestSelfReportIsIdleEvidenceWithoutMarker(t *testing.T) {
 // 会話数ぶん加算すると、2会話から指示されているセッションは中断1回で上限に届いてしまう。
 func TestAutoResumeCountsSessionEventsNotConversations(t *testing.T) {
 	m, sid, conv1 := ledgerFixture(t, "slot79")
-	conv2 := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
-	if err := saveConv(conv2); err != nil {
+	conv2 := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
+	if err := SaveConv(conv2); err != nil {
 		t.Fatal(err)
 	}
 	var cs countingSink
 	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
 
 	past := time.Now().Add(-60 * time.Second)
-	addInstructionAt(m.Name, conv1, turnSourceOperator, past)
-	addInstructionAt(m.Name, conv2.ID, turnSourceOperator, past)
+	addInstructionAt(m.Name, conv1, "operator", past)
+	addInstructionAt(m.Name, conv2.ID, "operator", past)
 	status.PersistTurnEnd(sid, "idle")
-	rc.hint(m.Name, reportKindAnswerReady, reportReasonTurnAborted)
+	rc.hint(m.Name, ReportKindAnswerReady, ReportReasonTurnAborted)
 	clock.waitSweep(t, rc) // 静穏 1 回目
 	clock.advance(t, rc, reportTickDefault)
 
 	if got := cs.callsSnapshot(); len(got) != 2 {
 		t.Fatalf("会話ごとに1通配るべき: %v", got)
 	}
-	if n := autoResumeAttempts(m.Name); n != 1 {
+	if n := AutoResumeAttempts(m.Name); n != 1 {
 		t.Fatalf("自動再開カウンタ = %d, want 1（会話数ぶん加算している）", n)
 	}
 }

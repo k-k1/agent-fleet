@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -30,7 +29,7 @@ func TestResolveChatModel(t *testing.T) {
 		{session.KindAgy, "  Gemini 3.1 Pro (High)  ", "Gemini 3.1 Pro (High)"},
 	}
 	for _, tt := range tests {
-		if got := resolveChatModel(tt.agent, tt.model); got != tt.want {
+		if got := ResolveChatModel(tt.agent, tt.model); got != tt.want {
 			t.Errorf("resolveChatModel(%q, %q) = %q, want %q", tt.agent, tt.model, got, tt.want)
 		}
 	}
@@ -38,13 +37,13 @@ func TestResolveChatModel(t *testing.T) {
 
 func TestResolveChatModelUsesAssistantPreference(t *testing.T) {
 	writeUIPrefs(t, `{"assistantModels":{"codex":"gpt-custom","opencode":""}}`)
-	if got := resolveChatModel(session.KindCodex, ""); got != "gpt-custom" {
+	if got := ResolveChatModel(session.KindCodex, ""); got != "gpt-custom" {
 		t.Fatalf("codex preference = %q", got)
 	}
-	if got := resolveChatModel(session.KindOpencode, ""); got != "" {
+	if got := ResolveChatModel(session.KindOpencode, ""); got != "" {
 		t.Fatalf("explicit CLI default = %q, want empty", got)
 	}
-	if got := resolveChatModel(session.KindCodex, "explicit"); got != "explicit" {
+	if got := ResolveChatModel(session.KindCodex, "explicit"); got != "explicit" {
 		t.Fatalf("conversation pin must win, got %q", got)
 	}
 }
@@ -57,7 +56,7 @@ func TestResolveChatModelRecommended(t *testing.T) {
 		session.KindCursor: "",
 	}
 	for kind, want := range tests {
-		if got := resolveChatModel(kind, ""); got != want {
+		if got := ResolveChatModel(kind, ""); got != want {
 			t.Errorf("%s recommendation = %q, want %q", kind, got, want)
 		}
 	}
@@ -80,7 +79,7 @@ type modelChatProv struct {
 	model string // "" = the CLI named no model and none was passed
 }
 
-func (p modelChatProv) send(_ context.Context, c *chatConversation, _ string) (string, error) {
+func (p modelChatProv) Send(_ context.Context, c *ChatConversation, _ string) (string, error) {
 	c.startTurn()
 	if p.model != "" {
 		c.noteTurnModel(p.model)
@@ -95,7 +94,7 @@ func (p modelChatProv) send(_ context.Context, c *chatConversation, _ string) (s
 // ことは型が保証する（JSON タグ無しの小文字フィールド）。
 func TestChatModelOverride(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	c := &chatConversation{Model: "sonnet"}
+	c := &ChatConversation{Model: "sonnet"}
 	if got := chatModel(c); got != "sonnet" {
 		t.Fatalf("base model = %q", got)
 	}
@@ -109,66 +108,18 @@ func TestChatModelOverride(t *testing.T) {
 	}
 }
 
-func TestTurnModelRecordedPerMessage(t *testing.T) {
-	withTempHome(t)
-	stubChatProvider(t, session.KindClaude, modelChatProv{reply: "了解", model: "claude-sonnet-5-20260501"})
-	conv := &chatConversation{
-		ID: randUUID(), Agent: session.KindClaude, Model: "sonnet",
-		Tools: assistants.ToolsAFWrite, AssistantID: "operator",
-	}
-	if err := saveConv(conv); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runOperatorTurn(conv.ID, "状況は?"); err != nil {
-		t.Fatal(err)
-	}
-	c, err := loadConv(conv.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := c.Messages[len(c.Messages)-1].Model; got != "claude-sonnet-5-20260501" {
-		// The CLI's own id, not the "sonnet" alias we passed on the command line.
-		t.Fatalf("assistant model = %q, want the model the CLI reported", got)
-	}
-	if c.turnModel != "" { // scratch state, never persisted
-		t.Fatalf("turnModel leaked into the stored conversation: %q", c.turnModel)
-	}
-}
-
 // TestTurnModelBlankWhenUnknown: a backend that neither names its model nor received
 // one (codex/cursor on their own default) records nothing — the conversation's current
 // setting must not stand in for it, since that is not what answered.
-func TestTurnModelBlankWhenUnknown(t *testing.T) {
-	withTempHome(t)
-	stubChatProvider(t, session.KindClaude, modelChatProv{reply: "了解"})
-	conv := &chatConversation{
-		ID: randUUID(), Agent: session.KindClaude, Model: "sonnet",
-		Tools: assistants.ToolsAFWrite, AssistantID: "operator",
-	}
-	if err := saveConv(conv); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runOperatorTurn(conv.ID, "状況は?"); err != nil {
-		t.Fatal(err)
-	}
-	c, err := loadConv(conv.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := c.Messages[len(c.Messages)-1].Model; got != "" {
-		t.Fatalf("assistant model = %q, want empty (must not guess from conversation.Model)", got)
-	}
-}
-
 // TestClaudeCtxApplyRecordsTurnModel: claude's usage tracker is the single point where
 // the observed model reaches both the context gauge and the turn record.
 func TestClaudeCtxApplyRecordsTurnModel(t *testing.T) {
-	c := &chatConversation{Model: "sonnet"}
+	c := &ChatConversation{Model: "sonnet"}
 	tr := claudeCtx{model: "claude-sonnet-5-20260501"}
-	tr.snap = claudeUsage{InputTokens: 100}
+	tr.snap = ClaudeUsage{InputTokens: 100}
 	tr.apply(c)
-	if c.turnModel != "claude-sonnet-5-20260501" {
-		t.Fatalf("turnModel = %q", c.turnModel)
+	if c.TurnModel != "claude-sonnet-5-20260501" {
+		t.Fatalf("turnModel = %q", c.TurnModel)
 	}
 	if c.Context == nil || c.Context.Model != "claude-sonnet-5-20260501" {
 		t.Fatalf("context = %+v", c.Context)

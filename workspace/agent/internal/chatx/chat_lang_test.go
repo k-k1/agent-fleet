@@ -30,7 +30,7 @@ func TestChatOutputRuleFollowsUILocale(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			writeUIPrefs(t, c.prefs)
-			got := (&chatConversation{}).personaOf()
+			got := (&ChatConversation{}).personaOf()
 			if !strings.Contains(got, c.wantMarker) {
 				t.Fatalf("出力ルールが %q を含まない:\n%s", c.wantMarker, got)
 			}
@@ -46,18 +46,18 @@ func TestLanguageRuleAutoFollowsInput(t *testing.T) {
 	cases := []struct {
 		name  string
 		prefs string
-		conv  chatConversation
+		conv  ChatConversation
 		want  string
 	}{
 		// P6: persona/出力ルールが表示言語で書かれるようになったので、auto は両ロケールとも
 		// 「入力言語に従う」— 言語を固定したい利用者は明示 ja/en を選ぶ。
-		{"auto × 英語 Console → 入力言語に従う", `{"locale":"en"}`, chatConversation{}, ""},
-		{"auto × 日本語 Console → 入力言語に従う", `{"locale":"ja"}`, chatConversation{}, ""},
-		{"auto × 未設定 → 入力言語に従う", `{}`, chatConversation{}, ""},
-		{"明示 ja は英語 Console でも優先", `{"locale":"en","outputLanguage":"ja"}`, chatConversation{}, langRuleJA},
-		{"明示 en は日本語 Console でも優先", `{"locale":"ja","outputLanguage":"en"}`, chatConversation{}, langRuleEN},
-		{"翻訳は英語 Console でも除外", `{"locale":"en"}`, chatConversation{SeedVerb: "translate"}, ""},
-		{"旧 翻訳 builtin も除外", `{"locale":"en"}`, chatConversation{AssistantID: "translate"}, ""},
+		{"auto × 英語 Console → 入力言語に従う", `{"locale":"en"}`, ChatConversation{}, ""},
+		{"auto × 日本語 Console → 入力言語に従う", `{"locale":"ja"}`, ChatConversation{}, ""},
+		{"auto × 未設定 → 入力言語に従う", `{}`, ChatConversation{}, ""},
+		{"明示 ja は英語 Console でも優先", `{"locale":"en","outputLanguage":"ja"}`, ChatConversation{}, langRuleJA},
+		{"明示 en は日本語 Console でも優先", `{"locale":"ja","outputLanguage":"en"}`, ChatConversation{}, langRuleEN},
+		{"翻訳は英語 Console でも除外", `{"locale":"en"}`, ChatConversation{SeedVerb: "translate"}, ""},
+		{"旧 翻訳 builtin も除外", `{"locale":"en"}`, ChatConversation{AssistantID: "translate"}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

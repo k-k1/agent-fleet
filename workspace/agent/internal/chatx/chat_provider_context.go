@@ -14,7 +14,7 @@ const providerSyncPreamble = "【他のエージェントで進んだ会話の�
 
 const maxProviderSyncChars = 64 << 10
 
-func providerCursor(c *chatConversation, agent string) int {
+func providerCursor(c *ChatConversation, agent string) int {
 	var cursor int
 	switch agent {
 	case "claude":
@@ -64,7 +64,7 @@ func providerCursor(c *chatConversation, agent string) int {
 	return 0
 }
 
-func providerHasResume(c *chatConversation, agent string) bool {
+func providerHasResume(c *ChatConversation, agent string) bool {
 	switch agent {
 	case "claude":
 		return c.ClaudeSessionID != ""
@@ -88,7 +88,7 @@ func providerHasResume(c *chatConversation, agent string) bool {
 var providerResumeKinds = []string{"claude", "codex", "opencode", "agy", "cursor"}
 
 // anyProviderResume reports whether ANY backend still holds a native session to summarize.
-func anyProviderResume(c *chatConversation) bool {
+func anyProviderResume(c *ChatConversation) bool {
 	for _, k := range providerResumeKinds {
 		if providerHasResume(c, k) {
 			return true
@@ -99,12 +99,12 @@ func anyProviderResume(c *chatConversation) bool {
 
 // clearProviderSessions drops every backend's resume handle, so the next prompt opens a
 // fresh native session on whichever backend runs it (compaction — chat_compact.go).
-func clearProviderSessions(c *chatConversation) {
+func clearProviderSessions(c *ChatConversation) {
 	c.ClaudeSessionID, c.CodexSessionID, c.OpencodeSessionID = "", "", ""
 	c.AgyConversationID, c.CursorSessionID = "", ""
 }
 
-func markProviderSynced(c *chatConversation, agent string, cursor int) {
+func MarkProviderSynced(c *ChatConversation, agent string, cursor int) {
 	switch agent {
 	case "claude":
 		c.ClaudeMessageCursor = cursor
@@ -119,7 +119,7 @@ func markProviderSynced(c *chatConversation, agent string, cursor int) {
 	}
 }
 
-func resetProviderCursors(c *chatConversation) {
+func resetProviderCursors(c *ChatConversation) {
 	c.ClaudeMessageCursor, c.CodexMessageCursor = 0, 0
 	c.OpencodeMessageCursor, c.AgyMessageCursor = 0, 0
 	c.CursorMessageCursor = 0
@@ -129,7 +129,7 @@ func resetProviderCursors(c *chatConversation) {
 // Reports have their own delivery preamble and notices are UI metadata, so neither is
 // replayed. If compaction has just produced a handoff for a fresh native session, that
 // summary is already the authoritative replacement for the full history.
-func syncProviderPrompt(c *chatConversation, agent, prompt string, upto int) string {
+func SyncProviderPrompt(c *ChatConversation, agent, prompt string, upto int) string {
 	if upto < 0 {
 		upto = 0
 	}

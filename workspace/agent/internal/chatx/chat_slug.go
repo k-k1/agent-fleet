@@ -56,7 +56,7 @@ func allocConvSlug(taken map[string]bool) string {
 // takenConvSlugs collects the slugs currently in use.
 func takenConvSlugs() map[string]bool {
 	taken := map[string]bool{}
-	metas, err := listConvs()
+	metas, err := ListConvs()
 	if err != nil {
 		return taken
 	}
@@ -69,14 +69,14 @@ func takenConvSlugs() map[string]bool {
 }
 
 // newConvSlug is the creation-site helper: one fresh slug against the live store.
-func newConvSlug() string { return allocConvSlug(takenConvSlugs()) }
+func NewConvSlug() string { return allocConvSlug(takenConvSlugs()) }
 
 // resolveConvRef maps a conversation reference — a UUID or a slug — onto the
 // conversation's UUID. ok=false when the ref matches nothing.
-func resolveConvRef(ref string) (id string, ok bool) {
+func ResolveConvRef(ref string) (id string, ok bool) {
 	ref = strings.TrimSpace(ref)
 	if paths.ValidIDSegment(ref) {
-		if _, err := loadConv(ref); err == nil {
+		if _, err := LoadConv(ref); err == nil {
 			return ref, true
 		}
 		return "", false
@@ -84,7 +84,7 @@ func resolveConvRef(ref string) (id string, ok bool) {
 	if !validConvSlug(ref) {
 		return "", false
 	}
-	metas, err := listConvs()
+	metas, err := ListConvs()
 	if err != nil {
 		return "", false
 	}
@@ -100,8 +100,8 @@ func resolveConvRef(ref string) (id string, ok bool) {
 // Run once at agent start (async): each un-slugged conversation is loaded under its
 // lock, re-checked, stamped, and saved. Best-effort — a failure just logs; the next
 // start retries.
-func backfillConvSlugs() {
-	metas, err := listConvs()
+func BackfillConvSlugs() {
+	metas, err := ListConvs()
 	if err != nil {
 		return
 	}
@@ -116,15 +116,15 @@ func backfillConvSlugs() {
 			continue
 		}
 		func() {
-			unlock := lockConv(m.ID)
+			unlock := LockConv(m.ID)
 			defer unlock()
-			c, err := loadConv(m.ID)
+			c, err := LoadConv(m.ID)
 			if err != nil || c.Slug != "" { // re-check under the lock
 				return
 			}
 			c.Slug = allocConvSlug(taken)
 			taken[c.Slug] = true
-			if err := saveConv(c); err != nil {
+			if err := SaveConv(c); err != nil {
 				log.Printf("chat: backfill slug %s: %v", m.ID, err)
 			}
 		}()

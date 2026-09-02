@@ -56,28 +56,28 @@ var reportLinks = fstore.JSON[reportLink](paths.AgentConfigDir, "session-report"
 // A Console halt (no flag) leaves the rows open — if the user resumes and the session
 // then completes the instruction, that report is still the instruction's completion.
 // docs/log/51 Phase 2: disarm = 行を cancelled にする（規約は v1 のまま）。
-func disarmSessionReport(name string) { cancelInstructions(name) }
+func DisarmSessionReport(name string) { cancelInstructions(name) }
 
 // reportKindAnswerReady is the one TERMINAL state-transition report kind (an
 // instruction's completion). Only it (and an abnormal "exit", record_exit.go)
 // reports to the operator and disarms; interim kinds (question / plan-approval /
 // permission-request) go to the notification center only and leave the arm intact,
 // so the completion report is never pre-empted (docs/log/30).
-const reportKindAnswerReady = "answer-ready"
+const ReportKindAnswerReady = "answer-ready"
 
 // reportReasonTurnFailed qualifies an answer-ready report whose turn ended in a
 // provider-side error rather than an answer (agents.StateFailed). The kind stays
 // answer-ready because the EVENT is the same terminal completion; only the wording
 // differs, so the operator is told to read the error instead of the (non-existent)
 // result.
-const reportReasonTurnFailed = "turn-failed"
+const ReportReasonTurnFailed = "turn-failed"
 
 // reportReasonTurnAborted qualifies an answer-ready report whose turn was CUT OFF
 // before it answered by something that clears on its own — a dropped connection, a
 // temporary rate limit (docs/log/47). It is deliberately distinct from turn-failed: there
 // the operator must NOT re-send until the cause is fixed, here re-sending IS the fix,
 // which is what 中断時の自動再開 acts on.
-const reportReasonTurnAborted = "turn-aborted"
+const ReportReasonTurnAborted = "turn-aborted"
 
 // reportKindReopened is the COMPENSATION report (docs/log/51 §補償 / Phase 3): 先に配った
 // 完了報告が早計だったことの訂正。kind を分けるのは、これが「セッションの状態が変わった」
@@ -96,14 +96,14 @@ const reportReasonReopenCapped = "reopen-capped"
 // で会話へ何かが書かれることはない）— リコンサイラへのヒント兼 idle 証拠として運ばれる
 // だけで、報告本文は従来どおりサーバが生成する（fact-only。prompt injection 面を
 // 増やさない — ADR 0035 決定5）。
-const reportKindSelfReport = "self-report"
+const ReportKindSelfReport = "self-report"
 
 // maxAutoResumeAttempts caps the CONSECUTIVE auto-resumes for one session. A session
 // that keeps getting cut off is not a transient hiccup any more — past the cap the
 // report stops asking for a resume and escalates to the user instead. The counter is
 // reset by any clean completion, so a session that recovers starts over with a full
 // budget. (chatAutoTurnLimit remains the structural clamp on the operator's turns.)
-const maxAutoResumeAttempts = 2
+const MaxAutoResumeAttempts = 2
 
 // resumeState counts the consecutive auto-resume nudges sent for a session. A separate
 // per-session file for the same reason as reportLink: several independent writers touch
@@ -116,7 +116,7 @@ type resumeState struct {
 var resumeStates = fstore.JSON[resumeState](paths.AgentConfigDir, "session-resume", ".json")
 
 // autoResumeAttempts is the consecutive auto-resume count recorded for the session.
-func autoResumeAttempts(name string) int {
+func AutoResumeAttempts(name string) int {
 	s, _ := resumeStates.Read(name)
 	return s.Count
 }
@@ -133,13 +133,13 @@ func bumpAutoResume(name string) int {
 
 // resetAutoResume clears the counter after a turn that completed normally: the session
 // is healthy again, so the next abort gets the full retry budget.
-func resetAutoResume(name string) { resumeStates.Remove(name) }
+func ResetAutoResume(name string) { resumeStates.Remove(name) }
 
 // setAutoResumeAttempts forces the counter to n. Used when the Agent's own automatic
 // resume gives up (docs/log/47 §4-6): the retries it already spent are what the escalation
 // has to count, so the report that finally goes out renders the「上限に達した」wording
 // instead of asking the operator for yet another resume.
-func setAutoResumeAttempts(name string, n int) {
+func SetAutoResumeAttempts(name string, n int) {
 	_ = resumeStates.Write(name, resumeState{Count: n, At: time.Now().Format(time.RFC3339)})
 }
 
@@ -149,8 +149,8 @@ func setAutoResumeAttempts(name string, n int) {
 // hard-clamped to maxAutoTurnLimit with NO unlimited mode (docs/log/30): the clamp is
 // the structural stop for a runaway follow-up loop.
 const (
-	defaultAutoTurns = 10
-	maxAutoTurnLimit = 50
+	DefaultAutoTurns = 10
+	MaxAutoTurnLimit = 50
 )
 
 // bridgeBodyCap bounds the full-text bridge body (docs/log/37 Fix ③). It is large
@@ -158,11 +158,11 @@ const (
 // (split across messages by chunkMessage / maxBodyChunks). Kept under the 16 KiB
 // pending-text buffer with headroom for the table-fence expansion, and matched to
 // maxBodyChunks so nothing is silently dropped.
-const bridgeBodyCap = 12000
+const BridgeBodyCap = 12000
 
 // headRunes returns the FIRST n runes of s (whole string when shorter), appending an
 // ellipsis when truncated. The full-text bridge body wants the answer from the START.
-func headRunes(s string, n int) string {
+func HeadRunes(s string, n int) string {
 	r := []rune(strings.TrimSpace(s))
 	if len(r) <= n {
 		return string(r)
@@ -175,7 +175,7 @@ func headRunes(s string, n int) string {
 // No turn-text excerpt rides along: the report is the completion FACT only, uniform
 // across TUI and managed sessions — the operator reads details via
 // get_session_output (it summarizes the session state anyway).
-func kickSessionReport(name, kind, reason string) {
+func KickSessionReport(name, kind, reason string) {
 	body, err := json.Marshal(map[string]string{
 		"name": name, "kind": kind, "reason": reason,
 	})
@@ -195,11 +195,11 @@ func kickSessionReport(name, kind, reason string) {
 //
 // resumeAttempts は自動再開のカウンタ（呼び出し側が「この報告を配ったあとの値」を渡す）。
 // カウンタの永続化は配送が成功してからなので、本文生成には渡し値を使う。
-func reportArgs(display, name, kind, reason string, resumeAttempts int) map[string]string {
+func ReportArgs(display, name, kind, reason string, resumeAttempts int) map[string]string {
 	args := map[string]string{"display": display, "name": name}
-	if kind == reportKindAnswerReady && reason == reportReasonTurnAborted {
+	if kind == ReportKindAnswerReady && reason == ReportReasonTurnAborted {
 		args["attempts"] = strconv.Itoa(resumeAttempts)
-		args["max"] = strconv.Itoa(maxAutoResumeAttempts)
+		args["max"] = strconv.Itoa(MaxAutoResumeAttempts)
 	}
 	if kind == reportKindReopened && reason == reportReasonReopenCapped {
 		args["max"] = strconv.Itoa(instrReopenMax)
@@ -220,14 +220,14 @@ func reportArgs(display, name, kind, reason string, resumeAttempts int) map[stri
 // あとから勝手に再開したように見える。予約済みの事実をここで足す — Agent の裏送信を
 // 利用者から見えるようにする 2 つ目の窓（1 つ目は定時実行の一覧）。
 func rateLimitResumeAtMs(name, reason string) int64 {
-	if reason != reportReasonTurnFailed {
+	if reason != ReportReasonTurnFailed {
 		return 0
 	}
-	st, ok := rateLimitStates.Read(name)
-	if !ok || st.ScheduleID == "" || st.ResumeAt == "" {
+	scheduleID, resumeAt, ok := deps.RateLimitState(name)
+	if !ok || scheduleID == "" || resumeAt == "" {
 		return 0
 	}
-	at, err := time.Parse(time.RFC3339, st.ResumeAt)
+	at, err := time.Parse(time.RFC3339, resumeAt)
 	if err != nil {
 		return 0
 	}
@@ -238,14 +238,14 @@ func rateLimitResumeAtMs(name, reason string) int64 {
 // メッセージから取る（reportedInstrTS）: 台帳の ReportedAt は reopen で消えるので、
 // 訂正が再試行されたときや2回目の補償で参照先が無くなる。会話側は訂正の対象そのものなので
 // 消えようがない。読めなければ黙って省く — 訂正が出ないより時刻が欠ける方が軽い。
-func reopenTargetMs(c *chatConversation, rows []instrRow) int64 {
+func reopenTargetMs(c *ChatConversation, rows []instrRow) int64 {
 	return reportedInstrTS(c, rows)
 }
 
 // undeliveredReports returns the report messages not yet fed into the provider's
 // context (stored but never part of a prompt).
-func undeliveredReports(c *chatConversation) []*chatMessage {
-	var out []*chatMessage
+func undeliveredReports(c *ChatConversation) []*ChatMessage {
+	var out []*ChatMessage
 	for i := range c.Messages {
 		m := &c.Messages[i]
 		if m.Role == "report" && !m.Delivered {
@@ -279,11 +279,11 @@ func reportPreambleFor(lang string) string {
 // reportsPrompt joins pending reports into one provider prompt block. 本文は保存された
 // Content（＝表示用の事実）ではなく、ここで組み直す（docs/log/28 P6）: オペレーターへの指示は
 // 表示言語で、しかも自動走行/自動再開のトグルは**この瞬間**の設定で決まる。
-func reportsPrompt(reports []*chatMessage) string {
+func reportsPrompt(reports []*ChatMessage) string {
 	lang := uiprefs.Locale()
 	var parts []string
 	for _, m := range reports {
-		parts = append(parts, reportPromptFor(*m, lang))
+		parts = append(parts, ReportPromptFor(*m, lang))
 	}
 	return reportPreambleFor(lang) + "\n\n" + strings.Join(parts, "\n\n---\n\n")
 }
@@ -292,7 +292,7 @@ func reportsPrompt(reports []*chatMessage) string {
 // a report that didn't get its own auto turn must still reach the provider's
 // context on the NEXT turn, or the stored thread and the LLM context diverge).
 // Returns the prompt to send and the reports to mark delivered on success.
-func injectPendingReports(c *chatConversation, content string) (string, []*chatMessage) {
+func InjectPendingReports(c *ChatConversation, content string) (string, []*ChatMessage) {
 	pending := undeliveredReports(c)
 	if len(pending) == 0 {
 		return content, nil
@@ -309,7 +309,7 @@ func userMessageHeader(lang string) string {
 	return "【利用者からのメッセージ】"
 }
 
-func markReportsDelivered(reports []*chatMessage) {
+func MarkReportsDelivered(reports []*ChatMessage) {
 	for _, m := range reports {
 		m.Delivered = true
 	}
@@ -334,7 +334,7 @@ func autoTurnPausedContent(limit, pendingCount int) string {
 // noteAutoTurnPaused appends the pause notice (once per cap-reach) and mirrors it into
 // the notification center so the user is alerted even when the conversation isn't open.
 // The caller holds the conversation lock (runReportAutoTurn).
-func noteAutoTurnPaused(c *chatConversation, limit int) {
+func noteAutoTurnPaused(c *ChatConversation, limit int) {
 	if c.AutoPausedNotified {
 		return // already told the user for this cap-reach; don't spam further reports
 	}
@@ -344,8 +344,8 @@ func noteAutoTurnPaused(c *chatConversation, limit int) {
 		"limit":   strconv.Itoa(limit),
 		"pending": strconv.Itoa(pending),
 	}, autoTurnPausedContent(limit, pending)))
-	c.UpdatedAt = nowMs()
-	if err := saveConv(c); err != nil {
+	c.UpdatedAt = NowMs()
+	if err := SaveConv(c); err != nil {
 		log.Printf("chat report: save auto-pause notice %s: %v", c.ID, err)
 		return
 	}
@@ -364,7 +364,7 @@ func noteAutoTurnPaused(c *chatConversation, limit int) {
 // tick が同じ状態をレベルで見て拾う）。
 // interim（question / plan-approval）は従来どおりその場で配送する: arm を消費しない
 // ので「1回だけ」の調停が要らず、レイテンシがそのまま利用者体験になる経路だから。
-func handleChatReport(w http.ResponseWriter, r *http.Request) {
+func HandleChatReport(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name   string `json:"name"`
 		Kind   string `json:"kind"`
@@ -385,7 +385,7 @@ func handleChatReport(w http.ResponseWriter, r *http.Request) {
 	// 自己申告（docs/log/51 §ファストパス）。ヒントと同じ seam に乗せる — 申告は「今すぐ
 	// 見に行け」＋「セッション自身は終わったと言っている」という証拠を1つ足すだけで、
 	// 報告するかどうかはリコンサイラの述語が決める（早呼びは busy 証拠に止められる）。
-	if body.Kind == reportKindSelfReport {
+	if body.Kind == ReportKindSelfReport {
 		reportRec.selfReport(body.Name, time.Now())
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false, "accepted": true})
 		return
@@ -443,13 +443,13 @@ func recordSessionReport(name, convID, kind, reason string, rows []instrRow) rep
 	// 切り替わる。本文にはこの報告を配ったあとの値を使うが、**永続化はここではやらない**:
 	// 数える単位はセッションの中断イベント1回で、同じ静穏を複数の会話へ配る配送の回数
 	// ではないから（永続化は reportReconciler.evaluate が会話ループの外で1回だけ行う）。
-	attempts := autoResumeAttempts(name)
-	if kind == reportKindAnswerReady && reason == reportReasonTurnAborted {
+	attempts := AutoResumeAttempts(name)
+	if kind == ReportKindAnswerReady && reason == ReportReasonTurnAborted {
 		attempts++
 	}
 
-	unlock := lockConv(convID)
-	c, err := loadConv(convID)
+	unlock := LockConv(convID)
+	c, err := LoadConv(convID)
 	if err != nil {
 		unlock()
 		return reportSinkDrop // conversation deleted since the instruction — drop it
@@ -459,7 +459,7 @@ func recordSessionReport(name, convID, kind, reason string, rows []instrRow) rep
 		unlock()
 		return reportSinkOK // 既に配送済みの行だけ — 二重投稿せず台帳だけ進める
 	}
-	args := reportArgs(display, name, kind, reason, attempts)
+	args := ReportArgs(display, name, kind, reason, attempts)
 	if kind == reportKindReopened {
 		// 訂正の対象がどの報告かは、**会話メッセージ**から引く（reportedInstrTS）。
 		if ms := reopenTargetMs(c, fresh); ms > 0 {
@@ -470,7 +470,7 @@ func recordSessionReport(name, convID, kind, reason string, rows []instrRow) rep
 		args["fold_ats"] = instrFoldAts(fresh)
 	}
 	v := reportView{kind: kind, reason: reason, args: args}
-	c.Messages = append(c.Messages, chatMessage{
+	c.Messages = append(c.Messages, ChatMessage{
 		Role: "report",
 		// Content は表示の正本言語（ja）フォールバック。表示は NoticeKey ＋引数から
 		// Console が描き直し、プロンプトは reportPromptFor が組み直す（docs/log/28 P6）。
@@ -478,10 +478,10 @@ func recordSessionReport(name, convID, kind, reason string, rows []instrRow) rep
 		NoticeKey:  v.displayKey(),
 		NoticeArgs: args,
 		ReportKind: kind, ReportReason: reason,
-		Session: name, Instr: instrKeysFor(kind, fresh), TS: nowMs(),
+		Session: name, Instr: instrKeysFor(kind, fresh), TS: NowMs(),
 	})
-	c.UpdatedAt = nowMs()
-	if err := saveConv(c); err != nil {
+	c.UpdatedAt = NowMs()
+	if err := SaveConv(c); err != nil {
 		log.Printf("chat report: save %s: %v", convID, err)
 		unlock()
 		return reportSinkRetry
@@ -501,12 +501,12 @@ func recordSessionReport(name, convID, kind, reason string, rows []instrRow) rep
 // (serializes with user turns), turnInFlight (an in-flight turn will inject the
 // reports itself on its NEXT prompt), and the auto-turn cap.
 func runReportAutoTurn(convID string) {
-	unlock := lockConv(convID)
+	unlock := LockConv(convID)
 	defer unlock()
-	if turnInFlight(convID) {
+	if TurnInFlight(convID) {
 		return // a running turn exists; reports stay pending for the next prompt
 	}
-	c, err := loadConv(convID)
+	c, err := LoadConv(convID)
 	if err != nil {
 		return
 	}
@@ -523,8 +523,8 @@ func runReportAutoTurn(convID string) {
 		noteAutoTurnPaused(c, limit)
 		return
 	}
-	prov := chatProviderFor(c)
-	actualAgent := chatProviderKind(c, prov)
+	prov := ChatProviderFor(c)
+	actualAgent := ChatProviderKind(c, prov)
 	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
 	defer cancel()
 	// 使用量台帳（ADR 0029 §3）: 完了報告への自動ターンは連鎖しうる無人消費 — 独立した
@@ -532,15 +532,15 @@ func runReportAutoTurn(convID string) {
 	ctx = usagex.WithTag(ctx, usagex.Tag{
 		Feature: usagex.FeatureAssistantAutoTur, Trigger: usagex.TriggerAuto, Ref: c.ID, Verb: c.SeedVerb,
 	})
-	deregister := registerLiveTurn(convID, cancel) // Stop button + in_progress work as usual
+	deregister := RegisterLiveTurn(convID, cancel) // Stop button + in_progress work as usual
 	defer deregister()
 	// docs/log/33 第4段: 無人の自動ターンでも、閾値超過のままなら先に予防的自動圧縮
 	// （オペレーター会話は長寿でコンテキストが積み上がりやすい代表格）。
-	maybeAutoCompact(ctx, c, prov)
+	MaybeAutoCompact(ctx, c, prov)
 	// docs/log/33: 圧縮直後の自動ターンも引き継ぎ要約を先頭に載せる（新セッションは
 	// 過去の指示・文脈を何も知らない）。
-	prompt, handoff := injectCarryover(c, actualAgent, reportsPrompt(pending))
-	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages))
+	prompt, handoff := InjectCarryover(c, actualAgent, reportsPrompt(pending))
+	prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages))
 	// 自動ターン専用モデル（設定 > アシスタント）。send の間だけ立てる: 圧縮
 	// （maybeAutoCompact / recoverForRetry の要約ターン）には適用しない — 引き継ぎ
 	// 要約の品質は会話本来のモデルで担保する。claude のみ（chatModel 経由）。
@@ -549,43 +549,43 @@ func runReportAutoTurn(convID string) {
 		override = chatAutoTurnModel()
 	}
 	c.modelOverride = override
-	reply, err := prov.send(ctx, c, prompt)
+	reply, err := prov.Send(ctx, c, prompt)
 	c.modelOverride = ""
-	if err != nil && recoverForRetry(ctx, c, prov, err) {
+	if err != nil && RecoverForRetry(ctx, c, prov, err) {
 		// docs/log/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
 		// リトライ（reports は未配信なので再注入され要約も前置される）。
-		prompt, handoff = injectCarryover(c, actualAgent, reportsPrompt(pending))
-		prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages))
+		prompt, handoff = InjectCarryover(c, actualAgent, reportsPrompt(pending))
+		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages))
 		c.modelOverride = override
-		reply, err = prov.send(ctx, c, prompt)
+		reply, err = prov.Send(ctx, c, prompt)
 		c.modelOverride = ""
 	}
 	if err != nil {
-		if isContextOverflowErr(err) {
+		if IsContextOverflowErr(err) {
 			// black hole を塞ぐ: 圧縮も不能な超過を notice＋通知で必ず可視化する
 			// （従来は log のみで、無人のオペレーターが静かに死んでいた）。
-			noteContextOverflow(c)
+			NoteContextOverflow(c)
 		}
 		// Keep the reports undelivered (they retry on the next turn) but persist the
 		// mutated resume handle, mirroring handleChatSend's failure path.
-		c.UpdatedAt = nowMs()
-		_ = saveConv(c)
+		c.UpdatedAt = NowMs()
+		_ = SaveConv(c)
 		log.Printf("chat report: auto turn %s: %v", convID, err)
 		return
 	}
-	markReportsDelivered(pending)
+	MarkReportsDelivered(pending)
 	if handoff {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
 	c.AutoTurns++
-	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.turnModel, TS: nowMs()})
+	c.Messages = append(c.Messages, ChatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.TurnModel, TS: NowMs()})
 	c.ActiveAgent = actualAgent
-	markProviderSynced(c, actualAgent, len(c.Messages))
+	MarkProviderSynced(c, actualAgent, len(c.Messages))
 	// 無人の自動ターンでも逼迫を見逃さない（notice＋通知センター、chat_usage.go）:
 	// オペレーター会話は長寿でコンテキストが積み上がりやすい代表格。
-	noteContextPressure(c)
-	c.UpdatedAt = nowMs()
-	if err := saveConv(c); err != nil {
+	NoteContextPressure(c)
+	c.UpdatedAt = NowMs()
+	if err := SaveConv(c); err != nil {
 		log.Printf("chat report: save %s: %v", convID, err)
 	}
 	// docs/log/37 P3先取り: when this IS the Discord operator conversation, mirror the

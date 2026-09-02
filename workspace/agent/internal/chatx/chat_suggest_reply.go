@@ -21,13 +21,13 @@ import (
 // フォールバックにすぎない — ADR 0033）ので窓から外す。
 // 窓の切り出し（畳み込み・文字予算・行単位の末尾）はセッション版と完全に共通。チャットは
 // 1 メッセージが最初から 1 発言なので畳み込みは基本 no-op だが、予算窓の効き方は同じ。
-func chatReplySuggestPrompt(msgs []chatMessage, lang string) string {
-	real := make([]replyMsg, 0, len(msgs))
+func ChatReplySuggestPrompt(msgs []ChatMessage, lang string) string {
+	real := make([]ReplyMsg, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == "report" || m.Role == "notice" || strings.TrimSpace(m.Content) == "" {
 			continue
 		}
-		real = append(real, replyMsg{m.Role, m.Content})
+		real = append(real, ReplyMsg{Role: m.Role, Text: m.Content})
 	}
 	var b strings.Builder
 	b.WriteString(replySuggestInstructions(lang, replyCounterpartChat))
@@ -36,9 +36,9 @@ func chatReplySuggestPrompt(msgs []chatMessage, lang string) string {
 	return b.String()
 }
 
-func runChatReplySuggestLLM(ctx context.Context, msgs []chatMessage) ([]string, error) {
+func runChatReplySuggestLLM(ctx context.Context, msgs []ChatMessage) ([]string, error) {
 	lang := uiprefs.Locale()
-	reply, err := oneShotHeadless(ctx, replySuggestPersona(lang), chatReplySuggestPrompt(msgs, lang), replySuggestModel())
+	reply, err := OneShotHeadless(ctx, replySuggestPersona(lang), ChatReplySuggestPrompt(msgs, lang), replySuggestModel())
 	if err != nil {
 		return nil, fmt.Errorf("chat reply suggestion failed: %w", err)
 	}
@@ -47,7 +47,7 @@ func runChatReplySuggestLLM(ctx context.Context, msgs []chatMessage) ([]string, 
 
 // handleChatSuggestReplies は preview 専用。Console のチャット✨ボタンが叩き、返ってきた候補を
 // コンポーサー上のチップ列にマージする。
-func handleChatSuggestReplies(w http.ResponseWriter, r *http.Request) {
+func HandleChatSuggestReplies(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatConversationNotFnd, "invalid conversation id")
@@ -57,7 +57,7 @@ func handleChatSuggestReplies(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "feature_disabled", "reply suggestion is turned off")
 		return
 	}
-	c, err := loadConv(id)
+	c, err := LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return

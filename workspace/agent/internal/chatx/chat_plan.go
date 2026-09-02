@@ -52,7 +52,7 @@ const (
 // 基準は「完了したか」ではなく**「これが無いと次の一手を間違えるか」**なので、枠の
 // 名前を『前提』にして必要なものだけを吸い上げる（例: 意図的に fail させてあるテスト
 // は完了作業だが、落とすと後任が「壊れている」と誤認して直しに行く＝運ぶ側）。
-func planShapeFor(lang string) string {
+func PlanShapeFor(lang string) string {
 	if lang == "en" {
 		// 見出しは Console の入力プレースホルダ（chat.plan.placeholder の en）と同じ綴りに
 		// そろえる — 手編集の枠と生成される計画の見出しが食い違うと、差分更新のたびに
@@ -76,7 +76,7 @@ func planShapeFor(lang string) string {
 
 // planUpdateInstructionFor は既存計画があるときに前置する更新指示。ゼロから作り直させると
 // 世代ごとに揺れて、結局要約方式と同じ劣化をする — 差分更新に固定する。
-func planUpdateInstructionFor(lang string) string {
+func PlanUpdateInstructionFor(lang string) string {
 	if lang == "en" {
 		return "[Current work plan] Below is the work plan currently in effect for this conversation. " +
 			"Write the " + planMarker + " block **from it, reflecting only what changed in the recent conversation** " +
@@ -93,7 +93,7 @@ func planUpdateInstructionFor(lang string) string {
 // 書いているのと**逆向き**にしてある。要約は背景情報だが、計画は従わせたい指示だから。
 // ここを取り違えて計画まで「参考情報」に格下げすると、運べていても従わず、利用者から
 // 見れば結局「忘れている」のと同じになる。
-func planPreambleFor(lang string) string {
+func PlanPreambleFor(lang string) string {
 	if lang == "en" {
 		return "[Current work plan] This is the agreed work plan currently in effect for this conversation. " +
 			"Carry the work forward along this plan (a new instruction from the user takes precedence)."
@@ -114,13 +114,13 @@ func planModel() string { return envOr("AF_PLAN_MODEL", "sonnet") }
 
 // compactPrompt builds the compaction turn's instruction: one reply carrying the plan
 // block (原文で運ぶ) and the summary block (背景). 既存計画があれば差分更新を指示する。
-func compactPrompt(c *chatConversation) string {
+func CompactPrompt(c *ChatConversation) string {
 	lang := uiprefs.Locale()
 	var b strings.Builder
 	if p := strings.TrimSpace(c.Plan); p != "" {
-		b.WriteString(planUpdateInstructionFor(lang) + "\n\n" + p + "\n\n---\n\n")
+		b.WriteString(PlanUpdateInstructionFor(lang) + "\n\n" + p + "\n\n---\n\n")
 	}
-	b.WriteString(compactSummaryPromptFor(lang))
+	b.WriteString(CompactSummaryPromptFor(lang))
 	return b.String()
 }
 
@@ -186,10 +186,10 @@ func clampPlan(s string) string {
 	if len(r) <= planMaxRunes {
 		return t
 	}
-	return strings.TrimSpace(string(r[:planMaxRunes])) + "\n\n" + planTruncatedNote(uiprefs.Locale())
+	return strings.TrimSpace(string(r[:planMaxRunes])) + "\n\n" + PlanTruncatedNote(uiprefs.Locale())
 }
 
-func planTruncatedNote(lang string) string {
+func PlanTruncatedNote(lang string) string {
 	if lang == "en" {
 		return "(truncated here — the plan hit its length limit)"
 	}
@@ -199,18 +199,18 @@ func planTruncatedNote(lang string) string {
 // setPlan stores a new plan and reports whether it actually changed. 変わっていない
 // ときに notice を出さない（自動圧縮のたびに同じ計画カードが積まれると、本当に計画が
 // 動いたときの1枚が埋もれる）ための判定を兼ねる。
-func setPlan(c *chatConversation, plan string) bool {
+func setPlan(c *ChatConversation, plan string) bool {
 	next := clampPlan(plan)
 	if next == strings.TrimSpace(c.Plan) {
 		return false
 	}
-	c.Plan, c.PlanUpdatedAt = next, nowMs()
+	c.Plan, c.PlanUpdatedAt = next, NowMs()
 	return true
 }
 
 // notePlanUpdated appends the "計画を更新しました" notice with the plan body. 原文
 // キャリーフォワードの誤上書きに人が気づける唯一の場所なので、本文ごと見せる。
-func notePlanUpdated(c *chatConversation) {
+func notePlanUpdated(c *ChatConversation) {
 	c.Messages = append(c.Messages, newNotice(noticeKeyPlanUpdated,
 		map[string]string{"plan": c.Plan},
 		"作業計画を更新しました。以降の新しいセッションには、この計画を要約せず原文のまま引き継ぎます。"+
@@ -221,12 +221,12 @@ func notePlanUpdated(c *chatConversation) {
 // session for this backend (圧縮直後・エージェント切替直後・初回)。resume が生きている
 // ターンでは相手の文脈に既に計画があるので送らない — 毎ターン送ると入力トークンを
 // 二重に払うだけになる。
-func injectPlan(c *chatConversation, agent, prompt string) (string, bool) {
+func InjectPlan(c *ChatConversation, agent, prompt string) (string, bool) {
 	plan := strings.TrimSpace(c.Plan)
 	if plan == "" || providerHasResume(c, agent) {
 		return prompt, false
 	}
-	return planPreambleFor(uiprefs.Locale()) + "\n\n" + plan + "\n\n---\n\n" + prompt, true
+	return PlanPreambleFor(uiprefs.Locale()) + "\n\n" + plan + "\n\n---\n\n" + prompt, true
 }
 
 // injectCarryover prepends everything that must survive a provider-session reset:
@@ -236,14 +236,14 @@ func injectPlan(c *chatConversation, agent, prompt string) (string, bool) {
 // （計画は今まさに従わせたい指示であり、要約は背景）。戻り値の bool は従来どおり
 // **要約を運んだか**で、呼び出し側はターン成功時に PendingHandoff を落とす。計画は
 // 会話に残り続けるので落とさない。
-func injectCarryover(c *chatConversation, agent, prompt string) (string, bool) {
-	prompt, _ = injectPlan(c, agent, prompt)
-	return injectHandoff(c, prompt)
+func InjectCarryover(c *ChatConversation, agent, prompt string) (string, bool) {
+	prompt, _ = InjectPlan(c, agent, prompt)
+	return InjectHandoff(c, prompt)
 }
 
 // --- 計画を更新（明示・oneShotHeadless）---------------------------------------
 
-func planRefreshPersonaFor(lang string) string {
+func PlanRefreshPersonaFor(lang string) string {
 	if lang == "en" {
 		return "You maintain a work plan. You compare the current plan you are given against the recent conversation " +
 			"and output only the plan's latest version. You never write a preamble, a closing remark or a code fence."
@@ -255,17 +255,17 @@ func planRefreshPersonaFor(lang string) string {
 // planRefreshPrompt asks for the updated plan only. 会話のプロバイダセッションではなく
 // 一発ヘッドレスで回すので、文脈は「現在の計画＋直近の会話」だけを明示的に渡す。
 // 会話本文は原文のまま渡し、枠だけを表示言語で書く（返信サジェスト・件名提案と同じ分け方）。
-func planRefreshPrompt(c *chatConversation, lang string) string {
+func planRefreshPrompt(c *ChatConversation, lang string) string {
 	var b strings.Builder
-	b.WriteString(planRefreshInstructions(strings.TrimSpace(c.Plan), lang))
-	b.WriteString(planContextHeader(lang))
+	b.WriteString(PlanRefreshInstructions(strings.TrimSpace(c.Plan), lang))
+	b.WriteString(PlanContextHeader(lang))
 	for _, m := range planContextTurns(c.Messages) {
 		fmt.Fprintf(&b, "%s: %s\n\n", m.Role, planTailText(m.Content))
 	}
 	return b.String()
 }
 
-func planRefreshInstructions(plan, lang string) string {
+func PlanRefreshInstructions(plan, lang string) string {
 	if lang == "en" {
 		var b strings.Builder
 		if plan != "" {
@@ -277,7 +277,7 @@ func planRefreshInstructions(plan, lang string) string {
 		}
 		b.WriteString("Write the plan under these three headings (omit a heading that has nothing under it). " +
 			"Write it in the language mainly used in this conversation.\n\n")
-		b.WriteString(planShapeFor(lang) + "\n\n")
+		b.WriteString(PlanShapeFor(lang) + "\n\n")
 		return b.String()
 	}
 	var b strings.Builder
@@ -289,11 +289,11 @@ func planRefreshInstructions(plan, lang string) string {
 		b.WriteString("【指示】直近の会話から、この先の作業計画を起こしてください。\n")
 	}
 	b.WriteString("計画は次の3見出しで書きます（該当が無い見出しは省略可）。この会話で主に使われている言語で。\n\n")
-	b.WriteString(planShapeFor(lang) + "\n\n")
+	b.WriteString(PlanShapeFor(lang) + "\n\n")
 	return b.String()
 }
 
-func planContextHeader(lang string) string {
+func PlanContextHeader(lang string) string {
 	if lang == "en" {
 		return "--- recent conversation ---\n"
 	}
@@ -302,8 +302,8 @@ func planContextHeader(lang string) string {
 
 // planContextTurns は計画の文脈に使う末尾窓。report / notice は会話の合意ではないので
 // 外す（notice 本文は表示用カタログの正本言語フォールバックにすぎない — ADR 0033）。
-func planContextTurns(msgs []chatMessage) []chatMessage {
-	real := make([]chatMessage, 0, len(msgs))
+func planContextTurns(msgs []ChatMessage) []ChatMessage {
+	real := make([]ChatMessage, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == "report" || m.Role == "notice" || strings.TrimSpace(m.Content) == "" {
 			continue
@@ -327,14 +327,14 @@ func planTailText(s string) string {
 
 // refreshPlan runs the one-shot plan update and stores the result. Returns whether the
 // plan changed. 呼び出し側が会話ロックを持つ。
-func refreshPlan(ctx context.Context, c *chatConversation) (bool, error) {
+func refreshPlan(ctx context.Context, c *ChatConversation) (bool, error) {
 	// 使用量台帳（ADR 0029 §3）: 計画更新は会話ターンとは別の補助機能。タグを付けないと
 	// unknown（＝タグ付け忘れの信号）に落ちる。
 	ctx = usagex.WithTag(ctx, usagex.Tag{
 		Feature: usagex.FeaturePlanUpdate, Trigger: usagex.TriggerManual, Ref: c.ID,
 	})
 	lang := uiprefs.Locale()
-	reply, err := oneShotHeadless(ctx, planRefreshPersonaFor(lang), planRefreshPrompt(c, lang), planModel())
+	reply, err := OneShotHeadless(ctx, PlanRefreshPersonaFor(lang), planRefreshPrompt(c, lang), planModel())
 	if err != nil {
 		return false, fmt.Errorf("plan refresh failed: %w", err)
 	}
@@ -359,8 +359,8 @@ type chatPlanReq struct {
 // 会話まるごとの GET と分けてあるのは MCP（オペレーター自身が自分の計画を読む口・
 // docs/log/33 第5段 案D）のため: 全メッセージを返すと、計画を1行読むためにモデルへ会話
 // 全文を流し込むことになる。
-func handleChatPlanGet(w http.ResponseWriter, r *http.Request) {
-	c, err := loadConv(r.PathValue("id"))
+func HandleChatPlanGet(w http.ResponseWriter, r *http.Request) {
+	c, err := LoadConv(r.PathValue("id"))
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
@@ -371,15 +371,15 @@ func handleChatPlanGet(w http.ResponseWriter, r *http.Request) {
 // handleChatPlanSet (PUT /chat/conversations/{id}/plan) stores a hand-edited plan.
 // 空文字を渡せば計画を消せる（完了した計画を畳む出口 — 自動更新は消さないので、
 // クリアは人の操作だけが行う）。
-func handleChatPlanSet(w http.ResponseWriter, r *http.Request) {
+func HandleChatPlanSet(w http.ResponseWriter, r *http.Request) {
 	var req chatPlanReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	id := r.PathValue("id")
-	unlock := lockConv(id)
+	unlock := LockConv(id)
 	defer unlock()
-	c, err := loadConv(id)
+	c, err := LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
@@ -388,8 +388,8 @@ func handleChatPlanSet(w http.ResponseWriter, r *http.Request) {
 		if req.Notice {
 			notePlanUpdated(c)
 		}
-		c.UpdatedAt = nowMs()
-		if err := saveConv(c); err != nil {
+		c.UpdatedAt = NowMs()
+		if err := SaveConv(c); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 			return
 		}
@@ -399,11 +399,11 @@ func handleChatPlanSet(w http.ResponseWriter, r *http.Request) {
 
 // handleChatPlanRefresh (POST /chat/conversations/{id}/plan/refresh) re-derives the plan
 // from the recent conversation — the 壁打ちで計画が動いた直後に押すボタン。
-func handleChatPlanRefresh(w http.ResponseWriter, r *http.Request) {
+func HandleChatPlanRefresh(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	unlock := lockConv(id)
+	unlock := LockConv(id)
 	defer unlock()
-	c, err := loadConv(id)
+	c, err := LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
@@ -421,8 +421,8 @@ func handleChatPlanRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	if changed {
 		notePlanUpdated(c)
-		c.UpdatedAt = nowMs()
-		if err := saveConv(c); err != nil {
+		c.UpdatedAt = NowMs()
+		if err := SaveConv(c); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 			return
 		}

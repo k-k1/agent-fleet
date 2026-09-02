@@ -23,7 +23,7 @@ import (
 // (load-modify-save), while different conversations proceed in parallel.
 var convLocks sync.Map // id -> *sync.Mutex
 
-func lockConv(id string) func() {
+func LockConv(id string) func() {
 	m, _ := convLocks.LoadOrStore(id, &sync.Mutex{})
 	mu := m.(*sync.Mutex)
 	mu.Lock()
@@ -38,7 +38,7 @@ func chatDir() string {
 
 func convPath(id string) string { return filepath.Join(chatDir(), id+".json") }
 
-func loadConv(id string) (*chatConversation, error) {
+func LoadConv(id string) (*ChatConversation, error) {
 	if !paths.ValidIDSegment(id) {
 		return nil, errors.New("invalid conversation id")
 	}
@@ -46,7 +46,7 @@ func loadConv(id string) (*chatConversation, error) {
 	if err != nil {
 		return nil, err
 	}
-	var c chatConversation
+	var c ChatConversation
 	if err := json.Unmarshal(b, &c); err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func loadConv(id string) (*chatConversation, error) {
 // 48 bits give the exact fallback start time. Messages before that point came from the
 // preferred backend; messages from that point came from Codex. Once new code writes an
 // explicit Agent it always wins (including a later switch back to Claude).
-func normalizeChatAgentMetadata(c *chatConversation) {
+func normalizeChatAgentMetadata(c *ChatConversation) {
 	codexAt, hasCodexAt := uuidV7Millis(c.CodexSessionID)
 	lastAgent := ""
 	for i := range c.Messages {
@@ -89,7 +89,7 @@ func uuidV7Millis(id string) (int64, bool) {
 	return ms, err == nil
 }
 
-func saveConv(c *chatConversation) error {
+func SaveConv(c *ChatConversation) error {
 	if err := os.MkdirAll(chatDir(), 0o700); err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func saveConv(c *chatConversation) error {
 	return os.WriteFile(convPath(c.ID), append(b, '\n'), 0o600)
 }
 
-func listConvs() ([]chatMeta, error) {
+func ListConvs() ([]chatMeta, error) {
 	ents, err := os.ReadDir(chatDir())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -113,7 +113,7 @@ func listConvs() ([]chatMeta, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		c, err := loadConv(strings.TrimSuffix(e.Name(), ".json"))
+		c, err := LoadConv(strings.TrimSuffix(e.Name(), ".json"))
 		if err != nil {
 			continue // skip unreadable entries rather than failing the whole list
 		}
@@ -129,7 +129,7 @@ func listConvs() ([]chatMeta, error) {
 
 // randUUID returns a random RFC-4122 v4 UUID, used for both conversation IDs and
 // the claude --session-id we pin.
-func randUUID() string {
+func RandUUID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	b[6] = (b[6] & 0x0f) | 0x40
@@ -138,4 +138,4 @@ func randUUID() string {
 	return fmt.Sprintf("%s-%s-%s-%s-%s", h[0:8], h[8:12], h[12:16], h[16:20], h[20:32])
 }
 
-func nowMs() int64 { return time.Now().UnixMilli() }
+func NowMs() int64 { return time.Now().UnixMilli() }

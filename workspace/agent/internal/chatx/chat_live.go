@@ -20,7 +20,7 @@ var liveTurns sync.Map // conversation id -> context.CancelFunc
 
 // registerLiveTurn marks a conversation's turn as running and stores its cancel
 // func; the returned func deregisters it (call via defer at turn end).
-func registerLiveTurn(id string, cancel context.CancelFunc) func() {
+func RegisterLiveTurn(id string, cancel context.CancelFunc) func() {
 	liveTurns.Store(id, cancel)
 	return func() { liveTurns.Delete(id) }
 }
@@ -28,7 +28,7 @@ func registerLiveTurn(id string, cancel context.CancelFunc) func() {
 // turnInFlight reports whether an assistant turn is currently running for this
 // conversation. handleChatGet surfaces it as in_progress so a reloaded client
 // knows the answer is still coming and polls for it.
-func turnInFlight(id string) bool {
+func TurnInFlight(id string) bool {
 	_, ok := liveTurns.Load(id)
 	return ok
 }

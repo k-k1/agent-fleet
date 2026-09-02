@@ -124,11 +124,11 @@ func lockInstr(name string) func() {
 // newInstrID mints a row id. 短い id で十分（衝突面はセッション1件の台帳の中だけ）だが、
 // 予測可能である必要も無いので randUUID の乱数から取る。
 func newInstrID() string {
-	return "i-" + strings.ReplaceAll(randUUID(), "-", "")[:10]
+	return "i-" + strings.ReplaceAll(RandUUID(), "-", "")[:10]
 }
 
 // readInstrRows returns the session's ledger rows (投入順).
-func readInstrRows(name string) []instrRow {
+func ReadInstrRows(name string) []instrRow {
 	l, ok := instrLedgers.Read(name)
 	if !ok {
 		return nil
@@ -140,7 +140,7 @@ func readInstrRows(name string) []instrRow {
 // リコンサイラはこの順に依存する（先頭 = 最古の指示 = 証拠の下限）。
 func openInstrRows(name string) []instrRow {
 	var out []instrRow
-	for _, r := range readInstrRows(name) {
+	for _, r := range ReadInstrRows(name) {
 		if r.open() && r.Conv != "" {
 			out = append(out, r)
 		}
@@ -152,7 +152,7 @@ func openInstrRows(name string) []instrRow {
 // sessionReportPending reports whether the session owes at least one report — hook /
 // record-exit プロセスが「そもそも kick する意味があるか」を見るのに使う
 // （v1 の reportArmed の後継）。
-func sessionReportPending(name string) bool { return len(openInstrRows(name)) > 0 }
+func SessionReportPending(name string) bool { return len(openInstrRows(name)) > 0 }
 
 // writeInstrRows persists the rows with the retention trim. 呼び出し側が lockInstr を
 // 保持していること。
@@ -183,7 +183,7 @@ func writeInstrRows(name string, rows []instrRow) {
 // Phase 2: arm の書込み箇所を行追加へ)。create_session（report_to 付き）と report_to を
 // 運ぶ /input・/turn の成功時に呼ぶ。**既存行は絶対に触らない** — 重なった指示が
 // 潰れないことがこの置き換えの目的そのもの（穴A）。
-func addInstruction(name, convID, source string) string {
+func AddInstruction(name, convID, source string) string {
 	return addInstructionAt(name, convID, source, time.Now())
 }
 
@@ -193,7 +193,7 @@ func addInstructionAt(name, convID, source string, at time.Time) string {
 	if !session.ValidName(name) || !paths.ValidIDSegment(convID) {
 		return ""
 	}
-	if _, err := loadConv(convID); err != nil {
+	if _, err := LoadConv(convID); err != nil {
 		return "" // unknown conversation — 宛先の無い行は作らない（v1 の arm と同じ判断）
 	}
 	ts := at.Format(time.RFC3339)
@@ -202,7 +202,7 @@ func addInstructionAt(name, convID, source string, at time.Time) string {
 		DeliveredAt: ts, Cursor: instrCursor{At: ts}, State: instrPending,
 	}
 	unlock := lockInstr(name)
-	writeInstrRows(name, append(readInstrRows(name), row))
+	writeInstrRows(name, append(ReadInstrRows(name), row))
 	unlock()
 	// 新しい指示 = 判定のやり直し。前の指示で溜まったデバウンス（静穏カウント）や中断
 	// ヒントを持ち越すと、走り出す前のセッションを「完了」と読みかねない。
@@ -223,7 +223,7 @@ func markInstrReported(name string, ids []string, at time.Time) {
 	}
 	unlock := lockInstr(name)
 	defer unlock()
-	rows := readInstrRows(name)
+	rows := ReadInstrRows(name)
 	for i := range rows {
 		if want[rows[i].ID] && rows[i].open() {
 			rows[i].State = instrReported
@@ -239,7 +239,7 @@ func markInstrReported(name string, ids []string, at time.Time) {
 func markInstrInterim(name, kind string, at time.Time) {
 	unlock := lockInstr(name)
 	defer unlock()
-	rows := readInstrRows(name)
+	rows := ReadInstrRows(name)
 	ts := at.Format(time.RFC3339)
 	for i := range rows {
 		if !rows[i].open() {
@@ -272,7 +272,7 @@ const instrReopenMax = 2
 func reopenInstrRow(name, id string) bool {
 	unlock := lockInstr(name)
 	defer unlock()
-	rows := readInstrRows(name)
+	rows := ReadInstrRows(name)
 	for i := range rows {
 		if rows[i].ID != id || rows[i].State != instrReported {
 			continue
@@ -294,7 +294,7 @@ func reopenInstrRow(name, id string) bool {
 // 古い報告は届かない。Console の停止（body なし）はこれを呼ばず、行を残す。
 func cancelInstructions(name string) int {
 	unlock := lockInstr(name)
-	rows := readInstrRows(name)
+	rows := ReadInstrRows(name)
 	n := 0
 	for i := range rows {
 		if rows[i].open() {
@@ -332,7 +332,7 @@ func instrSweepSessions(now time.Time) (open, grace []string) {
 		if !session.ValidName(name) {
 			continue
 		}
-		rows := readInstrRows(name)
+		rows := ReadInstrRows(name)
 		for _, r := range rows {
 			if r.open() && r.Conv != "" {
 				open = append(open, name)
@@ -435,7 +435,7 @@ func instrRowsCoveredBy(rows []instrRow, at string) []instrRow {
 // the conversation（配送の冪等化 — 呼び出し側は会話ロックを保持していること）。kind を
 // 取るのは補償の訂正（docs/log/51 §補償）のため: 訂正と完了報告は同じ行・同じ世代を指すが
 // 別々の1通なので、鍵の名前空間を分けないと片方がもう片方を握り潰す。
-func undeliveredInstrRows(c *chatConversation, rows []instrRow, kind string) []instrRow {
+func undeliveredInstrRows(c *ChatConversation, rows []instrRow, kind string) []instrRow {
 	if len(rows) == 0 {
 		return rows
 	}
@@ -463,7 +463,7 @@ func undeliveredInstrRows(c *chatConversation, rows []instrRow, kind string) []i
 // 「訂正の対象はいつの報告か」を台帳から読むと、訂正が再試行された second pass や
 // 2回目の補償で参照先が消えている。会話メッセージは訂正の対象そのものなので、そこから
 // 取れば世代がずれない。
-func reportedInstrTS(c *chatConversation, rows []instrRow) int64 {
+func reportedInstrTS(c *ChatConversation, rows []instrRow) int64 {
 	want := map[string]bool{}
 	for _, r := range rows {
 		want[instrDeliveryKey(r)] = true
@@ -536,7 +536,7 @@ func instrFoldAts(rows []instrRow) string {
 // 変換後に v1 ファイルを消すのは、再起動のたびに同じ arm を再変換して行が増えるのを
 // 防ぐため。代償は「Phase 1 バイナリへロールバックすると、移行済みの未完了指示の報告が
 // 出ない」こと（指示を出し直せば復旧する）— 二重報告より軽い方に倒した。
-func migrateReportArms() {
+func MigrateReportArms() {
 	ents, err := os.ReadDir(reportLinks.Dir())
 	if err != nil {
 		return
@@ -554,13 +554,13 @@ func migrateReportArms() {
 		if !ok {
 			continue
 		}
-		if l.Armed && l.Conv != "" && !sessionReportPending(name) {
+		if l.Armed && l.Conv != "" && !SessionReportPending(name) {
 			at := l.At
 			if _, err := time.Parse(time.RFC3339, at); err != nil {
 				at = time.Now().Format(time.RFC3339)
 			}
 			unlock := lockInstr(name)
-			writeInstrRows(name, append(readInstrRows(name), instrRow{
+			writeInstrRows(name, append(ReadInstrRows(name), instrRow{
 				ID: newInstrID(), Conv: l.Conv, Source: "v1-arm",
 				DeliveredAt: at, Cursor: instrCursor{At: at}, State: instrPending,
 			}))

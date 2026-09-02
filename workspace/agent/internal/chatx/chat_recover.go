@@ -45,7 +45,7 @@ var contextOverflowNeedles = []string{
 
 // isContextOverflowErr reports whether err looks like a context-window / input-size
 // overflow (vs a transient network or auth failure).
-func isContextOverflowErr(err error) bool {
+func IsContextOverflowErr(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -67,11 +67,11 @@ func isContextOverflowErr(err error) bool {
 // If compaction itself fails (e.g. the accumulated context ALREADY exceeds the window,
 // so even the summary turn overflows), returns false — the caller then surfaces
 // noteContextOverflow. No retry loop: one heal attempt per failed turn.
-func recoverForRetry(ctx context.Context, c *chatConversation, prov chatProvider, origErr error) bool {
-	if !isContextOverflowErr(origErr) {
+func RecoverForRetry(ctx context.Context, c *ChatConversation, prov ChatProvider, origErr error) bool {
+	if !IsContextOverflowErr(origErr) {
 		return false
 	}
-	if err := compactConversation(ctx, c, prov, compactReasonRecovery); err != nil {
+	if err := compactConversation(ctx, c, prov, CompactReasonRecovery); err != nil {
 		return false
 	}
 	return true
@@ -81,7 +81,7 @@ func recoverForRetry(ctx context.Context, c *chatConversation, prov chatProvider
 // and could not be auto-healed, and mirrors it into the notification center (so an
 // unattended auto turn — docs/log/30 — is never silently lost). The caller holds the
 // conversation lock and saves afterwards.
-func noteContextOverflow(c *chatConversation) {
+func NoteContextOverflow(c *ChatConversation) {
 	c.Messages = append(c.Messages, newNotice(noticeKeyCtxOverflow, nil, contextOverflowContent()))
 	ev := notice.New("chat-context-overflow", "", "", c.Title)
 	ev.Payload["conversation_id"] = c.ID

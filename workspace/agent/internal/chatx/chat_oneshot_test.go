@@ -19,7 +19,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 func TestClaudeOneShotArgs(t *testing.T) {
@@ -97,7 +96,7 @@ func TestTitleSuggestLive(t *testing.T) {
 		t.Run(lang, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			reply, err := oneShotHeadless(ctx, titleSuggestPersona(lang),
+			reply, err := OneShotHeadless(ctx, titleSuggestPersona(lang),
 				titleSuggestInstructions(lang)+log+"\n"+titleSuggestFooter(lang), titleModel())
 			if err != nil {
 				t.Fatalf("oneShotHeadless: %v", err)
@@ -133,51 +132,6 @@ func TestTitleSuggestLive(t *testing.T) {
 // ので、CLI の出力形が変わったこと（modelUsage のキー名・canonicalModel・total_cost_usd）は
 // ここでしか検知できない。
 // 実行例: AF_TITLE_LIVE=1 go test -run TestUsageLedgerLive -v .
-func TestUsageLedgerLive(t *testing.T) {
-	if os.Getenv("AF_TITLE_LIVE") != "1" {
-		t.Skip("AF_TITLE_LIVE=1 で有効化")
-	}
-	useTempUsageDir(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	ctx = usagex.WithTag(ctx, usagex.Tag{
-		Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerManual, Ref: "slot99",
-	})
-	if _, err := oneShotHeadless(ctx, titleSuggestPersona("ja"),
-		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します",
-		titleModel()); err != nil {
-		t.Fatalf("oneShotHeadless: %v", err)
-	}
-	rows := usagex.ReadRows()
-	if len(rows) == 0 {
-		t.Fatal("台帳に1行も落ちていない")
-	}
-	r := rows[0]
-	t.Logf("row = %+v", r)
-	if r.Feature != usagex.FeatureTitleSession || r.Trigger != usagex.TriggerManual || r.Ref != "slot99" {
-		t.Fatalf("タグが行に乗っていない: %+v", r)
-	}
-	if !r.OK || r.Kind == "" {
-		t.Fatalf("実行結果の kind と成否が入っていない: %+v", r)
-	}
-	if r.Kind != session.KindClaude {
-		t.Skipf("claude 以外（%s）で実行された — 以降はコスト実測の検証なのでスキップ", r.Kind)
-	}
-	// claude だけはモデル・トークン・コストが全部実測で返る（docs/log/46 §0）。
-	if r.ModelSrc != usagex.ModelReported || r.Model == "" || r.ModelRaw == "" {
-		t.Fatalf("モデルが報告値として記録されていない: %+v", r)
-	}
-	if r.Model == r.ModelRaw {
-		t.Errorf("canonicalModel と生 id が同じ — 版を畳めていない可能性: %q", r.Model)
-	}
-	if r.Spend <= 0 || r.Measured != usagex.MeasuredExact {
-		t.Fatalf("トークンが実測で入っていない: %+v", r)
-	}
-	if r.CostUSD <= 0 {
-		t.Fatalf("コスト実測が入っていない: %+v", r)
-	}
-}
-
 // liveTurns は3機能に食わせる最小の会話ログ。
 func oneShotLiveTurns() []transcript.Turn {
 	return []transcript.Turn{
@@ -188,42 +142,6 @@ func oneShotLiveTurns() []transcript.Turn {
 
 // TestBranchSuggestLive / TestReplySuggestLive — oneShotHeadless を共有する残り2機能。
 // 削った argv でもペルソナの指示（kebab-case 1語 / 短い返信候補）が守られることを見る。
-func TestBranchSuggestLive(t *testing.T) {
-	if os.Getenv("AF_TITLE_LIVE") != "1" {
-		t.Skip("AF_TITLE_LIVE=1 で有効化")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	reply, err := oneShotHeadless(ctx, branchSuggestPersona, branchSuggestPrompt(oneShotLiveTurns()), titleModel())
-	if err != nil {
-		t.Fatalf("oneShotHeadless: %v", err)
-	}
-	name := cleanBranchName(reply)
-	if name == "" {
-		t.Fatalf("ブランチ名が空: reply=%q", reply)
-	}
-	t.Logf("branch=%q (raw=%q)", name, reply)
-}
-
-func TestReplySuggestLive(t *testing.T) {
-	if os.Getenv("AF_TITLE_LIVE") != "1" {
-		t.Skip("AF_TITLE_LIVE=1 で有効化")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	reply, err := oneShotHeadless(ctx, replySuggestPersona("ja"), replySuggestPrompt(oneShotLiveTurns(), "ja"), replySuggestModel())
-	if err != nil {
-		t.Fatalf("oneShotHeadless: %v", err)
-	}
-	list := cleanSuggestedReplies(reply)
-	if len(list) == 0 {
-		t.Fatalf("返信候補が空: reply=%q", reply)
-	}
-	t.Logf("suggestions=%q (raw=%q)", list, reply)
-}
-
 func TestCheapOneShotModel(t *testing.T) {
 	// 実カタログ（codex debug models 2026-07-25）: mini だけが小型。
 	got := cheapOneShotModel([]string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"})

@@ -47,7 +47,7 @@ func TestPersonaOfLanguageRule(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			writeUIPrefsLang(t, tc.lang)
-			c := &chatConversation{AssistantID: tc.assistantID, SeedVerb: tc.seedVerb}
+			c := &ChatConversation{AssistantID: tc.assistantID, SeedVerb: tc.seedVerb}
 			got := c.personaOf()
 			// The base persona + global output rule are always present.
 			if !strings.Contains(got, chatOutputRule) {

@@ -21,7 +21,7 @@ func patchConv(t *testing.T, id string, body string) *httptest.ResponseRecorder 
 	req := httptest.NewRequest(http.MethodPatch, "/chat/conversations/"+id, strings.NewReader(body))
 	req.SetPathValue("id", id)
 	rec := httptest.NewRecorder()
-	handleChatPatch(rec, req)
+	HandleChatPatch(rec, req)
 	return rec
 }
 
@@ -29,7 +29,7 @@ func patchConv(t *testing.T, id string, body string) *httptest.ResponseRecorder 
 // 1本しかないので、別バックエンドが回すターンではその CLI の設定から解決し直す。
 func TestChatModelForResolvesPerActualBackend(t *testing.T) {
 	writeUIPrefs(t, `{"assistantModels":{"codex":"gpt-custom","claude":"opus"}}`)
-	c := &chatConversation{Agent: session.KindClaude, Model: "sonnet"}
+	c := &ChatConversation{Agent: session.KindClaude, Model: "sonnet"}
 
 	if got := chatModelFor(c, session.KindClaude); got != "sonnet" {
 		t.Fatalf("pinned backend model = %q, want the conversation's own pin", got)
@@ -46,7 +46,7 @@ func TestChatModelForResolvesPerActualBackend(t *testing.T) {
 	}
 	c.modelOverride = ""
 	// Agent 未設定の旧レコードは従来の素通し（kind 判定の材料が無い）。
-	legacy := &chatConversation{Model: "gpt-5.6"}
+	legacy := &ChatConversation{Model: "gpt-5.6"}
 	if got := chatModelFor(legacy, session.KindCodex); got != "gpt-5.6" {
 		t.Fatalf("legacy conversation model = %q", got)
 	}
@@ -57,10 +57,10 @@ func TestChatModelForResolvesPerActualBackend(t *testing.T) {
 // native セッションを続きから使えるように）。
 func TestSwitchChatAgentRepinsAndKeepsResumeHandles(t *testing.T) {
 	writeUIPrefs(t, `{"assistantModels":{"codex":"gpt-custom"}}`)
-	c := &chatConversation{
+	c := &ChatConversation{
 		Agent: session.KindClaude, ActiveAgent: session.KindClaude, Model: "sonnet",
 		ClaudeSessionID: "claude-sess", ClaudeMessageCursor: 2,
-		Messages: []chatMessage{
+		Messages: []ChatMessage{
 			{Role: "user", Content: "u1"},
 			{Role: "assistant", Content: "a1", Agent: session.KindClaude},
 		},
@@ -95,17 +95,17 @@ func TestSwitchChatAgentRepinsAndKeepsResumeHandles(t *testing.T) {
 // TestSwitchedAgentGetsHistoryOnNextTurn: 切替後の初回送信で、新バックエンドがまだ
 // 知らない履歴が再生される（認証フォールバックと同じ経路）。
 func TestSwitchedAgentGetsHistoryOnNextTurn(t *testing.T) {
-	c := &chatConversation{
+	c := &ChatConversation{
 		Agent: session.KindClaude, ClaudeSessionID: "claude-sess",
-		Messages: []chatMessage{
+		Messages: []ChatMessage{
 			{Role: "user", Content: "前の依頼"},
 			{Role: "assistant", Content: "前の回答", Agent: session.KindClaude},
 		},
 	}
 	switchChatAgent(c, session.KindCodex)
-	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: "切替後の依頼"})
+	c.Messages = append(c.Messages, ChatMessage{Role: "user", Content: "切替後の依頼"})
 
-	got := syncProviderPrompt(c, session.KindCodex, "切替後の依頼", len(c.Messages)-1)
+	got := SyncProviderPrompt(c, session.KindCodex, "切替後の依頼", len(c.Messages)-1)
 	for _, want := range []string{"前の依頼", "前の回答", "切替後の依頼"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("synced prompt = %q, missing %q", got, want)
@@ -118,12 +118,12 @@ func TestSwitchedAgentGetsHistoryOnNextTurn(t *testing.T) {
 
 func TestHandleChatPatchAgent(t *testing.T) {
 	writeUIPrefs(t, `{"assistantModels":{"codex":"gpt-custom"}}`)
-	conv := &chatConversation{
-		ID: randUUID(), Slug: newConvSlug(), Title: "元のタイトル",
+	conv := &ChatConversation{
+		ID: RandUUID(), Slug: NewConvSlug(), Title: "元のタイトル",
 		Agent: session.KindClaude, Model: "sonnet",
-		Messages: []chatMessage{{Role: "user", Content: "u1"}},
+		Messages: []ChatMessage{{Role: "user", Content: "u1"}},
 	}
-	if err := saveConv(conv); err != nil {
+	if err := SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 
@@ -131,7 +131,7 @@ func TestHandleChatPatchAgent(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	c, err := loadConv(conv.ID)
+	c, err := LoadConv(conv.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestHandleChatPatchAgent(t *testing.T) {
 	if rec := patchConv(t, conv.ID, `{"title":"新しいタイトル"}`); rec.Code != http.StatusOK {
 		t.Fatalf("rename status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if c, _ = loadConv(conv.ID); c.Title != "新しいタイトル" || c.Agent != session.KindCodex {
+	if c, _ = LoadConv(conv.ID); c.Title != "新しいタイトル" || c.Agent != session.KindCodex {
 		t.Fatalf("rename result = %q / agent %q (agent must survive a title-only patch)", c.Title, c.Agent)
 	}
 
@@ -166,13 +166,13 @@ func TestHandleChatPatchAgent(t *testing.T) {
 // 困るので、削除と同じく 409 で先に止めてもらう。
 func TestHandleChatPatchAgentRejectsWhileTurnInFlight(t *testing.T) {
 	withTempHome(t)
-	conv := &chatConversation{ID: randUUID(), Slug: newConvSlug(), Agent: session.KindClaude}
-	if err := saveConv(conv); err != nil {
+	conv := &ChatConversation{ID: RandUUID(), Slug: NewConvSlug(), Agent: session.KindClaude}
+	if err := SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	deregister := registerLiveTurn(conv.ID, cancel)
+	deregister := RegisterLiveTurn(conv.ID, cancel)
 	defer deregister()
 
 	rec := patchConv(t, conv.ID, `{"agent":"codex"}`)
@@ -188,7 +188,7 @@ func TestHandleChatPatchAgentRejectsWhileTurnInFlight(t *testing.T) {
 	if body.Error.Code != "conversation_busy" {
 		t.Fatalf("error code = %q, want conversation_busy", body.Error.Code)
 	}
-	if c, err := loadConv(conv.ID); err != nil || c.Agent != session.KindClaude {
+	if c, err := LoadConv(conv.ID); err != nil || c.Agent != session.KindClaude {
 		t.Fatalf("agent switched under a live turn: %v / %+v", err, c)
 	}
 }

@@ -37,12 +37,12 @@ import (
 
 // chatProvider drives one agent's CLI in non-interactive mode. send appends the
 // assistant reply's text as its return value and may mutate c's resume handles.
-type chatProvider interface {
-	send(ctx context.Context, c *chatConversation, prompt string) (string, error)
+type ChatProvider interface {
+	Send(ctx context.Context, c *ChatConversation, prompt string) (string, error)
 }
 
-var chatProviders = map[string]chatProvider{
-	session.KindClaude:   claudeChat{},
+var ChatProviders = map[string]ChatProvider{
+	session.KindClaude:   ClaudeChat{},
 	session.KindCodex:    codexChat{},
 	session.KindOpencode: opencodeChat{},
 	session.KindAgy:      agyChat{},
@@ -103,13 +103,13 @@ func headlessAgentAvailable(kind string) bool {
 // Track D), so out of the box it is only reached in an agy-only workspace. The
 // user can rank the backends themselves in 設定 > エージェント (ui-prefs
 // assistantAgentOrder — assistantAgentOrderPref normalizes against this list).
-var defaultHeadlessOrder = []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCursor, session.KindAgy}
+var DefaultHeadlessOrder = []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCursor, session.KindAgy}
 
 // preferredHeadlessAgent picks the backend for new builtin-assistant conversations
 // and one-shot calls: the first AUTHENTICATED backend in the user's priority order
 // (or the built-in default order). When nothing is connected it returns the order's
 // top choice, so the resulting error points at the CLI the user cares about most.
-func preferredHeadlessAgent() string {
+func PreferredHeadlessAgent() string {
 	order := assistantAgentOrderPref()
 	for _, k := range order {
 		if headlessAgentAvailable(k) {
@@ -125,22 +125,22 @@ func preferredHeadlessAgent() string {
 // Each provider keeps its own resume handle on the conversation. The canonical
 // message cursor synchronizes turns handled by another backend before that handle is
 // resumed (chat_provider_context.go).
-func chatProviderFor(c *chatConversation) chatProvider {
-	if prov, ok := chatProviders[c.Agent]; ok && headlessAgentAvailable(c.Agent) {
+func ChatProviderFor(c *ChatConversation) ChatProvider {
+	if prov, ok := ChatProviders[c.Agent]; ok && headlessAgentAvailable(c.Agent) {
 		return prov
 	}
-	if prov, ok := chatProviders[preferredHeadlessAgent()]; ok {
+	if prov, ok := ChatProviders[PreferredHeadlessAgent()]; ok {
 		return prov
 	}
-	return chatProviders[session.KindClaude]
+	return ChatProviders[session.KindClaude]
 }
 
 // chatProviderKind returns the concrete backend selected by chatProviderFor. Keeping
 // this out of chatProvider avoids widening every test stub merely for presentation
 // metadata. Production providers are the five value types below.
-func chatProviderKind(c *chatConversation, prov chatProvider) string {
+func ChatProviderKind(c *ChatConversation, prov ChatProvider) string {
 	switch prov.(type) {
-	case claudeChat:
+	case ClaudeChat:
 		return session.KindClaude
 	case codexChat:
 		return session.KindCodex
@@ -158,7 +158,7 @@ func chatProviderKind(c *chatConversation, prov chatProvider) string {
 // claudeChat runs `claude -p` (headless), pinning a session id on the first turn
 // and resuming it thereafter so context carries across turns. Auth is the
 // container's existing CLAUDE_CODE_OAUTH_TOKEN / CLAUDE_CONFIG_DIR (subscription).
-type claudeChat struct{}
+type ClaudeChat struct{}
 
 type claudeResult struct {
 	Result    string `json:"result"`
@@ -167,14 +167,14 @@ type claudeResult struct {
 	// Usage/ModelUsage feed the conversation's context-fill snapshot (chat_usage.go):
 	// usage.iterations' last entry is the final per-call snapshot, and modelUsage
 	// carries the model's real contextWindow.
-	Usage      claudeUsage                 `json:"usage"`
-	ModelUsage map[string]claudeModelUsage `json:"modelUsage"`
+	Usage      ClaudeUsage                 `json:"usage"`
+	ModelUsage map[string]ClaudeModelUsage `json:"modelUsage"`
 	// TotalCostUSD is claude's OWN measured cost for this call — the one backend that
 	// doesn't need a price table (docs/log/46 §0). Recorded as the ledger's cost_usd.
 	TotalCostUSD float64 `json:"total_cost_usd"`
 }
 
-func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+func (ClaudeChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）: 呼び出しの開始時点で記録を defer に積む。成功・エラー
 	// result・exec 失敗・パース失敗のどの経路を通っても必ず1回だけ行が残る。
@@ -187,7 +187,7 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	if c.ClaudeSessionID != "" {
 		args = append(args, "--resume", c.ClaudeSessionID)
 	} else {
-		c.ClaudeSessionID = randUUID()
+		c.ClaudeSessionID = RandUUID()
 		args = append(args, "--session-id", c.ClaudeSessionID)
 	}
 	args = append(args, c.knowledgeArgs()...)
@@ -208,9 +208,9 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 		return "", fmt.Errorf("failed to parse claude response: %v", jerr)
 	}
 	// 失敗した result にも usage は乗る（超過エラーは特に高い）ので、OK 判定より先に採る。
-	call.Models, call.CostUSD = usageModelRows(r.ModelUsage), r.TotalCostUSD
+	call.Models, call.CostUSD = UsageModelRows(r.ModelUsage), r.TotalCostUSD
 	// modelUsage の無い result（古い CLI・異常終了）でも総量は残す。
-	call.FallbackTotals(r.Usage.ledgerTokens(), "")
+	call.FallbackTotals(r.Usage.LedgerTokens(), "")
 	if r.SessionID != "" {
 		c.ClaudeSessionID = r.SessionID
 	}
@@ -230,7 +230,7 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 // chatStreamEvent is one incremental event a streamingProvider emits: either a text Delta
 // for the current (tentative) answer, or a completed Step (the model finished a working
 // message that ended in a tool call). Exactly one field is set per emit.
-type chatStreamEvent struct {
+type ChatStreamEvent struct {
 	Delta string    // incremental text of the current answer
 	Step  *chatStep // a just-completed working step (narration + tool names)
 }
@@ -240,7 +240,7 @@ type chatStreamEvent struct {
 // working steps (docs/log/19). A provider that doesn't implement it falls back to send() (one
 // emit of the whole result) in handleChatStream, so every agent works through the stream.
 type streamingProvider interface {
-	sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(chatStreamEvent)) (string, []chatStep, error)
+	SendStream(ctx context.Context, c *ChatConversation, prompt string, emit func(ChatStreamEvent)) (string, []chatStep, error)
 }
 
 // streamLine is one JSONL event from `claude --output-format stream-json`. We read the
@@ -257,11 +257,11 @@ type streamLine struct {
 	// the per-message context snapshot claudeCtx tracks (chat_usage.go).
 	Message struct {
 		Model string      `json:"model"`
-		Usage claudeUsage `json:"usage"`
+		Usage ClaudeUsage `json:"usage"`
 	} `json:"message"`
 	// Usage/ModelUsage/TotalCostUSD ride the final "result" line (same shape as claudeResult).
-	Usage        claudeUsage                 `json:"usage"`
-	ModelUsage   map[string]claudeModelUsage `json:"modelUsage"`
+	Usage        ClaudeUsage                 `json:"usage"`
+	ModelUsage   map[string]ClaudeModelUsage `json:"modelUsage"`
 	TotalCostUSD float64                     `json:"total_cost_usd"`
 	Event        struct {
 		Type         string `json:"type"`
@@ -277,7 +277,7 @@ type streamLine struct {
 	} `json:"event"`
 }
 
-func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(chatStreamEvent)) (string, []chatStep, error) {
+func (ClaudeChat) SendStream(ctx context.Context, c *ChatConversation, prompt string, emit func(ChatStreamEvent)) (string, []chatStep, error) {
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）— send と同じく全経路で1回記録する。
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
@@ -291,7 +291,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	if c.ClaudeSessionID != "" {
 		args = append(args, "--resume", c.ClaudeSessionID)
 	} else {
-		c.ClaudeSessionID = randUUID()
+		c.ClaudeSessionID = RandUUID()
 		args = append(args, "--session-id", c.ClaudeSessionID)
 	}
 	args = append(args, c.knowledgeArgs()...)
@@ -339,7 +339,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 					case "content_block_delta":
 						if sl.Event.Delta.Type == "text_delta" && sl.Event.Delta.Text != "" {
 							cur.WriteString(sl.Event.Delta.Text)
-							emit(chatStreamEvent{Delta: sl.Event.Delta.Text})
+							emit(ChatStreamEvent{Delta: sl.Event.Delta.Text})
 						}
 					case "message_delta":
 						// A message that stops to call a tool is a working step; flush it and
@@ -348,7 +348,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 							step := chatStep{Text: strings.TrimSpace(cur.String()), Tools: curTools}
 							if step.Text != "" || len(step.Tools) > 0 {
 								steps = append(steps, step)
-								emit(chatStreamEvent{Step: &step})
+								emit(ChatStreamEvent{Step: &step})
 							}
 							cur.Reset()
 							curTools = nil
@@ -360,8 +360,8 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 					result = sl.Result
 					resultErr = sl.IsError
 					ctxTrack.observeResult(sl.Usage, sl.ModelUsage)
-					call.Models, call.CostUSD = usageModelRows(sl.ModelUsage), sl.TotalCostUSD
-					call.FallbackTotals(sl.Usage.ledgerTokens(), "")
+					call.Models, call.CostUSD = UsageModelRows(sl.ModelUsage), sl.TotalCostUSD
+					call.FallbackTotals(sl.Usage.LedgerTokens(), "")
 				}
 			}
 		}
@@ -374,7 +374,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	// イベントで見た最後のスナップショットを縮退として採る（出力側は途中なので partial）。
 	// 採らないと「トークン 0 / measured=none」の行になり、**止めた回の消費だけが台帳から
 	// 消える** — 止められるのは重いターンほど多いので、そこが欠けると配分の絵が狂う。
-	call.FallbackTotals(ctxTrack.snap.ledgerTokens(), usagex.MeasuredPartial)
+	call.FallbackTotals(ctxTrack.snap.LedgerTokens(), usagex.MeasuredPartial)
 	// An error result (e.g. context overflow) rides the stream's `result` event AND makes
 	// claude exit non-zero. Prefer the parsed message so the overflow self-heal can see
 	// "Prompt is too long …" (chat_recover.go); a bare "exit status 1" from waitErr would
@@ -419,7 +419,7 @@ func stderrOr(err error, stderr *bytes.Buffer) string {
 //	{"type":"turn.completed","usage":{…}} / {"type":"turn.failed","error":{…}}
 type codexChat struct{}
 
-func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+func (codexChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）。codex はどのイベントにもモデルを載せない（実測）ので、
 	// -m を渡した時だけ requested、未指定なら default_unknown に縮退する。
@@ -451,7 +451,7 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 		return "", fmt.Errorf("codex execution failed: %s", cliErr(err))
 	}
 	reply, threadID, execErr, usage := parseCodexExecEvents(out)
-	call.Totals = usage.ledgerTokens()
+	call.Totals = usage.LedgerTokens()
 	if threadID != "" {
 		c.CodexSessionID = threadID
 	}
@@ -520,7 +520,7 @@ func chatCodexCmd(ctx context.Context, extraEnv []string, args ...string) *exec.
 // The returned env MUST be put on the codex process: codex's remote headers and any
 // stdio server's own variables are passed by NAME in argv and read from codex's
 // environment, which is what keeps registered credentials out of argv.
-func codexMCPArgs(c *chatConversation) (args, env []string) {
+func codexMCPArgs(c *ChatConversation) (args, env []string) {
 	if sargs, ok := c.afServerArgs(); ok {
 		args = append(args,
 			"-c", "mcp_servers.af.command="+tomlString(paths.ExePath()),
@@ -552,7 +552,7 @@ func tomlStringArray(vals []string) string {
 // agent_message items joined (normally one), the thread id comes from thread.started,
 // a turn.failed / error event surfaces as execErr, and turn.completed's usage feeds
 // the context-fill snapshot (chat_usage.go; last one wins).
-func parseCodexExecEvents(out []byte) (reply, threadID, execErr string, usage codexUsage) {
+func parseCodexExecEvents(out []byte) (reply, threadID, execErr string, usage CodexUsage) {
 	var texts []string
 	for _, ln := range bytes.Split(out, []byte("\n")) {
 		if len(bytes.TrimSpace(ln)) == 0 {
@@ -562,7 +562,7 @@ func parseCodexExecEvents(out []byte) (reply, threadID, execErr string, usage co
 			Type     string     `json:"type"`
 			ThreadID string     `json:"thread_id"`
 			Message  string     `json:"message"`
-			Usage    codexUsage `json:"usage"`
+			Usage    CodexUsage `json:"usage"`
 			Item     struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -613,7 +613,7 @@ func tomlString(s string) string {
 //	(step_start / step_finish / tool events interleave; every event carries sessionID)
 type opencodeChat struct{}
 
-func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
 	c.startTurn()
 	pinned := chatModelFor(c, session.KindOpencode)                   // ピン留めが別 kind ならこの CLI の設定から解決
 	call := usagex.Call{Kind: session.KindOpencode, ModelReq: pinned} // 使用量台帳（ADR 0029 §3）
@@ -638,7 +638,7 @@ func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string
 	// Parse BEFORE the error branch: a failed run still prints its events, and both the
 	// reason (turnErr) and whatever tokens it burned are in there.
 	reply, sesID, model, turnErr, usage := parseOpencodeRunEvents(out)
-	call.Totals = usage.ledgerTokens()
+	call.Totals = usage.LedgerTokens()
 	if model != "" {
 		call.Models = []usagex.ModelRow{{Model: model, ModelRaw: model, Tokens: call.Totals}}
 	}
@@ -711,11 +711,11 @@ func opencodeChatPolicy() map[string]any {
 //
 // Falls back to the shared chat workdir when the dir can't be prepared (opencode then
 // runs with its defaults).
-func opencodeChatDir(c *chatConversation) string {
+func opencodeChatDir(c *ChatConversation) string {
 	grant := "none"
 	if c.afToolsEnabled() {
 		grant = "read"
-		if c.afWriteEnabled() {
+		if c.AFWriteEnabled() {
 			grant = "write"
 		}
 	}
@@ -764,7 +764,7 @@ func opencodeChatDir(c *chatConversation) string {
 // at all — this file is then the only thing standing between the conversation and a
 // turn with none of its servers. Under the measured merge the project copy wins the
 // collision, but both are built from the same conversation, so they agree.
-func opencodeChatConfig(c *chatConversation) string {
+func opencodeChatConfig(c *ChatConversation) string {
 	if !c.afToolsEnabled() || !paths.ValidIDSegment(c.ID) {
 		return ""
 	}
@@ -774,7 +774,7 @@ func opencodeChatConfig(c *chatConversation) string {
 		return ""
 	}
 	mcpArgs := []string{paths.ExePath(), "mcp-stdio"}
-	if c.afWriteEnabled() {
+	if c.AFWriteEnabled() {
 		// --conv rides the write grant only: it exists for report_to / origin_conv,
 		// which are write-side plumbing (mcp_stdio.go).
 		mcpArgs = append(mcpArgs, "--write", "--conv", c.ID)
@@ -807,7 +807,7 @@ func opencodeChatConfig(c *chatConversation) string {
 // read-only 提案生成チャネルはここで閉じる。Returns "" when the file can't be
 // written (the caller then degrades to today's behaviour rather than breaking
 // titles on a broken home).
-func opencodeOneShotConfig() string {
+func OpencodeOneShotConfig() string {
 	cfg := map[string]any{
 		"$schema":    "https://opencode.ai/config.json",
 		"permission": opencodeChatPolicy(),
@@ -970,7 +970,7 @@ func opencodeErrText(name, msg, ref string) string {
 // the context gauge stays empty (Context = nil).
 type agyChat struct{}
 
-func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）: agy は素のテキストしか返さないので measured=none —
 	// トークンは 0 ではなく「未計測」として、回数だけを数える。
@@ -1014,7 +1014,7 @@ func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (st
 // actually passed ("" when the pin was dropped or none was set, i.e. agy runs on its
 // own default) — agy prints plain text and names no model, so this is the only
 // truthful thing to record for the turn.
-func agyChatArgs(c *chatConversation, prompt string) ([]string, string) {
+func agyChatArgs(c *ChatConversation, prompt string) ([]string, string) {
 	var args []string
 	var model string
 	if pinned := chatModelFor(c, session.KindAgy); pinned != "" { // fetch the catalog only when there is a pin to validate
@@ -1061,7 +1061,7 @@ func agyChatModel(model string, catalog []agents.ModelChoice) string {
 // Per-conversation (not per-grant like opencode) because a write grant's --conv
 // must ride mcp_config.json args — there is no per-invocation override to carry
 // the conversation id. The dir doubles as the cwd→UUID capture scope.
-func chatAgyHome(c *chatConversation) (home, wd string, err error) {
+func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
 	base := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "agy-"+c.ID)
 	home = filepath.Join(base, "home")
 	wd = filepath.Join(base, "wd")
@@ -1101,7 +1101,7 @@ func chatAgyHome(c *chatConversation) (home, wd string, err error) {
 // server. Everything else — command execution, writes — stays auto-denied by -p,
 // which IS the chat contract. Rule syntax verified live (mcp(af) and bare tool
 // names do NOT match; docs/log/32 headlessChat 節).
-func agyChatAllowRules(c *chatConversation) []string {
+func agyChatAllowRules(c *ChatConversation) []string {
 	allow := []string{"read_file", "list_dir", "grep_search", "find_files", "codebase_search"}
 	for name := range agyChatServers(c) {
 		allow = append(allow, "mcp("+name+"/*)")
@@ -1125,7 +1125,7 @@ var agyChatExe = paths.ExePath
 // isolated HOME, so the exe is resolved separately (agyChatExe). Registry-registered
 // servers carry their own absolute command and are unaffected — only the builtins,
 // which the registry defines as `<this binary> mcp-run <id>`, need rewriting.
-func agyChatServers(c *chatConversation) map[string]any {
+func agyChatServers(c *ChatConversation) map[string]any {
 	exe := agyChatExe()
 	env := map[string]any{"HOME": homeDir()}
 	defs := c.mcpServersFor(session.KindAgy)
@@ -1185,7 +1185,7 @@ type cursorResult struct {
 	} `json:"usage"`
 }
 
-func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）。cursor は result にモデルを載せない（実測）ので requested
 	// 止まり。"auto" は --model を渡さない＝解決後のモデル不明なので default_unknown。
@@ -1200,7 +1200,7 @@ func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) 
 		args = append(args, "--model", m)
 	}
 	if c.CursorSessionID == "" {
-		c.CursorSessionID = randUUID() // --resume with a fresh valid v4 creates the chat
+		c.CursorSessionID = RandUUID() // --resume with a fresh valid v4 creates the chat
 	}
 	args = append(args, "--resume", c.CursorSessionID)
 	cmd := exec.CommandContext(ctx, cursor.Bin(), args...)
@@ -1424,12 +1424,12 @@ func codexOneShotArgsNoModel(args []string) []string {
 // into err here, which is what makes the caller's single retry cover either shape.
 // usage も返すのは、一発呼び出しを台帳に載せるため（ADR 0029 §3）— 失敗して
 // リトライした場合は「2回撃った」ことが2行として残るのが正しい。
-func runCodexOneShot(ctx context.Context, args []string, prompt string) (string, codexUsage, error) {
+func runCodexOneShot(ctx context.Context, args []string, prompt string) (string, CodexUsage, error) {
 	cmd := chatCodexCmd(ctx, nil, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	if err != nil {
-		return "", codexUsage{}, fmt.Errorf("codex execution failed: %s", cliErr(err))
+		return "", CodexUsage{}, fmt.Errorf("codex execution failed: %s", cliErr(err))
 	}
 	reply, _, execErr, usage := parseCodexExecEvents(out)
 	if execErr != "" {
@@ -1439,7 +1439,7 @@ func runCodexOneShot(ctx context.Context, args []string, prompt string) (string,
 }
 
 // codexOneShotRun は runCodexOneShot の形（テストで差し替える）。
-type codexOneShotRun func(ctx context.Context, args []string, prompt string) (string, codexUsage, error)
+type codexOneShotRun func(ctx context.Context, args []string, prompt string) (string, CodexUsage, error)
 
 // codexOneShotWithRetry は自前ピクの小型モデルで撃ち、失敗したらモデルを外して1度だけ
 // 撃ち直す。**2回分のトークンを合算して返す**のが台帳側の要点。
@@ -1452,14 +1452,14 @@ type codexOneShotRun func(ctx context.Context, args []string, prompt string) (st
 // 消える — 「安いモデルで失敗 → 既定のフラッグシップで撃ち直し」は**最も高くつく経路**なので、
 // そこが1回分に見えるのが一番まずい。要求値（model_req）は「モデルを外して撃ち直した」ことが
 // 分かるようリトライ側で上書きする（行は1本なので、後勝ちで実際に答えを出した方を載せる）。
-func codexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, prompt string,
+func CodexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, prompt string,
 	run codexOneShotRun) (reply string, tok usagex.Tokens, modelReq string, err error) {
 	modelReq = argValue(args, "-m")
 	reply, usage, err := run(ctx, args, prompt)
-	tok = usage.ledgerTokens()
+	tok = usage.LedgerTokens()
 	if err != nil && autoPicked {
 		reply, usage, err = run(ctx, codexOneShotArgsNoModel(args), prompt)
-		tok, modelReq = tok.Add(usage.ledgerTokens()), ""
+		tok, modelReq = tok.Add(usage.LedgerTokens()), ""
 	}
 	return reply, tok, modelReq, err
 }
@@ -1470,7 +1470,7 @@ func codexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, 
 // otherwise. claudeModel applies to the claude backend only (codex/opencode run their
 // own configured defaults; override via AF_TITLE_MODEL_CODEX/_OPENCODE — docs/log/46 §2-b
 // flags that an unset override means the CLI's own default, usually the flagship).
-func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (string, error) {
+func OneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (string, error) {
 	// 使用量台帳（ADR 0029 §3）。この関数は claude → codex → opencode → cursor → agy の
 	// うち「最初に使えるもの」を選ぶので、kind は分岐の中で実行結果として埋める — 要求値を
 	// 書くと claude-less ワークスペースの消費が全部 claude に化ける（docs/log/46 §2）。
@@ -1478,11 +1478,11 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	// 呼び出し側4箇所を触る理由がないため。
 	call := usagex.Call{}
 	defer usagex.RecordCall(ctx, &call, time.Now())
-	kind := preferredHeadlessAgent()
+	kind := PreferredHeadlessAgent()
 	selected, configured := assistantUtilityModelPref(kind)
 	selected = strings.TrimSpace(selected)
-	autoRecommended := selected == assistantRecommendedModel
-	if selected == assistantRecommendedModel {
+	autoRecommended := selected == AssistantRecommendedModel
+	if selected == AssistantRecommendedModel {
 		selected, configured = recommendedUtilityModel(kind), true
 	}
 	switch kind {
@@ -1496,7 +1496,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		}
 		args, autoPicked := codexOneShotArgsFor(selected)
 		autoPicked = autoPicked || autoRecommended
-		reply, tok, modelReq, err := codexOneShotWithRetry(ctx, args, autoPicked, full, runCodexOneShot)
+		reply, tok, modelReq, err := CodexOneShotWithRetry(ctx, args, autoPicked, full, runCodexOneShot)
 		call.ModelReq, call.Totals, call.OK = modelReq, tok, err == nil
 		return reply, err
 	case session.KindOpencode:
@@ -1507,7 +1507,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		// project config（opencode.json）が無いため、OPENCODE_CONFIG の deny が実効になる
 		// （実測 1.18.7 の併合優先度: project > OPENCODE_CONFIG > global — opencodeChatDir 参照）。
 		// 書けなかったときは従来どおり素で走る（title/reply を壊さない）— ホーム破損時の縮退。
-		if cfg := opencodeOneShotConfig(); cfg != "" {
+		if cfg := OpencodeOneShotConfig(); cfg != "" {
 			env = append(env, "OPENCODE_CONFIG="+cfg)
 		}
 		// NOTE: deliberately NOT auto-picking a cheap model here (docs/log/46 §1-a-2). opencode's
@@ -1539,7 +1539,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 			}
 			return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
 		}
-		call.Totals, call.OK = usage.ledgerTokens(), true
+		call.Totals, call.OK = usage.LedgerTokens(), true
 		if model != "" {
 			call.Models = []usagex.ModelRow{{Model: model, ModelRaw: model, Tokens: call.Totals}}
 		}
@@ -1598,7 +1598,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		// plan) unless overridden.
 		// agy は素のテキスト出力なのでトークンが一切取れない — measured=none で回数だけ数える。
 		call.Kind, call.Measured = session.KindAgy, usagex.MeasuredNone
-		home, wdir, err := chatAgyHome(&chatConversation{ID: "oneshot"})
+		home, wdir, err := chatAgyHome(&ChatConversation{ID: "oneshot"})
 		if err != nil {
 			return "", fmt.Errorf("agy chat home: %v", err)
 		}
@@ -1640,8 +1640,8 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	// claude だけはモデル別の実測内訳とコストが返る（docs/log/46 §0）— エラー result でも
 	// 課金は発生しているので、OK 判定より先に採る。exec エラー（停止・非ゼロ終了）でも
 	// claude は構造化 result を吐いていることがあるので、**エラー return より先に**解析する。
-	call.Models, call.CostUSD = usageModelRows(r.ModelUsage), r.TotalCostUSD
-	call.FallbackTotals(r.Usage.ledgerTokens(), "") // modelUsage の無い応答の縮退
+	call.Models, call.CostUSD = UsageModelRows(r.ModelUsage), r.TotalCostUSD
+	call.FallbackTotals(r.Usage.LedgerTokens(), "") // modelUsage の無い応答の縮退
 	if err != nil {
 		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}

@@ -11,9 +11,9 @@ func TestNoticesCarryCatalogKeys(t *testing.T) {
 	withTempHome(t)
 
 	t.Run("ctx_pressure", func(t *testing.T) {
-		c := &chatConversation{ID: randUUID()}
+		c := &ChatConversation{ID: RandUUID()}
 		setChatContext(c, 170000, 0, 0, 200000, "claude-sonnet-5")
-		noteContextPressure(c)
+		NoteContextPressure(c)
 		m := lastNotice(t, c)
 		assertNoticeKey(t, m, noticeKeyCtxPressure)
 		// 引数は表示文と同じ値（85% / 170k / 200k）。
@@ -23,13 +23,13 @@ func TestNoticesCarryCatalogKeys(t *testing.T) {
 	})
 
 	t.Run("ctx_overflow", func(t *testing.T) {
-		c := &chatConversation{ID: randUUID()}
-		noteContextOverflow(c)
+		c := &ChatConversation{ID: RandUUID()}
+		NoteContextOverflow(c)
 		assertNoticeKey(t, lastNotice(t, c), noticeKeyCtxOverflow)
 	})
 
 	t.Run("auto_paused", func(t *testing.T) {
-		c := &chatConversation{ID: randUUID(), Messages: []chatMessage{
+		c := &ChatConversation{ID: RandUUID(), Messages: []ChatMessage{
 			{Role: "report", Content: "報告", Session: "s000001"},
 		}}
 		noteAutoTurnPaused(c, 3)
@@ -42,9 +42,9 @@ func TestNoticesCarryCatalogKeys(t *testing.T) {
 
 	t.Run("compact", func(t *testing.T) {
 		for reason, want := range map[string]string{
-			compactReasonManual:   noticeKeyCompactManual,
-			compactReasonAuto:     noticeKeyCompactAuto,
-			compactReasonRecovery: noticeKeyCompactRecovery,
+			CompactReasonManual:   noticeKeyCompactManual,
+			CompactReasonAuto:     noticeKeyCompactAuto,
+			CompactReasonRecovery: noticeKeyCompactRecovery,
 			"":                    noticeKeyCompactManual, // 未設定は手動扱い
 		} {
 			if got := compactNoticeKey(reason); got != want {
@@ -54,7 +54,7 @@ func TestNoticesCarryCatalogKeys(t *testing.T) {
 	})
 }
 
-func lastNotice(t *testing.T, c *chatConversation) chatMessage {
+func lastNotice(t *testing.T, c *ChatConversation) ChatMessage {
 	t.Helper()
 	for i := len(c.Messages) - 1; i >= 0; i-- {
 		if c.Messages[i].Role == "notice" {
@@ -62,10 +62,10 @@ func lastNotice(t *testing.T, c *chatConversation) chatMessage {
 		}
 	}
 	t.Fatal("no notice appended")
-	return chatMessage{}
+	return ChatMessage{}
 }
 
-func assertNoticeKey(t *testing.T, m chatMessage, want string) {
+func assertNoticeKey(t *testing.T, m ChatMessage, want string) {
 	t.Helper()
 	if m.NoticeKey != want {
 		t.Fatalf("notice_key = %q, want %q", m.NoticeKey, want)

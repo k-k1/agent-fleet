@@ -246,7 +246,7 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 		reason = s.AbortReason
 	}
 	return reportVerdict{
-		Quiet: true, Fast: s.SelfReported, Kind: reportKindAnswerReady, Reason: reason,
+		Quiet: true, Fast: s.SelfReported, Kind: ReportKindAnswerReady, Reason: reason,
 		At: s.evidenceAt(), Why: "idle:" + strings.Join(idle, ","),
 	}
 }
@@ -395,9 +395,9 @@ func collectAbortSignal(s *reportSignals, name, sid, since string) {
 		return
 	}
 	s.Abort, s.AbortAt = true, at
-	s.AbortReason = reportReasonTurnFailed
+	s.AbortReason = ReportReasonTurnFailed
 	if a.Retryable {
-		s.AbortReason = reportReasonTurnAborted
+		s.AbortReason = ReportReasonTurnAborted
 	}
 	// 中断が末尾にあるなら、転写の「新しさ」はその中断レコード自身のもの — 進行中の
 	// 証拠ではなく、終わり方そのものである。ここで下ろさないと、中断のたびに鮮度の
@@ -500,7 +500,7 @@ func quietReport(kind, reason string) bool {
 	if !uiprefs.ChatQuietCompletion() {
 		return false
 	}
-	return reason == "" && (kind == reportKindAnswerReady || kind == reportKindReopened)
+	return reason == "" && (kind == ReportKindAnswerReady || kind == reportKindReopened)
 }
 
 // --- リコンサイラ本体 -----------------------------------------------------------
@@ -561,7 +561,7 @@ func newReportReconciler(interval time.Duration) *reportReconciler {
 var reportRec = newReportReconciler(reportTickDefault)
 
 // startReportReconciler launches the sweep loop (main 起動時に1回)。
-func startReportReconciler() { go reportRec.run(context.Background()) }
+func StartReportReconciler() { go reportRec.run(context.Background()) }
 
 func (rc *reportReconciler) run(ctx context.Context) {
 	tick, stop := rc.clock.Ticker(rc.interval)
@@ -587,7 +587,7 @@ func (rc *reportReconciler) run(ctx context.Context) {
 // qualifier（中断/失敗の別。マーカーからは読めないので、失われたら素の完了報告に
 // 縮退する＝消失ではなく情報の欠落に留める）。
 func (rc *reportReconciler) hint(name, kind, reason string) {
-	if kind == reportKindAnswerReady && reason != "" {
+	if kind == ReportKindAnswerReady && reason != "" {
 		rc.mu.Lock()
 		rc.hints[name] = reason
 		rc.mu.Unlock()
@@ -778,12 +778,12 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 	// 複数のオペレーター会話へ配ったときに会話数ぶん加算すると、2会話から指示されている
 	// セッションは中断1回で上限（2回）に届いてしまう。数えるのは「中断報告を配った」と
 	// いう事実1つなので、会話ループの外で1回だけ動かす。
-	if delivered && v.Kind == reportKindAnswerReady {
+	if delivered && v.Kind == ReportKindAnswerReady {
 		switch v.Reason {
-		case reportReasonTurnAborted:
+		case ReportReasonTurnAborted:
 			bumpAutoResume(name)
 		case "":
-			resetAutoResume(name)
+			ResetAutoResume(name)
 		}
 	}
 	if !retry {
@@ -806,7 +806,7 @@ const reportReopenGrace = 10 * time.Minute
 // 訂正 → reopen の順は落とせない: 逆順だと、訂正の配送に失敗したときに「黙って
 // 開き直しただけ」になり、利用者から見れば v1 の消失と区別が付かない。
 func (rc *reportReconciler) compensate(name string, now time.Time) {
-	cands := instrReopenCandidates(readInstrRows(name), now, reportReopenGrace)
+	cands := instrReopenCandidates(ReadInstrRows(name), now, reportReopenGrace)
 	if len(cands) == 0 {
 		return
 	}
@@ -862,5 +862,28 @@ func (rc *reportReconciler) compensate(name string, now time.Time) {
 	if reopened {
 		// 開き直した行は「これから完了する指示」なので、判定はまっさらから始める。
 		rc.forget(name)
+	}
+}
+
+// InstallReconcilerForTest は**テスト用の据え付け口**。指定間隔の reconciler を起動して
+// パッケージの現役に据え、後始末の関数を返す。
+//
+// なぜ公開するか: 移送で reconciler の実体（`reportRec` / `run`）が chatx の内側へ入ったが、
+// **main に残る 3 本のテスト**（`TestSessionReport*`）は claude の Stop フックから実 HTTP を
+// 通す end-to-end で、**本物の reconciler が回っていることが検査の前提**である。
+// ここを開けずに済ませようとすると、テストの駆動を「本物を回す」から「予定を差し替える」へ
+// 変えることになり、**捕まえられるバグの集合が縮む**（README §4 の #310）。
+// `reportRec` を var のまま別名で受けるのは**写しになるので不可**（再代入が届かない）。
+func InstallReconcilerForTest(interval time.Duration) (stop func()) {
+	rc := newReportReconciler(interval)
+	old := reportRec
+	reportRec = rc
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); rc.run(ctx) }()
+	return func() {
+		cancel()
+		<-done
+		reportRec = old
 	}
 }

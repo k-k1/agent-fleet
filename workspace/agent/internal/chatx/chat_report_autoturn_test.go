@@ -94,7 +94,7 @@ func TestAutoTurnSchedulerConcurrentScheduleIsSingleFire(t *testing.T) {
 func TestQuietReport(t *testing.T) {
 	// 既定 OFF: 何も抑止しない。
 	writeUIPrefs(t, `{}`)
-	if quietReport(reportKindAnswerReady, "") {
+	if quietReport(ReportKindAnswerReady, "") {
 		t.Fatal("quiet while the setting is OFF")
 	}
 	// ON: 静かになるのは正常完了とその訂正だけ。異常系・打ち切りは従来どおり回す。
@@ -103,10 +103,10 @@ func TestQuietReport(t *testing.T) {
 		kind, reason string
 		quiet        bool
 	}{
-		{reportKindAnswerReady, "", true},
+		{ReportKindAnswerReady, "", true},
 		{reportKindReopened, "", true},
-		{reportKindAnswerReady, reportReasonTurnAborted, false},
-		{reportKindAnswerReady, reportReasonTurnFailed, false},
+		{ReportKindAnswerReady, ReportReasonTurnAborted, false},
+		{ReportKindAnswerReady, ReportReasonTurnFailed, false},
 		{reportKindReopened, reportReasonReopenCapped, false},
 		{"exit", "oom", false},
 	}
@@ -119,19 +119,19 @@ func TestQuietReport(t *testing.T) {
 
 func TestChatAutoTurnDelayEnvOverride(t *testing.T) {
 	writeUIPrefs(t, `{}`) // HOME を隔離（実環境の ui-prefs を読ませない）
-	if got := chatAutoTurnDelay(); got != chatAutoTurnDelayDefault {
+	if got := ChatAutoTurnDelay(); got != ChatAutoTurnDelayDefault {
 		t.Fatalf("default delay = %v", got)
 	}
 	t.Setenv("AF_CHAT_AUTOTURN_DELAY", "5")
-	if got := chatAutoTurnDelay(); got != 5*time.Second {
+	if got := ChatAutoTurnDelay(); got != 5*time.Second {
 		t.Fatalf("env delay = %v", got)
 	}
 	t.Setenv("AF_CHAT_AUTOTURN_DELAY", "0")
-	if got := chatAutoTurnDelay(); got != 0 {
+	if got := ChatAutoTurnDelay(); got != 0 {
 		t.Fatalf("zero delay = %v", got)
 	}
 	t.Setenv("AF_CHAT_AUTOTURN_DELAY", "junk")
-	if got := chatAutoTurnDelay(); got != chatAutoTurnDelayDefault {
+	if got := ChatAutoTurnDelay(); got != ChatAutoTurnDelayDefault {
 		t.Fatalf("invalid env must fall back: %v", got)
 	}
 }

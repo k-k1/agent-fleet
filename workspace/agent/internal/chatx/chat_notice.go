@@ -26,12 +26,12 @@ const (
 
 // newNotice builds a notice message from its catalog key, arguments and source-language
 // fallback text.
-func newNotice(key string, args map[string]string, fallback string) chatMessage {
-	return chatMessage{
+func newNotice(key string, args map[string]string, fallback string) ChatMessage {
+	return ChatMessage{
 		Role:       "notice",
 		Content:    fallback,
 		NoticeKey:  key,
 		NoticeArgs: args,
-		TS:         nowMs(),
+		TS:         NowMs(),
 	}
 }

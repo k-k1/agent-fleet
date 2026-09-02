@@ -26,7 +26,7 @@ const (
 
 // chatTitleSuggestPrompt mirrors titleSuggestPrompt (session_title.go): opening + most
 // recent real exchanges, weighting the recent topic.
-func chatTitleSuggestPrompt(msgs []chatMessage, lang string) string {
+func ChatTitleSuggestPrompt(msgs []ChatMessage, lang string) string {
 	var b strings.Builder
 	b.WriteString(titleSuggestInstructions(lang)) // session_title.go と共有（前置き・ラベル禁止の 悪い例 込み）
 	writeChatTitleWindow(&b, msgs)
@@ -39,15 +39,15 @@ func chatTitleSuggestPrompt(msgs []chatMessage, lang string) string {
 // are skipped — they're session-origin, not conversation topic — and so are system
 // notices (role=="notice"), which are UI housekeeping whose body is only a
 // source-language fallback for the Console's catalog (ADR 0033).
-func writeChatTitleWindow(b *strings.Builder, msgs []chatMessage) {
-	real := make([]chatMessage, 0, len(msgs))
+func writeChatTitleWindow(b *strings.Builder, msgs []ChatMessage) {
+	real := make([]ChatMessage, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == "report" || m.Role == "notice" || strings.TrimSpace(m.Content) == "" {
 			continue
 		}
 		real = append(real, m)
 	}
-	writeMsg := func(m chatMessage) {
+	writeMsg := func(m ChatMessage) {
 		text := strings.TrimSpace(m.Content)
 		if r := []rune(text); len(r) > chatTitlePerMsgRunes {
 			text = string(r[:chatTitlePerMsgRunes]) + "…"
@@ -69,9 +69,9 @@ func writeChatTitleWindow(b *strings.Builder, msgs []chatMessage) {
 	}
 }
 
-func runChatTitleSuggestLLM(ctx context.Context, msgs []chatMessage) (string, error) {
+func runChatTitleSuggestLLM(ctx context.Context, msgs []ChatMessage) (string, error) {
 	lang := titleLang() // セッション件名と同じ規約（表示言語で生成し、後からの切替では作り直さない）
-	reply, err := oneShotHeadless(ctx, titleSuggestPersona(lang), chatTitleSuggestPrompt(msgs, lang), titleModel())
+	reply, err := OneShotHeadless(ctx, titleSuggestPersona(lang), ChatTitleSuggestPrompt(msgs, lang), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("chat title generation failed: %w", err)
 	}
@@ -82,7 +82,7 @@ func runChatTitleSuggestLLM(ctx context.Context, msgs []chatMessage) (string, er
 // persisting it — mirrors handleSuggestTitle (session_title.go): the rename dialog's
 // "AIに提案してもらう" button fills the text field for the user to edit/accept themselves.
 // Works even when the conversation already has a title (renaming is exactly that case).
-func handleChatSuggestTitle(w http.ResponseWriter, r *http.Request) {
+func HandleChatSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatConversationNotFnd, "invalid conversation id")
@@ -92,7 +92,7 @@ func handleChatSuggestTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "assistant title suggestion is turned off")
 		return
 	}
-	c, err := loadConv(id)
+	c, err := LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
