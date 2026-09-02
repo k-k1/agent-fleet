@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import type { CSSProperties, KeyboardEvent, ClipboardEvent, ReactNode } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
-import { useTtsStore } from "../../core/store/tts.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useChatStore } from "./store.ts";
 import { chatGet, chatStream, chatStop, chatCreate, chatCompact, chatSetAgent, assistantGet, chatPasteImage, chatSuggestReplies } from "./api.ts";
@@ -61,6 +60,7 @@ import { ChatHead } from "./parts/ChatHead.tsx";
 import { ChatAttachStrip } from "./parts/ChatAttachStrip.tsx";
 import { ChatSuggestRow } from "./parts/ChatSuggestRow.tsx";
 import { ChatComposerRow } from "./parts/ChatComposerRow.tsx";
+import { createWorkStepTts } from "./parts/chatWorkTts.ts";
 import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
 import type { SessionKind } from "../../types/session.ts";
@@ -722,52 +722,12 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     stopTtsForReplacement(ttsRef.current?.ctl ?? null); // whatever this pane was reading
     setPaneTts(convId, workMode === "off" ? makeTts() : null);
 
-    // 作業過程は確定順に 1 本ずつ読む。次の step が来ても再生中の step は止めず、
-    // 最終回答が来た時点でだけ再生中・未再生をまとめて破棄して通常声へ譲る。
-    // 他の読み上げに置換された場合も、それを即座に置換し返さず、グローバル再生が
-    // 空いてから続きを再開する。
-    const workQueue: string[] = [];
-    let workCurrent: TtsController | null = null;
-    let workClosed = false;
-    let unsubscribeWork = () => {};
-    let pumpWork = () => {};
-    pumpWork = () => {
-      if (workMode === "off" || workClosed || workCurrent || !workQueue.length) return;
-      const st = useTtsStore.getState();
-      if (st.active || st.speaking) return;
-      const text = workQueue.shift()!;
-      const c = makeTts(true, (reason) => {
-        if (workCurrent === c) workCurrent = null;
-        if (paneTts(convId) === c) setPaneTts(convId, null);
-        if (reason === "explicit") {
-          workClosed = true;
-          workQueue.length = 0;
-          unsubscribeWork();
-        } else {
-          queueMicrotask(pumpWork);
-        }
-      });
-      if (!c) return;
-      workCurrent = c;
-      setPaneTts(convId, c);
-      c.push(text);
-      c.flush();
-    };
-    unsubscribeWork =
-      workMode === "off"
-        ? () => {}
-        : useTtsStore.subscribe(() => {
-            queueMicrotask(pumpWork);
-          });
-    const closeWork = () => {
-      unsubscribeWork();
-      if (workClosed) return;
-      workClosed = true;
-      workQueue.length = 0;
-      stopTtsForReplacement(workCurrent);
-      if (paneTts(convId) === workCurrent) setPaneTts(convId, null);
-      workCurrent = null;
-    };
+    const workTts = createWorkStepTts({
+      workMode,
+      makeTts,
+      getPaneTts: () => paneTts(convId),
+      setPaneTts: (ctl) => setPaneTts(convId, ctl),
+    });
     let streamDone = false;
     markChatBusy(convId, true); // publish 進行中 to the rail
     // The live reply + working steps + final conversation live in the store, keyed by
@@ -813,8 +773,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
             stopTtsForReplacement(paneTts(convId));
             setPaneTts(convId, makeTts()); // 従来動作: 次の tentative message をライブ再生
           } else if (step.text?.trim()) {
-            workQueue.push(step.text);
-            pumpWork();
+            workTts.push(step.text);
           }
         },
         onError: (m) => setErrorFor(convId, m),
@@ -829,7 +788,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
             paneTts(convId)?.flush();
           } else {
             // 最終回答の到着で、残っている小声再生を置換して通常声へ戻す。
-            closeWork();
+            workTts.close();
             const finalText = acc.trim() || updated?.messages.at(-1)?.content || "";
             const c = finalText ? makeTts() : null;
             setPaneTts(convId, c);
@@ -841,7 +800,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       ac.signal,
     );
     // Abort/error paths emit no done event. Work playback must not outlive the turn.
-    if (!streamDone) closeWork();
+    if (!streamDone) workTts.close();
     // Abort/error paths emit no done event, so clear the streaming state here too. teardown is
     // idempotent — after a normal completion this re-run is a harmless no-op.
     teardown();
