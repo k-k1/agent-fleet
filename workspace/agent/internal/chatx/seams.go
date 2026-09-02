@@ -76,14 +76,14 @@ func bindValues(d Deps) {
 // --- Configure が受け取った関数への継ぎ目 ------------------------------------
 
 func assistantAgentOrderPref() []string { return deps.AssistantAgentOrderPref() }
+func aiAssistOrderPref() []string       { return deps.AiAssistOrderPref() }
 func assistantChatModelPref(kind string) (string, bool) {
 	return deps.AssistantChatModelPref(kind)
 }
-func assistantUtilityModelPref(kind string) (string, bool) {
-	return deps.AssistantUtilityModelPref(kind)
-}
-func chatAutoTurnLimit() int    { return deps.ChatAutoTurnLimit() }
-func chatAutoTurnModel() string { return deps.ChatAutoTurnModel() }
+func aiShortModelPref(kind string) (string, bool) { return deps.AiShortModelPref(kind) }
+func aiProseModelPref(kind string) (string, bool) { return deps.AiProseModelPref(kind) }
+func chatAutoTurnLimit() int                      { return deps.ChatAutoTurnLimit() }
+func chatAutoTurnModel() string                   { return deps.ChatAutoTurnModel() }
 
 func filterVisibleModels(kind string, list []agents.ModelChoice) []agents.ModelChoice {
 	return deps.FilterVisibleModels(kind, list)

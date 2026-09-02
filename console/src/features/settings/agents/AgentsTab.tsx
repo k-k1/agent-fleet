@@ -90,10 +90,9 @@ export function AgentsTab() {
   const sessionSettings = (
     <section className="ds-group">
       <h4 className="ds-title">{tr("agents.session")}</h4>
-      <Row label={tr("agents.auto_title")}>
-        <OnOff value={s.autoTitleSuggest} onChange={(v) => setSetting("autoTitleSuggest", v)} />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_auto_title")}</p>
+      {/* タイトル自動提案（autoTitleSuggest）は 設定 > AI補助 へ移した（docs/log/84）。
+          ここに在ると「セッションの設定」に見えるが、同じ 1 キーがブランチ名の AI 提案
+          まで止めていた。AI 補助生成の ON/OFF は機能ごとに 1 箇所へ集約している。 */}
       {/* セッション間メッセージ（docs/log/58 / ADR 0041）。カードの中ではなくここに置くのは、
           af 自身の MCP が配られる 7 kind すべてに効く設定で、特定のエージェントの
           設定ではないから（claude カードに入れると claude 限定に見える）。 */}

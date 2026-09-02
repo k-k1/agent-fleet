@@ -334,7 +334,7 @@ func refreshPlan(ctx context.Context, c *ChatConversation) (bool, error) {
 		Feature: usagex.FeaturePlanUpdate, Trigger: usagex.TriggerManual, Ref: c.ID,
 	})
 	lang := uiprefs.Locale()
-	reply, err := OneShotHeadless(ctx, PlanRefreshPersonaFor(lang), planRefreshPrompt(c, lang), planModel())
+	reply, err := OneShotHeadless(ctx, OneShotProse, PlanRefreshPersonaFor(lang), planRefreshPrompt(c, lang), planModel())
 	if err != nil {
 		return false, fmt.Errorf("plan refresh failed: %w", err)
 	}

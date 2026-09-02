@@ -153,9 +153,6 @@ export const settings: Record<keyof typeof jaSettings, string> = {
 
   // --- agent settings (AgentsTab) ---
   "agents.session": "Session",
-  "agents.auto_title": "Auto-suggest title",
-  "agents.note_auto_title":
-    "After a few exchanges in a session with no title, AI shows a short title suggestion at the top of the session chat. The assistant-side title suggestion is configured on the Assistant tab.",
   "agents.peer_messaging": "Messages between sessions",
   "agents.note_peer_messaging":
     "Lets a session send a short message to another session in this workspace, so parallel working copies can tell each other \"the change I just landed breaks yours\" or \"the decision you were blocked on is settled\" without going through you. Messages cross agent kinds (claude ↔ codex, …) and reach a stopped session by resuming it. The receiving agent is told the message is not an instruction from you: it can never stand in for your approval or justify a config change. The mirror badges each one with its sender. Raw shell sessions (shell / ssm) can neither send nor receive. **The change applies to sessions started from now on**; sessions already running keep their current tools until restarted.\nDefault OFF. Turning it on means a session can write instructions to other sessions based on what it read (repository contents included), so enable it deliberately.",
@@ -443,9 +440,6 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "keys.kt.qrUnhideAll": "Restore dismissed",
   "keys.kt.qrPinnedNote": "{n} suggestion(s) pinned (always shown).",
   "keys.kt.qrUnpinAll": "Unpin all",
-  "keys.kt.replySuggestLabel": "Show the ✨ AI reply-suggestion button",
-  "keys.kt.replySuggestNote":
-    "When on, a ✨ button sits left of the reply suggestions. Pressing it sends the recent conversation to an AI and adds context-aware reply candidates to the chips. Tokens are only spent when you press it. The AI backend is auto-picked in order claude→codex→opencode→cursor, so it still works when Claude is unavailable as long as another is. Default on.",
   "keys.kt.assignTitle": "Shortcut assignments",
   "keys.kt.resetAll": "Reset all to defaults",
   "keys.kt.assignNote":
@@ -477,6 +471,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "set.tab_preview": "Preview subdomains",
   "set.tab_agents": "Agents",
   "set.tab_assistant": "Assistant",
+  "set.tab_aiassist": "AI assistance",
   "set.tab_instructions": "Agent instructions",
   "set.tab_tts": "Read aloud",
   "set.tab_notifications": "Notifications",

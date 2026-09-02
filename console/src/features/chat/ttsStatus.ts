@@ -12,7 +12,7 @@ import { api } from "../../core/api/client.ts";
 import type { TtsStatus } from "./ttsAvailability.ts";
 
 export type { TtsProviderStatus, TtsStatus } from "./ttsAvailability.ts";
-export { voicevoxAvailable } from "./ttsAvailability.ts";
+export { voicevoxAvailable, pollyAvailable } from "./ttsAvailability.ts";
 
 const TTL = 30_000; // 管理者がエンジンを起動/停止しうるので、設定画面を開き直せば追随する程度に
 let cache: TtsStatus | null = null;

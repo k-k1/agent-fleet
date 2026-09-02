@@ -31,6 +31,7 @@ value you set is not the value in force, look one layer out.
 | Agent instructions | text added to every agent you start in this workspace |
 | Agent memory | version management, rollback, import / export of an agent's memory |
 | Assistant | the assistant chat's agent and model |
+| AI assistance | agent and models for titles, branch names, reply and edit suggestions; per-feature on/off |
 | Agent usage | your token spend, by feature, agent and model |
 | Cloud cost | your share of the deployment's cloud spend |
 | Running time | when your workspace was running (a 24-hour x date heatmap) |

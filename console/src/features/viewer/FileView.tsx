@@ -622,6 +622,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
             }
             saving={phase === "saving"}
             suggestDisabled={editorAlert || phase === "saving" || editor.suggesting}
+            suggestEnabled={settings.editSuggestEnabled}
             suggesting={editor.suggesting}
             onSave={() => {
               setEditorNotice("");

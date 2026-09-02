@@ -7,6 +7,7 @@
 // ⚠️ Never write a key in this file — see ./ja.ts for why the catalog is split at all.
 import type { ja } from "./ja.ts";
 import { admin } from "./en/admin.ts";
+import { aiassist } from "./en/aiassist.ts";
 import { assistant } from "./en/assistant.ts";
 import { chat } from "./en/chat.ts";
 import { common } from "./en/common.ts";
@@ -31,6 +32,7 @@ export const en: Record<keyof typeof ja, string> = {
   ...settings,
   ...tools,
   ...assistant,
+  ...aiassist,
   ...sessions,
   ...mirror,
   ...chat,

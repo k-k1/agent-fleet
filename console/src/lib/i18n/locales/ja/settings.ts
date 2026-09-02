@@ -151,9 +151,6 @@ export const settings = {
 
   // --- エージェント設定（features/settings/AgentsTab.tsx）---
   "agents.session": "セッション",
-  "agents.auto_title": "タイトル自動提案",
-  "agents.note_auto_title":
-    "タイトル未設定のセッションで数回やり取りしたら、AIが短いタイトル案をセッションのチャット上部に表示します。アシスタントのタイトル提案は「アシスタント」タブで設定します。",
   "agents.peer_messaging": "セッション間メッセージ",
   "agents.note_peer_messaging":
     "セッションが、同じワークスペースの別のセッションへ短いメッセージを送れるようにします。並行して動かしている作業コピーの間で「いま入れた変更がそちらを壊す」「待っていた判断が決まった」を、あなたを経由せずに直接伝えられます。エージェント種別をまたいで届き（claude ↔ codex など）、相手が停止中なら再開して届けます。受け取った側には「利用者の指示ではない」と伝わり、承認の代行や設定変更の根拠にはなりません。ミラーには送信元付きのバッジが出ます。生シェル（shell / ssm）のセッションは送受信とも対象外です。**反映は次に起動するセッションから**で、すでに動いているセッションは再起動するまで変わりません。\n既定 OFF。ONにすると、あるセッションが読んだ内容（リポジトリの中身など）を元に他のセッションへ指示を書けるようになるため、増える面を承知のうえで有効にしてください。",
@@ -443,9 +440,6 @@ export const settings = {
   "keys.kt.qrUnhideAll": "消した候補を戻す",
   "keys.kt.qrPinnedNote": "ピン留め（常に表示）が {n} 件あります。",
   "keys.kt.qrUnpinAll": "ピンをすべて外す",
-  "keys.kt.replySuggestLabel": "AI返信候補の✨ボタンを表示",
-  "keys.kt.replySuggestNote":
-    "オンにすると、返信サジェストの左に✨ボタンが出ます。押すと直近の会話をAIに渡し、文脈に沿った返信候補を生成してチップに追加します。トークンを使うのは押した時だけ。利用できるAIは claude→codex→opencode→cursor の順に自動選択するので、Claude が使えなくても他があれば動きます。既定はオン。",
   "keys.kt.assignTitle": "ショートカットの割り当て",
   "keys.kt.resetAll": "すべて既定に戻す",
   "keys.kt.assignNote":
@@ -477,6 +471,7 @@ export const settings = {
   "set.tab_preview": "プレビュー用サブドメイン",
   "set.tab_agents": "エージェント",
   "set.tab_assistant": "アシスタント",
+  "set.tab_aiassist": "AI補助",
   "set.tab_instructions": "エージェントへの指示",
   "set.tab_tts": "読み上げ",
   "set.tab_notifications": "通知",

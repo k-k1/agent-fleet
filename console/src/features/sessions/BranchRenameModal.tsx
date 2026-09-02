@@ -10,6 +10,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { apiJSON, errText } from "../../core/api/client.ts";
+import { useSettings } from "../../lib/settings.ts";
 
 const PREFIXES = ["feat/", "fix/", "refactor/", "chore/", "docs/"];
 // temp/ is the auto-generated placeholder prefix (deferred naming) — never offered
@@ -28,6 +29,7 @@ interface BranchRenameModalProps {
 }
 
 export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRenameModalProps) {
+  const branchSuggest = useSettings().branchSuggestEnabled;
   const [value, setValue] = useState(branch);
   const [saving, setSaving] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
@@ -120,11 +122,15 @@ export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRena
             </button>
           ))}
         </div>
-        <div>
-          <Button icon={suggesting ? "loading" : "sparkle"} onClick={suggest} disabled={busy}>
-            {tr("sx.ai_suggest")}
-          </Button>
-        </div>
+        {/* 設定 > AI補助「ブランチ名の提案」。かつてはセッションのタイトル提案の
+            設定に相乗りしていて、しかも off でもボタンは出ていた。 */}
+        {branchSuggest && (
+          <div>
+            <Button icon={suggesting ? "loading" : "sparkle"} onClick={suggest} disabled={busy}>
+              {tr("sx.ai_suggest")}
+            </Button>
+          </div>
+        )}
         {proposal && (
           <div className="sm-proposal">
             <span className="sm-proposal-label">{tr("sx.proposal")}</span>

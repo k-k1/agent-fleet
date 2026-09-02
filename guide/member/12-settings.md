@@ -16,7 +16,7 @@ How each setting is *used* belongs to the other chapters, so read this one as a
 
 | Group | What is in it |
 |---|---|
-| **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / Agent instructions |
+| **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / AI assistance / Agent instructions |
 | **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens |
 | **Workspace** | Agent usage / Cloud cost / Running time / Agent memory / Toolchain / Preview subdomains / AWS SSM / Internal repositories / Export & import / Danger zone |
 
@@ -99,8 +99,6 @@ land in the same workspace, the same home and the same settings.
   where you clear what has been learned or unpin pinned chips. There are two ways to clear: **Clear used-once**
   drops only the throwaway phrasings you sent exactly once (pinned ones stay, and sending one again learns it
   back), while **Clear all learned** wipes both what was learned and the dismissed list, back to the initial state.
-- **✨ AI reply suggestions button** — the button that generates suggestions from the recent conversation. On by
-  default.
 
 ### Speech
 
@@ -114,6 +112,8 @@ Reads out replies from sessions and assistants.
   **pronunciation dictionary** (`written=reading`, one per line).
 - **Advanced** — background playback and volume, panning to match the pane position, audio cache.
 - **Audio notifications** — announce session state changes and rate-limit resets by voice.
+- **Read-aloud language** — Auto (follows the display language) / Japanese / English. With the engine on
+  "auto", English switches to a Polly English voice. This is separate from the assistant's **Output language**.
 - "Reset to defaults" resets the speech settings only (the pronunciation dictionary is kept).
 
 ### Notifications
@@ -128,11 +128,12 @@ Reads out replies from sessions and assistants.
 
 The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [11](08-organising.md)).
 
-- **Output language** — follow the input / 日本語 / English.
-- **AI title suggestions** — whether the rename dialog offers "let AI suggest".
-- **Agent priority** — the first connected CLI from the top of this list runs the assistants.
-- **Assistant models** / **models for titles and suggestions** — per CLI. "Recommended (currently: …)" picks a
-  safe default from the live catalogue and shows what it currently resolves to.
+- **Output language** — follow the input / 日本語 / English. It changes chat replies only (the read-aloud
+  language lives on the **Speech** tab).
+- **Agent priority** — the first connected CLI from the top of this list runs the assistants. Titles, reply
+  suggestions and the like are ranked separately (the **AI assistance** tab).
+- **Assistant models** — per CLI. "Recommended (currently: …)" picks a safe default from the live catalogue and
+  shows what it currently resolves to.
 - **Auto-reply to session reports** — the operator takes one turn automatically when a report arrives.
   **Automatic reply limit** (default 10, max 50 — it cannot be unlimited), **model for automatic replies**
   (reading a report is routine work, so a lighter model saves a lot), **batching window** (reports arriving
@@ -148,6 +149,24 @@ The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [
   full output is always readable in the chat view.
 - **Appearance** — theme and background colour of the assistant surface (this device only).
 
+### AI assistance
+
+Settings for the **one-shot AI generations** that appear on sessions, the mirror and the File pane. These are not
+the assistant conversation — they share an implementation, but they surface somewhere else.
+
+- **Agent priority** — the CLI order used for assistance, ranked separately from the assistant. The chat wants
+  the strongest model; assistance runs constantly and wants the cheapest one that works.
+- **Model for short labels** / **Model for prose** — short covers titles, branch names and reply suggestions;
+  prose covers File pane edit suggestions and chat plan updates. Different needs, so different defaults (a
+  lightweight model for short labels, one tier up for prose).
+- **Features that use AI assistance** — each can be turned off individually, which hides its button entirely.
+  - **Session title suggestion** — the banner that proposes a title, plus "Ask AI" in a session's rename dialog.
+  - **Chat title suggestion** — "Ask AI" in the assistant's rename dialog. A chat has no banner of its own.
+  - **Branch name suggestion** — used when creating a worktree or renaming a branch.
+  - **AI reply suggestions (✨)** — the button on the mirror and chat composers; it spends tokens only when
+    pressed. The **reply suggestions** learned from your own input history (Keys tab) use no AI and are separate.
+  - **File edit suggestions** — turns a selection plus your instruction into a proposed replacement.
+
 ### Agent instructions
 
 Adds your own standing instructions to every agent newly started in this workspace, with a per-target row
@@ -162,8 +181,8 @@ See [06 Agents](06-agents.md#agent-instructions-write-down-how-you-work-once).
 
 Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor / Kiro (and the experimental
 Antigravity): default model, **models you don't use**, **extra Claude models**, expanded thinking, RTK. The
-**Sessions** group holds automatic title suggestions, **session-to-session messaging**, auto-resume after a rate
-limit resets, and auto-resume of an interrupted turn.
+**Sessions** group holds **session-to-session messaging**, auto-resume after a rate limit resets, and
+auto-resume of an interrupted turn.
 → [06 Agents](06-agents.md), [02 Sessions](02-sessions.md#messages-between-sessions)
 
 ### Git hosting
@@ -381,6 +400,8 @@ deeper reset that also removes home except logins and connections). Both lose un
 | Silence Slack without disconnecting | Notifications (service notifications) |
 | Make the assistant answer in English | Assistant (output language) |
 | Let the operator run ahead — or stop it | Assistant (autopilot, auto-reply) |
+| Stop AI from writing titles or reply suggestions | AI assistance (per-feature on/off) |
+| Run only the assistance on a cheap model | AI assistance (priority, models) |
 | I keep typing the same preamble | Agent instructions |
 | Sign in to Claude / Codex | Agents |
 | Stop a model that bills extra from being picked | Agents (models you don't use) |

@@ -7,6 +7,7 @@ import {
   TTS_SPEEDS,
   TTS_CACHE_SIZES,
   TTS_PROVIDERS,
+  TTS_LANGS,
   TTS_POLLY_VOICES,
   TTS_WORK_READ_MODES,
   TTS_BACKGROUND_PLAYBACK_MODES,
@@ -15,7 +16,7 @@ import {
 } from "../../../lib/settings.ts";
 import { voiceCharacters, isDefaultVoice, previewVoice } from "../../chat/tts.ts";
 import { loadSpeakers, speakersCatalog } from "../../chat/ttsSpeakers.ts";
-import { loadTtsStatus, ttsStatusCache, voicevoxAvailable } from "../../chat/ttsStatus.ts";
+import { loadTtsStatus, ttsStatusCache, voicevoxAvailable, pollyAvailable } from "../../chat/ttsStatus.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
@@ -45,9 +46,18 @@ export function TtsTab() {
     };
   }, []);
   const noVv = voicevoxAvailable(engines) === false;
-  // エンジン選択から voicevox を落とす。ただし現在値が voicevox のときだけは残す — 選択肢から
-  // 消すと現在値が表示できず、壊れた設定のまま黙って隠れてしまう（下で警告も出す）。
-  const engineOptions = TTS_PROVIDERS.filter(([id]) => !noVv || id !== "voicevox" || s.ttsProvider === "voicevox");
+  // Polly が無い配備（CP に region 未設定）。voicevox と対称に扱う: 選択肢から落とし、
+  // 読み上げ言語の注記も「English にしても Polly では読まない」に切り替える。
+  // 見ないままだと、CP が chooseTTSProvider で voicevox へ落としているのに UI だけが
+  // Polly を約束する（docs/log/84 §84.7）。
+  const noPolly = pollyAvailable(engines) === false;
+  // エンジン選択から落とす。ただし現在値がそれのときだけは残す — 選択肢から消すと
+  // 現在値が表示できず、壊れた設定のまま黙って隠れてしまう（下で警告も出す）。
+  const engineOptions = TTS_PROVIDERS.filter(
+    ([id]) =>
+      (!noVv || id !== "voicevox" || s.ttsProvider === "voicevox") &&
+      (!noPolly || id !== "polly" || s.ttsProvider === "polly"),
+  );
   // リセット＝音声読み上げ設定を「初期状態」(TTS_RESET = DEFAULTS の TTS キー) に戻す。キャラは
   // ttsVoicePool: {} ＝標準 14 キャラのスタートで、新規ユーザーの初期状態と揃う。読み仮名辞書は
   // ユーザーが打ち込んだ内容なので消さない（TTS_RESET に含めていない）。多数のキーを一度に書くため
@@ -102,6 +112,17 @@ export function TtsTab() {
             </Row>
             <p className="muted ds-note">{noVv ? tr("tts.note_no_voicevox") : tr("tts.note_engine")}</p>
             {noVv && s.ttsProvider === "voicevox" && <p className="form-err">{tr("tts.warn_voicevox_missing")}</p>}
+            {/* 読み上げ言語（docs/log/84）。エンジンが「自動」のときの振り分け（en → Polly）と
+                Polly の既定の声を決める。以前は アシスタントの「回答言語」を借りていたので、
+                チャットの回答を English にしただけでミラーの読み上げまで声が変わっていた。 */}
+            <Row label={tr("tts.lang")}>
+              <Choice
+                value={s.ttsLang}
+                options={TTS_LANGS.map(([id, k]) => [id, tr(k)])}
+                onChange={(v) => setSetting("ttsLang", v)}
+              />
+            </Row>
+            <p className="muted ds-note">{noPolly ? tr("tts.note_lang_no_polly") : tr("tts.note_lang")}</p>
             {!noVv && s.ttsProvider !== "polly" && (
               <>
                 <Row label={tr("tts.speaker_voicevox")}>

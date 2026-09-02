@@ -25,3 +25,17 @@ export function voicevoxAvailable(st: TtsStatus | null): boolean | null {
   if (!st) return null;
   return st.voicevox.ready || st.voicevox.managed === true;
 }
+
+// pollyAvailable は「このデプロイで Polly が使えるか」。null = まだ分からない。
+//
+// voicevox と違い managed（オンデマンド起動）の概念が無く、CP 側の ready はリージョン設定の
+// 有無そのもの（pollyProvider.Ready）なので、ready がそのまま available になる。
+//
+// これを見ないと、Polly の無い配備でもエンジン選択肢に「Polly」が並び、読み上げ言語に
+// English を選べば「Polly の声で読む」と読める注記が出る。実際には CP の
+// chooseTTSProvider が plReady=false を見て voicevox へ落とすので、鳴るのはずんだもんで
+// ある（docs/log/84 §84.7）。
+export function pollyAvailable(st: TtsStatus | null): boolean | null {
+  if (!st) return null;
+  return st.polly.ready;
+}

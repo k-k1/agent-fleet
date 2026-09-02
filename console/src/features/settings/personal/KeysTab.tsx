@@ -225,12 +225,9 @@ export function KeysTab() {
         </div>
         <p className="muted ds-note">{t("keys.kt.quickRepliesNote")}</p>
         {s.quickRepliesEnabled && <LearnedQuickReplies />}
-
-        <div className="ds-row">
-          <span className="ds-label">{t("keys.kt.replySuggestLabel")}</span>
-          <OnOff value={s.replySuggestEnabled} onChange={(v) => setSetting("replySuggestEnabled", v)} />
-        </div>
-        <p className="muted ds-note">{t("keys.kt.replySuggestNote")}</p>
+        {/* AI 返信候補（✨・replySuggestEnabled）は 設定 > AI補助 へ移した（docs/log/84）。
+            学習ベースのクイック返信（すぐ上）と違って LLM を呼ぶ機能で、優先順位と
+            モデルの設定と離れていると何が効くのか辿れなかった。 */}
       </section>
 
       <section className="ds-group">

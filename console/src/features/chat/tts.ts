@@ -37,7 +37,7 @@ export interface TtsOptions {
   speed: number; // speedScale
   enkana?: boolean; // 英語をカタカナ英語に前処理して読ませる（CP の enkana。voicevox 時のみ効く）
   pollyVoice?: string; // Polly の VoiceId（auto のフォールバック先でも使う）
-  lang?: string; // 言語ヒント（設定 outputLanguage を再利用）: "auto" | "ja" | "en"
+  lang?: string; // 言語ヒント（設定 > 読み上げ の ttsLang）: "auto" | "ja" | "en"
   particlePause?: boolean; // 設定 ttsParticlePause。CP 側で読点ポーズを詰める（voicevox のみ）
   volume?: number; // 再生音量（0..1）。合成条件ではなく Web Audio の出力ゲイン
   paneId?: string; // 発生元ペイン。設定ON時、現在の列位置からステレオのパンを決める
@@ -54,7 +54,12 @@ export function ttsOptsFromSettings(s = getSettings()): TtsOptions {
     speed: s.ttsSpeed,
     enkana: ja && s.ttsEnglishKana,
     pollyVoice: s.ttsVoicePolly,
-    lang: s.outputLanguage,
+    // 読み上げ専用の言語軸（docs/log/84）。以前はアシスタントの回答言語
+    // （outputLanguage）を借りていたため、チャットの回答を English にしただけで
+    // ミラーの読み上げ・朗読ビューまで Polly / Joanna に切り替わっていた。
+    // "auto" は UI 表示言語に従う（上の enkana / 助詞ポーズと同じ軸で揃える。
+    // 借用時代の auto は常に日本語扱いで、英語 UI でも VOICEVOX に流れていた）。
+    lang: s.ttsLang === "auto" ? getLocale() : s.ttsLang,
     particlePause: ja && s.ttsParticlePause,
   };
 }

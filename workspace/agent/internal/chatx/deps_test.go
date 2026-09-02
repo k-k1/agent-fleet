@@ -50,8 +50,12 @@ func testDeps() Deps {
 		AssistantChatModelPref: func(kind string) (string, bool) {
 			return modelPrefForTest("assistantModels", kind)
 		},
-		AssistantUtilityModelPref: func(kind string) (string, bool) {
-			return modelPrefForTest("assistantUtilityModels", kind)
+		AiAssistOrderPref: func() []string { return DefaultHeadlessOrder },
+		AiShortModelPref: func(kind string) (string, bool) {
+			return modelPrefForTest("aiShortModels", kind)
+		},
+		AiProseModelPref: func(kind string) (string, bool) {
+			return modelPrefForTest("aiProseModels", kind)
 		},
 		// main の chatAutoTurnLimit と同じ丸め: 未設定なら既定、常に [1, 上限] に収める。
 		ChatAutoTurnLimit: func() int {

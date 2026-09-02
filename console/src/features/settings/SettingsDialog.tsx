@@ -30,6 +30,7 @@ import { EnvTab } from "./workspace/EnvTab.tsx";
 import { PreviewTab, usePreviewAvailable } from "./workspace/PreviewTab.tsx";
 import { AgentsTab } from "./agents/AgentsTab.tsx";
 import { AssistantTab } from "./personal/AssistantTab.tsx";
+import { AiAssistTab } from "./personal/AiAssistTab.tsx";
 import { InstructionsTab } from "./personal/InstructionsTab.tsx";
 import { TtsTab } from "./personal/TtsTab.tsx";
 import { GitTab } from "./connect/GitTab.tsx";
@@ -65,6 +66,9 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       ["tts", "set.tab_tts"],
       ["notifications", "set.tab_notifications"],
       ["assistant", "set.tab_assistant"],
+      // AI 補助（docs/log/84）。アシスタントの隣なのは「LLM を呼ぶ設定」という近さで、
+      // 中身は別物 — チャットではなく、セッション・ミラー・File ペインの一発生成。
+      ["aiassist", "set.tab_aiassist"],
       ["instructions", "set.tab_instructions"],
     ],
   },
@@ -200,6 +204,7 @@ export function SettingsDialog() {
             </div>
             {section === "agents" && <AgentsTab />}
             {section === "assistant" && <AssistantTab />}
+            {section === "aiassist" && <AiAssistTab />}
             {section === "instructions" && <InstructionsTab />}
             {section === "tts" && <TtsTab />}
             {section === "notifications" && <NotificationsTab />}

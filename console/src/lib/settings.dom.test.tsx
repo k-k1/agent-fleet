@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expandThinking, getSettings, isDeviceLocalSetting, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, type Settings } from "./settings.ts";
+import { expandThinking, getSettings, isDeviceLocalSetting, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, type Settings } from "./settings.ts";
 
 // 純ロジックだが jsdom プロジェクト（.dom.test.tsx）に置く: settings.ts は API クライアント
 // 経由で読み込み時に localStorage を触るため、node 環境では import 自体が落ちる。
@@ -84,5 +84,64 @@ describe("normalizeAgentLaunchDefaults / skipPermissions", () => {
     expect(rows.kiro.skipPermissions).toBe(true);
     // 他 kind に漏れない。
     expect(rows.cursor.skipPermissions).toBe(true);
+  });
+});
+
+// --- AI 補助生成の分離（docs/log/84）の移行 -----------------------------------
+//
+// 原則は「アップグレードで挙動を変えない」。ただし aiProseModels だけは意図的に
+// 引き継がない（旧キーは名前に反して文章生成の既定まで置き換えていた）。
+// load()（localStorage）と hydrateUIPrefs()（サーバ prefs）が同じ関数を通ることは
+// settingsSync 側ではなくここで固定する — 規則が 2 箇所に写経されていたのが元の事故。
+describe("migrateAiAssistPrefs", () => {
+  it("splits the old title toggle into session / chat / branch", () => {
+    const o: Record<string, unknown> = { autoTitleSuggest: false };
+    migrateAiAssistPrefs(o);
+    expect(o.assistantTitleSuggest).toBe(false);
+    expect(o.branchSuggestEnabled).toBe(false);
+  });
+
+  it("never overwrites a key the user already set", () => {
+    const o: Record<string, unknown> = { autoTitleSuggest: false, branchSuggestEnabled: true };
+    migrateAiAssistPrefs(o);
+    expect(o.branchSuggestEnabled).toBe(true);
+  });
+
+  it("carries the single agent order over to the assist side", () => {
+    const o: Record<string, unknown> = { assistantAgentOrder: ["codex", "claude"] };
+    migrateAiAssistPrefs(o);
+    expect((o.aiAssistOrder as string[])[0]).toBe("codex");
+    // チャット側はそのまま（分離しても片方だけ動くことはない）
+    expect((o.assistantAgentOrder as string[])[0]).toBe("codex");
+  });
+
+  it("inherits the legacy utility models into BOTH tiers", () => {
+    // 旧キーは（名前に反して）短文・文章の両方へ効いていた。分割の瞬間に片方だけ
+    // 別のモデルへ動かすと、利用者が触っていないのに挙動が変わる。
+    const o: Record<string, unknown> = { assistantUtilityModels: { claude: "haiku" } };
+    migrateAiAssistPrefs(o);
+    expect(o.aiShortModels).toEqual({ claude: "haiku" });
+    expect(o.aiProseModels).toEqual({ claude: "haiku" });
+  });
+
+  it("does not touch a tier the user has already split", () => {
+    const o: Record<string, unknown> = {
+      assistantUtilityModels: { claude: "haiku" },
+      aiProseModels: { claude: "sonnet" },
+    };
+    migrateAiAssistPrefs(o);
+    expect(o.aiProseModels).toEqual({ claude: "sonnet" });
+  });
+
+  it("gives read-aloud its own language key, seeded from the borrowed one", () => {
+    const o: Record<string, unknown> = { outputLanguage: "en" };
+    migrateAiAssistPrefs(o);
+    expect(o.ttsLang).toBe("en");
+  });
+
+  it("leaves a pre-split blob alone when nothing legacy is present", () => {
+    const o: Record<string, unknown> = {};
+    migrateAiAssistPrefs(o);
+    expect(o).toEqual({});
   });
 });

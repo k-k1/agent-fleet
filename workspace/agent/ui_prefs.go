@@ -56,16 +56,17 @@ func skipPermissionsPref(kind string) (bool, bool) {
 // mcpreg.PeerMessagingEnabled と同じくフックで渡す。
 func init() { agents.SkipPermissionsPref = skipPermissionsPref }
 
-// assistantAgentOrderPref returns the user's assistant-chat backend priority (the
-// AssistantTab 並べ替え UI, ui-prefs assistantAgentOrder), normalized into a TOTAL
-// order: unknown kinds and dupes are dropped, and kinds missing from the stored
-// list are appended in the built-in default order — so a partial or stale list
-// (e.g. written before a new backend existed) still ranks every backend. When the
-// key is absent, the legacy single-pin key (assistantAgent) degrades gracefully:
-// a pin is simply "that backend first". Read live per call (like
-// chatOutputLanguage) so a change applies from the next builtin-assistant
-// conversation / one-shot call without a restart.
-func assistantAgentOrderPref() []string {
+// agentOrderPref normalizes a stored priority list into a TOTAL order: unknown kinds
+// and dupes are dropped, and kinds missing from the stored list are appended in the
+// built-in default order — so a partial or stale list (e.g. written before a new
+// backend existed) still ranks every backend. Read live per call (like
+// chatOutputLanguage) so a change applies to the next conversation / one-shot without
+// a restart.
+//
+// keys は先勝ちのフォールバック鎖（新キー → 旧キー）。ここが 1 本のリストではなく鎖に
+// なっているのは、チャットと AI 補助生成で優先順位を分けたとき（docs/log/84）に、旧
+// 単一リストしか持たない prefs から補助生成側を引き継ぐため。
+func agentOrderPref(keys ...string) []string {
 	prefs := uiprefs.Read()
 	out := make([]string, 0, len(chatx.DefaultHeadlessOrder))
 	seen := map[string]bool{}
@@ -75,20 +76,42 @@ func assistantAgentOrderPref() []string {
 			out = append(out, k)
 		}
 	}
-	if raw, ok := prefs["assistantAgentOrder"].([]any); ok {
+	stored := false
+	for _, key := range keys {
+		raw, ok := prefs[key].([]any)
+		if !ok {
+			continue
+		}
 		for _, v := range raw {
 			if s, ok := v.(string); ok {
 				add(s)
 			}
 		}
-	} else if pin, _ := prefs["assistantAgent"].(string); pin != "" {
-		add(pin) // legacy pin ("auto" is not a kind, so it falls through to the default)
+		stored = true
+		break
+	}
+	if !stored {
+		// legacy pin ("auto" is not a kind, so it falls through to the default)
+		if pin, _ := prefs["assistantAgent"].(string); pin != "" {
+			add(pin)
+		}
 	}
 	for _, k := range chatx.DefaultHeadlessOrder {
 		add(k)
 	}
 	return out
 }
+
+// assistantAgentOrderPref is the priority for assistant-CHAT conversations
+// (AssistantTab 並べ替え UI, ui-prefs assistantAgentOrder).
+func assistantAgentOrderPref() []string { return agentOrderPref("assistantAgentOrder") }
+
+// aiAssistOrderPref is the priority for the AI 補助生成 one-shots — titles, branch
+// names, reply chips, edit suggestions, plan updates (設定 > AI補助, ui-prefs
+// aiAssistOrder). Separate from the chat because the two want opposite things: the
+// chat wants the strongest CLI, these run constantly and want the cheapest that
+// works. Falls back to assistantAgentOrder, which is where both used to live.
+func aiAssistOrderPref() []string { return agentOrderPref("aiAssistOrder", "assistantAgentOrder") }
 
 // assistantModelPref returns a per-backend model selected in AssistantTab. The
 // boolean distinguishes a missing (pre-feature) map from an explicit empty value:
@@ -116,7 +139,26 @@ func assistantChatModelPref(kind string) (string, bool) {
 	return assistantModelPref("assistantModels", kind)
 }
 
-func assistantUtilityModelPref(kind string) (string, bool) {
+// aiShortModelPref / aiProseModelPref — AI 補助生成のモデルを用途で 2 系統に分けたもの
+// （設定 > AI補助・docs/log/84）。short は短いラベル（タイトル・ブランチ名・返信候補）、
+// prose は人が読んで採用する文章（ファイル編集の提案・計画の更新）。
+//
+// 分ける前は assistantUtilityModels 1 つが両方を兼ねており、「タイトル・サジェストの
+// モデル」という名前のまま prose 側の既定（sonnet 級）まで置き換えていた。**両方**が
+// その旧キーを引き継ぐ — 旧キーは実際に両方へ効いていたので、これが分割時点の挙動を
+// そのまま持ち越す初期値になる。分けた意味は、この先それぞれ独立に変えられること。
+func aiShortModelPref(kind string) (string, bool) {
+	return aiModelPref("aiShortModels", kind)
+}
+
+func aiProseModelPref(kind string) (string, bool) {
+	return aiModelPref("aiProseModels", kind)
+}
+
+func aiModelPref(key, kind string) (string, bool) {
+	if v, ok := assistantModelPref(key, kind); ok {
+		return v, true
+	}
 	return assistantModelPref("assistantUtilityModels", kind)
 }
 

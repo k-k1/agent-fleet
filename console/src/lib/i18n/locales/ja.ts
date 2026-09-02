@@ -11,6 +11,7 @@
 // ⚠️ キーの接頭辞とドメインの対応は各ファイル冒頭の「キー接頭辞」に書いてある。既存の
 // 接頭辞は必ずその所属ファイルへ足すこと（同じキーが 2 ファイルに在ると後勝ちで無言に化ける）。
 import { admin } from "./ja/admin.ts";
+import { aiassist } from "./ja/aiassist.ts";
 import { assistant } from "./ja/assistant.ts";
 import { chat } from "./ja/chat.ts";
 import { common } from "./ja/common.ts";
@@ -35,6 +36,7 @@ export const ja = {
   ...settings,
   ...tools,
   ...assistant,
+  ...aiassist,
   ...sessions,
   ...mirror,
   ...chat,

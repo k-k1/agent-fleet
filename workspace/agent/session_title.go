@@ -186,7 +186,7 @@ func runTitleSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, e
 	// Backend-agnostic one-shot (oneShotHeadless): runs on the first available of
 	// claude → codex → opencode, so claude-less workspaces get suggestions too.
 	lang := titleLang()
-	reply, err := chatx.OneShotHeadless(ctx, titleSuggestPersona(lang), titleSuggestPrompt(turns, lang), titleModel())
+	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, titleSuggestPersona(lang), titleSuggestPrompt(turns, lang), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
 	}
@@ -688,7 +688,7 @@ const branchSuggestPersona = "You name git branches. Read the conversation log a
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
 // invalid ref/folder segment.
 func runBranchSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
-	reply, err := chatx.OneShotHeadless(ctx, branchSuggestPersona, branchSuggestPrompt(turns), titleModel())
+	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, branchSuggestPersona, branchSuggestPrompt(turns), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("branch suggestion failed: %w", err)
 	}
@@ -733,8 +733,10 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	if !uiprefs.AutoTitleSuggest() {
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "AI suggestions are disabled (enable title auto-suggestion in agent settings)")
+	// ブランチ名は自分のトグルで止める（設定 > AI補助「ブランチ名の提案」）。以前は
+	// セッションのタイトル提案と同じキーで、どのラベルにもそう書かれていなかった。
+	if !uiprefs.BranchSuggest() {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "branch name suggestion is turned off")
 		return
 	}
 	m, ok := session.ReadMeta(name)

@@ -3,77 +3,15 @@ import {
   setSetting,
   OUTPUT_LANGUAGES,
   ASSISTANT_AGENT_KINDS,
-  ASSISTANT_RECOMMENDED_MODEL,
   normalizeAssistantOrder,
   REGION_THEMES,
 } from "../../../lib/settings.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { SwatchGrid } from "../../../ui/SwatchGrid.tsx";
 import { Choice, OnOff, OrderList, Row, Select, Slider } from "../parts/controls.tsx";
+import { AiModelRow } from "../parts/aiModelRow.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useHiddenModel, useModelOptions } from "../../../lib/agentModels.ts";
-
-// kind → 推奨モデル ID の解決。utility（タイトル提案などの軽量用途）と本回答とで別。
-// catalog 依存の分岐（cheap 探索 / ids に居るかの確認）があるため定数表ではなく関数で持つ。
-function recommendedModelId(
-  kind: (typeof ASSISTANT_AGENT_KINDS)[number],
-  utility: boolean,
-  ids: string[],
-  cheap: string | undefined,
-): string {
-  switch (kind) {
-    case "claude":
-      return utility ? "haiku" : "sonnet";
-    case "codex":
-      return utility ? cheap || "" : "gpt-5.6-luna";
-    case "opencode":
-      if (utility) return ids.includes("opencode-go/deepseek-v4-flash") ? "opencode-go/deepseek-v4-flash" : "";
-      return ids.includes("opencode-go/glm-5.2") ? "opencode-go/glm-5.2" : "opencode/nemotron-3-ultra-free";
-    case "agy":
-      return "Gemini 3.5 Flash (Medium)";
-    default:
-      return "";
-  }
-}
-
-function AssistantModelRow({
-  kind,
-  utility,
-  value,
-  onChange,
-}: {
-  kind: (typeof ASSISTANT_AGENT_KINDS)[number];
-  utility: boolean;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const tr = useT();
-  const live = useModelOptions(kind) || [["", tr("ui.default")]];
-  const ids = live.map(([id]) => id);
-  const cheap = ids.find((id) => ["mini", "flash", "lite", "small", "nano", "haiku"].some((x) => id.toLowerCase().includes(x)));
-  const recommended = recommendedModelId(kind, utility, ids, cheap);
-  const resolvedLabel = live.find(([id]) => id === recommended)?.[1] || recommended || tr("ui.default");
-  const recommendedOption: [string, string] = [
-    ASSISTANT_RECOMMENDED_MODEL,
-    tr("assistant.recommended_now", { model: resolvedLabel }),
-  ];
-  const choices = [recommendedOption, ...live];
-  // Preserve a configured model that temporarily disappeared from a live catalog
-  // (workspace stopped, provider disconnected, upstream rename). Dropping it from
-  // the select would make the visible value lie about the persisted setting.
-  // 設定で除外したモデルはこの救済から外す（消えた ≠ 隠した）— Agent 側は除外値を
-  // 未設定として扱い推奨へ退避するので、足し戻すと表示のほうが嘘になる。
-  const hidden = useHiddenModel(kind, value);
-  const options =
-    value && !hidden && !choices.some(([id]) => id === value)
-      ? [...choices, [value, value] as [string, string]]
-      : choices;
-  return (
-    <Row label={agentOf(kind).assistantName}>
-      <Select value={value} options={options} onChange={onChange} />
-    </Row>
-  );
-}
 
 // AutoTurnModelSelect — 自動応答（セッション報告への自動ターン）専用モデル。対象は
 // claude の会話のみなので catalog も claude 固定。空 = 会話のモデルのまま。
@@ -91,24 +29,24 @@ function AutoTurnModelSelect({ value, onChange }: { value: string; onChange: (v:
   return <Select value={value} options={options} onChange={onChange} />;
 }
 
-// AssistantTab — アシスタント・チャットの設定：挙動（タイトルAI提案 / 回答言語 /
-// エージェント優先順位 / 報告への自動応答 / コンテキスト自動圧縮）と 外観（テーマ /
-// 背景色）。外観は以前 DisplayTab にあったが、アシスタントの挙動と同じタブに置いた方が
-// 見つけやすいのでここへ移設。もとは AgentsTab の「セッション」グループに同居していたが、
-// アシスタント固有の項目が増えたため TtsTab と同様に独立タブへ分離。タイトル提案の
-// ON/OFF もセッション用（autoTitleSuggest、AgentsTab 残置）とチャット用
-// （assistantTitleSuggest、ここ）に分かれている。すべてクライアント側の設定
-// （settings store）なので、ワークスペースの起動状態に依らず表示・変更できる。
+// AssistantTab — **アシスタント・チャットだけ**の設定：挙動（回答言語 / モデル /
+// 報告への自動応答 / コンテキスト自動圧縮）と 外観（テーマ / 背景色）。外観は以前
+// DisplayTab にあったが、アシスタントの挙動と同じタブに置いた方が見つけやすいので
+// ここへ移設。
+//
+// ★ かつてここに在った「タイトルのAI提案」「エージェント優先順位」「タイトル・
+// サジェストのモデル」は AiAssistTab へ移した（docs/log/84）。実装をチャットと共有して
+// いるだけで、効く先はセッション・ミラー・File ペイン＝アシスタントではなかった。
+// このタブに残すのは「アシスタントとの会話そのもの」を変える設定に限る。
+//
+// すべてクライアント側の設定（settings store）なので、ワークスペースの起動状態に
+// 依らず表示・変更できる。
 export function AssistantTab() {
   const tr = useT();
   const s = useSettings();
   return (
     <>
       <section className="ds-group">
-        <Row label={tr("assistant.title_suggest")}>
-          <OnOff value={s.assistantTitleSuggest} onChange={(v) => setSetting("assistantTitleSuggest", v)} />
-        </Row>
-        <p className="muted ds-note">{tr("assistant.note_title_suggest")}</p>
         <Row label={tr("assistant.output_language")}>
           <Choice
             value={s.outputLanguage}
@@ -128,25 +66,12 @@ export function AssistantTab() {
         <h4 className="ds-title">{tr("assistant.models")}</h4>
         <p className="muted ds-note">{tr("assistant.note_models")}</p>
         {ASSISTANT_AGENT_KINDS.map((kind) => (
-          <AssistantModelRow
+          <AiModelRow
             key={`assistant-${kind}`}
             kind={kind}
-            utility={false}
+            tier="chat"
             value={s.assistantModels?.[kind] || ""}
             onChange={(model) => setSetting("assistantModels", { ...s.assistantModels, [kind]: model })}
-          />
-        ))}
-        <h4 className="ds-title">{tr("assistant.utility_models")}</h4>
-        <p className="muted ds-note">{tr("assistant.note_utility_models")}</p>
-        {ASSISTANT_AGENT_KINDS.map((kind) => (
-          <AssistantModelRow
-            key={`utility-${kind}`}
-            kind={kind}
-            utility
-            value={s.assistantUtilityModels?.[kind] || ""}
-            onChange={(model) =>
-              setSetting("assistantUtilityModels", { ...s.assistantUtilityModels, [kind]: model })
-            }
           />
         ))}
         <Row label={tr("assistant.auto_turn")}>

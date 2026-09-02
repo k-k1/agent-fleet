@@ -21,6 +21,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -58,7 +59,7 @@ const editSuggestPersona = "あなたはコード/文書エディタの変更提
 
 // editSuggestModel: 置換文の生成は分類系（タイトル/返信候補）より品質感度が高いので、
 // 既定は haiku ではなく sonnet。deployment 単位で上書き可。claude backend のみに効き、
-// 他 backend は AssistantTab のユーティリティモデル設定に従う（oneShotHeadless）。
+// 他 backend は 設定 > AI補助 の「文章生成のモデル」に従う（OneShotProse・docs/log/84）。
 func editSuggestModel() string { return envOr("AF_EDIT_SUGGEST_MODEL", "sonnet") }
 
 // editSuggestRequest は Console が送る提案リクエスト。before/selection/after は
@@ -205,13 +206,19 @@ func cleanEditSuggestion(r editSuggestResult, instruction string) (summary, repl
 
 // editSuggestLLM はテストで差し替える生成シーム。
 var editSuggestLLM = func(ctx context.Context, req *editSuggestRequest) (string, error) {
-	return chatx.OneShotHeadless(ctx, editSuggestPersona, editSuggestPrompt(req), editSuggestModel())
+	return chatx.OneShotHeadless(ctx, chatx.OneShotProse, editSuggestPersona, editSuggestPrompt(req), editSuggestModel())
 }
 
 // handleFSSuggestEdit — POST /fs/suggest-edit（docs/log/44 Phase 4）。
 // 応答は {"summary":…,"replacement":…} のみ。envelope（paneId/requestId/sourceRevision）
 // は Console がリクエスト時に控えて応答へ合成するため、wire には載せない。
 func handleFSSuggestEdit(w http.ResponseWriter, r *http.Request) {
+	// 設定 > AI補助「ファイル編集の提案」。この機能だけを止められるようにした
+	// （docs/log/84）。以前はトグルが無く常時有効だった。
+	if !uiprefs.EditSuggest() {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "edit suggestion is turned off")
+		return
+	}
 	var req editSuggestRequest
 	if serr := httpx.DecodeStrictJSON(r, &req, editSuggestMaxBody); serr != nil {
 		httpx.WriteErr(w, serr.Status, serr.Code, serr.Message)

@@ -38,7 +38,7 @@ func ChatReplySuggestPrompt(msgs []ChatMessage, lang string) string {
 
 func runChatReplySuggestLLM(ctx context.Context, msgs []ChatMessage) ([]string, error) {
 	lang := uiprefs.Locale()
-	reply, err := OneShotHeadless(ctx, replySuggestPersona(lang), ChatReplySuggestPrompt(msgs, lang), replySuggestModel())
+	reply, err := OneShotHeadless(ctx, OneShotShort, replySuggestPersona(lang), ChatReplySuggestPrompt(msgs, lang), replySuggestModel())
 	if err != nil {
 		return nil, fmt.Errorf("chat reply suggestion failed: %w", err)
 	}

@@ -30,11 +30,14 @@ func init() {
 		ErrCodeTitleFeatureDisabled:   errCodeTitleFeatureDisabled,
 		ErrCodeTitleNoContent:         errCodeTitleNoContent,
 
-		AssistantAgentOrderPref:   assistantAgentOrderPref,
-		AssistantChatModelPref:    assistantChatModelPref,
-		AssistantUtilityModelPref: assistantUtilityModelPref,
-		ChatAutoTurnLimit:         chatAutoTurnLimit,
-		ChatAutoTurnModel:         chatAutoTurnModel,
+		AssistantAgentOrderPref: assistantAgentOrderPref,
+		AssistantChatModelPref:  assistantChatModelPref,
+		// AI 補助生成（一発生成）の優先順位とモデル。チャットと別系統（docs/log/84）。
+		AiAssistOrderPref: aiAssistOrderPref,
+		AiShortModelPref:  aiShortModelPref,
+		AiProseModelPref:  aiProseModelPref,
+		ChatAutoTurnLimit: chatAutoTurnLimit,
+		ChatAutoTurnModel: chatAutoTurnModel,
 
 		FilterVisibleModels: filterVisibleModels,
 		VisibleModel:        visibleModel,

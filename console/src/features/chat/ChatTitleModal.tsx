@@ -9,6 +9,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { SESSION_TITLE_MAX } from "../../lib/sessionTitle.ts";
+import { useSettings } from "../../lib/settings.ts";
 import { errText, type ApiError } from "../../core/api/client.ts";
 import { chatRename, chatSuggestTitle } from "./api.ts";
 
@@ -26,6 +27,7 @@ export function ChatTitleModal({ id, title, onClose, onSaved }: ChatTitleModalPr
   const [proposal, setProposal] = useState("");
   const toast = useToast();
   const tr = useT();
+  const aiSuggest = useSettings().assistantTitleSuggest;
   const busy = saving || suggesting;
 
   const submit = async (e: FormEvent) => {
@@ -83,11 +85,15 @@ export function ChatTitleModal({ id, title, onClose, onSaved }: ChatTitleModalPr
             autoFocus
           />
         </label>
-        <div>
-          <Button icon={suggesting ? "loading" : "lightbulb"} onClick={suggest} disabled={busy}>
-            {tr("asst.ai_suggest")}
-          </Button>
-        </div>
+        {/* 設定 > AI補助「チャットのタイトル提案」。オフならボタンを出さない —
+            以前は常に出ていて、押すと 400（feature_disabled）でトーストが出るだけだった。 */}
+        {aiSuggest && (
+          <div>
+            <Button icon={suggesting ? "loading" : "lightbulb"} onClick={suggest} disabled={busy}>
+              {tr("asst.ai_suggest")}
+            </Button>
+          </div>
+        )}
         {proposal && (
           <div className="sm-proposal">
             <span className="sm-proposal-label">{tr("asst.proposal")}</span>
