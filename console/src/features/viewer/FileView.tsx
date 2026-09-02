@@ -8,7 +8,6 @@ import { createPortal } from "react-dom";
 import type { CSSProperties, FocusEvent, KeyboardEvent, ReactNode } from "react";
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
-import { api, isTransientErr } from "../../core/api/client.ts";
 import { langFor, countLines, isMarpDoc, imageFormat, isDrawioFile, isPdfFile, documentFormat } from "../../lib/filemeta.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
@@ -21,6 +20,7 @@ import { speakText } from "../chat/tts.ts";
 import { DrawioView, type DrawioState } from "./DrawioView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
 import { dismissSoftKeyboard, escapeHtml, lineRangeOfSelection } from "./parts/fileDom.ts";
+import { useFileContent, type FileData } from "./parts/useFileContent.ts";
 import {
   FileDiagramControls,
   FileEditControls,
@@ -33,7 +33,6 @@ import {
 import { EditorResolutionPanel } from "./parts/EditorResolutionPanel.tsx";
 import { FileViewerShell } from "./parts/FileViewerShell.tsx";
 import { EditorSuggestPanel } from "./parts/EditorSuggestPanel.tsx";
-import type { LineMarks } from "./CodeView.tsx";
 import { CodeEditor, type CodeEditorHandle } from "../editor/CodeEditor.tsx";
 import type { EditorSelectionReport } from "../editor/selection.ts";
 import { editorPill, type SelectionPill } from "./selectionPill.ts";
@@ -81,19 +80,6 @@ interface FileViewProps {
   headerActions?: ReactNode;
 }
 
-interface FileData {
-  error?: { message?: string };
-  path?: string;
-  binary?: boolean;
-  content?: string;
-  size?: number;
-  truncated?: boolean;
-  lfs?: boolean;
-  editable?: boolean;
-  editabilityReason?: string | null;
-  revision?: string;
-}
-
 export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, paneId, headerActions }: FileViewProps) {
   const tr = useT();
   const openTarget = useLayoutStore((s) => s.openTarget);
@@ -104,24 +90,29 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const settings = useSettings();
   // wrap is the per-pane override; fall back to the global setting.
   const wrapOn = wrap === undefined || wrap === null ? settings.wrap : wrap;
-  const [data, setData] = useState<FileData | null>(null);
-  const dataRef = useRef<FileData | null>(null);
-  dataRef.current = data;
-  // External-change notice for panes without an editor buffer (docs/log/44 §7.4's
-  // read-only view case); buffered panes speak through the editor status line.
-  const [viewNotice, setViewNotice] = useState("");
-  const [err, setErr] = useState("");
-  const [imgMode, setImgMode] = useState<"preview" | "source">("preview");
-  const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
-  // PDF のページ数（情報バー用）。開けるまでは null で、行数と同じ場所に出す。
-  const [pdfPages, setPdfPages] = useState<number | null>(null);
+  // 中身と、開き直しで一緒にリセットされる表示状態（parts/useFileContent）。
+  // この面でいちばん先に走る effect 2 つ（linemarks / 読み込み）もここが持つ。
+  const {
+    data,
+    setData,
+    dataRef,
+    err,
+    viewNotice,
+    setViewNotice,
+    imgMode,
+    setImgMode,
+    imgDims,
+    setImgDims,
+    pdfPages,
+    setPdfPages,
+    marks,
+  } = useFileContent(filePath);
   // 図の面が返す状態（ページ数・倍率）。ヘッダの表示にだけ使う。
   const [diagramState, setDiagramState] = useState<DrawioState | null>(null);
   // 図の面は **一度出したら畳んでも外さない**（hidden にするだけ）。作り直すと 4MB の
   // ビューアを読み直し、ズーム位置と開いていたページも失う。逆に一度も見ていない
   // うちは作らない —— ソースだけ見て閉じる人に図の取得をさせない。
   const [diagramMounted, setDiagramMounted] = useState(false);
-  const [marks, setMarks] = useState<LineMarks | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   // `origin` keeps the two capture paths (the read-only grid's DOM walk and the
   // editor's own report) from clearing each other's pill (docs/log/44 §1.8).
@@ -165,69 +156,6 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // Markdown へ変換して読む面なので、種類は別に持つ。
   const docFmt = documentFormat(filePath);
   const isDoc = !!docFmt;
-
-  // Editor-style change marks for git-tracked working-tree files.
-  useEffect(() => {
-    setMarks(null);
-    if (!filePath || !filePath.startsWith("repos/")) return;
-    let alive = true;
-    api(`api/fs/linemarks?path=${encodeURIComponent(filePath)}`)
-      .then((d) => alive && d && !d.error && setMarks(d))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [filePath]);
-
-  useEffect(() => {
-    if (!filePath) return;
-    let alive = true;
-    let timer = 0;
-    let tries = 0;
-    let settled = false; // a terminal result (content or a real error) has landed
-    setData(null);
-    setErr("");
-    setViewNotice("");
-    setImgDims(null);
-    setImgMode("preview");
-    setPdfPages(null);
-    // Load the file, retrying transient gateway failures. Right after a WS start the agent
-    // is briefly unreachable and api() resolves an http_5xx error (not a throw); committing
-    // that as a real error would leave the pane stuck on "(…cannot load)" forever. Genuine
-    // errors (missing file, permission) carry an app code and stay terminal.
-    const retry = () => {
-      if (!alive) return;
-      const delay = Math.min(5000, 700 * 2 ** Math.min(tries, 3));
-      tries++;
-      timer = window.setTimeout(load, delay);
-    };
-    const load = () => {
-      api(`api/fs/file?path=${encodeURIComponent(filePath)}`)
-        .then((d) => {
-          if (!alive) return;
-          if (isTransientErr(d)) return retry();
-          settled = true;
-          if (d && d.error) setErr(d.error.message || tr("view.cannot_load"));
-          else setData(d);
-        })
-        .catch(() => alive && retry());
-    };
-    const onVis = () => {
-      if (!document.hidden && alive && !settled) {
-        tries = 0;
-        window.clearTimeout(timer);
-        load();
-      }
-    };
-    load();
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      alive = false;
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filePath]);
 
   const isText = !!data && !data.binary && typeof data.content === "string";
   const lines = isText ? countLines(data!.content!) : 0;
