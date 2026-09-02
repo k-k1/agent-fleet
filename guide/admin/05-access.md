@@ -56,6 +56,17 @@ To register one:
 3. Paste the **client_id** and **client_secret** here. Bitbucket calls the same two
    things Key and Secret.
 
+> **Jira: turn Sharing on as well.** An Atlassian 3LO app is "in development" until you
+> enable Sharing under its **Distribution**, and until then **only the person who created
+> it can authorize it** — so your own test passes and every other member is stopped by
+> Atlassian's *"You don't have access to this app"*. That page is before the consent
+> screen, so nothing comes back to af: the member simply stays unconnected, with no error
+> anywhere. Enabling Sharing asks for a **Vendor name**, **Contact link** and **Privacy
+> policy URL**, which the members authorizing the app can see — put your company name and
+> a support address there, not a personal name or inbox. It does not list the app on the
+> Atlassian Marketplace. Members will still see a notice that the app has not been
+> reviewed by Atlassian; that is expected for an app you registered yourself.
+
 The secret is **encrypted on save and never shown again**. When you edit the
 registration later, leaving the secret field empty keeps the stored one — fill it in
 only when you actually want to change it. **Remove registration** takes the OAuth
