@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // previewSlugAlphabet は DNS ラベルに置ける文字のうち、slug に使うもの。`-` を含めない
@@ -180,10 +182,10 @@ func auditPreviewPublic(ctx context.Context, m *manager, res *resolved, on bool)
 	if on {
 		state = "on"
 	}
-	_ = m.store.InsertAudit(ctx, AuditLog{
-		ID: newID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
+	_ = m.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
 		Action: "workspace.preview_public", Target: res.ws.ID,
-		Detail: "public=" + state, At: nowTS(),
+		Detail: "public=" + state, At: store.NowTS(),
 	})
 }
 
@@ -201,10 +203,10 @@ func auditPreviewShare(ctx context.Context, m *manager, res *resolved, on bool) 
 	if on {
 		state = "on"
 	}
-	_ = m.store.InsertAudit(ctx, AuditLog{
-		ID: newID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
+	_ = m.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
 		Action: "workspace.preview_tenant_share", Target: res.ws.ID,
-		Detail: "tenant=" + state, At: nowTS(),
+		Detail: "tenant=" + state, At: store.NowTS(),
 	})
 }
 
@@ -217,7 +219,7 @@ func auditPreviewShare(ctx context.Context, m *manager, res *resolved, on bool) 
 //
 // GetMembershipByID は active 行しか返さないので、無効化された membership はここで
 // 落ちる（git_http.go が同じ理由で同じ関数を使っている）。
-func previewViewerAllowed(ctx context.Context, m *manager, ws Workspace, st wsSettings, membershipID string) bool {
+func previewViewerAllowed(ctx context.Context, m *manager, ws store.Workspace, st wsSettings, membershipID string) bool {
 	if membershipID == "" {
 		return false
 	}

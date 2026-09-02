@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // auditActionTarget must classify exactly the M1 change operations and nothing else.
@@ -61,7 +63,7 @@ func TestAuditActionTarget(t *testing.T) {
 // InsertAudit + ListAuditByTenant: "" spans every tenant, a set id scopes to it.
 func TestAuditStoreScope(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -70,9 +72,9 @@ func TestAuditStoreScope(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	ins := func(tenant, action string) {
-		if err := st.InsertAudit(ctx, AuditLog{
-			ID: newID(), TenantID: tenant, ActorKind: "user", ActorID: "id1",
-			Action: action, HTTPStatus: http.StatusAccepted, At: nowTS(),
+		if err := st.InsertAudit(ctx, store.AuditLog{
+			ID: store.NewID(), TenantID: tenant, ActorKind: "user", ActorID: "id1",
+			Action: action, HTTPStatus: http.StatusAccepted, At: store.NowTS(),
 		}); err != nil {
 			t.Fatalf("insert: %v", err)
 		}

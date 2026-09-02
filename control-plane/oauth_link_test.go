@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // docs/log/61 §61.16 + ADR0043 決定 37 — 本人の同意で 2 つ目のサインイン方法を紐づける。
@@ -34,13 +36,13 @@ func TestAttachProviderAddsAMethodWithoutTouchingTheIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first login: %v", err)
 	}
-	if err := st.AttachProvider(ctx, me.ID, IdentityLink{
+	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
 		Provider: "t:sub:github", Subject: "gh-1", Realm: githubWebBase, Email: email,
 	}); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	// 押し間違いで 2 回押しても同じ（冪等）。
-	if err := st.AttachProvider(ctx, me.ID, IdentityLink{
+	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
 		Provider: "t:sub:github", Subject: "gh-1", Realm: githubWebBase, Email: email,
 	}); err != nil {
 		t.Fatalf("attach twice: %v", err)
@@ -72,7 +74,7 @@ func TestAttachProviderRefusesAnAccountThatBelongsToSomebody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("me: %v", err)
 	}
-	other, _, err := st.LinkIdentity(ctx, IdentityLink{
+	other, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "github", Subject: "gh-9", Realm: githubWebBase,
 		Email: "suzuki@acme.co.jp", FallbackKey: "suzuki-acme-co-jp", EmailJoin: true,
 	})
@@ -81,23 +83,23 @@ func TestAttachProviderRefusesAnAccountThatBelongsToSomebody(t *testing.T) {
 	}
 
 	// 1. その対そのものが他人のもの。
-	if err := st.AttachProvider(ctx, me.ID, IdentityLink{
+	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
 		Provider: "github", Subject: "gh-9", Realm: githubWebBase, Email: "yamada@acme.co.jp",
-	}); !errors.Is(err, errLinkTaken) {
+	}); !errors.Is(err, store.ErrLinkTaken) {
 		t.Fatalf("err = %v, want errLinkTaken", err)
 	}
 	// 2. 規則 1.5 — 別のボタン（テナントの GitHub）だが同じ GitHub アカウント。
 	//    そのアカウントでログインすると other に着地するので、ここで紐づけると
 	//    1 つのアカウントを 2 人が名乗ることになる。
-	if err := st.AttachProvider(ctx, me.ID, IdentityLink{
+	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
 		Provider: "t:sub:github", Subject: "gh-9", Realm: githubWebBase, Email: "yamada@acme.co.jp",
-	}); !errors.Is(err, errLinkTaken) {
+	}); !errors.Is(err, store.ErrLinkTaken) {
 		t.Fatalf("rule 1.5 err = %v, want errLinkTaken", err)
 	}
 	// 3. アドレスが他人のもの（呼び出し側の同一アドレス規則の後ろで、なお効く層）。
-	if err := st.AttachProvider(ctx, me.ID, IdentityLink{
+	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
 		Provider: "t:sub:entra", Subject: "e-1", Email: "suzuki@acme.co.jp",
-	}); !errors.Is(err, errLinkTaken) {
+	}); !errors.Is(err, store.ErrLinkTaken) {
 		t.Fatalf("email err = %v, want errLinkTaken", err)
 	}
 	if n := countRows(t, st, "identity_provider"); n != 2 {
@@ -111,7 +113,7 @@ func TestAttachProviderRefusesAnAccountThatBelongsToSomebody(t *testing.T) {
 // --- the flow ----------------------------------------------------------------
 
 // linkTestConfig は「Google で入っている人が、2 つ目の方式（entra）を足す」最小構成。
-func linkTestConfig(t *testing.T, idp *stubIdP) (config, *sqlStore) {
+func linkTestConfig(t *testing.T, idp *stubIdP) (config, *store.SQL) {
 	t.Helper()
 	st := p3Store(t)
 	mgr := p4Manager(t, st)
@@ -128,7 +130,7 @@ func linkTestConfig(t *testing.T, idp *stubIdP) (config, *sqlStore) {
 }
 
 // seedSignedIn creates the person and the session cookie they are holding.
-func seedSignedIn(t *testing.T, cfg config, st *sqlStore, email string) (Identity, *http.Cookie) {
+func seedSignedIn(t *testing.T, cfg config, st *store.SQL, email string) (store.Identity, *http.Cookie) {
 	t.Helper()
 	ident, _, err := st.LinkIdentity(t.Context(), linkOf(googleProviderID, "g-1", email, true))
 	if err != nil {
@@ -370,7 +372,7 @@ func TestLoginMethodsListsLinkedAndLinkable(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
 	cfg, st := linkTestConfig(t, idp)
 	me, _ := seedSignedIn(t, cfg, st, "yamada@acme.co.jp")
-	if err := st.AttachProvider(t.Context(), me.ID, IdentityLink{
+	if err := st.AttachProvider(t.Context(), me.ID, store.IdentityLink{
 		Provider: "entra", Subject: "e-1", Realm: idp.URL, Email: "yamada@acme.co.jp",
 	}); err != nil {
 		t.Fatalf("attach: %v", err)
@@ -420,7 +422,7 @@ func TestLoginMethodsListsLinkedAndLinkable(t *testing.T) {
 
 // detachReq は DELETE /api/me/login-methods を 1 回叩く。provider / subject は
 // パスではなくクエリ（テナントの provider id は ":" を含む）。
-func detachReq(t *testing.T, api accountAPI, me Identity, cur loginRef, provider, subject string) *httptest.ResponseRecorder {
+func detachReq(t *testing.T, api accountAPI, me store.Identity, cur loginRef, provider, subject string) *httptest.ResponseRecorder {
 	t.Helper()
 	q := url.Values{"provider": {provider}, "subject": {subject}}
 	r := httptest.NewRequest(http.MethodDelete, "/api/me/login-methods?"+q.Encode(), nil)
@@ -448,11 +450,11 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 		t.Fatalf("最後の 1 つは外せてはいけない: %d %s", w.Code, w.Body.String())
 	}
 	// ★ SQL 層でも数えている（API のチェックと DELETE の間にタブが 1 枚挟まる）。
-	if err := st.DetachProvider(t.Context(), me.ID, googleProviderID, "g-1"); !errors.Is(err, errLastLoginMethod) {
+	if err := st.DetachProvider(t.Context(), me.ID, googleProviderID, "g-1"); !errors.Is(err, store.ErrLastLoginMethod) {
 		t.Fatalf("store 層の残数ガードが効いていない: %v", err)
 	}
 
-	if err := st.AttachProvider(t.Context(), me.ID, IdentityLink{
+	if err := st.AttachProvider(t.Context(), me.ID, store.IdentityLink{
 		Provider: "entra", Subject: "e-1", Realm: idp.URL, Email: "yamada@acme.co.jp",
 	}); err != nil {
 		t.Fatalf("attach: %v", err)
@@ -463,7 +465,7 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 		t.Fatalf("現セッションの方式は外せてはいけない: %d %s", w.Code, w.Body.String())
 	}
 	// 3. 他人の行。対を知っていても届かない。
-	other, _, err := st.LinkIdentity(t.Context(), IdentityLink{
+	other, _, err := st.LinkIdentity(t.Context(), store.IdentityLink{
 		Provider: "entra", Subject: "e-9", Realm: idp.URL, Email: "suzuki@acme.co.jp",
 		FallbackKey: "suzuki-acme-co-jp", EmailJoin: true,
 	})
@@ -548,7 +550,7 @@ func TestLoginMethodsSaysWhichRowsCanBeRemoved(t *testing.T) {
 		t.Fatalf("行を名指しする subject が返っていない: %+v", one)
 	}
 
-	if err := st.AttachProvider(t.Context(), me.ID, IdentityLink{
+	if err := st.AttachProvider(t.Context(), me.ID, store.IdentityLink{
 		Provider: "entra", Subject: "e-1", Realm: idp.URL, Email: "yamada@acme.co.jp",
 	}); err != nil {
 		t.Fatalf("attach: %v", err)

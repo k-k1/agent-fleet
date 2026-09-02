@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // docs/log/61 §61.15.10 + ADR0043 決定 38 — 規則 1.5 の 2 本目の鍵（安定クレーム）。
@@ -27,8 +29,8 @@ const entraIssuer = "https://login.microsoftonline.com/guid-1/v2.0"
 
 // oidLink は「同じ Entra アカウントを、別のアプリ登録から」を作る。sub は違い、
 // oid は同じ — 実物の Entra がそう振る舞う。
-func oidLink(provider, sub, oid, email string, emailJoin bool) IdentityLink {
-	return IdentityLink{
+func oidLink(provider, sub, oid, email string, emailJoin bool) store.IdentityLink {
+	return store.IdentityLink{
 		Provider: provider, Subject: sub, Realm: entraIssuer,
 		RealmClaim: "oid", RealmSubject: oid, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: emailJoin,
@@ -96,14 +98,14 @@ func TestRule15DoesNotJoinWhenTheClaimNameDiffers(t *testing.T) {
 func TestRule15IgnoresRowsWithoutAStableClaim(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 
-	a, _, err := st.LinkIdentity(ctx, IdentityLink{
+	a, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "entra", Subject: "s-1", Realm: entraIssuer,
 		Email: "yamada@acme.co.jp", FallbackKey: "yamada-acme-co-jp", EmailJoin: true,
 	})
 	if err != nil {
 		t.Fatalf("a: %v", err)
 	}
-	b, _, err := st.LinkIdentity(ctx, IdentityLink{
+	b, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "okta", Subject: "s-2", Realm: entraIssuer,
 		Email: "suzuki@acme.co.jp", FallbackKey: "suzuki-acme-co-jp", EmailJoin: true,
 	})
@@ -114,7 +116,7 @@ func TestRule15IgnoresRowsWithoutAStableClaim(t *testing.T) {
 		t.Fatal("realm_claim / realm_subject が空同士で結合した")
 	}
 	// realm+subject の従来の規則 1.5 も生きていること（GitHub の経路）。
-	c, _, err := st.LinkIdentity(ctx, IdentityLink{
+	c, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "t:sub:entra", Subject: "s-1", Realm: entraIssuer,
 		Email: "yamada@acme.co.jp", FallbackKey: "yamada-acme-co-jp", EmailJoin: false,
 	})
@@ -136,11 +138,11 @@ func TestAttachRefusesAnAccountFoundByTheStableClaim(t *testing.T) {
 	if _, _, err := st.LinkIdentity(ctx, oidLink("entra", "pairwise-A", "oid-9", "suzuki@acme.co.jp", true)); err != nil {
 		t.Fatalf("other: %v", err)
 	}
-	err = st.AttachProvider(ctx, me.ID, IdentityLink{
+	err = st.AttachProvider(ctx, me.ID, store.IdentityLink{
 		Provider: "t:sub:entra", Subject: "pairwise-B", Realm: entraIssuer,
 		RealmClaim: "oid", RealmSubject: "oid-9", Email: "yamada@acme.co.jp",
 	})
-	if !errors.Is(err, errLinkTaken) {
+	if !errors.Is(err, store.ErrLinkTaken) {
 		t.Fatalf("err = %v, want errLinkTaken", err)
 	}
 }
@@ -187,10 +189,10 @@ func TestTenantLinkClaimIsWhitelistedOnSaveAndAtRuntime(t *testing.T) {
 	// プロバイダに組まれない。
 	bad := rows[0]
 	bad.LinkClaim = "email"
-	if _, err := buildTenantProvider(bad, TenantRef{Slug: "sub", Name: "子会社"}, "s"); err == nil {
+	if _, err := buildTenantProvider(bad, store.TenantRef{Slug: "sub", Name: "子会社"}, "s"); err == nil {
 		t.Fatal("実行時側の検証が無い — 保存できてしまえば承認後に効いてしまう")
 	}
-	if _, err := buildTenantProvider(rows[0], TenantRef{Slug: "sub", Name: "子会社"}, "s"); err != nil {
+	if _, err := buildTenantProvider(rows[0], store.TenantRef{Slug: "sub", Name: "子会社"}, "s"); err != nil {
 		t.Fatalf("oid の行は組めるはず: %v", err)
 	}
 	// ★ github 行は 2 本目の鍵を持たない（subject が最初から全アプリ共通）。
@@ -208,7 +210,7 @@ func TestTenantLinkClaimIsWhitelistedOnSaveAndAtRuntime(t *testing.T) {
 // ★ link_claim の変更は承認をやり直す。誰が入れるかは変わらないが、誰に着地するか
 // が変わる — 既存アカウントに届くボタンが増えるので、承認者が見るべき変更。
 func TestLinkClaimChangeRepends(t *testing.T) {
-	active := TenantIdP{
+	active := store.TenantIdP{
 		Kind: tenantIdPKindOIDC, Status: "active", ClientID: "c", Issuer: entraIssuer,
 		Trust: trustIssuer, AllowedDomains: "sub.co.jp",
 	}

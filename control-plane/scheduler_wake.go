@@ -11,6 +11,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Scheduled execution P2 (docs/log/38 + ADR0021): the real scheduleFirer that turns a
@@ -66,7 +69,7 @@ func newWakeFirer(mgr *manager, settle, readyTimeout time.Duration) *wakeFirer {
 	}
 }
 
-func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (string, string, error) {
+func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time) (string, string, error) {
 	// 1. membership -> resolved (no gateway headers; the MCP/memo-bridge path).
 	identityID, ok, err := f.mgr.store.IdentityIDForMembership(ctx, sch.MembershipID)
 	if err != nil {
@@ -186,10 +189,10 @@ func (f *wakeFirer) scheduleRelease(release func()) {
 // after Start" clock even begins. A budget picked against that number is ~20s tighter than
 // it reads (measured on the acrt deployment: a fire that logged "healthy 73s after Start"
 // was 93.8s after the wake, and was dropped by the old 90s budget).
-func (f *wakeFirer) awaitAgentReady(ctx context.Context, rt Runtime) error {
+func (f *wakeFirer) awaitAgentReady(ctx context.Context, rt runtime.Runtime) error {
 	deadline := time.Now().Add(f.readyTimeout)
 	if f.readyTimeout <= 0 {
-		deadline = time.Now().Add(agentBootBudget)
+		deadline = time.Now().Add(runtime.AgentBootBudget)
 	}
 	var lastErr error
 	for {
@@ -213,7 +216,7 @@ func (f *wakeFirer) awaitAgentReady(ctx context.Context, rt Runtime) error {
 // returns the created session's name so the run history can link to it. The idempotency
 // key collapses a retry onto the first session, and the Agent replays that session's wire
 // body verbatim, so the returned name is stable across a CP restart that re-fires the slot.
-func (f *wakeFirer) injectSession(ctx context.Context, rt Runtime, body []byte) (string, error) {
+func (f *wakeFirer) injectSession(ctx context.Context, rt runtime.Runtime, body []byte) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", rt.Endpoint()+"/sessions", bytes.NewReader(body))
 	if err != nil {
 		return "", err
@@ -285,7 +288,7 @@ func injectDriver(kind string) string {
 // delivers (create initial_prompt and reuse /input), so the mirror can badge the turn
 // as schedule-driven — and distinguish a run-now（手動発火）from a timed fire. The
 // Agent whitelists these values (session_injections.go injectionSource).
-func scheduleSource(sch Schedule) string {
+func scheduleSource(sch store.Schedule) string {
 	if sch.ManualFirePending {
 		return "schedule-manual"
 	}
@@ -296,7 +299,7 @@ func scheduleSource(sch Schedule) string {
 // when the schedule opted into completion reports (report=true), empty otherwise — an
 // empty report_to disables the report obligation on the Agent side, so the default is
 // a silent fire (the run history / failure notifications still surface it).
-func scheduleReportTo(sch Schedule) string {
+func scheduleReportTo(sch store.Schedule) string {
 	if sch.Report {
 		return sch.OwnerConv
 	}
@@ -311,7 +314,7 @@ func scheduleIdempotencyKey(scheduleID string, slot time.Time) string {
 }
 
 // buildInjectBody marshals the Agent create_session request for a scheduled fire.
-func buildInjectBody(sch Schedule, slot time.Time) []byte {
+func buildInjectBody(sch store.Schedule, slot time.Time) []byte {
 	kind := scheduleInjectKind(sch.AgentKind)
 	body := map[string]any{
 		"dir":             sch.Repo, // P2 verbatim passthrough; repo/worktree resolution is P3
@@ -331,7 +334,7 @@ func buildInjectBody(sch Schedule, slot time.Time) []byte {
 // into the prompt. Every value is deterministically computed by the scheduler from the
 // fire slot and the schedule row — no user/report/external data is ever injected, so the
 // prompt-injection surface stays zero. An undefined {{foo}} is passed through literally.
-func expandSchedulePrompt(sch Schedule, slot time.Time) string {
+func expandSchedulePrompt(sch store.Schedule, slot time.Time) string {
 	loc := scheduleLocation(sch.TZ)
 	st := slot.In(loc)
 	lastRun := ""

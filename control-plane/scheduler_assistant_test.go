@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // fakeAssistantAgent serves POST /assistant-turns with a scripted outcome and records
@@ -62,7 +64,7 @@ func newAssistantFixture(t *testing.T, a *fakeAssistantAgent) (*wakeFirer, *reso
 func TestFireAssistantPinnedConv(t *testing.T) {
 	a := &fakeAssistantAgent{outcome: "ok", slug: "a3k7f2q"}
 	f, res := newAssistantFixture(t, a)
-	sch := Schedule{ID: "sch_a", SessionMode: "assistant", ReuseTarget: "a3k7f2q", OwnerConv: "conv-uuid", Prompt: "毎朝の報告を {{date}} 分まとめて"}
+	sch := store.Schedule{ID: "sch_a", SessionMode: "assistant", ReuseTarget: "a3k7f2q", OwnerConv: "conv-uuid", Prompt: "毎朝の報告を {{date}} 分まとめて"}
 
 	status, link, err := f.fireAssistant(t.Context(), res, sch, time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC))
 	if err != nil || status != "fired" {
@@ -82,7 +84,7 @@ func TestFireAssistantPinnedConv(t *testing.T) {
 func TestFireAssistantDefaultsToOwnerConv(t *testing.T) {
 	a := &fakeAssistantAgent{outcome: "ok", slug: "aowner77"[:7]}
 	f, res := newAssistantFixture(t, a)
-	sch := Schedule{ID: "sch_b", SessionMode: "assistant", OwnerConv: "owner-conv-uuid", Prompt: "p"}
+	sch := store.Schedule{ID: "sch_b", SessionMode: "assistant", OwnerConv: "owner-conv-uuid", Prompt: "p"}
 
 	status, _, err := f.fireAssistant(t.Context(), res, sch, time.Now().UTC())
 	if err != nil || status != "fired" {
@@ -96,7 +98,7 @@ func TestFireAssistantDefaultsToOwnerConv(t *testing.T) {
 func TestFireAssistantBusyIsOverlapSkip(t *testing.T) {
 	a := &fakeAssistantAgent{outcome: "busy"}
 	f, res := newAssistantFixture(t, a)
-	sch := Schedule{ID: "sch_c", SessionMode: "assistant", OwnerConv: "conv-uuid", Prompt: "p"}
+	sch := store.Schedule{ID: "sch_c", SessionMode: "assistant", OwnerConv: "conv-uuid", Prompt: "p"}
 
 	status, _, err := f.fireAssistant(t.Context(), res, sch, time.Now().UTC())
 	if err != nil || status != "skipped_overlap" {
@@ -107,7 +109,7 @@ func TestFireAssistantBusyIsOverlapSkip(t *testing.T) {
 func TestFireAssistantGoneIsTargetMissing(t *testing.T) {
 	a := &fakeAssistantAgent{outcome: "gone"}
 	f, res := newAssistantFixture(t, a)
-	sch := Schedule{ID: "sch_d", SessionMode: "assistant", ReuseTarget: "a999999", OwnerConv: "conv-uuid", Prompt: "p"}
+	sch := store.Schedule{ID: "sch_d", SessionMode: "assistant", ReuseTarget: "a999999", OwnerConv: "conv-uuid", Prompt: "p"}
 
 	status, _, err := f.fireAssistant(t.Context(), res, sch, time.Now().UTC())
 	if err != nil || status != "skipped_target_missing" {
@@ -118,7 +120,7 @@ func TestFireAssistantGoneIsTargetMissing(t *testing.T) {
 func TestFireAssistantNoConvAtAll(t *testing.T) {
 	a := &fakeAssistantAgent{outcome: "ok"}
 	f, res := newAssistantFixture(t, a)
-	sch := Schedule{ID: "sch_e", SessionMode: "assistant", Prompt: "p"} // no target, no owner
+	sch := store.Schedule{ID: "sch_e", SessionMode: "assistant", Prompt: "p"} // no target, no owner
 
 	status, _, err := f.fireAssistant(t.Context(), res, sch, time.Now().UTC())
 	if err != nil || status != "skipped_target_missing" {

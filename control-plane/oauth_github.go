@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // GitHub login adapter (docs/log/61 §61.7 + ADR0043). GitHub has no OIDC for user
@@ -522,7 +524,7 @@ func newGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.C
 // constants github.com / api.github.com. A row that could redirect them would let a
 // tenant point the adapter at a server it controls and mint any subject it liked —
 // and the subject is what rule 1.5 joins on.
-func newTenantGitHubProvider(row TenantIdP, tn TenantRef, secret string) (*githubProvider, error) {
+func newTenantGitHubProvider(row store.TenantIdP, tn store.TenantRef, secret string) (*githubProvider, error) {
 	if row.ClientID == "" || secret == "" {
 		return nil, errors.New("client_id / client_secret are required")
 	}

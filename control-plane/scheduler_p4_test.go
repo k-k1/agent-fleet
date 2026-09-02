@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // realMembership creates a genuine membership row so notification inserts (which FK to
 // membership) succeed, and returns its id.
-func realMembership(t *testing.T, st *sqlStore, ctx context.Context) string {
+func realMembership(t *testing.T, st *store.SQL, ctx context.Context) string {
 	t.Helper()
 	tn, err := st.EnsureDefaultTenant(ctx)
 	if err != nil {
@@ -71,7 +73,7 @@ func TestJitterNotBakedIntoNextRun(t *testing.T) {
 	from := time.Date(2026, 7, 22, 6, 0, 0, 0, time.UTC)
 
 	// cron: next_run is the EXACT nominal instant, no jitter mixed in.
-	cron := Schedule{ID: "sch_jit", SpecKind: "cron", Spec: "0 9 * * *", TZ: "UTC"}
+	cron := store.Schedule{ID: "sch_jit", SpecKind: "cron", Spec: "0 9 * * *", TZ: "UTC"}
 	got, err := initialNextRun(cron, from)
 	if err != nil {
 		t.Fatalf("cron initial: %v", err)
@@ -85,7 +87,7 @@ func TestJitterNotBakedIntoNextRun(t *testing.T) {
 	}
 
 	// interval: no jitter, next_run = from + interval.
-	iv := Schedule{ID: "sch_iv", SpecKind: "interval", Spec: "3600"}
+	iv := store.Schedule{ID: "sch_iv", SpecKind: "interval", Spec: "3600"}
 	if jitterForSchedule(iv) != 0 {
 		t.Fatalf("interval must not jitter")
 	}
@@ -94,7 +96,7 @@ func TestJitterNotBakedIntoNextRun(t *testing.T) {
 	}
 
 	// once: exact instant, no jitter.
-	once := Schedule{ID: "sch_once", SpecKind: "once", Spec: "2026-07-22T09:30:00Z"}
+	once := store.Schedule{ID: "sch_once", SpecKind: "once", Spec: "2026-07-22T09:30:00Z"}
 	if jitterForSchedule(once) != 0 {
 		t.Fatalf("once must not jitter")
 	}
@@ -126,9 +128,9 @@ func TestJitterGateDefersCronFire(t *testing.T) {
 
 	st, ctx := newSchedTestStore(t)
 	T0 := time.Date(2026, 7, 23, 9, 0, 0, 0, time.UTC)
-	cron := Schedule{
+	cron := store.Schedule{
 		ID: id, MembershipID: "m1", TenantID: "default", SpecKind: "cron", Spec: "0 9 * * *",
-		TZ: "UTC", Enabled: true, NextRun: T0.Format(time.RFC3339), CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		TZ: "UTC", Enabled: true, NextRun: T0.Format(time.RFC3339), CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, cron); err != nil {
 		t.Fatalf("create cron: %v", err)
@@ -147,10 +149,10 @@ func TestJitterGateDefersCronFire(t *testing.T) {
 	}
 
 	// once: no jitter — a due once fires on the first tick even with jitter enabled.
-	once := Schedule{
+	once := store.Schedule{
 		ID: "sch_once_gate", MembershipID: "m1", TenantID: "default", SpecKind: "once",
 		Spec: T0.Format(time.RFC3339), TZ: "UTC", Enabled: true,
-		NextRun: T0.Format(time.RFC3339), CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: T0.Format(time.RFC3339), CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, once); err != nil {
 		t.Fatalf("create once: %v", err)
@@ -183,10 +185,10 @@ func TestScheduleNotifyStatus(t *testing.T) {
 func TestSchedulerTickNotifiesFailure(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
 	mid := realMembership(t, st, ctx)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_f", MembershipID: mid, TenantID: "default",
 		SpecKind: "cron", Spec: "*/5 * * * *", TZ: "UTC", Enabled: true, SpecLabel: "毎朝レビュー",
-		NextRun: "2000-01-01T00:00:00Z", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: "2000-01-01T00:00:00Z", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)
@@ -211,7 +213,7 @@ func TestSchedulerTickNotifiesFailure(t *testing.T) {
 
 	// Re-firing the SAME slot must not double-notify (deterministic EventID dedup).
 	sc.NextRun = "2000-01-01T00:00:00Z"
-	_ = st.RecordScheduleFire(ctx, sc.ID, "", "", "2000-01-01T00:00:00Z", true, nowTS())
+	_ = st.RecordScheduleFire(ctx, sc.ID, "", "", "2000-01-01T00:00:00Z", true, store.NowTS())
 	newScheduler(st, ff, time.Minute).tick(ctx)
 	notifs2, _ := st.ListNotifications(ctx, mid, "2000-01-01T00:00:00Z", 50)
 	if len(notifs2) != 1 {
@@ -223,10 +225,10 @@ func TestSchedulerTickNotifiesFailure(t *testing.T) {
 // the scheduler must NOT also raise a failure notification.
 func TestSchedulerTickSuccessNoNotify(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_ok", MembershipID: "m1", TenantID: "default",
 		SpecKind: "cron", Spec: "*/5 * * * *", TZ: "UTC", Enabled: true,
-		NextRun: "2000-01-01T00:00:00Z", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: "2000-01-01T00:00:00Z", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	_ = st.CreateSchedule(ctx, sc)
 	newScheduler(st, &fakeFirer{}, time.Minute).tick(ctx) // fakeFirer returns "fired"

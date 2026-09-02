@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-func newGuardTestStore(t *testing.T) (*sqlStore, context.Context) {
+func newGuardTestStore(t *testing.T) (*store.SQL, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -23,14 +25,14 @@ func newGuardTestStore(t *testing.T) (*sqlStore, context.Context) {
 	return st, ctx
 }
 
-func mustCreateSchedule(t *testing.T, ctx context.Context, st *sqlStore, sc Schedule) {
+func mustCreateSchedule(t *testing.T, ctx context.Context, st *store.SQL, sc store.Schedule) {
 	t.Helper()
 	sc.SpecKind = "interval"
 	sc.Spec = "3600"
-	sc.CreatedAt = nowTS()
+	sc.CreatedAt = store.NowTS()
 	sc.UpdatedAt = sc.CreatedAt
 	if sc.ID == "" {
-		sc.ID = newID()
+		sc.ID = store.NewID()
 	}
 	if sc.TenantID == "" {
 		sc.TenantID = "default"
@@ -42,7 +44,7 @@ func mustCreateSchedule(t *testing.T, ctx context.Context, st *sqlStore, sc Sche
 
 func TestScheduleGuardErrBlocksRepoInUseByEnabledSchedule(t *testing.T) {
 	st, ctx := newGuardTestStore(t)
-	mustCreateSchedule(t, ctx, st, Schedule{
+	mustCreateSchedule(t, ctx, st, store.Schedule{
 		MembershipID: "m1", SpecLabel: "毎朝レビュー",
 		Repo: "/home/dev/repos/agent-fleet@schedule-cli-release-watch", Enabled: true,
 	})
@@ -58,7 +60,7 @@ func TestScheduleGuardErrBlocksRepoInUseByEnabledSchedule(t *testing.T) {
 
 func TestScheduleGuardErrBlocksSessionInUseByReuseTarget(t *testing.T) {
 	st, ctx := newGuardTestStore(t)
-	mustCreateSchedule(t, ctx, st, Schedule{
+	mustCreateSchedule(t, ctx, st, store.Schedule{
 		MembershipID: "m1", SpecLabel: "cli-watch", ReuseTarget: "sess-pinned", Enabled: true,
 	})
 
@@ -69,7 +71,7 @@ func TestScheduleGuardErrBlocksSessionInUseByReuseTarget(t *testing.T) {
 
 func TestScheduleGuardErrBlocksSessionInUseByReuseSession(t *testing.T) {
 	st, ctx := newGuardTestStore(t)
-	mustCreateSchedule(t, ctx, st, Schedule{
+	mustCreateSchedule(t, ctx, st, store.Schedule{
 		MembershipID: "m1", SpecLabel: "cli-watch", ReuseSession: "sess-live", Enabled: true,
 	})
 
@@ -80,7 +82,7 @@ func TestScheduleGuardErrBlocksSessionInUseByReuseSession(t *testing.T) {
 
 func TestScheduleGuardErrAllowsWhenScheduleDisabled(t *testing.T) {
 	st, ctx := newGuardTestStore(t)
-	mustCreateSchedule(t, ctx, st, Schedule{
+	mustCreateSchedule(t, ctx, st, store.Schedule{
 		MembershipID: "m1", Repo: "/home/dev/repos/myrepo", ReuseTarget: "sess1", Enabled: false,
 	})
 
@@ -94,7 +96,7 @@ func TestScheduleGuardErrAllowsWhenScheduleDisabled(t *testing.T) {
 
 func TestScheduleGuardErrAllowsUnrelatedTarget(t *testing.T) {
 	st, ctx := newGuardTestStore(t)
-	mustCreateSchedule(t, ctx, st, Schedule{
+	mustCreateSchedule(t, ctx, st, store.Schedule{
 		MembershipID: "m1", Repo: "/home/dev/repos/other-repo", ReuseTarget: "other-sess", Enabled: true,
 	})
 
@@ -108,7 +110,7 @@ func TestScheduleGuardErrAllowsUnrelatedTarget(t *testing.T) {
 
 func TestScheduleGuardErrIsScopedToMembership(t *testing.T) {
 	st, ctx := newGuardTestStore(t)
-	mustCreateSchedule(t, ctx, st, Schedule{
+	mustCreateSchedule(t, ctx, st, store.Schedule{
 		MembershipID: "m2", Repo: "/home/dev/repos/myrepo", Enabled: true,
 	})
 
@@ -119,7 +121,7 @@ func TestScheduleGuardErrIsScopedToMembership(t *testing.T) {
 
 func TestScheduleDeleteGuardMatchesOnlyExactRepoAndSessionDeleteRoutes(t *testing.T) {
 	st, ctx := newGuardTestStore(t)
-	mustCreateSchedule(t, ctx, st, Schedule{
+	mustCreateSchedule(t, ctx, st, store.Schedule{
 		MembershipID: "m1", SpecLabel: "watch", Repo: "/home/dev/repos/myrepo",
 		ReuseTarget: "sess1", Enabled: true,
 	})

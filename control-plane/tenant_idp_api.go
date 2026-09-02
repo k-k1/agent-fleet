@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Admin API for tenant-defined login providers (docs/log/61 §61.11.6 + ADR0043 決定 30).
@@ -76,7 +78,7 @@ type tenantIdPBody struct {
 	Usable bool `json:"usable,omitempty"`
 }
 
-func (a tenantIdPAPI) rowToBody(row TenantIdP, slug string, usable bool) tenantIdPBody {
+func (a tenantIdPAPI) rowToBody(row store.TenantIdP, slug string, usable bool) tenantIdPBody {
 	kind := row.Kind
 	if kind == "" {
 		kind = tenantIdPKindOIDC // rows written before 0041
@@ -115,7 +117,7 @@ func (a tenantIdPAPI) list(w http.ResponseWriter, r *http.Request) {
 
 // queue (GET /api/admin/idp) — the super_admin approval queue across every tenant
 // (docs/log/61 §61.11.6). Pending rows come first: that is the list somebody is waiting on.
-func (a tenantIdPAPI) queue(w http.ResponseWriter, r *http.Request, _ Identity) {
+func (a tenantIdPAPI) queue(w http.ResponseWriter, r *http.Request, _ store.Identity) {
 	rows, tenants, err := a.mgr.store.ListAllTenantIdPs(r.Context())
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -186,7 +188,7 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	var stored *TenantIdP
+	var stored *store.TenantIdP
 	for i := range rows {
 		if id != "" && rows[i].ID == id {
 			stored = &rows[i]
@@ -241,8 +243,8 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := nowTS()
-	row := TenantIdP{
+	now := store.NowTS()
+	row := store.TenantIdP{
 		ID: id, TenantID: t.ID, Name: b.Name, LabelJA: strings.TrimSpace(b.LabelJA),
 		LabelEN: strings.TrimSpace(b.LabelEN), Kind: b.Kind, Issuer: b.Issuer, ClientID: b.ClientID,
 		SecretEnc: enc, KeyRef: keyRef, Trust: b.Trust,
@@ -264,7 +266,7 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if stored == nil {
-		row.ID = newID()
+		row.ID = store.NewID()
 		err = a.mgr.store.CreateTenantIdP(r.Context(), row)
 	} else {
 		err = a.mgr.store.UpdateTenantIdP(r.Context(), row)
@@ -293,7 +295,7 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 // the approver said "the members of these organizations", and another organization
 // is another set of people they never saw. Removing one does not, for the same
 // reason narrowing the domains does not.
-func repend(old, next TenantIdP) bool {
+func repend(old, next store.TenantIdP) bool {
 	if old.Status != "active" {
 		return false
 	}
@@ -377,7 +379,7 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 				"the stored client secret cannot be decrypted — the tenant has to enter it again"})
 			return
 		}
-		if _, err := buildTenantProvider(row, TenantRef{Slug: t.Slug, Name: t.Name}, secret); err != nil {
+		if _, err := buildTenantProvider(row, store.TenantRef{Slug: t.Slug, Name: t.Name}, secret); err != nil {
 			writeAPIErr(w, &apiError{http.StatusBadRequest, "tenant_idp_invalid", err.Error()})
 			return
 		}
@@ -416,9 +418,9 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	approvedBy, approvedAt := "", ""
 	if status == "active" {
-		approvedBy, approvedAt = ident.ID, nowTS()
+		approvedBy, approvedAt = ident.ID, store.NowTS()
 	}
-	if err := a.mgr.store.SetTenantIdPStatus(r.Context(), t.ID, row.ID, status, approvedBy, approvedAt, nowTS()); err != nil {
+	if err := a.mgr.store.SetTenantIdPStatus(r.Context(), t.ID, row.ID, status, approvedBy, approvedAt, store.NowTS()); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -457,10 +459,10 @@ func (a tenantIdPAPI) remove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": row.ID})
 }
 
-func (a tenantIdPAPI) audit(r *http.Request, ident Identity, tenantID, action, target, detail string) {
-	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
-		ID: newID(), TenantID: tenantID, ActorKind: "admin", ActorID: ident.ID,
-		Action: action, Target: target, Detail: detail, At: nowTS(),
+func (a tenantIdPAPI) audit(r *http.Request, ident store.Identity, tenantID, action, target, detail string) {
+	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+		ID: store.NewID(), TenantID: tenantID, ActorKind: "admin", ActorID: ident.ID,
+		Action: action, Target: target, Detail: detail, At: store.NowTS(),
 	})
 }
 

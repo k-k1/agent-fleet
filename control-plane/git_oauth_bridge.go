@@ -37,6 +37,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 func gitOAuthSignKey(master32 []byte) []byte {
@@ -86,7 +88,7 @@ type gitOAuthBridgeAPI struct{ mgr *manager }
 func newGitOAuthBridgeAPI(m *manager) gitOAuthBridgeAPI { return gitOAuthBridgeAPI{m} }
 
 // withGitOAuthToken adapts a membership-scoped handler to the internal token face.
-func (a gitOAuthBridgeAPI) withGitOAuthToken(h func(http.ResponseWriter, *http.Request, MembershipView)) http.HandlerFunc {
+func (a gitOAuthBridgeAPI) withGitOAuthToken(h func(http.ResponseWriter, *http.Request, store.MembershipView)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		mid, ok := verifyGitOAuthToken(gitOAuthSignKey(a.mgr.tokenSignMaster()), tok)
@@ -112,7 +114,7 @@ func (a gitOAuthBridgeAPI) withGitOAuthToken(h func(http.ResponseWriter, *http.R
 //
 // ★ The tenant comes from the token → membership → store, never from the request. A
 // client-chosen tenant would be a cross-tenant use of somebody else's OAuth app.
-func (a gitOAuthBridgeAPI) refreshBitbucket(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a gitOAuthBridgeAPI) refreshBitbucket(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	var body struct {
 		RefreshToken string `json:"refresh_token"`
 	}
@@ -154,7 +156,7 @@ func (a gitOAuthBridgeAPI) refreshBitbucket(w http.ResponseWriter, r *http.Reque
 // the old. The Agent must persist what comes back; dropping it strands the connection at
 // the next expiry with no way to renew. (Bitbucket may or may not rotate, so the Agent's
 // store-what-you-get behaviour already covers both.)
-func (a gitOAuthBridgeAPI) refreshJira(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a gitOAuthBridgeAPI) refreshJira(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	var body struct {
 		RefreshToken string `json:"refresh_token"`
 	}

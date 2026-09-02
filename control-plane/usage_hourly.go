@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // 稼働時間ヒートマップの API（docs/log/83）。縦 24 時間 × 横 日付のマスを描くための、
@@ -52,7 +54,7 @@ func usageHourWindow(r *http.Request, now time.Time) (fromDay, toDay, fromHour, 
 // 密な配列を返す設計ではないが、止まっていた時間まで数値 7 個で埋めると応答が無駄に太る。
 type usageHourPoint struct {
 	Hour string `json:"hour"` // YYYY-MM-DDTHH (UTC)
-	UsageHourCounters
+	store.UsageHourCounters
 }
 
 // usageHourMember は 1 メンバーの系列。**時間の行は稼働していた時間だけ**入る
@@ -87,7 +89,7 @@ type usageHourlyResponse struct {
 //
 // ⚠️ membership_id=="" の行はメンバーではなくサンプラのハートビート。Members へ混ぜると
 // 「名前の無いメンバー」が全テナントの一覧に現れる。
-func buildUsageHourly(rows []UsageHourRow, from, to string, intervalSecs int) usageHourlyResponse {
+func buildUsageHourly(rows []store.UsageHourRow, from, to string, intervalSecs int) usageHourlyResponse {
 	out := usageHourlyResponse{
 		From: from, To: to, IntervalSecs: intervalSecs,
 		Observed: []usageHourPoint{}, Members: []usageHourMember{},
@@ -96,7 +98,7 @@ func buildUsageHourly(rows []UsageHourRow, from, to string, intervalSecs int) us
 	for _, r := range rows {
 		if r.MembershipID == "" {
 			out.Observed = append(out.Observed,
-				usageHourPoint{Hour: r.Hour, UsageHourCounters: UsageHourCounters{Samples: r.Samples}})
+				usageHourPoint{Hour: r.Hour, UsageHourCounters: store.UsageHourCounters{Samples: r.Samples}})
 			continue
 		}
 		// 予約テナント（af-golden など）の稼働は人の稼働ではない。一覧から隠しておいて
@@ -157,7 +159,7 @@ func (a adminAPI) usageHourlyFor(w http.ResponseWriter, r *http.Request, tenantI
 //
 // ⚠️ 他人の合計を引き算で復元できる値を返さない（/api/cost/me と同じ作法）。返すのは
 // 本人の行とハートビートだけで、デプロイ全体の合計はどこにも入っていない。
-func (a adminAPI) myUsageHourly(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+func (a adminAPI) myUsageHourly(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	// ⚠️ テナントで絞らない。破棄済みワークスペースの行も本人のものであり、
 	// 絞ると「自信たっぷりの空っぽ」を本人に見せることになる（docs/log/67 §67.15 と同型）。
 	a.usageHourlyFor(w, r, "", mv.MembershipID)

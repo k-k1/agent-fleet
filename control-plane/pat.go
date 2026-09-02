@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Personal Access Tokens (docs/decisions/0006, P3-6). A user issues PATs in the
@@ -77,7 +79,7 @@ func hashPAT(token string) string {
 // 経由する（memberAuth が mgr を運ぶ）。
 type patAPI struct {
 	memberAuth
-	store PATStore
+	store store.PATStore
 }
 
 func newPATAPI(m *manager) patAPI { return patAPI{memberAuth{m}, m.store} }
@@ -88,14 +90,14 @@ const maxActivePATs = 20
 
 // auditPAT records a PAT lifecycle event to the audit ledger (best-effort).
 func (a patAPI) auditPAT(ctx context.Context, tenantID, actorID, action, target, detail string) {
-	_ = a.mgr.store.InsertAudit(ctx, AuditLog{
-		ID: newID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
-		Action: action, Target: target, Detail: detail, At: nowTS(),
+	_ = a.mgr.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
+		Action: action, Target: target, Detail: detail, At: store.NowTS(),
 	})
 }
 
 // list (GET /api/pat) — the caller's tokens (no secrets/hashes).
-func (a patAPI) list(w http.ResponseWriter, r *http.Request, ident Identity) {
+func (a patAPI) list(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	pats, err := a.store.ListPATsByIdentity(r.Context(), ident.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -116,7 +118,7 @@ func (a patAPI) list(w http.ResponseWriter, r *http.Request, ident Identity) {
 // create (POST /api/pat {name, scope, tenant, ttl_days}) mints a token.
 // scope is clamped to the issuer's ceiling. ttl_days: omitted/0 = 90 days,
 // negative = never expires, positive = that many days. Returns the secret once.
-func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident Identity) {
+func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	var body struct {
 		Name    string `json:"name"`
 		Scope   string `json:"scope"`
@@ -169,13 +171,13 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident Identity) {
 	}
 
 	token, hash := newPATToken()
-	p := PAT{
-		ID:           newID(),
+	p := store.PAT{
+		ID:           store.NewID(),
 		IdentityID:   ident.ID,
 		MembershipID: mv.MembershipID,
 		Scope:        scope,
 		Name:         strings.TrimSpace(body.Name),
-		CreatedAt:    nowTS(),
+		CreatedAt:    store.NowTS(),
 		ExpiresAt:    expires,
 	}
 	if err := a.store.CreatePAT(r.Context(), p, hash); err != nil {
@@ -192,7 +194,7 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident Identity) {
 }
 
 // revoke (DELETE /api/pat/{id}) revokes one of the caller's tokens.
-func (a patAPI) revoke(w http.ResponseWriter, r *http.Request, ident Identity) {
+func (a patAPI) revoke(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	id := r.PathValue("id")
 	if err := a.store.RevokePAT(r.Context(), id, ident.ID); err != nil {
 		writeAPIErr(w, internalErr(err))

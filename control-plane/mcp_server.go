@@ -29,6 +29,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Validation codes, identical to mcpreg's (docs/log/48 §11.3: one reason = one code).
@@ -73,8 +75,8 @@ var mcpKnownKinds = map[string]bool{
 // mcpServerStore is the narrow store view this feature needs: the definitions plus the
 // audit ledger (every admin mutation is recorded, docs/log/48 §9).
 type mcpServerStore interface {
-	MCPServerStore
-	AuditStore
+	store.MCPServerStore
+	store.AuditStore
 }
 
 // mcpServerAPI serves both faces. It holds the manager (for master32 / custodian /
@@ -376,7 +378,7 @@ func (a mcpServerAPI) adminList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tenant": t.Slug, "servers": out})
 }
 
-func rowToBody(row MCPServerRow, headers map[string]string) mcpServerBody {
+func rowToBody(row store.MCPServerRow, headers map[string]string) mcpServerBody {
 	return mcpServerBody{
 		ID: row.ID, Name: row.Name, Label: row.Label, Transport: row.Transport, URL: row.URL,
 		Headers: headers, Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
@@ -421,7 +423,7 @@ func (a mcpServerAPI) adminUpsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(b.Name)
-	var stored *MCPServerRow
+	var stored *store.MCPServerRow
 	for i := range rows {
 		if rows[i].ID == id && id != "" {
 			stored = &rows[i]
@@ -462,14 +464,14 @@ func (a mcpServerAPI) adminUpsert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sort.Strings(b.Kinds)
-	row := MCPServerRow{
+	row := store.MCPServerRow{
 		ID: id, TenantID: t.ID, Name: name, Label: strings.TrimSpace(b.Label),
 		Transport: "http", URL: strings.TrimSpace(b.URL), HeadersEnc: enc, KeyRef: keyRef,
 		Targets: joinTargets(b.Targets), Kinds: strings.Join(b.Kinds, ","), TimeoutMS: b.TimeoutMS,
-		Enabled: b.Enabled, UserSecret: b.UserSecret, UpdatedAt: nowTS(),
+		Enabled: b.Enabled, UserSecret: b.UserSecret, UpdatedAt: store.NowTS(),
 	}
 	if stored == nil {
-		row.ID = newID()
+		row.ID = store.NewID()
 		row.CreatedBy = ident.Email
 		row.CreatedAt = row.UpdatedAt
 		err = a.store.CreateMCPServer(r.Context(), row)
@@ -521,10 +523,10 @@ func boolStr(b bool) string {
 
 // auditMCP records one admin mutation. Tenant-scoped so a tenant_admin sees their own
 // changes in the audit view. Best-effort: a ledger failure must not fail the edit.
-func (a mcpServerAPI) auditMCP(ctx context.Context, ident Identity, tenantID, action, target, detail string) {
-	_ = a.store.InsertAudit(ctx, AuditLog{
-		ID: newID(), TenantID: tenantID, ActorKind: "admin", ActorID: ident.ID,
-		Action: action, Target: target, Detail: detail, At: nowTS(),
+func (a mcpServerAPI) auditMCP(ctx context.Context, ident store.Identity, tenantID, action, target, detail string) {
+	_ = a.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: tenantID, ActorKind: "admin", ActorID: ident.ID,
+		Action: action, Target: target, Detail: detail, At: store.NowTS(),
 	})
 }
 
@@ -539,7 +541,7 @@ func (a mcpServerAPI) auditMCP(ctx context.Context, ident Identity, tenantID, ac
 // agent would otherwise materialize a server that authenticates with nothing, and the
 // member would debug the MCP server instead of the key configuration. The count of such
 // rows is reported so the Console can say the set is incomplete.
-func (a mcpServerAPI) distribute(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a mcpServerAPI) distribute(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	rows, err := a.store.ListMCPServers(r.Context(), mv.TenantID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))

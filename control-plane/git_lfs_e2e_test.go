@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // gitMux builds a mux with the internal-git routes (LFS + smart-HTTP) exactly as
@@ -47,7 +49,7 @@ func TestLFSEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 	dataRoot := filepath.Join(tmp, "data")
-	st, err := openSQLite(filepath.Join(tmp, "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(tmp, "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -71,7 +73,7 @@ func TestLFSEndToEnd(t *testing.T) {
 	if out, err := exec.Command("git", "init", "--bare", "--initial-branch=main", dir).CombinedOutput(); err != nil {
 		t.Fatalf("init bare: %v: %s", err, out)
 	}
-	if err := st.CreateGitRepo(ctx, GitRepo{ID: newID(), TenantID: dflt.ID, Name: "shared", DefaultBranch: "main", CreatedAt: nowTS()}); err != nil {
+	if err := st.CreateGitRepo(ctx, store.GitRepo{ID: store.NewID(), TenantID: dflt.ID, Name: "shared", DefaultBranch: "main", CreatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
 

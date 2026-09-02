@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Showback (docs/roadmap.md P3-9 運用の成熟). The infra cost worth attributing in
@@ -113,7 +116,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 	if !complete {
 		return
 	}
-	if err := u.mgr.store.AddUsageHour(ctx, "", "", hour, UsageHourCounters{Samples: 1}); err != nil {
+	if err := u.mgr.store.AddUsageHour(ctx, "", "", hour, store.UsageHourCounters{Samples: 1}); err != nil {
 		log.Printf("showback: heartbeat: %v", err)
 	}
 	u.prune(ctx, now)
@@ -125,8 +128,8 @@ func (u *usageSampler) sample(ctx context.Context) {
 // A workspace mid-start, or one whose Agent is wedged, is exactly the case where the
 // count is unknown, and "0 sessions" would draw a cold cell over a busy hour — the same
 // 0-vs-unmeasured confusion the usage ledger keeps re-teaching.
-func (u *usageSampler) counters(ctx context.Context, rt Runtime, secs int) UsageHourCounters {
-	c := UsageHourCounters{Samples: 1, RunningSecs: secs}
+func (u *usageSampler) counters(ctx context.Context, rt runtime.Runtime, secs int) store.UsageHourCounters {
+	c := store.UsageHourCounters{Samples: 1, RunningSecs: secs}
 	sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
 	defer cancel()
 	env, err := u.mgr.agentSessionsEnv(sctx, rt)
@@ -229,7 +232,7 @@ type usageTotal struct {
 
 // aggregateUsage sums the per-day rows into one total per member, key order
 // preserved from the (tenant, user_key, day)-ordered input.
-func aggregateUsage(rows []UsageRow) []usageTotal {
+func aggregateUsage(rows []store.UsageRow) []usageTotal {
 	idx := map[string]int{}
 	var out []usageTotal
 	for _, r := range rows {
@@ -252,7 +255,7 @@ func aggregateUsage(rows []UsageRow) []usageTotal {
 // answer. Kept next to the aggregation rather than in the store: the ledger records
 // every running workspace on purpose (the sampler must not decide what counts), and
 // this is only about what an admin screen shows.
-func withoutSystemTenants(rows []UsageRow) []UsageRow {
+func withoutSystemTenants(rows []store.UsageRow) []store.UsageRow {
 	out := rows[:0:0]
 	for _, r := range rows {
 		if isSystemTenantSlug(r.TenantSlug) {
@@ -307,7 +310,7 @@ func (a adminAPI) usage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func writeUsageCSV(w http.ResponseWriter, rows []UsageRow) {
+func writeUsageCSV(w http.ResponseWriter, rows []store.UsageRow) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="showback.csv"`)
 	cw := csv.NewWriter(w)

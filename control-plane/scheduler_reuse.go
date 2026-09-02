@@ -12,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Scheduled execution P6 (docs/log/38 + ADR0021): long-lived session reuse. When a schedule
@@ -35,7 +38,7 @@ import (
 // the workspace is awake, the keep-alive is held, and the Agent is reachable, so it only
 // has to pick/rotate the target session and deliver the prompt. It persists the reuse
 // ledger itself (SetScheduleReuse); fireOne stamps the cron ledger afterward.
-func (f *wakeFirer) fireReuse(ctx context.Context, res *resolved, sch Schedule, slot time.Time) (string, string, error) {
+func (f *wakeFirer) fireReuse(ctx context.Context, res *resolved, sch store.Schedule, slot time.Time) (string, string, error) {
 	sessions, err := f.mgr.agentSessions(ctx, res.rt)
 	if err != nil {
 		return "", "", fmt.Errorf("list sessions: %w", err)
@@ -102,7 +105,7 @@ func (f *wakeFirer) fireReuse(ctx context.Context, res *resolved, sch Schedule, 
 // deliverReuse resolves the overlap policy against the target's live state, then sends
 // the prompt (resuming the session if it is stopped). A non-empty skipStatus means the
 // overlap policy declined to deliver this fire (recorded, not an error).
-func (f *wakeFirer) deliverReuse(ctx context.Context, rt Runtime, sch Schedule, target *sessionWire, slot time.Time) (skipStatus string, err error) {
+func (f *wakeFirer) deliverReuse(ctx context.Context, rt runtime.Runtime, sch store.Schedule, target *sessionWire, slot time.Time) (skipStatus string, err error) {
 	body := reuseSendBody(sch, slot)
 	alive := target.Alive
 	if target.Alive && sessionBusy(target.State) {
@@ -135,7 +138,7 @@ func (f *wakeFirer) deliverReuse(ctx context.Context, rt Runtime, sch Schedule, 
 // path too: /input types keystrokes into the pane and returns 200 regardless of whether
 // the CLI can accept them, and the unattended cron has no human to notice a swallowed
 // prompt. This is the sbk7oej silent-drop fix (docs/log/38 + ADR0021).
-func (f *wakeFirer) sendToSession(ctx context.Context, rt Runtime, name string, alive bool, body []byte) error {
+func (f *wakeFirer) sendToSession(ctx context.Context, rt runtime.Runtime, name string, alive bool, body []byte) error {
 	inputPath := "/sessions/" + url.PathEscape(name) + "/input"
 	if !alive {
 		return f.resumeAndSend(ctx, rt, name, inputPath, body)
@@ -158,7 +161,7 @@ func (f *wakeFirer) sendToSession(ctx context.Context, rt Runtime, name string, 
 	return nil
 }
 
-func (f *wakeFirer) resumeAndSend(ctx context.Context, rt Runtime, name, inputPath string, body []byte) error {
+func (f *wakeFirer) resumeAndSend(ctx context.Context, rt runtime.Runtime, name, inputPath string, body []byte) error {
 	if _, status, err := f.agentReq(ctx, rt, http.MethodPost, "/sessions/"+url.PathEscape(name)+"/start", nil); err != nil {
 		return fmt.Errorf("resume: %w", err)
 	} else if status >= 300 {
@@ -184,7 +187,7 @@ func (f *wakeFirer) resumeAndSend(ctx context.Context, rt Runtime, name, inputPa
 // createReuseSession creates the long-lived session for reuse and returns the Agent's
 // assigned session name (stored in the reuse ledger so later fires find it). title lets a
 // human recognize it in the Console; the idempotency key collapses a CP-restart re-fire.
-func (f *wakeFirer) createReuseSession(ctx context.Context, rt Runtime, sch Schedule, slot time.Time, title string) (string, error) {
+func (f *wakeFirer) createReuseSession(ctx context.Context, rt runtime.Runtime, sch store.Schedule, slot time.Time, title string) (string, error) {
 	body := buildReuseCreateBody(sch, slot, title)
 	respBody, status, err := f.agentReq(ctx, rt, http.MethodPost, "/sessions", body)
 	if err != nil {
@@ -205,7 +208,7 @@ func (f *wakeFirer) createReuseSession(ctx context.Context, rt Runtime, sch Sche
 // retireSession best-effort archives the outgoing managed session on rotation so it stops
 // occupying a slot and lands in the cleanup machinery. A failure is logged, not fatal —
 // the new session is created regardless.
-func (f *wakeFirer) retireSession(ctx context.Context, rt Runtime, name string) {
+func (f *wakeFirer) retireSession(ctx context.Context, rt runtime.Runtime, name string) {
 	if _, _, err := f.agentReq(ctx, rt, http.MethodPost, "/sessions/"+url.PathEscape(name)+"/archive", nil); err != nil {
 		log.Printf("scheduler: retire session %s: %v", name, err)
 	}
@@ -219,7 +222,7 @@ func (f *wakeFirer) retireSession(ctx context.Context, rt Runtime, name string) 
 // and reuse_run_count still advanced. A timeout surfaces as an error, so the fire is
 // recorded "error:" and the operator is notified — never a bogus "fired" with an unadvanced
 // session.
-func (f *wakeFirer) awaitSessionReady(ctx context.Context, rt Runtime, name string) error {
+func (f *wakeFirer) awaitSessionReady(ctx context.Context, rt runtime.Runtime, name string) error {
 	timeout := f.sessionReadyTimeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -247,7 +250,7 @@ func (f *wakeFirer) awaitSessionReady(ctx context.Context, rt Runtime, name stri
 // sessionReady reads the Agent's /status input-readiness for one session (alive && ready).
 // A transport/HTTP/parse error is returned so the caller's poll can retry within its
 // deadline rather than treating a hiccup as "not ready forever".
-func (f *wakeFirer) sessionReady(ctx context.Context, rt Runtime, name string) (bool, error) {
+func (f *wakeFirer) sessionReady(ctx context.Context, rt runtime.Runtime, name string) (bool, error) {
 	body, status, err := f.agentReq(ctx, rt, http.MethodGet, "/sessions/"+url.PathEscape(name)+"/status", nil)
 	if err != nil {
 		return false, err
@@ -279,14 +282,14 @@ func (f *wakeFirer) saveReuse(ctx context.Context, id, session, startedAt string
 // agentReq performs one CP→Agent HTTP call and returns the response body + status. A
 // transport error (err != nil) is distinct from an HTTP error status the caller
 // interprets (e.g. 409 to trigger a resume).
-func (f *wakeFirer) agentReq(ctx context.Context, rt Runtime, method, path string, body []byte) ([]byte, int, error) {
+func (f *wakeFirer) agentReq(ctx context.Context, rt runtime.Runtime, method, path string, body []byte) ([]byte, int, error) {
 	return f.agentReqClient(ctx, agentHTTPClient, rt, method, path, body)
 }
 
 // agentReqClient is agentReq with an explicit client — the assistant-turn fire
 // passes agentLongCallClient because its 8-minute ctx (not the shared 2-minute
 // client timeout) is the intended bound.
-func (f *wakeFirer) agentReqClient(ctx context.Context, cl *http.Client, rt Runtime, method, path string, body []byte) ([]byte, int, error) {
+func (f *wakeFirer) agentReqClient(ctx context.Context, cl *http.Client, rt runtime.Runtime, method, path string, body []byte) ([]byte, int, error) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
@@ -342,7 +345,7 @@ func findSessionByName(sessions []sessionWire, name string) *sessionWire {
 func sessionBusy(state string) bool { return state == "working" || state == "question" }
 
 // reuseOverlap returns the schedule's overlap policy, defaulting to skip.
-func reuseOverlap(sch Schedule) string {
+func reuseOverlap(sch store.Schedule) string {
 	if sch.OverlapPolicy == "" {
 		return "skip"
 	}
@@ -350,7 +353,7 @@ func reuseOverlap(sch Schedule) string {
 }
 
 // reuseMissingPolicy returns the pinned-target-missing policy, defaulting to recreate.
-func reuseMissingPolicy(sch Schedule) string {
+func reuseMissingPolicy(sch store.Schedule) string {
 	if sch.MissingTargetPolicy == "" {
 		return "recreate"
 	}
@@ -360,7 +363,7 @@ func reuseMissingPolicy(sch Schedule) string {
 // reuseCreateTitle is the human-readable title for a reuse session the scheduler creates.
 // A pinned recreate adopts the operator's target name so the replacement is recognizable;
 // a managed session is titled from the label/id.
-func reuseCreateTitle(sch Schedule, pinned bool) string {
+func reuseCreateTitle(sch store.Schedule, pinned bool) string {
 	if pinned {
 		return sch.ReuseTarget
 	}
@@ -380,7 +383,7 @@ func reuseCreateTitle(sch Schedule, pinned bool) string {
 // appended to the conversation log), self-heals once, and otherwise answers
 // delivery_unconfirmed — which lands here as an error: status plus a notification,
 // never a bogus "fired".
-func reuseSendBody(sch Schedule, slot time.Time) []byte {
+func reuseSendBody(sch store.Schedule, slot time.Time) []byte {
 	b, _ := json.Marshal(map[string]any{
 		"prompt":    expandSchedulePrompt(sch, slot),
 		"report_to": scheduleReportTo(sch),
@@ -392,7 +395,7 @@ func reuseSendBody(sch Schedule, slot time.Time) []byte {
 
 // buildReuseCreateBody marshals the create_session body for a reuse session — the same
 // fields as a new-mode fire plus a title so the created session is recognizable.
-func buildReuseCreateBody(sch Schedule, slot time.Time, title string) []byte {
+func buildReuseCreateBody(sch store.Schedule, slot time.Time, title string) []byte {
 	kind := scheduleInjectKind(sch.AgentKind)
 	body := map[string]any{
 		"dir":             sch.Repo,
@@ -463,7 +466,7 @@ func validateRotation(s string) error {
 // this fire. Deterministic triggers only (v1): every_runs (fires since last rotation),
 // after (age of the current session), calendar (a boundary crossed). loc is the
 // schedule's zone so calendar boundaries align to the user's week/day.
-func rotationDue(sch Schedule, slot time.Time, loc *time.Location) bool {
+func rotationDue(sch store.Schedule, slot time.Time, loc *time.Location) bool {
 	r, err := parseRotation(sch.Rotation)
 	if err != nil || r.isEmpty() {
 		return false

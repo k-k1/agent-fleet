@@ -3,6 +3,9 @@ package main
 import (
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // The retry seam (docs/log/38 ★7). A fire that never reached the Agent is a fire
@@ -18,10 +21,10 @@ func TestSchedulerRetriesUndeliveredFire(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
 	mid := realMembership(t, st, ctx)
 	slot := time.Date(2026, 8, 31, 0, 1, 0, 0, time.UTC)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_retry", MembershipID: mid, TenantID: "default",
 		SpecKind: "cron", Spec: "0 9 * * *", TZ: "Asia/Tokyo", Enabled: true, SpecLabel: "毎朝",
-		NextRun: slot.Format(time.RFC3339), CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: slot.Format(time.RFC3339), CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)
@@ -74,10 +77,10 @@ func TestSchedulerRetryWindowIsBounded(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
 	mid := realMembership(t, st, ctx)
 	slot := time.Date(2026, 8, 31, 0, 1, 0, 0, time.UTC)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_giveup", MembershipID: mid, TenantID: "default",
 		SpecKind: "cron", Spec: "0 9 * * *", TZ: "UTC", Enabled: true, SpecLabel: "毎朝",
-		NextRun: slot.Format(time.RFC3339), CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: slot.Format(time.RFC3339), CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)
@@ -104,10 +107,10 @@ func TestSchedulerNonRetryableErrorIsFinal(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
 	mid := realMembership(t, st, ctx)
 	slot := time.Date(2026, 8, 31, 0, 1, 0, 0, time.UTC)
-	sc := Schedule{
+	sc := store.Schedule{
 		ID: "sch_final", MembershipID: mid, TenantID: "default",
 		SpecKind: "cron", Spec: "0 9 * * *", TZ: "UTC", Enabled: true,
-		NextRun: slot.Format(time.RFC3339), CreatedAt: nowTS(), UpdatedAt: nowTS(),
+		NextRun: slot.Format(time.RFC3339), CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("create: %v", err)
@@ -130,9 +133,9 @@ func TestSchedulerNonRetryableErrorIsFinal(t *testing.T) {
 // than this". The per-session input-readiness wait must NOT follow it up: that one runs
 // against a container that is already answering.
 func TestScheduleWakeBudgets(t *testing.T) {
-	f := newWakeFirer(nil, 5*time.Minute, agentBootBudget)
-	if f.readyTimeout != agentBootBudget {
-		t.Fatalf("readyTimeout = %v, want %v", f.readyTimeout, agentBootBudget)
+	f := newWakeFirer(nil, 5*time.Minute, runtime.AgentBootBudget)
+	if f.readyTimeout != runtime.AgentBootBudget {
+		t.Fatalf("readyTimeout = %v, want %v", f.readyTimeout, runtime.AgentBootBudget)
 	}
 	if f.sessionReadyTimeout != scheduleSessionReadyWait {
 		t.Fatalf("sessionReadyTimeout = %v, want %v", f.sessionReadyTimeout, scheduleSessionReadyWait)
@@ -144,7 +147,7 @@ func TestScheduleWakeBudgets(t *testing.T) {
 	// The measured ecs-ec2 wake distribution (docs/log/64: ~110s for a sleeping slot,
 	// ~135s to grow the pool, 131s observed end to end on acrt) must fit inside the
 	// budget — that is the whole point of the number.
-	if agentBootBudget < 150*time.Second {
-		t.Fatalf("boot budget %v is below the measured ecs-ec2 wake times", agentBootBudget)
+	if runtime.AgentBootBudget < 150*time.Second {
+		t.Fatalf("boot budget %v is below the measured ecs-ec2 wake times", runtime.AgentBootBudget)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // costProfile is declared by the adapters' package: cost_profile.go used to hang a
@@ -39,6 +40,6 @@ func (m *manager) cloudCostProfile() costProfile {
 // costProfileHandler (GET /api/cost/profile) — any signed-in identity may read it. It
 // says nothing about money, only what KIND of deployment this is, and the Console needs
 // it before it can decide whether to draw the tab at all.
-func (a adminAPI) costProfileHandler(w http.ResponseWriter, _ *http.Request, _ Identity) {
+func (a adminAPI) costProfileHandler(w http.ResponseWriter, _ *http.Request, _ store.Identity) {
 	writeJSON(w, http.StatusOK, a.mgr.cloudCostProfile())
 }

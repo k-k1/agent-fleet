@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // --- pure rotation helpers ------------------------------------------------------
@@ -79,7 +81,7 @@ func TestRotationDue(t *testing.T) {
 		{"OR: none hits", `{"every_runs":50,"after":"30d","calendar":"monthly"}`, 2, false},
 	}
 	for _, c := range cases {
-		sch := Schedule{Rotation: c.rotation, ReuseStartedAt: started, ReuseRunCount: c.runCount}
+		sch := store.Schedule{Rotation: c.rotation, ReuseStartedAt: started, ReuseRunCount: c.runCount}
 		if got := rotationDue(sch, slot, loc); got != c.want {
 			t.Errorf("%s: rotationDue = %v, want %v", c.name, got, c.want)
 		}
@@ -90,10 +92,10 @@ func TestRotationDueNoBaseline(t *testing.T) {
 	// A period/calendar trigger cannot fire without a reuse_started_at baseline; only
 	// every_runs (which needs no time baseline) can.
 	slot := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
-	if rotationDue(Schedule{Rotation: `{"after":"1h"}`, ReuseStartedAt: ""}, slot, time.UTC) {
+	if rotationDue(store.Schedule{Rotation: `{"after":"1h"}`, ReuseStartedAt: ""}, slot, time.UTC) {
 		t.Error("after should not trigger without a baseline")
 	}
-	if !rotationDue(Schedule{Rotation: `{"every_runs":2}`, ReuseStartedAt: "", ReuseRunCount: 2}, slot, time.UTC) {
+	if !rotationDue(store.Schedule{Rotation: `{"every_runs":2}`, ReuseStartedAt: "", ReuseRunCount: 2}, slot, time.UTC) {
 		t.Error("every_runs should trigger regardless of baseline")
 	}
 }
@@ -115,16 +117,16 @@ func TestValidateRotation(t *testing.T) {
 }
 
 func TestReusePolicyDefaults(t *testing.T) {
-	if reuseOverlap(Schedule{}) != "skip" {
+	if reuseOverlap(store.Schedule{}) != "skip" {
 		t.Error("overlap default should be skip")
 	}
-	if reuseOverlap(Schedule{OverlapPolicy: "queue"}) != "queue" {
+	if reuseOverlap(store.Schedule{OverlapPolicy: "queue"}) != "queue" {
 		t.Error("overlap should honor explicit value")
 	}
-	if reuseMissingPolicy(Schedule{}) != "recreate" {
+	if reuseMissingPolicy(store.Schedule{}) != "recreate" {
 		t.Error("missing default should be recreate")
 	}
-	if reuseMissingPolicy(Schedule{MissingTargetPolicy: "fail"}) != "fail" {
+	if reuseMissingPolicy(store.Schedule{MissingTargetPolicy: "fail"}) != "fail" {
 		t.Error("missing should honor explicit value")
 	}
 	if !sessionBusy("working") || !sessionBusy("question") || sessionBusy("idle") {
@@ -146,7 +148,7 @@ func TestReuseSendBodyRequestsConfirm(t *testing.T) {
 		Confirm  bool   `json:"confirm"`
 		Source   string `json:"source"`
 	}
-	raw := reuseSendBody(Schedule{Prompt: "/scout", OwnerConv: "conv-1", Report: true}, time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC))
+	raw := reuseSendBody(store.Schedule{Prompt: "/scout", OwnerConv: "conv-1", Report: true}, time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC))
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +156,7 @@ func TestReuseSendBodyRequestsConfirm(t *testing.T) {
 		t.Fatalf("body mismatch: %+v", body)
 	}
 	// report=false (the default) must NOT carry a report_to — the fire runs silently.
-	raw = reuseSendBody(Schedule{Prompt: "/scout", OwnerConv: "conv-1"}, time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC))
+	raw = reuseSendBody(store.Schedule{Prompt: "/scout", OwnerConv: "conv-1"}, time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC))
 	_ = json.Unmarshal(raw, &body)
 	if body.ReportTo != "" {
 		t.Fatalf("report_to = %q, want empty when report is off (default)", body.ReportTo)
@@ -165,7 +167,7 @@ func TestReuseSendBodyRequestsConfirm(t *testing.T) {
 	if body.Source != "schedule" {
 		t.Fatalf("source = %q, want schedule (mirror badge, docs/log/38)", body.Source)
 	}
-	raw = reuseSendBody(Schedule{Prompt: "/scout", OwnerConv: "conv-1", ManualFirePending: true}, time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC))
+	raw = reuseSendBody(store.Schedule{Prompt: "/scout", OwnerConv: "conv-1", ManualFirePending: true}, time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC))
 	_ = json.Unmarshal(raw, &body)
 	if body.Source != "schedule-manual" {
 		t.Fatalf("manual-fire source = %q, want schedule-manual", body.Source)
@@ -237,11 +239,11 @@ func sessionSeg(path string) string {
 	return ""
 }
 
-func newReuseFixture(t *testing.T, a *fakeAgent, sch Schedule) (*wakeFirer, *resolved, *sqlStore, context.Context) {
+func newReuseFixture(t *testing.T, a *fakeAgent, sch store.Schedule) (*wakeFirer, *resolved, *store.SQL, context.Context) {
 	t.Helper()
 	st, ctx := newSchedTestStore(t)
 	sch.MembershipID, sch.TenantID = "m1", "default"
-	sch.CreatedAt, sch.UpdatedAt = nowTS(), nowTS()
+	sch.CreatedAt, sch.UpdatedAt = store.NowTS(), store.NowTS()
 	if err := st.CreateSchedule(ctx, sch); err != nil {
 		t.Fatalf("seed schedule: %v", err)
 	}
@@ -254,7 +256,7 @@ func newReuseFixture(t *testing.T, a *fakeAgent, sch Schedule) (*wakeFirer, *res
 
 func TestFireReusePinnedSendsToExisting(t *testing.T) {
 	a := &fakeAgent{sessions: []sessionWire{{Name: "my-sess", Alive: true, State: "idle"}}}
-	sch := Schedule{ID: "sch_p", SessionMode: "reuse", ReuseTarget: "my-sess", OwnerConv: "conv1", Prompt: "go"}
+	sch := store.Schedule{ID: "sch_p", SessionMode: "reuse", ReuseTarget: "my-sess", OwnerConv: "conv1", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
 
 	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
@@ -275,7 +277,7 @@ func TestFireReusePinnedSendsToExisting(t *testing.T) {
 
 func TestFireReusePinnedMissingRecreate(t *testing.T) {
 	a := &fakeAgent{sessions: nil, newName: "fresh-1"}
-	sch := Schedule{ID: "sch_r", SessionMode: "reuse", ReuseTarget: "gone", MissingTargetPolicy: "recreate", Prompt: "go"}
+	sch := store.Schedule{ID: "sch_r", SessionMode: "reuse", ReuseTarget: "gone", MissingTargetPolicy: "recreate", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
 
 	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
@@ -293,7 +295,7 @@ func TestFireReusePinnedMissingRecreate(t *testing.T) {
 
 func TestFireReusePinnedMissingFail(t *testing.T) {
 	a := &fakeAgent{sessions: nil}
-	sch := Schedule{ID: "sch_f", SessionMode: "reuse", ReuseTarget: "gone", MissingTargetPolicy: "fail", Prompt: "go"}
+	sch := store.Schedule{ID: "sch_f", SessionMode: "reuse", ReuseTarget: "gone", MissingTargetPolicy: "fail", Prompt: "go"}
 	f, res, _, ctx := newReuseFixture(t, a, sch)
 
 	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
@@ -307,7 +309,7 @@ func TestFireReusePinnedMissingFail(t *testing.T) {
 
 func TestFireReuseManagedFirstFireCreates(t *testing.T) {
 	a := &fakeAgent{sessions: nil, newName: "managed-1"}
-	sch := Schedule{ID: "sch_m", SessionMode: "reuse", Prompt: "go"} // reuse_target empty => managed
+	sch := store.Schedule{ID: "sch_m", SessionMode: "reuse", Prompt: "go"} // reuse_target empty => managed
 	f, res, st, ctx := newReuseFixture(t, a, sch)
 
 	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
@@ -329,7 +331,7 @@ func TestFireReuseManagedRotates(t *testing.T) {
 		newName:  "new-sess",
 	}
 	// every_runs=1 with run_count already at 1 => the next fire rotates.
-	sch := Schedule{
+	sch := store.Schedule{
 		ID: "sch_rot", SessionMode: "reuse", Prompt: "go",
 		ReuseSession: "old-sess", ReuseRunCount: 1, ReuseStartedAt: "2026-07-20T00:00:00Z",
 		Rotation: `{"every_runs":1}`,
@@ -354,7 +356,7 @@ func TestFireReuseManagedRotates(t *testing.T) {
 
 func TestFireReuseOverlapSkip(t *testing.T) {
 	a := &fakeAgent{sessions: []sessionWire{{Name: "busy", Alive: true, State: "working"}}}
-	sch := Schedule{ID: "sch_o", SessionMode: "reuse", ReuseTarget: "busy", OverlapPolicy: "skip", Prompt: "go"}
+	sch := store.Schedule{ID: "sch_o", SessionMode: "reuse", ReuseTarget: "busy", OverlapPolicy: "skip", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
 
 	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
@@ -373,7 +375,7 @@ func TestFireReuseOverlapSkip(t *testing.T) {
 
 func TestFireReuseOverlapQueueSends(t *testing.T) {
 	a := &fakeAgent{sessions: []sessionWire{{Name: "busy", Alive: true, State: "working"}}}
-	sch := Schedule{ID: "sch_q", SessionMode: "reuse", ReuseTarget: "busy", OverlapPolicy: "queue", Prompt: "go"}
+	sch := store.Schedule{ID: "sch_q", SessionMode: "reuse", ReuseTarget: "busy", OverlapPolicy: "queue", Prompt: "go"}
 	f, res, _, ctx := newReuseFixture(t, a, sch)
 
 	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
@@ -390,7 +392,7 @@ func TestFireReuseOverlapQueueSends(t *testing.T) {
 // /start the session, wait for /status ready, and deliver exactly one /input.
 func TestFireReuseResumesStoppedTargetThenSends(t *testing.T) {
 	a := &fakeAgent{sessions: []sessionWire{{Name: "pinned", Alive: false, State: "stopped"}}}
-	sch := Schedule{ID: "sch_stop", SessionMode: "reuse", ReuseTarget: "pinned", OwnerConv: "conv1", Prompt: "go"}
+	sch := store.Schedule{ID: "sch_stop", SessionMode: "reuse", ReuseTarget: "pinned", OwnerConv: "conv1", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
 	f.readyInterval = time.Millisecond // no need to slow the poll
 
@@ -420,7 +422,7 @@ func TestFireReuseUnreadyTargetErrorsNotSilentFire(t *testing.T) {
 		sessions: []sessionWire{{Name: "zombie", Alive: true, State: "idle"}},
 		unready:  map[string]bool{"zombie": true},
 	}
-	sch := Schedule{ID: "sch_zomb", SessionMode: "reuse", ReuseTarget: "zombie", OwnerConv: "conv1", Prompt: "go"}
+	sch := store.Schedule{ID: "sch_zomb", SessionMode: "reuse", ReuseTarget: "zombie", OwnerConv: "conv1", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
 	f.readyTimeout = 150 * time.Millisecond // bound the not-ready wait for the test
 	f.readyInterval = 5 * time.Millisecond

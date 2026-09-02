@@ -10,13 +10,15 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // 新規メモは、API が position を省いてきても repo/category グループの末尾に付く
 // （ゼロ値の 0 をそのまま採らない）。
 func TestMemoCreateForAppendsToItsGroup(t *testing.T) {
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -28,13 +30,13 @@ func TestMemoCreateForAppendsToItsGroup(t *testing.T) {
 	ident, _ := st.UpsertIdentity(ctx, "a@x.com", "a-x-com", "")
 	mem, _ := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
 
-	first := Memo{ID: newID(), MembershipID: mem.ID, Repo: "repo-a", Category: "frontend",
-		Kind: "text", Body: "tighten padding", Position: 0, CreatedAt: nowTS()}
+	first := store.Memo{ID: store.NewID(), MembershipID: mem.ID, Repo: "repo-a", Category: "frontend",
+		Kind: "text", Body: "tighten padding", Position: 0, CreatedAt: store.NowTS()}
 	if err := st.CreateMemo(ctx, first); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
-	created, aerr := memoCreateFor(ctx, st, MembershipView{MembershipID: mem.ID}, memoDTO{
+	created, aerr := memoCreateFor(ctx, st, store.MembershipView{MembershipID: mem.ID}, memoDTO{
 		Repo: "repo-a", Category: "frontend", Kind: "text", Body: "add at bottom",
 	})
 	if aerr != nil || created.Position != 1 {

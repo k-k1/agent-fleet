@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // markProseKinds — 印を置ける part の kind。Agent 側の同名の表と、Console の
@@ -34,7 +36,7 @@ var markProseKinds = map[string]bool{"": true, "text": true, "plan": true, "answ
 
 const sharedMarkMaxBytes = 8 << 10
 
-func (a sessionShareAPI) marks(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a sessionShareAPI) marks(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	switch r.Method {
 	case http.MethodGet:
 		a.marksRead(w, r, mv)
@@ -47,7 +49,7 @@ func (a sessionShareAPI) marks(w http.ResponseWriter, r *http.Request, ident Ide
 	}
 }
 
-func (a sessionShareAPI) marksRead(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+func (a sessionShareAPI) marksRead(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	c, res, e := a.authorizeCatalog(r.Context(), mv, r.PathValue("id"), false)
 	if e != nil {
 		writeAPIErr(w, e)
@@ -72,7 +74,7 @@ func (a sessionShareAPI) marksRead(w http.ResponseWriter, r *http.Request, mv Me
 	writeJSON(w, status, sharedMarksDTO(payload))
 }
 
-func (a sessionShareAPI) marksAdd(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a sessionShareAPI) marksAdd(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	c, res, e := a.authorizeCatalog(r.Context(), mv, r.PathValue("id"), true)
 	if e != nil {
 		writeAPIErr(w, e)
@@ -115,7 +117,7 @@ func (a sessionShareAPI) marksAdd(w http.ResponseWriter, r *http.Request, ident 
 	writeJSON(w, status, map[string]any{"mark": sharedMarkDTO(one)})
 }
 
-func (a sessionShareAPI) marksDelete(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+func (a sessionShareAPI) marksDelete(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	c, res, e := a.authorizeCatalog(r.Context(), mv, r.PathValue("id"), true)
 	if e != nil {
 		writeAPIErr(w, e)

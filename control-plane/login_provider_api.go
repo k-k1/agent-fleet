@@ -2,6 +2,8 @@ package main
 
 import (
 	"net/http"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // The deployment's own login providers, read-only (docs/log/61 §61.11.8).
@@ -57,7 +59,7 @@ type providerIssuer interface{ issuerURL() string }
 // administrator needs to know THAT a method exists, not which directory backs it —
 // so the column is omitted unless the caller is a super_admin. Omitted, not blanked:
 // a "" issuer would render as an empty cell and read like a misconfiguration.
-func (a loginProviderAPI) list(w http.ResponseWriter, r *http.Request, ident Identity) {
+func (a loginProviderAPI) list(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	withIssuer := ident.Role == "super_admin"
 	out := make([]map[string]any, 0, len(a.provs))
 	for _, p := range a.provs {

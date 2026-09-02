@@ -3951,7 +3951,7 @@ func (e *ecsEC2Runtime) homeSnapshots(ctx context.Context) ([]ec2types.Snapshot,
 //
 // Hibernating pins this adapter to the hibernation entry point as an interface value.
 // The real interface is the reaper's (reaper.go: hibernatingRuntime) and cannot be
-// imported here, so the CP asserts against THIS in alias_runtime.go — chaining the two
+// imported here, so the CP asserts against THIS in runtime_seam.go — chaining the two
 // declarations, because a drift between them would not break anything loudly: the
 // reaper's `rt.(hibernatingRuntime)` would simply stop matching, and homes would quietly
 // never hibernate again.

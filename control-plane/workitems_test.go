@@ -16,12 +16,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 type workItemEnv struct {
 	api  workItemsAPI
 	res  *resolved
-	st   *sqlStore
+	st   *store.SQL
 	mid  string
 	body func() string // stub Agent が返す /work-items/fetch の本文
 	hits *int
@@ -29,7 +31,7 @@ type workItemEnv struct {
 
 func newWorkItemEnv(t *testing.T, state string) *workItemEnv {
 	t.Helper()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,14 +60,14 @@ func newWorkItemEnv(t *testing.T, state string) *workItemEnv {
 	mgr := &manager{store: st}
 	env.api = workItemsAPI{memberAuth{mgr}, st}
 	env.res = &resolved{rt: stubRuntime{endpoint: srv.URL, token: "tok", state: state},
-		mv: MembershipView{MembershipID: m.ID}}
+		mv: store.MembershipView{MembershipID: m.ID}}
 	return env
 }
 
 func (e *workItemEnv) addQuery(t *testing.T, id, label, query string, enabled bool) {
 	t.Helper()
-	q := WorkItemQuery{ID: id, MembershipID: e.mid, Provider: "github", Label: label,
-		Query: query, Enabled: enabled, CreatedAt: nowTS()}
+	q := store.WorkItemQuery{ID: id, MembershipID: e.mid, Provider: "github", Label: label,
+		Query: query, Enabled: enabled, CreatedAt: store.NowTS()}
 	if err := e.st.CreateWorkItemQuery(context.Background(), q); err != nil {
 		t.Fatal(err)
 	}
@@ -78,8 +80,8 @@ func TestWorkItemsStoppedServesCacheWithoutFetching(t *testing.T) {
 	env := newWorkItemEnv(t, "stopped")
 	ctx := context.Background()
 	env.addQuery(t, "q1", "自分の未完了", "assignee:@me is:open", true)
-	if err := env.st.ReplaceWorkItems(ctx, env.mid, []string{"q1"}, []WorkItem{{
-		ID: newID(), MembershipID: env.mid, QueryID: "q1", Provider: "github", Kind: "issue",
+	if err := env.st.ReplaceWorkItems(ctx, env.mid, []string{"q1"}, []store.WorkItem{{
+		ID: store.NewID(), MembershipID: env.mid, QueryID: "q1", Provider: "github", Kind: "issue",
 		Key: "acme/web#45", Title: "古い行", State: "open", FetchedAt: "2026-08-25T00:00:00Z",
 	}}); err != nil {
 		t.Fatal(err)
@@ -106,8 +108,8 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 	ctx := context.Background()
 	env.addQuery(t, "ok", "動く方", "assignee:@me", true)
 	env.addQuery(t, "ng", "壊れた方", "bad query", true)
-	if err := env.st.ReplaceWorkItems(ctx, env.mid, []string{"ng"}, []WorkItem{{
-		ID: newID(), MembershipID: env.mid, QueryID: "ng", Provider: "github",
+	if err := env.st.ReplaceWorkItems(ctx, env.mid, []string{"ng"}, []store.WorkItem{{
+		ID: store.NewID(), MembershipID: env.mid, QueryID: "ng", Provider: "github",
 		Key: "acme/web#1", Title: "壊れたクエリの古い行", State: "open", FetchedAt: "2026-08-25T00:00:00Z",
 	}}); err != nil {
 		t.Fatal(err)
@@ -196,7 +198,7 @@ func TestWorkItemsRefreshIntervalThrottles(t *testing.T) {
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	env.addQuery(t, "q1", "自分の未完了", "assignee:@me", true)
-	_ = env.st.MarkWorkItemQueryFetched(ctx, "q1", nowTS(), "")
+	_ = env.st.MarkWorkItemQueryFetched(ctx, "q1", store.NowTS(), "")
 
 	env.api.refreshNow(ctx, env.res, false)
 	if *env.hits != 0 {
@@ -227,7 +229,7 @@ func TestWorkItemsDisabledQueryNotFetched(t *testing.T) {
 }
 
 func TestWorkItemQueryValidation(t *testing.T) {
-	mv := MembershipView{MembershipID: "m1"}
+	mv := store.MembershipView{MembershipID: "m1"}
 	// jira は P1 で受け付けるようになった。未知の provider は今も拒む —— 取得できない
 	// 行として保存されるより、その場で断る方がよい。
 	if _, aerr := validateWorkItemQuery(mv, workItemQueryDTO{Provider: "jira", Query: "assignee = currentUser()"}); aerr != nil {
@@ -258,7 +260,7 @@ func TestWorkItemSessionLedgerIdempotent(t *testing.T) {
 		body := `{"provider":"github","itemKey":"acme/web#45","sessionName":"sk7f3q9","repo":"web","branch":"feature/web-45"}`
 		r := httptest.NewRequest("POST", "/api/work-item-sessions", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		env.api.createSession(w, r, Identity{}, MembershipView{MembershipID: env.mid})
+		env.api.createSession(w, r, store.Identity{}, store.MembershipView{MembershipID: env.mid})
 		return w
 	}
 	first, second := post(), post()
@@ -282,11 +284,11 @@ func TestDeleteQueryKeepsLedger(t *testing.T) {
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	env.addQuery(t, "q1", "自分の未完了", "assignee:@me", true)
-	_ = env.st.ReplaceWorkItems(ctx, env.mid, []string{"q1"}, []WorkItem{{
-		ID: newID(), MembershipID: env.mid, QueryID: "q1", Key: "acme/web#45", FetchedAt: nowTS(),
+	_ = env.st.ReplaceWorkItems(ctx, env.mid, []string{"q1"}, []store.WorkItem{{
+		ID: store.NewID(), MembershipID: env.mid, QueryID: "q1", Key: "acme/web#45", FetchedAt: store.NowTS(),
 	}})
-	_ = env.st.CreateWorkItemSession(ctx, WorkItemSession{ID: newID(), MembershipID: env.mid,
-		Provider: "github", ItemKey: "acme/web#45", SessionName: "sk7f3q9", CreatedAt: nowTS()})
+	_ = env.st.CreateWorkItemSession(ctx, store.WorkItemSession{ID: store.NewID(), MembershipID: env.mid,
+		Provider: "github", ItemKey: "acme/web#45", SessionName: "sk7f3q9", CreatedAt: store.NowTS()})
 
 	if err := env.st.DeleteWorkItemQuery(ctx, "q1", env.mid); err != nil {
 		t.Fatal(err)
@@ -311,7 +313,7 @@ func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 	if got := splitLabels("   "); got == nil {
 		t.Error("splitLabels(blank) returned nil")
 	}
-	dto := workItemToDTO(WorkItem{ID: "1", Key: "PROJ-1", Labels: ""})
+	dto := workItemToDTO(store.WorkItem{ID: "1", Key: "PROJ-1", Labels: ""})
 	enc, err := json.Marshal(dto)
 	if err != nil {
 		t.Fatal(err)

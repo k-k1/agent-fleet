@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Linking a SECOND sign-in method to an account, with the account owner's consent
@@ -110,15 +112,15 @@ func (c config) handleOAuthLink(w http.ResponseWriter, r *http.Request) {
 // linkCaller resolves the signed-in person the way every API request does. The
 // header is set here because /oauth2/ is auth-exempt: authGate stripped whatever
 // the client sent (that is unconditional) but did not put ours back.
-func (c config) linkCaller(r *http.Request, claims sessionClaims) (Identity, bool) {
+func (c config) linkCaller(r *http.Request, claims sessionClaims) (store.Identity, bool) {
 	if c.mgr == nil {
-		return Identity{}, false
+		return store.Identity{}, false
 	}
 	r.Header.Set(c.mgr.emailHeader, claims.Email)
 	ctx := withLoginRef(r.Context(), loginRef{claims.provider(), claims.Sub})
 	ident, aerr := c.mgr.identityFor(ctx, r)
 	if aerr != nil {
-		return Identity{}, false
+		return store.Identity{}, false
 	}
 	return ident, true
 }
@@ -130,7 +132,7 @@ func (c config) linkCaller(r *http.Request, claims sessionClaims) (Identity, boo
 // a directory of the group's subsidiaries (決定 32-4). It is not the authorization
 // (Allowed() still runs at the callback), it is what this person is shown and may
 // probe.
-func (c config) linkableFor(ctx context.Context, ident Identity, providerID string) bool {
+func (c config) linkableFor(ctx context.Context, ident store.Identity, providerID string) bool {
 	slug, _, ok := parseTenantProviderID(providerID)
 	if !ok {
 		return true
@@ -207,12 +209,12 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 		c.writeLinkResult(w, r, linkErrEmail, p.Label(preferredUILang(r)), next)
 		return
 	}
-	err = c.mgr.store.AttachProvider(r.Context(), ident.ID, IdentityLink{
+	err = c.mgr.store.AttachProvider(r.Context(), ident.ID, store.IdentityLink{
 		Provider: pr.Provider, Subject: pr.Subject, Realm: pr.Realm,
 		RealmClaim: pr.RealmClaim, RealmSubject: pr.RealmSubject, Email: pr.Email,
 	})
 	switch {
-	case errors.Is(err, errLinkTaken):
+	case errors.Is(err, store.ErrLinkTaken):
 		c.writeLinkResult(w, r, linkErrTaken, p.Label(preferredUILang(r)), next)
 		return
 	case err != nil:
@@ -224,10 +226,10 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 	// ★ Both directions are in the ledger (§61.16.4). A link is a NEW door into a
 	// workspace, and an audit that only records removals cannot answer "since when
 	// could that account also be reached with the subsidiary's GitHub".
-	_ = c.mgr.store.InsertAudit(r.Context(), AuditLog{
-		ID: newID(), ActorKind: "user", ActorID: ident.ID,
+	_ = c.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+		ID: store.NewID(), ActorKind: "user", ActorID: ident.ID,
 		Action: "identity_provider.attach", Target: pr.Provider,
-		Detail: "subject=" + pr.Subject, HTTPStatus: http.StatusOK, At: nowTS(),
+		Detail: "subject=" + pr.Subject, HTTPStatus: http.StatusOK, At: store.NowTS(),
 	})
 	c.writeLinkResult(w, r, linkOK, p.Label(preferredUILang(r)), next)
 }
@@ -292,7 +294,7 @@ func newAccountAPI(cfg config) accountAPI {
 // ★ The linkable list is narrowed to the caller's own tenants for tenant-defined
 // providers (linkableFor), and the endpoint that starts the flow applies the SAME
 // rule — the list is a view, never the gate (決定 14).
-func (a accountAPI) loginMethods(w http.ResponseWriter, r *http.Request, ident Identity) {
+func (a accountAPI) loginMethods(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	linked, err := a.mgr.store.ListLinkedProviders(r.Context(), ident.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -364,7 +366,7 @@ func currentMethod(cur loginRef, provider, subject string) bool {
 //	the one in use         you would still be signed in on a method you just deleted,
 //	                       and the next request would resolve to nothing
 //	somebody else's row    identityID is in the WHERE, always
-func (a accountAPI) detachLoginMethod(w http.ResponseWriter, r *http.Request, ident Identity) {
+func (a accountAPI) detachLoginMethod(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
 	subject := strings.TrimSpace(r.URL.Query().Get("subject"))
 	if provider == "" || subject == "" {
@@ -382,10 +384,10 @@ func (a accountAPI) detachLoginMethod(w http.ResponseWriter, r *http.Request, id
 	}
 	err := a.mgr.store.DetachProvider(r.Context(), ident.ID, provider, subject)
 	switch {
-	case errors.Is(err, errNoSuchLoginMethod):
+	case errors.Is(err, store.ErrNoSuchLoginMethod):
 		writeAPIErr(w, &apiError{http.StatusNotFound, "login_method_not_found", err.Error()})
 		return
-	case errors.Is(err, errLastLoginMethod):
+	case errors.Is(err, store.ErrLastLoginMethod):
 		writeAPIErr(w, &apiError{http.StatusConflict, "last_login_method", err.Error()})
 		return
 	case err != nil:
@@ -404,14 +406,14 @@ func (a accountAPI) detachLoginMethod(w http.ResponseWriter, r *http.Request, id
 // TenantID is empty on purpose — this is a deployment-level fact about one person,
 // not an action inside a tenant, and filing it under whichever tenant happened to be
 // selected would hide it from everybody else's view of the same account.
-func (a accountAPI) auditMethod(r *http.Request, ident Identity, action, provider, subject string) {
+func (a accountAPI) auditMethod(r *http.Request, ident store.Identity, action, provider, subject string) {
 	if a.mgr == nil || a.mgr.store == nil {
 		return
 	}
-	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
-		ID: newID(), ActorKind: "user", ActorID: ident.ID,
+	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
+		ID: store.NewID(), ActorKind: "user", ActorID: ident.ID,
 		Action: action, Target: provider, Detail: "subject=" + subject,
-		HTTPStatus: http.StatusOK, At: nowTS(),
+		HTTPStatus: http.StatusOK, At: store.NowTS(),
 	})
 }
 
@@ -431,7 +433,7 @@ func (a accountAPI) providerByID(ctx context.Context, id string) loginProvider {
 
 // linkCandidates is every method this person could add: the deployment's own
 // buttons plus the active providers of the tenants they belong to.
-func (a accountAPI) linkCandidates(ctx context.Context, ident Identity) []loginProvider {
+func (a accountAPI) linkCandidates(ctx context.Context, ident store.Identity) []loginProvider {
 	out := append([]loginProvider(nil), a.provs...)
 	if a.mgr == nil {
 		return out

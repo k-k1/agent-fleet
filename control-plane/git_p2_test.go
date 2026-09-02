@@ -10,20 +10,22 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // p2Env is a gitServerAPI + store wired for the CP-native management handlers,
 // with a member of the default tenant resolvable via proxy-auth headers.
 type p2Env struct {
 	g        gitServerAPI
-	st       *sqlStore
+	st       *store.SQL
 	tenantID string
 }
 
 func newP2Env(t *testing.T) *p2Env {
 	t.Helper()
 	ctx := context.Background()
-	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -67,8 +69,8 @@ func (e *p2Env) setLimits(t *testing.T, l tenantLimits) {
 
 func (e *p2Env) seedRepo(t *testing.T, name string) {
 	t.Helper()
-	if err := e.st.CreateGitRepo(context.Background(), GitRepo{
-		ID: newID(), TenantID: e.tenantID, Name: name, DefaultBranch: "main", CreatedAt: nowTS(),
+	if err := e.st.CreateGitRepo(context.Background(), store.GitRepo{
+		ID: store.NewID(), TenantID: e.tenantID, Name: name, DefaultBranch: "main", CreatedAt: store.NowTS(),
 	}); err != nil {
 		t.Fatalf("seed repo: %v", err)
 	}
