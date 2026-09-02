@@ -24,6 +24,14 @@ import (
 // テストが縮めるため）。
 var idleTick = 15 * time.Second
 
+// IdleTickForTest swaps the observation interval and returns the previous value,
+// so a test in another package can drive the loop without waiting real seconds.
+func IdleTickForTest(d time.Duration) time.Duration {
+	prev := idleTick
+	idleTick = d
+	return prev
+}
+
 // IdleGrace reads a "<n> 秒間ゼロなら停止" knob from env. 0 で自動停止を無効化
 // （一度上げたら Agent が死ぬまで畳まない）。不正値は既定にフォールバックする。
 func IdleGrace(env string, def time.Duration) time.Duration {
