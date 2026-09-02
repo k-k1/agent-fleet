@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -272,7 +273,7 @@ func handleChatGet(w http.ResponseWriter, r *http.Request) {
 // turn was found, but always succeeds.
 func handleChatStop(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !validConvID(id) {
+	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatConversationNotFnd, "invalid conversation id")
 		return
 	}
@@ -371,7 +372,7 @@ func switchChatAgent(c *chatConversation, kind string) {
 
 func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !validConvID(id) {
+	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
 		return
 	}

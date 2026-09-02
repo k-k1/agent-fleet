@@ -21,6 +21,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
 // --- builtin knowledge (embedded, materialized to a runtime dir) ---
@@ -168,7 +169,7 @@ func handleAssistantDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeAssistantBuiltinDelete, "builtin assistants cannot be deleted")
 		return
 	}
-	if !validConvID(id) {
+	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
 		return
 	}

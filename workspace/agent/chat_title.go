@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -83,7 +84,7 @@ func runChatTitleSuggestLLM(ctx context.Context, msgs []chatMessage) (string, er
 // Works even when the conversation already has a title (renaming is exactly that case).
 func handleChatSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !validConvID(id) {
+	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatConversationNotFnd, "invalid conversation id")
 		return
 	}

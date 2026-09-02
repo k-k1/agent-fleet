@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -245,7 +246,7 @@ func handleChatPasteImage(w http.ResponseWriter, r *http.Request) {
 // handleChatPastedImage serves a previously-pasted chat image by basename (GET).
 func handleChatPastedImage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !validConvID(id) {
+	if !paths.ValidIDSegment(id) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_id", "invalid conversation id")
 		return
 	}

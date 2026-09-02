@@ -765,7 +765,7 @@ func opencodeChatDir(c *chatConversation) string {
 // turn with none of its servers. Under the measured merge the project copy wins the
 // collision, but both are built from the same conversation, so they agree.
 func opencodeChatConfig(c *chatConversation) string {
-	if !c.afToolsEnabled() || !validConvID(c.ID) {
+	if !c.afToolsEnabled() || !paths.ValidIDSegment(c.ID) {
 		return ""
 	}
 	dir := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "opencode-conv")

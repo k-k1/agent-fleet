@@ -166,3 +166,22 @@ func volatilePath(p string) bool {
 	}
 	return false
 }
+
+// ValidIDSegment guards path traversal for files named after one of our own ids:
+// conversation ids, assistant ids, and anything else built from randUUID() (36 桁の
+// hex ＋ '-'). 呼び出し側は id を**そのままファイル名にする直前**に通すこと。
+//
+// ★ ここに置いてあるのは「1 実装 1 箇所」にするため。ウェーブ B では chat_store.go の
+// validConvID と internal/assistants の validID という**2 つの実装**に割れていて、
+// 片方だけ緩めても誰も気付かない形だった（RECLAIM-B で 1 本化）。
+func ValidIDSegment(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for _, r := range id {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || r == '-') {
+			return false
+		}
+	}
+	return true
+}

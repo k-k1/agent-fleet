@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,23 +36,10 @@ func chatDir() string {
 	return filepath.Join(homeDir(), ".config", "agent-fleet", "chats")
 }
 
-// validConvID guards path traversal: IDs are our own randUUID() output.
-func validConvID(id string) bool {
-	if len(id) != 36 {
-		return false
-	}
-	for _, r := range id {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || r == '-') {
-			return false
-		}
-	}
-	return true
-}
-
 func convPath(id string) string { return filepath.Join(chatDir(), id+".json") }
 
 func loadConv(id string) (*chatConversation, error) {
-	if !validConvID(id) {
+	if !paths.ValidIDSegment(id) {
 		return nil, errors.New("invalid conversation id")
 	}
 	b, err := os.ReadFile(convPath(id))
