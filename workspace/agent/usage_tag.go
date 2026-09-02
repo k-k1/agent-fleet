@@ -12,33 +12,17 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
-
-// usageTag は「この呼び出しは何のためか」。プロバイダ層は内容を解釈せず、そのまま台帳へ
-// 転記する（新しい feature を足しても provider 側は無変更）。
-type usageTag struct {
-	Feature string // usageFeature*
-	Trigger string // usageTrigger*
-	Ref     string // セッション名 or アシスタント会話 id
-	Verb    string // assistant.chat のサブ次元（translate|summarize）
-}
-
-type usageTagKeyT struct{}
-
-var usageTagKey usageTagKeyT
-
-// withUsageTag は呼び出し側13箇所が打つ唯一の1行。
-func withUsageTag(ctx context.Context, t usageTag) context.Context {
-	return context.WithValue(ctx, usageTagKey, t)
-}
 
 // usageTagOf はタグを取り出す。タグの無い呼び出しは feature=unknown として必ず記録する
 // （タグの付け忘れで消費が見えなくなる方が、unknown が混ざるより悪い）。
+// 型と context への出し入れそのものは internal/usagex（別名は alias_usagex.go）。
+// 既定の feature=unknown だけがここに残るのは、usageFeature* が usage_ledger.go に
+// あり、そちらの移送がフェーズ2だから。
 func usageTagOf(ctx context.Context) usageTag {
-	if ctx != nil {
-		if t, ok := ctx.Value(usageTagKey).(usageTag); ok && t.Feature != "" {
-			return t
-		}
+	if t, ok := usagex.TagOf(ctx); ok {
+		return t
 	}
 	return usageTag{Feature: usageFeatureUnknown}
 }
