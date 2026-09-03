@@ -152,6 +152,13 @@ func isolateAgentState(t *testing.T) {
 // then stays alive, and returns the session meta for it.
 func paneShowing(t *testing.T, name, frame string) session.Meta {
 	t.Helper()
+	// 🔥 **フレームの実在をここで見る。** 無くても `cat` が失敗するだけで `new-session` は
+	// 成功するので、**呼び出し側は「空のペイン」を検査対象として素通りさせる**（移送で
+	// 相対パスの深さが変わったとき、実際にそうなった）。呼び出し側の一覧を手で並べる検査は
+	// 一覧が減ったことしか見られないので、**守るのは呼び出し口であるここ**。
+	if _, err := os.Stat(frame); err != nil {
+		t.Fatalf("frame %s が無い: %v（相対パスの深さを疑う。放置するとペインに何も出ないまま検査は緑になる）", frame, err)
+	}
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}

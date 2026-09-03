@@ -313,7 +313,7 @@ describe("every named key these builders emit is one the Agent accepts", () => {
   // 通るのに Console からは一度も届かなかった実例）。モーダルの契約はテストされていても
   // **配送層の契約**は誰も見ていなかったので、ここで結ぶ。
   const allowed = (() => {
-    const go = readFileSync(fileURLToPath(new URL("../../../../workspace/agent/session_io.go", import.meta.url)), "utf8");
+    const go = readFileSync(fileURLToPath(new URL("../../../../workspace/agent/internal/sessionx/session_io.go", import.meta.url)), "utf8");
     const fn = go.slice(go.indexOf("func allowedKey("));
     const cases = fn.slice(0, fn.indexOf("}")).match(/"([^"]+)"/g) || [];
     return new Set(cases.map((s) => s.slice(1, -1)));
