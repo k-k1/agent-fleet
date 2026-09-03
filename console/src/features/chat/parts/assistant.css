@@ -1,0 +1,81 @@
+/* Assistant templates (Q2): the ＋新規 picker popover + rows in the left rail. */
+.assistant-picker-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.assistant-picker {
+  min-width: 220px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.assistant-picker-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px 6px;
+}
+.assistant-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.assistant-picker-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.assistant-picker-open:hover {
+  background: var(--hover-bg, var(--btn));
+}
+.assistant-ic {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+.assistant-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+/* Icon picker in the assistant create/edit modal. */
+.assistant-icon-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.assistant-icon-opt.active {
+  background: var(--accent-soft, var(--hover-bg));
+  outline: 1px solid var(--accent, var(--border));
+}
+.assistant-persona,
+.assistant-knowledge {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+}
+/* MCP server picker in the assistant modal (docs/log/48 P2). One row per attachable
+   server: checkbox, display name, and — when it won't actually attach — the reason
+   inline, so the row explains itself instead of silently doing nothing. */
+.assistant-mcp-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg);
+  padding: 2px 0;
+}
+.assistant-mcp-name {
+  font-weight: 500;
+}
+

@@ -1,0 +1,56 @@
+/* Chat view + assistant rail styles — extracted from the old console's
+   styles.css (regions 8199–8484, 8545–8608) for pixel parity. */
+.chatview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  /* --chat-bg (assistantColor surface) set inline on .chatview per its own theme; falls
+     back to the theme --bg when no surface color is chosen. Shared var contract with the
+     session mirror (.mirrorview) — each container sets its own value. */
+  background: var(--chat-bg, var(--bg));
+}
+/* Legacy control styles (old styles.css element globals), scoped to the chat view —
+   the verbatim-ported ChatView's raw buttons (送信 / 停止) relied on them. Same
+   rationale (and same :where() specificity note) as the .mirrorview block in
+   mirror.css; dissolved at P8. */
+:where(.chatview) button {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+:where(.chatview) button:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+:where(.chatview) button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+:where(.chatview) button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 2px 6px;
+}
+:where(.chatview) button.ghost:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+.chat-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}

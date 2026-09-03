@@ -1,0 +1,27 @@
+/* コンテキストバー右端の「圧縮」ボタン（docs/log/33 第2段・要約引き継ぎ）。ContextBar の
+   action スロットに乗る小型ボタンで、バー行の 11.5px スケールに合わせる。 */
+.cb-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.cb-action:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.cb-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.cb-action .codicon {
+  font-size: 12px;
+}
+

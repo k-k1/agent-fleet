@@ -1,0 +1,83 @@
+/* 返信サジェストのチップ行（コンポーサー入力の上）。MirrorView と同じで、折り返さず必ず1行に
+   収め、あふれた分は左右スクロール（タッチ=スワイプ／マウス=ドラッグ）。スクロールバーは隠す。 */
+.chat-suggest {
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  /* 長タップがメニューに届くよう選択と iOS callout を抑える（mirror 側と同じ）。 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+}
+.chat-suggest::-webkit-scrollbar {
+  display: none;
+}
+/* 候補チップ。削除・ピン留めは右クリック / 長タップのメニュー（mirror 側と共有）。 */
+.chat-suggest-chip {
+  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-suggest-chip:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+/* v2: LLM 生成候補は accent 寄りで学習候補と区別。 */
+.chat-suggest-chip.llm {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+/* ピン留め（常に表示）した候補。mirror 側と同じ扱い。 */
+.chat-suggest-chip.pinned {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+/* Tab 補完でいま入力欄に入っている候補（mirror 側と同じ扱い・入力欄のフォーカスは動かさない）。 */
+.chat-suggest-chip.cycling {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+}
+.chat-suggest-pin {
+  font-size: 11px;
+  color: var(--accent);
+}
+/* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
+.chat-suggest-ai {
+  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.chat-suggest-ai:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+.chat-suggest-ai:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -1,0 +1,123 @@
+/* 作業計画パネル（docs/log/33 第5段）— ChatPlan.tsx。
+   ヘッダー直下に開く折り畳み面。会話バブルではなく「会話に付随する状態」なので、
+   ContextBar と同じ薄い枠・小さめの文字で、本文の邪魔をしない見え方にする。 */
+.chat-plan-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.chat-plan-toggle:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+/* 計画が入っている会話だけ塗る（＝アシスタントが忘れない内容を持つ会話の目印）。 */
+.chat-plan-toggle.has-plan {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.chat-plan-toggle.open {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 40%, transparent);
+}
+.chat-plan {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 42vh;
+  overflow: auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.chat-plan .cp-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chat-plan .cp-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.chat-plan .cp-ts {
+  font-size: 11px;
+  color: var(--muted);
+}
+.chat-plan .cp-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-plan .cp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.chat-plan .cp-btn:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.chat-plan .cp-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.chat-plan .cp-close {
+  border-color: transparent;
+}
+.chat-plan .cp-body {
+  font-size: 13px;
+}
+/* 計画は箇条書きが主体。既定の markdown 余白は縦に間延びするので詰める。 */
+.chat-plan .cp-body :is(h1, h2, h3, h4) {
+  margin: 8px 0 4px;
+  font-size: 12px;
+}
+.chat-plan .cp-body :is(ul, ol) {
+  margin: 0;
+  padding-left: 20px;
+}
+.chat-plan .cp-body p {
+  margin: 4px 0;
+}
+.chat-plan .cp-edit {
+  min-height: 180px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+.chat-plan .cp-edit:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.chat-plan .cp-empty,
+.chat-plan .cp-note {
+  margin: 0;
+  font-size: 11px;
+}

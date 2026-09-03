@@ -42,7 +42,15 @@ const ALLOW_DIRS = ["lib/i18n/locales/"];
 const ALLOW_FILES = new Set([
   "features/chat/ttsText.ts", // TTS 読み変換の内部（発音辞書ロジック・docs/log/28 §4）
   "features/chat/ttsDict.ts", // 読み辞書データ
-  "features/chat/tts.ts", // VOICEVOX 話者名・感情スタイル名（§6.4 未翻訳）＋読み上げロジック
+  // ⚠️ ここは ALLOW_DIRS と違って**完全一致**（下の ALLOW_FILES.has(rel)）。ファイルを割ると
+  // 割った先が免除から外れるので、面ごとに分けたら 1 枚ずつここへ足す。接頭辞にはしない —
+  // parts/ には今後 UI のファイルも入るので、接頭辞だと新規が黙って免除される（カタログの
+  // ALLOW_DIRS が接頭辞なのは「新規も必ず CJK」だからで、ここは逆の性質）。
+  "features/chat/parts/ttsVoices.ts", // VOICEVOX 話者名・感情スタイル名（§6.4 未翻訳）
+  "features/chat/parts/ttsAudio.ts", // 出力音量のキャラ分岐（話者名で判定）
+  "features/chat/parts/ttsPlay.ts", // 試聴の定型文（キャラが読む日本語サンプル）
+  "features/chat/parts/ttsAbbrev.ts", // 省略読みのフィラー語
+  "features/chat/parts/ttsReadings.ts", // 組み込みの読み補正の表
   "features/viewer/readerText.ts", // なろうルビ解析ロジック（《》｜ は構文文字）
 ]);
 

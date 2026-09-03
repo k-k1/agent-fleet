@@ -1,0 +1,207 @@
+<div class="chatview">
+<header class="view-head fileinfo">
+<span class="fi-name">
+<span class="codicon codicon-comment-discussion" aria-hidden="true">
+</span> テスト会話</span>
+<button type="button" class="kind-tag kind-claude chat-agent-pick" title="この会話を動かすエージェント（CLI）を切り替えます" aria-haspopup="menu" aria-expanded="false">
+<span class="codicon codicon-sparkle" aria-hidden="true">
+</span>Claude<span class="codicon codicon-chevron-down chat-agent-caret" aria-hidden="true">
+</span>
+</button>
+<span class="session-state on">
+<span class="codicon codicon-check" aria-hidden="true">
+</span> 待機中</span>
+<button type="button" class="chat-plan-toggle has-plan" title="作業計画を開く（圧縮しても要約されず、原文のまま新しいセッションへ引き継がれます）" aria-expanded="false">
+<span class="codicon codicon-checklist" aria-hidden="true">
+</span> 作業計画</button>
+</header>
+<div class="mirror-ctxbar" title="文脈 1,000 / 200,000 トークン (1%)
+キャッシュ再利用 400 · 新規キャッシュ 300 · 未キャッシュ 300">
+<div class="cb-ctx">
+<span class="cb-ctx-label">
+<span class="cb-lbl-full">コンテキスト</span>
+<span class="cb-lbl-short">ctx</span>
+</span>
+<div class="cb-track">
+<div class="cb-seg cb-read" style="width: 0.2%;">
+</div>
+<div class="cb-seg cb-create" style="width: 0.15%;">
+</div>
+<div class="cb-seg cb-fresh" style="width: 0.15%;">
+</div>
+</div>
+<span class="cb-label"> 1k / 200k・1%</span>
+</div>
+<button type="button" class="cb-action" title="会話を要約し、要約だけを新しいセッションへ引き継いでコンテキストを圧縮します（この画面の履歴は残ります）">
+<span class="codicon codicon-fold" aria-hidden="true">
+</span>圧縮</button>
+</div>
+<div class="chat-scroll" data-swipe-y="">
+<div class="chat-msg role-user">
+<div class="chat-role">あなた</div>
+<div class="chat-body">
+<div class="markdown">
+<p>こんにちは</p>
+<p>添付: <img src="http://localhost:3000/api/fs/download?path=pasted-1.png" alt="">
+</p>
+</div>
+</div>
+<div class="chat-msg-foot">
+<span class="cm-time">01/01 00:00</span>
+<button type="button" class="ghost cm-copy" title="Markdown をコピー">
+<span class="codicon codicon-copy" aria-hidden="true">
+</span> コピー</button>
+</div>
+</div>
+<div class="chat-msg role-assistant">
+<div class="chat-role">Claude<span class="chat-model" title="claude-opus-5">opus 5</span>
+</div>
+<details class="mt-work chat-steps">
+<summary class="mt-work-head">
+<span class="codicon codicon-chevron-right" aria-hidden="true">
+</span>
+<span class="mt-work-title">作業過程</span>
+<span class="mt-work-count muted">ツール 5件・途中応答 3件</span>
+</summary>
+<div class="mt-work-body">
+<div class="chat-step">
+<div class="markdown">
+<p>まず読みます</p>
+</div>
+</div>
+<div class="mt-toolrun">
+<button type="button" class="mt-tool mt-toolrun-head" aria-expanded="false" title="ツールを展開">
+<span class="codicon codicon-chevron-right" aria-hidden="true">
+</span>
+<span class="mt-tool-name">4 件のツール</span>
+<span class="mt-tool-info">Read · Grep×2 · Bash</span>
+</button>
+</div>
+<div class="chat-step">
+<div class="markdown">
+<p>次に書きます</p>
+</div>
+</div>
+<div class="mt-tool">
+<span class="codicon codicon-tools" aria-hidden="true">
+</span>
+<span class="mt-tool-name">Edit</span>
+</div>
+<button type="button" class="mirror-disclosure-foot">
+<span class="codicon codicon-chevron-up" aria-hidden="true">
+</span>
+<span>閉じる</span>
+</button>
+</div>
+</details>
+<div class="chat-body">
+<div class="markdown">
+<p>はい、<strong>了解</strong>しました。</p>
+<ul>
+<li>一つ目</li>
+<li>二つ目</li>
+</ul>
+</div>
+</div>
+<div class="chat-msg-foot">
+<span class="cm-time">01/01 00:00</span>
+<button type="button" class="ghost cm-copy" title="カラオケ読み上げ">
+<span class="codicon codicon-unmute" aria-hidden="true">
+</span> 読み上げ</button>
+<button type="button" class="ghost cm-copy" title="Markdown をコピー">
+<span class="codicon codicon-copy" aria-hidden="true">
+</span> コピー</button>
+</div>
+</div>
+<div class="chat-msg role-report">
+<div class="chat-role">
+<span class="codicon codicon-broadcast" aria-hidden="true">
+</span> セッション報告<span class="chat-report-session">sxxxxxx</span>
+</div>
+<div class="chat-body">
+<div class="markdown">
+<p>報告本文</p>
+</div>
+</div>
+<div class="chat-msg-foot">
+<span class="cm-time">01/01 00:00</span>
+</div>
+</div>
+<div class="chat-msg role-notice">
+<div class="chat-notice">
+<span class="codicon codicon-info" aria-hidden="true">
+</span>
+<div class="chat-notice-body">
+<div class="markdown">
+<p>システム通知の本文</p>
+</div>
+</div>
+</div>
+</div>
+<div class="chat-msg role-user">
+<div class="chat-role">あなた</div>
+<div class="chat-body">
+<div class="markdown">
+<p>もう一度お願いします</p>
+</div>
+</div>
+<div class="chat-msg-foot">
+<span class="cm-time">01/01 00:00</span>
+<button type="button" class="ghost cm-copy" title="Markdown をコピー">
+<span class="codicon codicon-copy" aria-hidden="true">
+</span> コピー</button>
+</div>
+</div>
+<div class="chat-msg role-assistant">
+<div class="chat-role">Claude</div>
+<div class="chat-body">
+<div class="markdown">
+<p>できました。</p>
+</div>
+</div>
+<div class="chat-msg-foot">
+<span class="cm-time">01/01 00:00</span>
+<button type="button" class="ghost cm-copy" title="カラオケ読み上げ">
+<span class="codicon codicon-unmute" aria-hidden="true">
+</span> 読み上げ</button>
+<button type="button" class="ghost cm-copy" title="Markdown をコピー">
+<span class="codicon codicon-copy" aria-hidden="true">
+</span> コピー</button>
+</div>
+</div>
+</div>
+<div class="chat-composer">
+<div class="chat-suggest">
+<button type="button" class="chat-suggest-ai" title="AIに返信候補を出してもらう（直近の会話から）">
+<span class="codicon codicon-sparkle" aria-hidden="true">
+</span>
+</button>
+<button type="button" class="chat-suggest-chip pinned" title="クリックで入力欄へ・Ctrl/⌘/Alt＋クリックで即送信（入力途中なら Tab で候補を順に補完・入力欄が空なら Tab で候補へ・←/→ で候補選択／右クリック・長タップでピン留めと削除）">
+<span class="codicon codicon-pinned chat-suggest-pin" aria-hidden="true">
+</span>続けて</button>
+<button type="button" class="chat-suggest-chip" title="クリックで入力欄へ・Ctrl/⌘/Alt＋クリックで即送信（入力途中なら Tab で候補を順に補完・入力欄が空なら Tab で候補へ・←/→ で候補選択／右クリック・長タップでピン留めと削除）">ありがとう</button>
+<button type="button" class="chat-suggest-chip" title="クリックで入力欄へ・Ctrl/⌘/Alt＋クリックで即送信（入力途中なら Tab で候補を順に補完・入力欄が空なら Tab で候補へ・←/→ で候補選択／右クリック・長タップでピン留めと削除）">OK</button>
+<button type="button" class="chat-suggest-chip" title="クリックで入力欄へ・Ctrl/⌘/Alt＋クリックで即送信（入力途中なら Tab で候補を順に補完・入力欄が空なら Tab で候補へ・←/→ で候補選択／右クリック・長タップでピン留めと削除）">進めて</button>
+<button type="button" class="chat-suggest-chip" title="クリックで入力欄へ・Ctrl/⌘/Alt＋クリックで即送信（入力途中なら Tab で候補を順に補完・入力欄が空なら Tab で候補へ・←/→ で候補選択／右クリック・長タップでピン留めと削除）">やめて</button>
+<button type="button" class="chat-suggest-chip" title="クリックで入力欄へ・Ctrl/⌘/Alt＋クリックで即送信（入力途中なら Tab で候補を順に補完・入力欄が空なら Tab で候補へ・←/→ で候補選択／右クリック・長タップでピン留めと削除）">commit して</button>
+</div>
+<div class="chat-composer-row">
+<div class="chat-hist">
+<button type="button" class="btn chat-hist-btn" title="前の入力">
+<span class="codicon codicon-chevron-up" aria-hidden="true">
+</span>
+</button>
+<button type="button" class="btn chat-hist-btn" title="次の入力" disabled="">
+<span class="codicon codicon-chevron-down" aria-hidden="true">
+</span>
+</button>
+</div>
+<textarea class="chat-input" placeholder="メッセージを入力（Ctrl+Enter で送信 / Enter で改行 / 画像は貼り付け）" rows="2" style="height: 0px;">
+</textarea>
+<button type="button" class="btn primary chat-send" disabled="" title="送信">
+<span class="codicon codicon-send" aria-hidden="true">
+</span>
+</button>
+</div>
+</div>
+</div>

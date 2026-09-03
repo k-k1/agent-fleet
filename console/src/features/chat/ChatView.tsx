@@ -1,47 +1,21 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent, ClipboardEvent, ReactNode } from "react";
-import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
-import { openSessionChatSplit } from "../sessions/open.ts";
-import { openChatSplit } from "./open.ts";
-import { useTtsStore } from "../../core/store/tts.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useChatStore } from "./store.ts";
-import { chatGet, chatStream, chatStop, chatCreate, chatCompact, chatSetAgent, assistantGet, chatPasteImage, chatSuggestReplies } from "./api.ts";
-import { errText, raw, isTransientErr } from "../../core/api/client.ts";
+import { chatGet, chatStream, chatStop, chatCreate, chatCompact, chatSetAgent, assistantGet, chatPasteImage } from "./api.ts";
+import { errText, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
-import { useDragScroll } from "../../lib/dragScroll.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
-import { fmtDateTime } from "../../lib/intl.ts";
-import { prettyModel } from "../../lib/modelName.ts";
-import { t, tCount, useT } from "../../lib/i18n/index.ts";
+import { t, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings, setSetting, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
-import {
-  rankQuickReplies,
-  recordQuickReply,
-  isQuickReplyCandidate,
-  forgetQuickReply,
-  hideQuickReply,
-  unhideQuickReply,
-  pinQuickReply,
-  unpinQuickReply,
-  isQuickReplyPinned,
-  quickReplyKey,
-} from "../../lib/quickReplies.ts";
-import {
-  stepSuggestCycle,
-  suggestFilterDraft,
-  cycledSuggestion,
-  type SuggestCycle,
-} from "../../lib/suggestCycle.ts";
-import { useChipMenu, SuggestChipMenu } from "../mirror/SuggestChipMenu.tsx";
+import { recordQuickReply, isQuickReplyCandidate, unhideQuickReply } from "../../lib/quickReplies.ts";
+import { stepSuggestCycle } from "../../lib/suggestCycle.ts";
 import {
   startTts,
   stopTtsForReplacement,
@@ -50,25 +24,26 @@ import {
   workVoiceOpts,
   type TtsController,
   type TtsEndReason,
-  type TtsOptions,
 } from "./tts.ts";
-import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../mirror/turnTts.ts";
 import { ContextBar } from "../mirror/ContextBar.tsx";
-// 作業過程はミラーの .mt-work をそのまま使っているので、最下部の「閉じる」も同じ部品を使う。
-import { DisclosureFoot, revealHead } from "../mirror/transcript/blocks.tsx";
 import { ChatPlan } from "./ChatPlan.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
-import { agentOf, AGENTS } from "../../agents/registry.ts";
+import { agentOf } from "../../agents/registry.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
-import { SESSION_KINDS } from "../../types/session.ts";
 import { getCachedConns, subscribeConns } from "../repos/connsCache.ts";
 import { assistantName, assistantDesc } from "./assistantI18n.ts";
-import { noticeText } from "./notice.ts";
-import { reportText } from "./report.ts";
-import { kindClass } from "../../lib/sessionkind.ts";
+import { ChatMarkdown, StreamingMarkdown } from "./parts/ChatMarkdown.tsx";
+import { ChatSteps } from "./parts/ChatSteps.tsx";
+import { ChatMessageRow } from "./parts/ChatMessageRow.tsx";
+import { ChatHead } from "./parts/ChatHead.tsx";
+import { ChatAttachStrip } from "./parts/ChatAttachStrip.tsx";
+import { ChatSuggestRow } from "./parts/ChatSuggestRow.tsx";
+import { ChatComposerRow } from "./parts/ChatComposerRow.tsx";
+import { createWorkStepTts } from "./parts/chatWorkTts.ts";
+import { useChatSuggest } from "./parts/useChatSuggest.ts";
 import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
 import type { SessionKind } from "../../types/session.ts";
@@ -89,10 +64,6 @@ interface ChatViewProps {
   /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
   headerActions?: ReactNode;
 }
-
-// Backends a conversation can run on, straight off the registry cap — the same source as
-// the assistant form's picker and the Agent's chatProviders map.
-const CHAT_KINDS: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.headlessChat);
 
 const chatDraftKey = (conversationId: string) => "af.chat-draft." + conversationId;
 
@@ -178,18 +149,6 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   // handoff: fire this first turn automatically once the conversation loads
   const [pendingAuto, setPendingAuto] = useState<{ key: string; text: string } | null>(null);
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history (↑/↓ recall), or null
-  // 返信サジェスト v2: ✨ボタンで取得した LLM 候補（Layer A のチップ列にマージ）と取得中フラグ。
-  const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
-  const [suggesting, setSuggesting] = useState(false);
-  // 入力途中の Tab 補完サイクル（lib/suggestCycle）。null = サイクル中でない。
-  const [cycle, setCycle] = useState<SuggestCycle | null>(null);
-  const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
-  // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）。
-  // チップ行はストリーミング中に消えて戻るので、返り値のコールバック ref で付け替える
-  // （ref オブジェクト任せだと戻ってきた要素にリスナーが付かない — dragScroll.ts の注記）。
-  const attachSuggestRow = useDragScroll(suggestRef);
-  // チップの右クリック / 長タップ / Menu キーで開くメニュー（ピン留め・削除）。MirrorView と共有。
-  const chipMenu = useChipMenu();
   // 読み上げ中の文（ライブ配信カラオケ・docs/log/19）と、直近のターンエラー。どちらも
   // 発生元の会話で括り、別チャットへ切り替えた後に相手の吹き出しへ出ないようにする。
   const [karaoke, setKaraoke] = useState<{ key: string; text: string } | null>(null);
@@ -734,52 +693,12 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     stopTtsForReplacement(ttsRef.current?.ctl ?? null); // whatever this pane was reading
     setPaneTts(convId, workMode === "off" ? makeTts() : null);
 
-    // 作業過程は確定順に 1 本ずつ読む。次の step が来ても再生中の step は止めず、
-    // 最終回答が来た時点でだけ再生中・未再生をまとめて破棄して通常声へ譲る。
-    // 他の読み上げに置換された場合も、それを即座に置換し返さず、グローバル再生が
-    // 空いてから続きを再開する。
-    const workQueue: string[] = [];
-    let workCurrent: TtsController | null = null;
-    let workClosed = false;
-    let unsubscribeWork = () => {};
-    let pumpWork = () => {};
-    pumpWork = () => {
-      if (workMode === "off" || workClosed || workCurrent || !workQueue.length) return;
-      const st = useTtsStore.getState();
-      if (st.active || st.speaking) return;
-      const text = workQueue.shift()!;
-      const c = makeTts(true, (reason) => {
-        if (workCurrent === c) workCurrent = null;
-        if (paneTts(convId) === c) setPaneTts(convId, null);
-        if (reason === "explicit") {
-          workClosed = true;
-          workQueue.length = 0;
-          unsubscribeWork();
-        } else {
-          queueMicrotask(pumpWork);
-        }
-      });
-      if (!c) return;
-      workCurrent = c;
-      setPaneTts(convId, c);
-      c.push(text);
-      c.flush();
-    };
-    unsubscribeWork =
-      workMode === "off"
-        ? () => {}
-        : useTtsStore.subscribe(() => {
-            queueMicrotask(pumpWork);
-          });
-    const closeWork = () => {
-      unsubscribeWork();
-      if (workClosed) return;
-      workClosed = true;
-      workQueue.length = 0;
-      stopTtsForReplacement(workCurrent);
-      if (paneTts(convId) === workCurrent) setPaneTts(convId, null);
-      workCurrent = null;
-    };
+    const workTts = createWorkStepTts({
+      workMode,
+      makeTts,
+      getPaneTts: () => paneTts(convId),
+      setPaneTts: (ctl) => setPaneTts(convId, ctl),
+    });
     let streamDone = false;
     markChatBusy(convId, true); // publish 進行中 to the rail
     // The live reply + working steps + final conversation live in the store, keyed by
@@ -825,8 +744,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
             stopTtsForReplacement(paneTts(convId));
             setPaneTts(convId, makeTts()); // 従来動作: 次の tentative message をライブ再生
           } else if (step.text?.trim()) {
-            workQueue.push(step.text);
-            pumpWork();
+            workTts.push(step.text);
           }
         },
         onError: (m) => setErrorFor(convId, m),
@@ -841,7 +759,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
             paneTts(convId)?.flush();
           } else {
             // 最終回答の到着で、残っている小声再生を置換して通常声へ戻す。
-            closeWork();
+            workTts.close();
             const finalText = acc.trim() || updated?.messages.at(-1)?.content || "";
             const c = finalText ? makeTts() : null;
             setPaneTts(convId, c);
@@ -853,7 +771,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       ac.signal,
     );
     // Abort/error paths emit no done event. Work playback must not outlive the turn.
-    if (!streamDone) closeWork();
+    if (!streamDone) workTts.close();
     // Abort/error paths emit no done event, so clear the streaming state here too. teardown is
     // idempotent — after a normal completion this re-run is a harmless no-op.
     teardown();
@@ -900,116 +818,38 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     if (s && history[history.length - 1] !== s) history.push(s);
   }
 
-  // 返信サジェスト（lib/quickReplies）。直近アシスタント発話を B-1 の文脈にし、頻度学習と統合。
-  let chatLastReply = "";
-  const msgs = conv?.messages ?? [];
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].role === "assistant") {
-      chatLastReply = splitPastedImages(msgs[i].content).text.trim();
-      break;
-    }
-  }
-  // Tab 補完サイクル中は、絞り込みキーを「ユーザーが打った文字」に凍結する（入力欄は補完で
-  // 候補そのものに変わっているので、そのまま渡すとチップ列が痩せてサイクルが崩れる）。
-  const suggestDraft = suggestFilterDraft(cycle, input);
-  const cycledText = cycledSuggestion(cycle, input); // いま入力欄に入っている候補（強調用）
-  const learned = settings.quickRepliesEnabled
-    ? rankQuickReplies(settings.quickReplies || {}, {
-        draft: suggestDraft,
-        lastReply: chatLastReply,
-        locale: settings.locale,
-        hidden: settings.quickRepliesHidden || [],
-        pinned: settings.quickRepliesPinned || [],
-        limit: 20, // チップ行は横スクロールなので、画面幅に収まらない分は流して見せる（ピンは別枠）
-      })
-    : [];
-  // v2 の LLM 候補を先頭に、Layer A の学習候補を後ろにマージ（重複は畳む）。llm フラグで見た目を分ける。
-  // 重複判定は学習キーと同じ畳み方（大小・空白に加えて全角半角）で行う。
-  const llmSet = new Set(llmSuggestions.map((s) => quickReplyKey(s)));
-  const suggestChips: { text: string; llm: boolean }[] = [
-    ...llmSuggestions.map((text) => ({ text, llm: true })),
-    ...learned.filter((s) => !llmSet.has(quickReplyKey(s))).map((text) => ({ text, llm: false })),
-  ];
-  // 会話が進む（新しい回答が来る）と古い LLM 候補は文脈遅れ。直近回答と会話切替で捨てる。
-  useEffect(() => {
-    setLlmSuggestions([]);
-  }, [conversationId, chatLastReply]);
-  // Tab 補完でたどっている候補が、1行スクロールのチップ行からはみ出していたら見える位置へ。
-  useEffect(() => {
-    if (!cycledText) return;
-    const el = suggestRef.current?.querySelector<HTMLElement>(".chat-suggest-chip.cycling");
-    // scrollIntoView は Chrome 150 で Promise を返す — 暗黙 return にすると effect の
-    // クリーンアップ扱いで落ちるので、必ずブロック本体で捨てる（effect-implicit-return）。
-    if (el) {
-      el.scrollIntoView({ block: "nearest", inline: "nearest" });
-    }
-  }, [cycledText]);
-  // サジェストのチップ: 通常クリックはコンポーサーへ差し込み、⌥/Alt で即送信（MirrorView と同挙動）。
-  const applySuggestion = (text: string, immediate: boolean) => {
-    if (showStreaming) return;
-    if (immediate) {
-      void send(text);
-      return;
-    }
-    setInput(text);
-    setHistIdx(null);
-    // スマホ: チップ差し込みで textarea にフォーカスすると GBoard が開いて画面を覆う。タッチ端末では
-    // フォーカスしない（キーボードを出さない）— ユーザーは送信 or タップして編集を選べる。
-    if (coarsePointer()) {
-      inputRef.current?.blur(); // 既に開いていたキーボードも畳む
-      return;
-    }
-    requestAnimationFrame(() => {
-      const el = inputRef.current;
-      if (el) {
-        el.focus();
-        el.setSelectionRange(el.value.length, el.value.length);
-      }
-    });
-  };
-  // メニューの「この候補を消す」: 学習を消し、隠しリストへ積み、ピンも外す（消すだけではシード/
-  // 再学習で戻る）。LLM 候補（✨）は学習物ではないので、その場の候補列から外すだけ。
-  const forgetSuggestion = (text: string, llm: boolean) => {
-    if (llm) {
-      setLlmSuggestions((prev) => prev.filter((s) => s !== text));
-      return;
-    }
-    setSetting("quickReplies", forgetQuickReply(settings.quickReplies || {}, text));
-    setSetting("quickRepliesHidden", hideQuickReply(settings.quickRepliesHidden || [], text));
-    setSetting("quickRepliesPinned", unpinQuickReply(settings.quickRepliesPinned || [], text));
-  };
-  // メニューの「常に表示（ピン留め）」/「ピン留めを解除」。MirrorView と同じ扱い（ピンは隠しより
-  // 強い意思表示なので、ピンするときは隠しを解除する）。
-  const togglePin = (text: string) => {
-    const pinned = settings.quickRepliesPinned || [];
-    if (isQuickReplyPinned(pinned, text)) {
-      setSetting("quickRepliesPinned", unpinQuickReply(pinned, text));
-      return;
-    }
-    setSetting("quickRepliesPinned", pinQuickReply(pinned, text));
-    setSetting("quickRepliesHidden", unhideQuickReply(settings.quickRepliesHidden || [], text));
-  };
-  // v2: ✨ボタン — 会話ログを一発ヘッドレス LLM に渡し、文脈に沿った返信候補をチップ列にマージ
-  // （chat_suggest_reply.go）。会話が確定していない（下書き）ときは押せない。
-  const fetchLlmSuggestions = async () => {
-    if (!conversationId || suggesting) return;
-    setSuggesting(true);
-    try {
-      const j = await chatSuggestReplies(conversationId);
-      // apiJSON はサーバエラーを {error} で解決する — 失敗を「候補なし」トーストに化けさせない。
-      if (j?.error) {
-        toast(errText(j.error) || t("chat.suggest_failed"));
-        return;
-      }
-      const list = Array.isArray(j?.suggestions) ? j.suggestions.filter((x): x is string => typeof x === "string") : [];
-      setLlmSuggestions(list);
-      if (!list.length) toast(t("chat.suggest_none"));
-    } catch {
-      toast(t("chat.suggest_failed"));
-    } finally {
-      setSuggesting(false);
-    }
-  };
+  // 返信サジェストの一式（候補・ピン留めメニュー・フォーカスリング）は parts/useChatSuggest に。
+  // 呼ぶ位置は元のブロックがあった場所のまま＝中の 2 つの effect の登録順も動かない。
+  const {
+    suggestRef,
+    attachSuggestRow,
+    chipMenu,
+    suggesting,
+    suggestChips,
+    cycle,
+    setCycle,
+    cycledText,
+    applySuggestion,
+    forgetSuggestion,
+    togglePin,
+    fetchLlmSuggestions,
+    suggestRing,
+    focusRingItem,
+    onSuggestNav,
+    onSuggestKeyDown,
+  } = useChatSuggest({
+    conv,
+    conversationId,
+    input,
+    settings,
+    modSend,
+    inputRef,
+    isStreaming: () => showStreaming,
+    setInput,
+    setHistIdx,
+    send: (override) => void send(override),
+    toast,
+  });
 
   // Recall the previous / next prompt (shared by ↑/↓ and the on-screen buttons shown on
   // phones, which have no arrow keys). Mirrors MirrorView's composer history.
@@ -1031,56 +871,6 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       setInput(history[ni]);
     }
     inputRef.current?.focus();
-  };
-
-  // 返信サジェストのフォーカスリング = ✨ボタン＋候補チップ（DOM 順）。MirrorView と同挙動。
-  const suggestRing = (): HTMLButtonElement[] =>
-    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
-
-  // チップ行は1行スクロールなので、キー移動のフォーカス先が隠れないよう横だけ最小限追従させる
-  // （focus 既定のスクロールは縦にも効いて本文が飛ぶため preventScroll で殺す）。
-  const focusRingItem = (el: HTMLButtonElement) => {
-    el.focus({ preventScroll: true });
-    el.scrollIntoView({ block: "nearest", inline: "nearest" });
-  };
-
-  // リング内の移動。Tab/Shift+Tab は「候補＋入力欄」を一巡（端まで来たら入力欄へ戻る）。
-  // ←/→ は候補内だけで循環。Escape で入力欄へ。処理したら true。
-  const onSuggestNav = (e: KeyboardEvent<HTMLButtonElement>): boolean => {
-    if (e.nativeEvent.isComposing) return false;
-    if (e.key === "Escape") {
-      e.preventDefault();
-      inputRef.current?.focus();
-      return true;
-    }
-    const ring = suggestRing();
-    const i = ring.indexOf(e.currentTarget);
-    if (i < 0 || !ring.length) return false;
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const next = e.shiftKey ? i - 1 : i + 1;
-      if (next < 0 || next >= ring.length) inputRef.current?.focus(); // 端 → 入力欄へ戻る
-      else focusRingItem(ring[next]);
-      return true;
-    }
-    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-      e.preventDefault();
-      const d = e.key === "ArrowRight" ? 1 : -1;
-      focusRingItem(ring[(i + d + ring.length) % ring.length]); // ←/→ は候補内で循環
-      return true;
-    }
-    return false;
-  };
-
-  // チップ上のキー操作。移動系は onSuggestNav に委ね、Enter/Ctrl(⌘)+Enter の役割はコンポーサーの
-  // 送信キー設定に合わせる: modSend なら mod+Enter=送信・素の Enter=差し込み、enter モードなら逆。
-  const onSuggestKeyDown = (e: KeyboardEvent<HTMLButtonElement>, text: string, llm: boolean) => {
-    if (onSuggestNav(e)) return;
-    if (chipMenu.onKeyDown(e, text, llm)) return; // Menu キー / Shift+F10 → ピン留め・削除メニュー
-    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
-    const mod = e.ctrlKey || e.metaKey;
-    e.preventDefault(); // ボタン既定の click（＝差し込み）と二重発火させない
-    applySuggestion(text, modSend ? mod : !mod);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1205,88 +995,28 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         ...(asstAccent ? { "--chat-accent": asstAccent } : {}),
       } as CSSProperties}
     >
-      <ViewHead className="fileinfo" actions={headerActions}>
-        <span className="fi-name">
-          <Icon name={draftAsst?.icon || "comment-discussion"} /> {title}
-        </span>
-        {/* エージェントのチップ。既存会話ではそのまま切替ピッカーのボタンを兼ねる
-            （draft はまだ会話が無いので表示のみ）。 */}
-        {agent && conversationId && (
-          <button
-            type="button"
-            ref={agentTagRef}
-            className={"kind-tag kind-" + kindClass(agentKind!) + " chat-agent-pick"}
-            title={tr("chat.switch_agent_tip")}
-            aria-haspopup="menu"
-            aria-expanded={agentPickerOpen}
-            disabled={switching || showStreaming || compacting || !wsRunning}
-            onClick={() => setAgentPickerOpen((o) => !o)}
-          >
-            <Icon name={switching ? "loading" : agent.icon} spin={switching} />
-            {agent.assistantName}
-            <Icon name="chevron-down" className="chat-agent-caret" />
-          </button>
-        )}
-        {agent && !conversationId && (
-          <span className={"kind-tag kind-" + kindClass(agentKind!)}>
-            <Icon name={agent.icon} />
-            {agent.assistantName}
-          </span>
-        )}
-        {agentPickerOpen &&
-          createPortal(
-            <div className="ui-menu chat-agent-menu" ref={agentMenuRef} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-              <div className="assistant-picker-label">{tr("chat.switch_agent")}</div>
-              {CHAT_KINDS.map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  className="ui-menu-item"
-                  role="menuitemradio"
-                  aria-checked={k === conv?.agent}
-                  // 未接続の CLI にピン留めしても、送信時に接続済みのバックエンドへ退避する
-                  // だけ（chatProviderFor）＝選ばせても効かない。接続状況が分からないとき
-                  // （キャッシュが冷えている）は塞がない。
-                  disabled={!!chatConns && !agentOf(k).available({ conns: chatConns })}
-                  title={
-                    chatConns && !agentOf(k).available({ conns: chatConns })
-                      ? tr("chat.switch_agent_offline")
-                      : undefined
-                  }
-                  onClick={() => void doSwitchAgent(k)}
-                >
-                  <Icon name={k === conv?.agent ? "check" : "blank"} />
-                  {/* kind の色は tokens.css の --kind-* が1ソース（agent-display-naming）。 */}
-                  <span className="chat-agent-ic" style={{ color: `var(--kind-${kindClass(k)})` }}>
-                    <Icon name={agentOf(k).icon} />
-                  </span>
-                  {agentOf(k).assistantName}
-                </button>
-              ))}
-              <div className="chat-agent-note muted">{tr("chat.switch_agent_note")}</div>
-            </div>,
-            document.body,
-          )}
-        {(conv || showStreaming || !wsRunning) && (
-          <span className={"session-state " + stateChip.cls}>
-            <Icon name={stateChip.icon} spin={stateChip.spin} /> {stateChip.text}
-          </span>
-        )}
-        {/* 作業計画（docs/log/33 第5段）: 圧縮を跨いで原文のまま運ばれる枠の開閉。計画が
-            入っている会話は塗って示す — 「アシスタントが絶対に忘れない内容」がどれかを
-            一目で分かるようにするのがこのバッジの役目。 */}
-        {conversationId && (
-          <button
-            type="button"
-            className={"chat-plan-toggle" + (conv?.plan ? " has-plan" : "") + (planOpen ? " open" : "")}
-            title={tr("chat.plan.toggle_tip")}
-            aria-expanded={planOpen}
-            onClick={() => setPlanOpen((v) => !v)}
-          >
-            <Icon name="checklist" /> {tr("chat.plan.title")}
-          </button>
-        )}
-      </ViewHead>
+      <ChatHead
+        headerActions={headerActions}
+        title={title}
+        draftAsst={draftAsst}
+        conv={conv}
+        conversationId={conversationId}
+        agent={agent}
+        agentKind={agentKind}
+        agentTagRef={agentTagRef}
+        agentMenuRef={agentMenuRef}
+        agentPickerOpen={agentPickerOpen}
+        onToggleAgentPicker={() => setAgentPickerOpen((o) => !o)}
+        onSwitchAgent={(k) => void doSwitchAgent(k)}
+        chatConns={chatConns}
+        switching={switching}
+        showStreaming={showStreaming}
+        compacting={compacting}
+        wsRunning={wsRunning}
+        stateChip={stateChip}
+        planOpen={planOpen}
+        onTogglePlan={() => setPlanOpen((v) => !v)}
+      />
       {planOpen && conversationId && (
         <ChatPlan
           conversationId={conversationId}
@@ -1366,86 +1096,17 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         {empty && !draftAsst && !isDraft && (
           <div className="chat-empty">{tr("chat.empty_hint")}</div>
         )}
-        {conv?.messages.map((m, i) => {
-          // Session reports (docs/log/30) render as a session-origin card — the sender is
-          // the reporting session, not the user or the assistant.
-          if (m.role === "report") {
-            return (
-              <div key={i} className="chat-msg role-report">
-                <div className="chat-role">
-                  <Icon name="broadcast" /> {tr("chat.report_role")}
-                  {m.session && <span className="chat-report-session">{m.session}</span>}
-                </div>
-                <div className="chat-body">
-                  <ChatMarkdown source={reportText(m)} breaks />
-                </div>
-                <div className="chat-msg-foot">
-                  {m.ts > 0 && <span className="cm-time">{formatMsgTS(m.ts)}</span>}
-                </div>
-              </div>
-            );
-          }
-          // System notices (docs/log/30) — e.g. the operator's auto-turn budget ran out and
-          // the loop paused. Rendered as a centered informational card, not a bubble; it
-          // tells the user why the operator went quiet and how to resume. The body comes
-          // from the catalog (ADR 0033), so it follows the UI language even on old threads.
-          if (m.role === "notice") {
-            return (
-              <div key={i} className="chat-msg role-notice">
-                <div className="chat-notice">
-                  <Icon name="info" />
-                  <div className="chat-notice-body">
-                    <ChatMarkdown source={noticeText(m)} breaks />
-                  </div>
-                </div>
-              </div>
-            );
-          }
-          // Assistant replies render through AssistantTurn, which owns the bubble ref so
-          // its footer can karaoke-read the rendered Markdown (docs/log/24).
-          if (m.role === "assistant") {
-            const turnAgent = agentOf(m.agent || conv.agent);
-            return (
-              <div key={i} className="chat-msg role-assistant">
-                <AssistantTurn
-                  text={m.content}
-                  steps={m.steps}
-                  ts={m.ts}
-                  agentName={turnAgent?.assistantName || tr("chat.assistant_fallback")}
-                  model={m.model}
-                  voice={{ ...(assistantVoiceOpts(assistId, assistVoice) ?? {}), paneId }}
-                  highlight={i === conv.messages.length - 1 ? karaokeText : null}
-                />
-              </div>
-            );
-          }
-          // Split off any pasted-image references so a user bubble shows the user's
-          // words + clickable thumbnails, not the machine-facing paths — and so the
-          // copy button copies the words, not the image instruction.
-          const { text, images } = splitPastedImages(m.content);
-          return (
-            <div key={i} className="chat-msg role-user">
-              <div className="chat-role">{tr("chat.you")}</div>
-              <div className="chat-body">
-                {/* Both roles render as Markdown; `breaks` keeps plain newlines as
-                    line breaks (mirrors MirrorView's user turns). */}
-                {text && <ChatMarkdown source={text} breaks />}
-                {images.length > 0 && conv && (
-                  <div className="chat-imgs">
-                    {images.map((nm) => (
-                      <ChatPastedThumb key={nm} convId={conv.id} name={nm} />
-                    ))}
-                  </div>
-                )}
-              </div>
-              {/* Footer under the bubble — time + copy, mirroring MirrorView's turn foot. */}
-              <div className="chat-msg-foot">
-                {m.ts > 0 && <span className="cm-time">{formatMsgTS(m.ts)}</span>}
-                <ChatCopyButton text={text} />
-              </div>
-            </div>
-          );
-        })}
+        {conv?.messages.map((m, i) => (
+          <ChatMessageRow
+            key={i}
+            m={m}
+            conv={conv}
+            assistId={assistId}
+            assistVoice={assistVoice}
+            paneId={paneId}
+            highlight={i === conv.messages.length - 1 ? karaokeText : null}
+          />
+        ))}
         {showStreaming && (
           <div className="chat-msg role-assistant">
             <div className="chat-role">{agent?.assistantName || tr("chat.assistant_fallback")}</div>
@@ -1479,21 +1140,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       )}
       <div className="chat-composer">
         {(attachments.length > 0 || pasting) && (
-          <div className="chat-attach">
-            {attachments.map((a, i) => (
-              <div className="ca-chip" key={a.path}>
-                <img className="ca-thumb" src={a.url} alt="" />
-                <button type="button" className="ca-del" title={tr("chat.remove")} onClick={() => removeAttachment(i)}>
-                  <Icon name="close" />
-                </button>
-              </div>
-            ))}
-            {pasting && (
-              <span className="ca-loading">
-                <Icon name="loading" spin /> {tr("chat.uploading")}
-              </span>
-            )}
-          </div>
+          <ChatAttachStrip attachments={attachments} pasting={pasting} onRemove={removeAttachment} />
         )}
         {!wsRunning ? (
           // Workspace stopped: nothing here can succeed (no per-chat "alive" to resume —
@@ -1507,586 +1154,47 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           </div>
         ) : (
         <>
-        {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨の LLM 候補（v2）。
-            クリックで差し込み・⌥で即送信。 */}
-        {(conv || isDraft) && !showStreaming && (suggestChips.length > 0 || (settings.replySuggestEnabled && conversationId)) && (
-          <div className="chat-suggest" ref={attachSuggestRow}>
-            {settings.replySuggestEnabled && conversationId && (
-              <button
-                type="button"
-                className="chat-suggest-ai"
-                title={tr("chat.suggest_ai")}
-                disabled={suggesting}
-                onClick={fetchLlmSuggestions}
-                onKeyDown={onSuggestNav} // Enter は既定の click（＝候補取得）に任せる
-              >
-                <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
-              </button>
-            )}
-            {suggestChips.map((sg) => (
-              // ピン留めは先頭固定＋📌。削除/ピンは右クリック・長タップ・Menu キーのメニューから。
-              <button
-                key={(sg.llm ? "l:" : "a:") + sg.text}
-                type="button"
-                className={
-                  "chat-suggest-chip" +
-                  (sg.llm ? " llm" : "") +
-                  (isQuickReplyPinned(settings.quickRepliesPinned, sg.text) ? " pinned" : "") +
-                  (sg.text === cycledText ? " cycling" : "") // Tab でいま入力欄に入れている候補
-                }
-                aria-current={sg.text === cycledText ? "true" : undefined}
-                title={tr("mirror.suggest_hint")}
-                onClick={(e) => {
-                  if (chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
-                  applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey);
-                }}
-                onKeyDown={(e) => onSuggestKeyDown(e, sg.text, sg.llm)}
-                {...chipMenu.chipProps(sg.text, sg.llm)}
-              >
-                {isQuickReplyPinned(settings.quickRepliesPinned, sg.text) && (
-                  <Icon name="pinned" className="chat-suggest-pin" />
-                )}
-                {sg.text}
-              </button>
-            ))}
-          </div>
-        )}
-        {chipMenu.menu && (
-          <SuggestChipMenu
-            menu={chipMenu.menu}
-            pinned={isQuickReplyPinned(settings.quickRepliesPinned, chipMenu.menu.text)}
-            onClose={chipMenu.close}
-            onTogglePin={togglePin}
-            onForget={forgetSuggestion}
-          />
-        )}
-        <div className="chat-composer-row">
-          {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
-          <div className="chat-hist">
-            <button
-              type="button"
-              className="btn chat-hist-btn"
-              title={tr("chat.prev_input")}
-              disabled={!history.length || (!conv && !isDraft) || showStreaming}
-              onClick={recallPrev}
-            >
-              <Icon name="chevron-up" />
-            </button>
-            <button
-              type="button"
-              className="btn chat-hist-btn"
-              title={tr("chat.next_input")}
-              disabled={histIdx === null || (!conv && !isDraft) || showStreaming}
-              onClick={recallNext}
-            >
-              <Icon name="chevron-down" />
-            </button>
-          </div>
-          <textarea
-            ref={inputRef}
-            className="chat-input"
-            value={input}
-            placeholder={
-              conv || isDraft
-                ? canAttach
-                  ? modSend
-                    ? tr("chat.ph_mod_img")
-                    : tr("chat.ph_enter_img")
-                  : modSend
-                    ? tr("chat.ph_mod")
-                    : tr("chat.ph_enter")
-                : tr("chat.ph_loading")
-            }
-            disabled={(!conv && !isDraft) || showStreaming}
-            onChange={(e) => {
-              setInput(e.target.value);
-              setHistIdx(null); // typing leaves history-recall mode
-            }}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            rows={2}
-          />
-          {sending || reattaching ? (
-            // reattaching: reloaded into a detached turn — stop still works via chatStop.
-            <button type="button" className="btn chat-send chat-stop" onClick={stop} title={tr("chat.stop")}>
-              <Icon name="debug-stop" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn primary chat-send"
-              disabled={(!conv && !isDraft) || showStreaming || (!input.trim() && !attachments.length)}
-              onClick={() => void send()}
-              title={tr("chat.send")}
-            >
-              <Icon name="send" />
-            </button>
-          )}
-        </div>
+        <ChatSuggestRow
+          show={(!!conv || isDraft) && !showStreaming && (suggestChips.length > 0 || (!!settings.replySuggestEnabled && !!conversationId))}
+          showAiButton={!!settings.replySuggestEnabled && !!conversationId}
+          attachSuggestRow={attachSuggestRow}
+          suggesting={suggesting}
+          onFetchLlmSuggestions={fetchLlmSuggestions}
+          onSuggestNav={onSuggestNav}
+          suggestChips={suggestChips}
+          pinnedList={settings.quickRepliesPinned}
+          cycledText={cycledText}
+          chipMenu={chipMenu}
+          onApply={applySuggestion}
+          onSuggestKeyDown={onSuggestKeyDown}
+          onTogglePin={togglePin}
+          onForget={forgetSuggestion}
+        />
+        <ChatComposerRow
+          input={input}
+          inputRef={inputRef}
+          disabled={(!conv && !isDraft) || showStreaming}
+          canSend={!!input.trim() || attachments.length > 0}
+          canAttach={canAttach}
+          modSend={modSend}
+          hasTarget={!!conv || isDraft}
+          history={history}
+          histIdx={histIdx}
+          onRecallPrev={recallPrev}
+          onRecallNext={recallNext}
+          onInput={(v) => {
+            setInput(v);
+            setHistIdx(null); // typing leaves history-recall mode
+          }}
+          onKeyDown={onKeyDown}
+          onPaste={onPaste}
+          streaming={sending || reattaching}
+          onStop={stop}
+          onSend={() => void send()}
+        />
         </>
         )}
       </div>
     </div>
-  );
-}
-
-// StreamingMarkdown renders the live-accumulating reply as Markdown, throttled to one
-// re-render per ~120ms — per-delta would re-parse and innerHTML-swap the whole bubble on
-// every SSE chunk (killing text selection, wasting CPU). Trailing updates are always
-// flushed, so the shown text never lags more than one window behind the stream.
-const STREAM_RENDER_MS = 120;
-function StreamingMarkdown({ text, highlight }: { text: string; highlight?: string | null }) {
-  const [shown, setShown] = useState(text);
-  const lastRef = useRef(0); // when we last flushed
-  const timerRef = useRef<number | null>(null);
-  const textRef = useRef(text); // latest text, for the trailing flush
-  textRef.current = text;
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-  const litRef = useRef<HTMLElement | null>(null);
-  const litNeedleRef = useRef(""); // last highlighted sentence, so we scroll only when it changes
-  useEffect(() => {
-    const due = lastRef.current + STREAM_RENDER_MS;
-    const now = Date.now();
-    if (now >= due) {
-      lastRef.current = now;
-      setShown(text);
-    } else if (timerRef.current == null) {
-      timerRef.current = window.setTimeout(() => {
-        timerRef.current = null;
-        lastRef.current = Date.now();
-        setShown(textRef.current);
-      }, due - now);
-    }
-  }, [text]);
-  useEffect(
-    () => () => {
-      if (timerRef.current != null) clearTimeout(timerRef.current);
-    },
-    [],
-  );
-  // Live karaoke (docs/log/19): each ~120ms re-render rebuilds the bubble DOM and wipes any
-  // highlight, so we (re)apply .tts-active after every render, driven by `highlight` (the
-  // sentence the TTS just started). We locate the sentence's block by matching its
-  // (whitespace-stripped) text against the rendered blocks — the same block set the
-  // completed-turn karaoke walks (collectBlocks). Not found → keep the current highlight
-  // (avoids flicker at sentence boundaries); no highlight → clear.
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    if (!highlight) {
-      litRef.current?.classList.remove("tts-active");
-      litRef.current = null;
-      litNeedleRef.current = "";
-      return;
-    }
-    const norm = (s: string) => s.replace(/\s+/g, "");
-    const needle = norm(highlight).slice(0, 16);
-    if (!needle) return;
-    const target = collectBlocks(wrap).find((b) => norm(b.textContent || "").includes(needle));
-    if (!target) return; // not found → keep the current highlight (no flicker at boundaries)
-    // Re-apply the class every render (the DOM was rebuilt), but only scroll when the spoken
-    // sentence actually changed — otherwise the ~120ms re-renders would spam smooth-scroll.
-    if (litRef.current && litRef.current !== target) litRef.current.classList.remove("tts-active");
-    target.classList.add("tts-active");
-    litRef.current = target;
-    if (litNeedleRef.current !== needle) {
-      litNeedleRef.current = needle;
-      target.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }
-  }, [shown, highlight]);
-  useEffect(() => () => litRef.current?.classList.remove("tts-active"), []);
-  return (
-    <div ref={wrapRef}>
-      <ChatMarkdown source={shown} breaks streaming />
-    </div>
-  );
-}
-
-function ChatMarkdown({ source, breaks, streaming }: { source: string; breaks?: boolean; streaming?: boolean }) {
-  const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
-  return (
-    <MarkdownView
-      source={source}
-      breaks={breaks}
-      streaming={streaming}
-      onOpenFile={(path, line, column) =>
-        openTargetInNew({ content: { kind: "file", filePath: path, targetLine: line, targetColumn: column } }, true)
-      }
-      // The chat lives in its own pane; opening a session or another conversation
-      // in-place would replace it. Like file citations above, always open in a NEW pane.
-      onOpenSession={(name) => openSessionChatSplit(name)}
-      onOpenConversation={(id) => openChatSplit(id)}
-    />
-  );
-}
-
-// ChatSteps renders an assistant turn's 作業過程 (docs/log/19 分離): the narration the model
-// emitted before each tool call, kept separate from — but alongside — the final answer.
-// Collapsible; open while streaming so progress is visible, collapsed once the turn is done.
-function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpen?: boolean; live?: boolean }) {
-  const tr = useT();
-  const [open, setOpen] = useState(!!defaultOpen);
-  // 見出し（summary）。最下部の「閉じる」で畳んだあと、見出しが画面の上へ流れていたら戻す。
-  const head = useRef<HTMLElement>(null);
-  if (!steps.length) return null;
-  const toolCount = steps.reduce((n, step) => n + (step.tools?.length ?? 0), 0);
-  return (
-    <details
-      className={"mt-work chat-steps" + (live ? " live" : "")}
-      open={open}
-      onToggle={(e) => setOpen(e.currentTarget.open)}
-    >
-      <summary className="mt-work-head" ref={head}>
-        <Icon name={open ? "chevron-down" : "chevron-right"} />
-        {live && <Icon name="loading" spin />}
-        <span className="mt-work-title">{tr("chat.work_process")}</span>
-        <span className="mt-work-count muted">
-          {tCount("chat.tool_count", toolCount)}
-          {steps.length > 0 ? tCount("chat.interim_count", steps.length) : ""}
-        </span>
-      </summary>
-      <div className="mt-work-body">
-        {foldStepParts(steps).map((it, i) =>
-          it.kind === "text" ? (
-            <div key={i} className="chat-step">
-              <ChatMarkdown source={it.text} breaks />
-            </div>
-          ) : (
-            <ChatToolRun key={i} tools={it.tools} />
-          ),
-        )}
-        <DisclosureFoot
-          onClose={() => {
-            setOpen(false);
-            revealHead(head.current);
-          }}
-        />
-      </div>
-    </details>
-  );
-}
-
-// Flatten a turn's 作業過程 into an ordered list of parts (narration text / tool name), then
-// coalesce each maximal run of CONSECUTIVE tool calls into one folded run — matching
-// MirrorView's foldParts/ToolRun. Narration between tools breaks a run (so a lone tool stays
-// on its own; back-to-back tool-only steps fold together).
-type StepItem = { kind: "text"; text: string } | { kind: "toolrun"; tools: string[] };
-function foldStepParts(steps: ChatStep[]): StepItem[] {
-  const items: StepItem[] = [];
-  const pushTool = (name: string) => {
-    const last = items[items.length - 1];
-    if (last && last.kind === "toolrun") last.tools.push(name);
-    else items.push({ kind: "toolrun", tools: [name] });
-  };
-  for (const s of steps) {
-    const text = s.text?.trim();
-    if (text) items.push({ kind: "text", text });
-    for (const tool of s.tools ?? []) pushTool(tool);
-  }
-  return items;
-}
-
-// ChatToolRun renders a run of consecutive tool/mcp calls in the 作業過程. A lone call shows
-// as a plain chip (as the mirror does for output-less traces); two or more fold into one
-// collapsed "N 件のツール · tally" summary that expands to the individual calls. Mirrors
-// MirrorView's ToolRun, reusing its .mt-toolrun / .mt-tool styling.
-function ChatToolRun({ tools }: { tools: string[] }) {
-  const tr = useT();
-  const [open, setOpen] = useState(false);
-  if (tools.length === 1) {
-    return (
-      <div className="mt-tool">
-        <Icon name="tools" />
-        <span className="mt-tool-name">{tools[0]}</span>
-      </div>
-    );
-  }
-  // Tally repeated names (Read×3 · Grep) so a long run reads at a glance.
-  const tally: [string, number][] = [];
-  const at: Record<string, number> = {};
-  for (const name of tools) {
-    if (at[name] === undefined) {
-      at[name] = tally.length;
-      tally.push([name, 0]);
-    }
-    tally[at[name]][1]++;
-  }
-  const summary = tally.map(([n, c]) => (c > 1 ? `${n}×${c}` : n)).join(" · ");
-  return (
-    <div className={"mt-toolrun" + (open ? " open" : "")}>
-      <button
-        type="button"
-        className="mt-tool mt-toolrun-head"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        title={open ? tr("mirror.collapse_tools") : tr("mirror.expand_tools")}
-      >
-        <Icon name={open ? "chevron-down" : "chevron-right"} />
-        <span className="mt-tool-name">{tCount("mirror.tools_count", tools.length)}</span>
-        <span className="mt-tool-info">{summary}</span>
-      </button>
-      {open && (
-        <div className="mt-toolrun-body">
-          {tools.map((name, i) => (
-            <div key={i} className="mt-tool">
-              <Icon name="tools" />
-              <span className="mt-tool-name">{name}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// AssistantTurn renders one completed assistant reply and its footer. It owns a ref to the
-// bubble body so the footer's read control can karaoke-read the RENDERED Markdown (docs/log/24):
-// readTurn (features/mirror/turnTts) walks the .markdown DOM into blocks, speaks it sentence
-// by sentence, and highlights the block whose sentence is playing (.tts-active) with scroll
-// follow — the same engine the mirror/ReaderView use. Live streaming stays plain (the bubble
-// re-renders every ~120ms, which would wipe any DOM highlight); karaoke is offered only once
-// the turn is complete, i.e. here.
-function AssistantTurn({
-  text,
-  steps,
-  ts,
-  agentName,
-  model,
-  voice,
-  highlight,
-}: {
-  text: string;
-  steps?: ChatStep[];
-  ts: number;
-  agentName: string;
-  model?: string;
-  voice?: Partial<TtsOptions>;
-  highlight?: string | null;
-}) {
-  const ttsEnabled = useSettings().ttsEnabled;
-  const tr = useT();
-  const bodyRef = useRef<HTMLDivElement | null>(null);
-  const handleRef = useRef<TurnReadHandle | null>(null);
-  const [state, setState] = useState<"idle" | "playing" | "paused">("idle");
-  // Floating "ここから読み上げ" pill anchored to a mouse selection inside the bubble.
-  const [selPill, setSelPill] = useState<{ x: number; y: number; block: number } | null>(null);
-  const autoLitRef = useRef<HTMLElement | null>(null);
-
-  // 自動読み上げは最終回答の確定後にこの完成済み DOM へ移るため、
-  // startTts から通知された文を本文ブロックへ対応付けて光らせる。
-  useEffect(() => {
-    const body = bodyRef.current;
-    if (!body || !highlight) {
-      autoLitRef.current?.classList.remove("tts-active");
-      autoLitRef.current = null;
-      return;
-    }
-    const norm = (s: string) => s.replace(/\s+/g, "");
-    const needle = norm(highlight).slice(0, 16);
-    if (!needle) return;
-    const target = collectBlocks(body).find((b) => norm(b.textContent || "").includes(needle));
-    if (!target) return;
-    if (autoLitRef.current && autoLitRef.current !== target) autoLitRef.current.classList.remove("tts-active");
-    target.classList.add("tts-active");
-    autoLitRef.current = target;
-    target.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [highlight]);
-  useEffect(() => () => autoLitRef.current?.classList.remove("tts-active"), []);
-
-  // Stop this bubble's reading if the pane/component goes away mid-read.
-  useEffect(() => () => handleRef.current?.stop("replaced"), []);
-
-  const start = (fromBlock: number) => {
-    const body = bodyRef.current;
-    if (!body) return;
-    handleRef.current?.stop("replaced");
-    // onEnd fires once on natural end AND on preemption (TopBar stop / another playback),
-    // so the footer always falls back to the idle "読み上げ" state.
-    const h = readTurn(body, t("chat.label"), fromBlock, () => {
-      handleRef.current = null;
-      setState("idle");
-    }, voice);
-    if (h) {
-      handleRef.current = h;
-      setState("playing");
-    }
-  };
-  const pause = () => {
-    handleRef.current?.pause();
-    setState("paused");
-  };
-  const resume = () => {
-    handleRef.current?.resume();
-    setState("playing");
-  };
-  const stop = () => {
-    handleRef.current?.stop();
-    handleRef.current = null;
-    setState("idle");
-  };
-
-  // After a mouse selection inside the bubble, surface a "ここから読み上げ" pill at the
-  // selection head — reading (re)starts from the block the selection begins in. Desktop
-  // mouse only (touch selection emits no mouseup); the footer button still reads from top.
-  const onMouseUp = () => {
-    const body = bodyRef.current;
-    const sel = window.getSelection();
-    if (!ttsEnabled || !body || !sel || sel.isCollapsed || sel.rangeCount === 0) {
-      setSelPill(null);
-      return;
-    }
-    const range = sel.getRangeAt(0);
-    if (!body.contains(range.startContainer)) {
-      setSelPill(null);
-      return;
-    }
-    const idx = blockIndexAt(collectBlocks(body), range.startContainer);
-    if (idx < 0) {
-      setSelPill(null);
-      return;
-    }
-    const rect = range.getBoundingClientRect();
-    setSelPill({ x: Math.round(rect.left), y: Math.round(rect.top - 34), block: idx });
-  };
-  const startFromSelection = () => {
-    if (!selPill) return;
-    start(selPill.block);
-    setSelPill(null);
-    window.getSelection()?.removeAllRanges();
-  };
-
-  return (
-    <>
-      <div className="chat-role">
-        {agentName}
-        {/* The model that answered, faint beside the agent name — the mirror's turn
-            header contract (.mt-model) applied to the chat. Recorded per turn, so a
-            thread that changed model (or fell back to another backend) shows what each
-            reply was actually produced with. title keeps the raw id copyable. */}
-        {model && (
-          <span className="chat-model" title={model}>
-            {prettyModel(model)}
-          </span>
-        )}
-      </div>
-      {/* 作業過程（ツール応答）は最終回答の上に折りたたんで表示（既定は畳む・保持）。 */}
-      {steps && steps.length > 0 && <ChatSteps steps={steps} />}
-      <div className="chat-body" ref={bodyRef} onMouseUp={onMouseUp}>
-        {text && <ChatMarkdown source={text} breaks />}
-      </div>
-      {selPill && (
-        <div className="sel-pill-group" style={{ left: selPill.x, top: Math.max(4, selPill.y) }}>
-          <button
-            type="button"
-            className="sel-send-pill"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={startFromSelection}
-          >
-            <Icon name="unmute" /> {tr("chat.read_from_here")}
-          </button>
-        </div>
-      )}
-      <div className="chat-msg-foot">
-        {ts > 0 && <span className="cm-time">{formatMsgTS(ts)}</span>}
-        {ttsEnabled && text.trim() && (
-          state === "idle" ? (
-            <button type="button" className="ghost cm-copy" title={tr("chat.read_title")} onClick={() => start(0)}>
-              <Icon name="unmute" /> {tr("chat.read")}
-            </button>
-          ) : (
-            <>
-              {state === "playing" ? (
-                <button type="button" className="ghost cm-copy" title={tr("chat.pause")} onClick={pause}>
-                  <Icon name="debug-pause" /> {tr("chat.pause")}
-                </button>
-              ) : (
-                <button type="button" className="ghost cm-copy" title={tr("chat.resume")} onClick={resume}>
-                  <Icon name="play" /> {tr("chat.resume")}
-                </button>
-              )}
-              <button type="button" className="ghost cm-copy" title={tr("chat.stop")} onClick={stop}>
-                <Icon name="debug-stop" /> {tr("chat.stop")}
-              </button>
-            </>
-          )
-        )}
-        <ChatCopyButton text={text} />
-      </div>
-    </>
-  );
-}
-
-// formatMsgTS renders a unix-millis timestamp as local "MM/DD HH:MM" — same shape as
-// MirrorView's turn footer (date kept so a thread that spans days stays unambiguous).
-const formatMsgTS = (ms: number) => fmtDateTime(ms);
-
-// ChatCopyButton copies the reply's RAW Markdown (not the rendered HTML) to the
-// clipboard — same behavior as MirrorView's CopyButton.
-function ChatCopyButton({ text }: { text: string }) {
-  const tr = useT();
-  const [done, setDone] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setDone(true);
-      setTimeout(() => setDone(false), 1500);
-    } catch {
-      /* clipboard blocked (insecure context / permission) — no-op */
-    }
-  };
-  return (
-    <button type="button" className="ghost cm-copy" title={tr("chat.copy_md_title")} onClick={copy}>
-      <Icon name={done ? "check" : "copy"} /> {done ? tr("chat.copied") : tr("chat.copy")}
-    </button>
-  );
-}
-
-// ChatPastedThumb previews a pasted image referenced in a chat turn. It fetches the bytes
-// through the authenticated API wrapper (an <img src> can't carry the tenant header) into
-// an object URL; clicking opens the full image in a new tab.
-function ChatPastedThumb({ convId, name }: { convId: string; name: string }) {
-  const tr = useT();
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    let obj = "";
-    raw(`api/chat/conversations/${encodeURIComponent(convId)}/pasted/${encodeURIComponent(name)}`)
-      .then((r) => (r.ok ? r.blob() : null))
-      .then((b) => {
-        if (!alive) return;
-        if (!b) {
-          setFailed(true);
-          return;
-        }
-        obj = URL.createObjectURL(b);
-        setUrl(obj);
-      })
-      .catch(() => {
-        if (alive) setFailed(true);
-      });
-    return () => {
-      alive = false;
-      if (obj) URL.revokeObjectURL(obj);
-    };
-  }, [convId, name]);
-  if (failed) {
-    return (
-      <span className="chat-img chat-img-loading" title={tr("chat.preview_failed")}>
-        <Icon name="file-media" />
-      </span>
-    );
-  }
-  if (!url) {
-    return (
-      <span className="chat-img chat-img-loading">
-        <Icon name="loading" spin />
-      </span>
-    );
-  }
-  return (
-    <button type="button" className="chat-img" title={tr("chat.click_to_zoom")} onClick={() => window.open(url, "_blank", "noopener")}>
-      <img src={url} alt={tr("chat.pasted_image_alt")} />
-    </button>
   );
 }
