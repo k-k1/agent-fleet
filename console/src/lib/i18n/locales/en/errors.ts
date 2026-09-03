@@ -45,6 +45,13 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.workspace_starting": "The workspace is still starting. Try again once it is ready.",
   "err.driver_unavailable": "Managed execution isn't available for this agent.",
   "err.runtime_failed": "Couldn't start the agent. Wait a moment and try again.",
+  // The line above is for failures that waiting fixes. A shared daemon that was not
+  // started because the CLI is not signed in never fixes itself, so it gets its own
+  // code instead of collapsing into runtime_failed (paired with runtime_err.go on the
+  // Agent). Which login is missing differs per kind — errDetail() appends the server's
+  // message for that.
+  "err.agent_not_connected":
+    "Couldn't start: you aren't signed in to this agent. Connect it from Settings > Agents.",
   "err.send_failed": "Failed to send.",
   "err.network": "Network error",
   "err.unknown": "An unknown error occurred.",

@@ -18,6 +18,7 @@ vi.mock("../../core/api/client.ts", () => ({
   api: vi.fn(async () => []),
   apiJSON: vi.fn(async () => ({})),
   errText: (e: { message?: string }) => e?.message || "",
+  errDetail: (e: { message?: string }) => e?.message || "",
   pasteImage: vi.fn(),
 }));
 

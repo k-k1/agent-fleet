@@ -6,7 +6,7 @@
 // changes (resolveModel), so this only renders and reports picks.
 import { useEffect, useMemo, useState } from "react";
 import { useT } from "../lib/i18n/index.ts";
-import { useModelOptions, useHiddenModel } from "../lib/agentModels.ts";
+import { useModelOptions, useHiddenModel, useModelCatalogSettled } from "../lib/agentModels.ts";
 import { useEffortOptions } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
 import { filterModelOptions } from "../lib/modelFilter.ts";
@@ -31,6 +31,7 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
   }, [kind]);
 
   const hidden = useHiddenModel(kind, model);
+  const settled = useModelCatalogSettled(kind);
   const dynamicOptions = useMemo(() => {
     if (!options || kind === "claude") return options;
     // A stored last-used model can be missing from the fetched list (deprecated /
@@ -49,6 +50,12 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
   if (!options) return null;
   if (kind !== "claude") {
     const selectedVisible = filtered.some(([v]) => v === model);
+    // 取得が決着したのに 既定 しか無い＝このアカウント/プラン/設定では選べるモデルが無い。
+    // 黙って「既定」だけを出すと、利用者からは読み込み中と見分けが付かない（実機で
+    // 「モデルが選べない」として報告された形）。⚠️ 原因は書かない — 未ログイン・
+    // プロバイダ不達・プランが既定のみ（Copilot Free）・設定で全部除外、を Console は
+    // 区別できない。dynamicOptions は除外フィルタ後なので、設定で全部隠した場合も真。
+    const onlyDefault = settled && (dynamicOptions?.length ?? 0) <= 1;
     const selectValue = selectedVisible ? model : "__filtered_selection__";
     return (
       <div className="model-picker-dynamic">
@@ -76,7 +83,9 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
             </option>
           ))}
         </select>
-        {query.trim() && <span className="ui-field-hint">{tr("ui.count_items", { count: filtered.length })}</span>}
+        {query.trim()
+          ? <span className="ui-field-hint">{tr("ui.count_items", { count: filtered.length })}</span>
+          : onlyDefault && <span className="ui-field-hint">{tr("ui.model_default_only")}</span>}
       </div>
     );
   }

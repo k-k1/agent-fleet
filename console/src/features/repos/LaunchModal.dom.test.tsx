@@ -31,6 +31,7 @@ vi.mock("../../core/api/client.ts", () => ({
   api: (...a: unknown[]) => apiMock(...(a as [string])),
   repoPromptTemplates: async () => ({ groups: [] }),
   errText: (e: { message?: string }) => e?.message ?? "",
+  errDetail: (e: { message?: string }) => e?.message ?? "",
   isTransientErr: () => false,
 }));
 

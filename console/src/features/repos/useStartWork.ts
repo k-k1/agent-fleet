@@ -4,7 +4,7 @@
 // はじめる hub (StartModal / LaunchHost, 起動導線 Ph2) share one implementation.
 // `dir: ""` launches in the home directory (repo-less session) — worktree options
 // and repo-scoped bookkeeping (repoLast / prompt history) are skipped there.
-import { apiJSON, errText, pasteImage } from "../../core/api/client.ts";
+import { apiJSON, errDetail, errText, pasteImage } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -84,10 +84,13 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       // payload names it so the dialog can say WHERE instead of just failing.
       if (code === "branch_in_use")
         return { ok: false, conflict: "in_use" as const, worktree: String(res.error.worktree || "") };
+      // errDetail（errText ではなく）: 起動失敗のコードは runtime_failed のような汎用で、
+      // **なぜ**失敗したかはサーバの message にしか無い。errText はカタログに文言がある
+      // 限り message を捨てるので、「しばらく待って再試行」だけが出て原因が消えていた。
       toast(
         worktree
-          ? t("rp.worktree_launch_failed", { err: errText(res.error) })
-          : t("rp.launch_failed", { err: errText(res.error) }),
+          ? t("rp.worktree_launch_failed", { err: errDetail(res.error) })
+          : t("rp.launch_failed", { err: errDetail(res.error) }),
       );
       return { ok: false };
     }
