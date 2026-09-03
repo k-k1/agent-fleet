@@ -1,0 +1,22 @@
+/* 作業過程はミラービューの .mt-work / .mt-tool をそのまま使う。チャットの
+   flex レイアウト内で横幅だけ補い、両画面の表示密度と開閉操作を揃える。 */
+.chat-steps {
+  align-self: stretch;
+  max-width: 100%;
+  overflow: hidden;
+}
+.chat-step {
+  font-size: 13px;
+  color: var(--muted);
+}
+.chat-step + .chat-step {
+  margin-top: 8px;
+}
+/* カラオケ読み上げ（AssistantTurn / turnTts, docs/log/24）: いま読んでいる文が属するブロックを
+   ハイライトし、scrollIntoView(nearest) で追従する。ミラーの .mirror-turn-body .tts-active と
+   同趣。ブロック（p/見出し/li/blockquote 内段落）に付く。 */
+.chat-body .tts-active {
+  background: color-mix(in srgb, var(--chat-accent, var(--accent)) 14%, transparent);
+  border-radius: 4px;
+  scroll-margin: 64px; /* ヘッダ等に隠れない余白 */
+}

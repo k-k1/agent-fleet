@@ -1,0 +1,26 @@
+/* Mirrors MirrorView's .mirror-compose so a chat pane and a mirror pane sit side by
+   side with identical composer bars (padding, background, input + send sizing, focus
+   border). The only intended differences are MirrorView's mode chip and ＋ attach. */
+.chat-composer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bar);
+}
+/* The input + send button sit on one row; the attachment strip (if any) stacks above. */
+.chat-composer-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+/* Workspace-stopped affordance, mirrors MirrorView's .mirror-compose-resume: centered
+   disabled button + hint instead of the input row. */
+.chat-compose-resume {
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 54px;
+}
