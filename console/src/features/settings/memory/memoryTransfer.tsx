@@ -242,6 +242,13 @@ export function TransferSection({
           {preview.secrets.length > 0 && (
             <p className="mem-warn">{tr("mem.import_secrets", { n: preview.secrets.length })}</p>
           )}
+          {/* 🔴 スキャンが失敗したときは「秘密 0 件」と読める画面にしない。走査できなかったのは
+              「検出なし」より弱い保証で、Go 側も `SecretScanFailed = true // 失敗を「検出なし」に
+              見せない` と明示している（internal/memoryx/memory_import.go）。旗が無いと
+              secrets が [] になるだけで、警告が 1 つも出ずに「見つからなかった」と同じ画面になる。 */}
+          {preview.secretScanFailed && (
+            <p className="mem-warn">{tr("mem.import_secret_scan_failed")}</p>
+          )}
           {preview.unavailable.length > 0 && (
             <p className="mem-warn">
               {tr("mem.import_unavailable", { kinds: preview.unavailable.join(tr("common.list_sep")) })}
