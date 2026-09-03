@@ -90,11 +90,11 @@ func TestWorkItemsStoppedServesCacheWithoutFetching(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("payload: %v", aerr)
 	}
-	if got := out["running"]; got != false {
+	if got := out.Running; got != false {
 		t.Errorf("running = %v, want false", got)
 	}
-	if items, _ := out["items"].([]workItemDTO); len(items) != 1 || items[0].Key != "acme/web#45" {
-		t.Errorf("stopped workspace lost the cache: %+v", out["items"])
+	if items := out.Items; len(items) != 1 || items[0].Key != "acme/web#45" {
+		t.Errorf("stopped workspace lost the cache: %+v", out.Items)
 	}
 	if *env.hits != 0 {
 		t.Errorf("fetched %d times while stopped — the rail must never wake the workspace", *env.hits)
@@ -187,7 +187,7 @@ func TestWorkItemsFetchedAtIsOldestEnabled(t *testing.T) {
 	if aerr != nil {
 		t.Fatal(aerr)
 	}
-	if got := out["fetchedAt"]; got != "2026-08-26T09:00:00Z" {
+	if got := out.FetchedAt; got != "2026-08-26T09:00:00Z" {
 		t.Errorf("fetchedAt = %v, want the oldest ENABLED query's stamp", got)
 	}
 }
