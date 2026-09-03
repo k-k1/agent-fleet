@@ -57,6 +57,47 @@ func wiremapExemptions() []wiremapExemption {
 	}
 }
 
+// exemptionStillNeeded — **免除がまだ必要か**の判定。
+//
+// 🔴 **この関数が唯一の実装であることが重要。** 本物の逆検査
+// （TestWiremapExemptionsAreStillNeeded）と、その逆検査自身を検査する対照
+// （TestWiremapExemptionReverseCheckActuallyFires）の**両方がここを呼ぶ**。
+//
+// 以前はこの判定が 2 箇所に写しで在り、**出荷される側を潰しても対照は緑のまま**だった
+// （#345 のレビューで実測: 本物の `if !still {` を `if false {` にしても免除まわり 4 本すべて PASS）。
+// **検証する側とされる側が二重化すると、写しだけが検査される。**
+//
+// 戻り値: (まだ必要か, 必要でないと判断した理由)
+func exemptionStillNeeded(ex wiremapExemption, byFunc map[string][]wireMapSite) (bool, string) {
+	got, ok := byFunc[ex.Func]
+	if !ok {
+		return false, "対象サイトがもう存在しない（変換済み・削除済みなら免除表からも消すこと）"
+	}
+	for _, s := range got {
+		switch ex.NeedsFlag {
+		case "dyn":
+			if s.DynKey {
+				return true, ""
+			}
+		case "partial":
+			if s.Partial {
+				return true, ""
+			}
+		}
+	}
+	return false, ex.NeedsFlag + " 印が付いていない（キー集合が確定するようになったか、走査が痩せた）"
+}
+
+// wiremapSitesByFunc は走査結果を関数名で引ける形にする。
+func wiremapSitesByFunc(t *testing.T) map[string][]wireMapSite {
+	t.Helper()
+	byFunc := map[string][]wireMapSite{}
+	for _, s := range scanWireMapSites(t, ".") {
+		byFunc[s.Func] = append(byFunc[s.Func], s)
+	}
+	return byFunc
+}
+
 // TestWiremapExemptionsAreStillNeeded — **逆検査その 1（Go 側の方向）**。
 //
 // 免除の理由は「キー集合が静的に確定しない」こと。その根拠はゴールデンの `dyn` / `partial` 印。
@@ -67,34 +108,24 @@ func wiremapExemptions() []wiremapExemption {
 //
 // のどちらかで、**どちらも黙って通してはいけない。**
 func TestWiremapExemptionsAreStillNeeded(t *testing.T) {
-	sites := scanWireMapSites(t, ".")
-	byFunc := map[string][]wireMapSite{}
-	for _, s := range sites {
-		byFunc[s.Func] = append(byFunc[s.Func], s)
-	}
+	reportStaleExemptions(t, wiremapExemptions(), wiremapSitesByFunc(t))
+}
 
-	for _, ex := range wiremapExemptions() {
-		got, ok := byFunc[ex.Func]
-		if !ok {
-			t.Errorf("免除 %q の対象サイトがもう存在しない（%s）。\n"+
-				"  変換済み・削除済みなら**免除表からも消すこと**——"+
-				"残すと「免除だから見ない」だけが積み上がる。", ex.Func, ex.Why)
-			continue
-		}
-		still := false
-		for _, s := range got {
-			switch ex.NeedsFlag {
-			case "dyn":
-				still = still || s.DynKey
-			case "partial":
-				still = still || s.Partial
-			}
-		}
-		if !still {
-			t.Errorf("免除 %q の理由（%s）がゴールデン上で裏付けられない: %s 印が付いていない。\n"+
+// reportStaleExemptions — **出荷される逆検査の本体**（判定 ＋ 報告）。
+//
+// 🔴 テスト関数ではなくここに本体を置くのは、**対照がこれを最後まで駆動できるようにする**ため。
+// 判定だけを共有して報告をテスト関数に書くと、**報告側（t.Errorf）を消しても対照は緑のまま**
+// になり、#345 で指摘された穴が形を変えて残る。
+// 引数の t を interface にしてあるので、対照は recordT を渡して「実際に報告されたか」を見る。
+func reportStaleExemptions(t wireEquivT, exs []wiremapExemption, byFunc map[string][]wireMapSite) {
+	t.Helper()
+	for _, ex := range exs {
+		if ok, why := exemptionStillNeeded(ex, byFunc); !ok {
+			t.Errorf("免除 %q はもう要らない（理由: %s）。\n"+
+				"  免除の根拠は %q だった。\n"+
 				"  実装が変わってキー集合が確定するようになったなら**免除を外して変換する**。\n"+
 				"  走査が痩せて印を落としたなら**道具を直す**。どちらにせよこのまま緑にはしない。",
-				ex.Func, ex.Why, ex.NeedsFlag)
+				ex.Func, why, ex.Why)
 		}
 	}
 }
@@ -167,23 +198,14 @@ func TestWiremapExemptionsHaveReasons(t *testing.T) {
 // 平常時は必ず緑＝**壊れていても緑**と区別が付かない。
 // そこで「理由が裏付けられない免除」を**合成して**当て、実際に赤くなることを見る。
 func TestWiremapExemptionReverseCheckActuallyFires(t *testing.T) {
-	sites := scanWireMapSites(t, ".")
-	byFunc := map[string][]wireMapSite{}
-	for _, s := range sites {
-		byFunc[s.Func] = append(byFunc[s.Func], s)
-	}
-
-	check := func(ex wiremapExemption) bool { // true = 赤くなるべきと判定した
-		got, ok := byFunc[ex.Func]
-		if !ok {
-			return true
-		}
-		for _, s := range got {
-			if (ex.NeedsFlag == "dyn" && s.DynKey) || (ex.NeedsFlag == "partial" && s.Partial) {
-				return false
-			}
-		}
-		return true
+	byFunc := wiremapSitesByFunc(t)
+	// 🔴 **出荷される逆検査を最後まで駆動する。**判定を写して書き直すと、
+	// 本物を潰しても対照が緑のままになる（#345 のレビューで実測された穴）。
+	// recordT を渡すので、判定と報告の**どちらを潰しても**この対照が赤くなる。
+	check := func(ex wiremapExemption) bool { // true = 実際に報告された＝赤くなるべき
+		rec := &recordT{}
+		reportStaleExemptions(rec, []wiremapExemption{ex}, byFunc)
+		return len(rec.errs) > 0
 	}
 
 	t.Run("対象が消えた免除は赤くなる", func(t *testing.T) {
