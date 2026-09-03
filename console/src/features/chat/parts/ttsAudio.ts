@@ -1,5 +1,5 @@
 import { rel } from "../../../core/api/client.ts";
-import { getSettings } from "../../../lib/settings.ts";
+import { getSettings, subscribe as subscribeSettings } from "../../../lib/settings.ts";
 import { useLayoutStore } from "../../../layout/store.ts";
 import { makeAudioLru } from "../ttsCache.ts";
 import { ttsIsBackground, ttsMasterGain, ttsPanePan } from "../ttsControl.ts";
@@ -190,3 +190,4 @@ export function connectOutput(ctx: AudioContext, src: AudioBufferSourceNode, vol
 
 // 設定画面で切り替えた瞬間にも、再生中の音へ反映する。サーバー同期で設定が更新された場合も
 // 同じ settings subscription を通るため、次の visibilitychange / focus を待たない。
+subscribeSettings(() => syncMasterGain());
