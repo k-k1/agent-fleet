@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -86,53 +85,7 @@ var sessionWireBinding = map[string]string{
 	"Carried":              "carried",
 }
 
-// sessionWireFields は sessionWire の実際の「Go フィールド名 → json キー」を reflect で読む。
-//
-// 🔴 **下の 2 本はどちらもここを originalとする。**②が `sessionWireBinding`（手書きの表）を
-// 材料にしていると、**構造体を直しても②に届かない**——免除の寿命を見張る逆検査が
-// 「Go 側から消えた／増えた」に鳴らなくなる（実測で緑になった）。
-// 表は①が守るもので、②が読むものではない。
-func sessionWireFields(t *testing.T) map[string]string {
-	t.Helper()
-	got := map[string]string{}
-	rt := reflect.TypeOf(sessionWire{})
-	for i := 0; i < rt.NumField(); i++ {
-		f := rt.Field(i)
-		tag := f.Tag.Get("json")
-		if tag == "" || tag == "-" {
-			continue
-		}
-		got[f.Name] = strings.Split(tag, ",")[0]
-	}
-	if len(got) == 0 {
-		t.Fatal("sessionWire から json タグを 1 つも読めなかった＝この検査が無言化している")
-	}
-	return got
-}
-
-// TestSessionWireFieldBinding は「同じ型の 2 つを入れ替える」取り違えを捕まえる。
-func TestSessionWireFieldBinding(t *testing.T) {
-	got := sessionWireFields(t)
-	for name, want := range sessionWireBinding {
-		g, ok := got[name]
-		if !ok {
-			t.Errorf("sessionWire に フィールド %s が無い（消えたか改名された）", name)
-			continue
-		}
-		if g != want {
-			t.Errorf("sessionWire.%s の json タグが %q（表は %q）"+
-				"——同じ型のフィールド同士でタグを入れ替えると、ワイヤのキー集合は変わらないまま値だけが入れ替わる",
-				name, g, want)
-		}
-	}
-	for name, key := range got {
-		if _, ok := sessionWireBinding[name]; !ok {
-			t.Errorf("sessionWire.%s (json:%q) が表に無い——足したなら表にも足すこと（Console 側の型にも要るはず）", name, key)
-		}
-	}
-}
-
-// --- ② 対応検査: sessionWire の json キー ↔ Console の Session 型 ---
+// --- ② 対応検査に使う免除表（家系の定義は contract_wire_test.go の cpContractFamilies）---
 
 // consoleOnlyExempt は「Console の Session に在るが、Go の sessionWire が出さない」ことが
 // **意図されている**キー。🔴 増やすときは必ず理由を書くこと。
@@ -161,66 +114,23 @@ var goOnlyExempt = map[string]string{
 	"archived": "【穴】sessionWire が出しているが Session に宣言が無い。",
 }
 
-func TestSessionWireMatchesConsoleType(t *testing.T) {
-	tsKeys := consoleInterfaceFields(t, consoleSessionTS, "Session")
-	goKeys := map[string]bool{}
-	for _, k := range sessionWireFields(t) { // 🔴 表ではなく実際の struct から
-		goKeys[k] = true
-	}
-
-	var tsOnly, goOnly []string
-	for k := range tsKeys {
-		if !goKeys[k] {
-			tsOnly = append(tsOnly, k)
-		}
-	}
-	for k := range goKeys {
-		if !tsKeys[k] {
-			goOnly = append(goOnly, k)
-		}
-	}
-	sort.Strings(tsOnly)
-	sort.Strings(goOnly)
-
-	for _, k := range tsOnly {
-		if _, ok := consoleOnlyExempt[k]; ok {
-			continue
-		}
-		t.Errorf("console/src/types/session.ts の Session が %q を宣言しているが、sessionWire は出さない"+
-			"——Console は常に undefined を読む（型検査は optional なので鳴らない）", k)
-	}
-	for _, k := range goOnly {
-		if _, ok := goOnlyExempt[k]; ok {
-			continue
-		}
-		t.Errorf("sessionWire が %q を出すが、console/src/types/session.ts の Session に無い"+
-			"——Console からは型の上で見えない", k)
-	}
-
-	// 🔴 免除の寿命の逆検査（README §4）。
-	//
-	// **免除が要らなくなる道は「揃う」と「消える」の 2 つある。片方だけ見ると片肺になる。**
-	// consoleOnlyExempt（TS に在って Go に無い）は、**Go が出すようになった**ときだけでなく
-	// **TS 側から消された**ときにも要らなくなる。後者を見ていないと、
-	// **免除に書いた理由が嘘のまま黙って残る**——`model` / `path` はまさに「消す」方向で
-	// 検討されているので、この向きが本命である。goOnlyExempt も対称に 2 方向を見る。
-	for k, why := range consoleOnlyExempt {
-		if goKeys[k] {
-			t.Errorf("免除 %q (%s) はもう要らない——sessionWire が出すようになった。consoleOnlyExempt から外すこと", k, why)
-		}
-		if !tsKeys[k] {
-			t.Errorf("免除 %q (%s) はもう要らない——console/src/types/session.ts の Session から消えた"+
-				"（両側に無いキーの免除は理由ごと嘘になる）。consoleOnlyExempt から外すこと", k, why)
-		}
-	}
-	for k, why := range goOnlyExempt {
-		if !goKeys[k] {
-			t.Errorf("免除 %q (%s) はもう要らない——sessionWire が出さなくなった"+
-				"（両側に無いキーの免除は理由ごと嘘になる）。goOnlyExempt から外すこと", k, why)
-		}
-		if tsKeys[k] {
-			t.Errorf("免除 %q (%s) はもう要らない——Console の Session が宣言するようになった。goOnlyExempt から外すこと", k, why)
-		}
+// sessionContractFamily は sessionWire 家系。**検査の中身は contract_wire_test.go の
+// checkContractFamily が持つ**（#343 以降、横展開のため表駆動に畳んだ）。
+// アサーションは #339 のときと同じ——①結び付き ②TS 走査の固定 ③両方向の突き合わせと 4 方向の寿命。
+func sessionContractFamily() contractFamily {
+	return contractFamily{
+		name:    "sessionWire",
+		goType:  reflect.TypeOf(sessionWire{}),
+		binding: sessionWireBinding,
+		tsPath:  consoleSessionTS,
+		tsName:  "Session",
+		tsKeys: keySet("name", "kind", "driver", "title", "color", "label", "repo", "workingCopyId",
+			"path", "dir", "subdir", "remoteUrl", "state", "alive", "resumable", "backgroundBusy",
+			"backgroundBusyReason", "rateLimitResumeAt", "createdAt", "model", "context", "branch",
+			"currentBranch", "branchDrift", "worktree", "exitReason", "exitCode", "exitSignal",
+			"carried", "locked", "keepAwakeUntil"),
+		tsOnly: consoleOnlyExempt,
+		goOnly: goOnlyExempt,
 	}
 }
 
@@ -287,7 +197,13 @@ export interface PreExtra {
 // 🔴 この検査が要る理由: `Session` は 1 行 1 フィールドなので、**走査が壊れていても
 // Session だけは通ってしまう。**案 A を他の家系へ写したとき、`a: string; b?: number;` の形が
 // 1 つでもあると、**取りこぼしたキーが「TS に無い」に化けて偽の赤／穴の見落としになる。**
-// 合成標本（testdata/contract_ts_probe.ts）は、実際に踏んだ形だけを並べてある。
+// 合成標本（上の tsProbeFixture）は、実際に踏んだ形だけを並べてある。
+//
+// 🔥 **レビュワーが #343 で実測**: 走査を壊す変異（`;` を文の区切りから外す／深さ判定を外す）を
+// 当てても、①`TestSessionWireFieldBinding` と ②`TestSessionWireMatchesConsoleType` は
+// **どちらも PASS のまま**だった——**実入力の `Session` が 1 行 1 フィールドなので、
+// 走査が壊れても本番の突き合わせは何も言わない。**この対照だけが鳴る。
+// **横展開する家系にも必ず合成標本を付けること**（実入力は易しすぎて対照にならない）。
 func TestTSInterfaceFieldsParser(t *testing.T) {
 	src := tsProbeFixture
 	for _, tc := range []struct {
@@ -342,7 +258,7 @@ func TestTSInterfaceFieldsParser(t *testing.T) {
 }
 
 // consoleInterfaceFields は TS の `interface <name> { ... }` の**深さ 1 の**フィールド名を返す。
-func consoleInterfaceFields(t *testing.T, path, name string) map[string]bool {
+func consoleInterfaceFields(t *testing.T, path, name string, wantAtLeast int) map[string]bool {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -353,11 +269,14 @@ func consoleInterfaceFields(t *testing.T, path, name string) map[string]bool {
 	if err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
-	// 🔴 「0 件でした」を結果として採らないための下限（走査が壊れたら Fatal）。
-	// ⚠️ **この下限は「一部の行だけ複数キー」を捕まえない**——数個取りこぼしても 10 は超えるため。
-	// そちらは TestTSInterfaceFieldsParser（合成標本）の担当。
-	if len(out) < 10 {
-		t.Fatalf("interface %s のフィールドを %d 個しか読めなかった＝TS の書き方が変わって走査が壊れている", name, len(out))
+	// 🔴 「0 件でした」を結果として採らないための下限。
+	// **下限は家系ごとに、固定したキー数そのもの**にしてある（定数の 10 にすると、
+	// キーが 6〜7 個の小さい家系で必ず落ち、逆に大きい家系では数個の取りこぼしを見逃す）。
+	// ⚠️ **この下限は「一部の行だけ複数キー」を捕まえない**——どの家系でも数個の取りこぼしは
+	// 素通りしうる。そちらは TestTSInterfaceFieldsParser（合成標本）の担当。
+	if len(out) < wantAtLeast {
+		t.Fatalf("interface %s のフィールドを %d 個しか読めなかった（表は %d 個）＝TS の書き方が変わって走査が壊れている",
+			name, len(out), wantAtLeast)
 	}
 	return out
 }
