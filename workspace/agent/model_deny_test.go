@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,7 +44,7 @@ func TestModelMatchesHiddenTokenBoundary(t *testing.T) {
 		{"opencode/glm-5.2", "glm-5.2", false},
 	}
 	for _, tt := range tests {
-		if got := modelMatchesHidden(tt.requested, tt.hidden); got != tt.want {
+		if got := sessionx.ModelMatchesHidden(tt.requested, tt.hidden); got != tt.want {
 			t.Errorf("modelMatchesHidden(%q, %q) = %v, want %v", tt.requested, tt.hidden, got, tt.want)
 		}
 	}
@@ -51,23 +52,23 @@ func TestModelMatchesHiddenTokenBoundary(t *testing.T) {
 
 func TestHiddenModelsForIgnoresJunkAndAllHiddenClaude(t *testing.T) {
 	writeUIPrefs(t, `{"hiddenModels":{"claude":["fable"," ",42],"codex":"nope"}}`)
-	if got := hiddenModelsFor("claude"); len(got) != 1 || got[0] != "fable" {
+	if got := sessionx.HiddenModelsFor("claude"); len(got) != 1 || got[0] != "fable" {
 		t.Fatalf("hiddenModelsFor(claude) = %v, want [fable]", got)
 	}
-	if got := hiddenModelsFor("codex"); got != nil { // 型違いは「除外なし」
+	if got := sessionx.HiddenModelsFor("codex"); got != nil { // 型違いは「除外なし」
 		t.Fatalf("hiddenModelsFor(codex) = %v, want nil", got)
 	}
-	if got := hiddenModelsFor("opencode"); got != nil { // 未設定
+	if got := sessionx.HiddenModelsFor("opencode"); got != nil { // 未設定
 		t.Fatalf("hiddenModelsFor(opencode) = %v, want nil", got)
 	}
 
 	// claude を全ティア除外した設定は無視する（固定4ティアしか無く「既定」の選択肢も
 	// 無いので、全部隠すと起動できるモデルが消える）。
 	writeUIPrefs(t, `{"hiddenModels":{"claude":["fable","opus","sonnet","haiku"]}}`)
-	if got := hiddenModelsFor("claude"); got != nil {
+	if got := sessionx.HiddenModelsFor("claude"); got != nil {
 		t.Fatalf("all-hidden claude = %v, want nil (fail-safe)", got)
 	}
-	if modelHidden("claude", "fable") {
+	if sessionx.ModelHidden("claude", "fable") {
 		t.Fatal("modelHidden(claude, fable) = true under the all-hidden fail-safe")
 	}
 }
@@ -109,13 +110,13 @@ func TestCreateSessionRejectsHiddenModel(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/sessions",
 			strings.NewReader(`{"kind":"claude","model":"`+model+`"}`))
 		rec := httptest.NewRecorder()
-		handleCreateSession(rec, req)
+		sessionx.HandleCreateSession(rec, req)
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "model_hidden") {
 			t.Fatalf("model %q: status = %d, body = %s, want 400 model_hidden", model, rec.Code, rec.Body.String())
 		}
 	}
 	// 除外していないティアはこのガードで落ちない。
-	if modelHidden("claude", "sonnet") {
+	if sessionx.ModelHidden("claude", "sonnet") {
 		t.Fatal("modelHidden(claude, sonnet) = true, want false")
 	}
 }

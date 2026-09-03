@@ -10,6 +10,7 @@ package main
 // 「日本語側は日本語である」ことだけを軽く確認する（英語版を両方に配ってしまう取り違えの検出）。
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"strings"
 	"testing"
 	"unicode"
@@ -56,20 +57,20 @@ func enPrompts() []langPrompt {
 	}
 	msgs := []chatx.ChatMessage{{Role: "user", Content: "使用量のグラフを作りたい"}}
 	return []langPrompt{
-		{"replySuggestPersona", replySuggestPersona},
+		{"replySuggestPersona", sessionx.ReplySuggestPersona},
 		{"replySuggestInstructions/session", func(l string) string {
-			return replySuggestInstructions(l, replyCounterpartSession)
+			return sessionx.ReplySuggestInstructions(l, sessionx.ReplyCounterpartSession)
 		}},
 		{"replySuggestInstructions/chat", func(l string) string {
-			return replySuggestInstructions(l, replyCounterpartChat)
+			return sessionx.ReplySuggestInstructions(l, sessionx.ReplyCounterpartChat)
 		}},
-		{"replySuggestLogHeader", replySuggestLogHeader},
+		{"replySuggestLogHeader", sessionx.ReplySuggestLogHeader},
 		// prompt 全体は会話ログ本文（原文＝日本語のことが多い）を含むので、枠だけを見る。
 		{"replySuggestPrompt/frame", func(l string) string {
-			return promptFrame(replySuggestPrompt(turns, l), replySuggestLogHeader(l))
+			return promptFrame(sessionx.ReplySuggestPrompt(turns, l), sessionx.ReplySuggestLogHeader(l))
 		}},
 		{"chatReplySuggestPrompt/frame", func(l string) string {
-			return promptFrame(chatx.ChatReplySuggestPrompt(msgs, l), replySuggestLogHeader(l))
+			return promptFrame(chatx.ChatReplySuggestPrompt(msgs, l), sessionx.ReplySuggestLogHeader(l))
 		}},
 		{"compactSummaryPromptFor", chatx.CompactSummaryPromptFor},
 		{"handoffPreambleFor", chatx.HandoffPreambleFor},

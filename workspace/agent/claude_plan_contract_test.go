@@ -22,6 +22,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"os"
 	"os/exec"
 	"regexp"
@@ -121,7 +122,7 @@ func TestClaudePlanApprovalContractLive(t *testing.T) {
 			time.Sleep(2 * time.Second)
 			continue
 		}
-		if mode = paneMode(session.KindClaude, tn); mode != "" {
+		if mode = sessionx.PaneMode(session.KindClaude, tn); mode != "" {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)

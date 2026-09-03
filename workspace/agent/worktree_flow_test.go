@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,12 +34,12 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	gitInit(t, parent) // on "main", plus a "feature" branch
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /sessions", handleListSessions)
-	mux.HandleFunc("POST /sessions", handleCreateSession)
-	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
+	mux.HandleFunc("GET /sessions", sessionx.HandleListSessions)
+	mux.HandleFunc("POST /sessions", sessionx.HandleCreateSession)
+	mux.HandleFunc("POST /sessions/{name}/stop", sessionx.HandleStopSession)
 	mux.HandleFunc("GET /repos", gitx.HandleListRepos)
 	mux.HandleFunc("POST /repos/{name}/checkout", gitx.HandleRepoCheckout)
-	mux.HandleFunc("POST /sessions/{name}/rename-branch", handleSessionRenameBranch)
+	mux.HandleFunc("POST /sessions/{name}/rename-branch", sessionx.HandleSessionRenameBranch)
 	mux.HandleFunc("DELETE /repos/{name}", gitx.HandleDeleteRepo)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()

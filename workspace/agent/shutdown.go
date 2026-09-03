@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"log"
 	"os"
 	"os/signal"
@@ -148,10 +149,10 @@ func gracefulShutdown(budget time.Duration) {
 // 昇格は冪等・非上書きなので、halt で既に昇格済みのものはそのまま残る。
 func promoteCarriedOnShutdown() {
 	for _, m := range session.ListMetas() {
-		if m.Archived || !sessionAlive(m) {
+		if m.Archived || !sessionx.SessionAlive(m) {
 			continue
 		}
-		promoteCarriedFor(m)
+		sessionx.PromoteCarriedFor(m)
 	}
 }
 

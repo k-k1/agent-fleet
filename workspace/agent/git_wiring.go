@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 )
@@ -24,14 +25,14 @@ func init() { gitx.Configure(gitDeps()) }
 // 作り物を使う**ので、ここが唯一「本物の値」を書く場所である。
 func gitDeps() gitx.Deps {
 	return gitx.Deps{
-		AbsPath:        absPath,
-		RepoLocked:     repoLocked,
-		LockedRepoDirs: lockedRepoDirs,
+		AbsPath:        sessionx.AbsPath,
+		RepoLocked:     sessionx.RepoLocked,
+		LockedRepoDirs: sessionx.LockedRepoDirs,
 
-		LiveSessionsInDir:   liveSessionsInDir,
-		LockedSessionsInDir: lockedSessionsInDir,
-		WorktreeHasSessions: worktreeHasSessions,
-		ManagedAlive:        managedAlive,
+		LiveSessionsInDir:   sessionx.LiveSessionsInDir,
+		LockedSessionsInDir: sessionx.LockedSessionsInDir,
+		WorktreeHasSessions: sessionx.WorktreeHasSessions,
+		ManagedAlive:        sessionx.ManagedAlive,
 
 		FinalizeSessionUsage: finalizeSessionUsage,
 

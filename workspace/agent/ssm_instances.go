@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"os"
 	"os/exec"
@@ -38,10 +39,10 @@ func handleSSMInstances(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_profile", "SSM profile is required")
 		return
 	}
-	cfg := ssmConfigPath("discovery-" + req.Profile)
+	cfg := sessionx.SsmConfigPath("discovery-" + req.Profile)
 	meta := session.SSMMeta{Profile: req.Profile, Region: req.Region, StartURL: req.StartURL,
 		SSORegion: req.SSORegion, AccountID: req.AccountID, RoleName: req.RoleName}
-	if err := writeSSMConfig(cfg, meta); err != nil {
+	if err := sessionx.WriteSSMConfig(cfg, meta); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 		return
 	}

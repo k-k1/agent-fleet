@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"strings"
 
@@ -78,7 +79,7 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// 使わないモデル（ui-prefs hiddenModels）を最後に落とす。ここが Console の
 	// ピッカーと MCP list_models の合流点なので、1 箇所で両方に効く（opencodeCatalog
 	// と同じ構図）。明示指定は handleCreateSession のガードが別に断る。
-	list = filterVisibleModels(r.PathValue("kind"), list)
+	list = sessionx.FilterVisibleModels(r.PathValue("kind"), list)
 	if list == nil {
 		list = []agents.ModelChoice{}
 	}

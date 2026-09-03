@@ -9,6 +9,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"os"
 	"os/exec"
 	"strings"
@@ -87,7 +88,7 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	// を認識できない場合は、最初のミラープロンプトが起動画面に食われる。
 	deadline := time.Now().Add(tuiContractReadyWait)
 	for time.Now().Before(deadline) {
-		if got := paneMode(spec.kind, tn); got != "" {
+		if got := sessionx.PaneMode(spec.kind, tn); got != "" {
 			if got != "Default" {
 				t.Fatalf("composer mode = %q, want Default\npane:\n%s", got, tmuxx.CapturePane(tn))
 			}
@@ -95,7 +96,7 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	if got := paneMode(spec.kind, tn); got == "" {
+	if got := sessionx.PaneMode(spec.kind, tn); got == "" {
 		t.Fatalf("composer readiness was never detected within %s\npane:\n%s", tuiContractReadyWait, tmuxx.CapturePane(tn))
 	}
 	// The first captured footer can precede the TUI's input-handler attachment by a

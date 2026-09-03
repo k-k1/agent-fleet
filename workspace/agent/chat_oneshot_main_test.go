@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"os"
 	"testing"
 	"time"
@@ -21,9 +22,9 @@ func TestUsageLedgerLive(t *testing.T) {
 	ctx = usagex.WithTag(ctx, usagex.Tag{
 		Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerManual, Ref: "slot99",
 	})
-	if _, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, titleSuggestPersona("ja"),
+	if _, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, sessionx.TitleSuggestPersona("ja"),
 		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します",
-		titleModel()); err != nil {
+		sessionx.TitleModel()); err != nil {
 		t.Fatalf("chatx.OneShotHeadless: %v", err)
 	}
 	rows := usagex.ReadRows()
@@ -63,11 +64,11 @@ func TestBranchSuggestLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, branchSuggestPersona, branchSuggestPrompt(oneShotLiveTurns()), titleModel())
+	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, sessionx.BranchSuggestPersona, sessionx.BranchSuggestPrompt(oneShotLiveTurns()), sessionx.TitleModel())
 	if err != nil {
 		t.Fatalf("chatx.OneShotHeadless: %v", err)
 	}
-	name := cleanBranchName(reply)
+	name := sessionx.CleanBranchName(reply)
 	if name == "" {
 		t.Fatalf("ブランチ名が空: reply=%q", reply)
 	}
@@ -81,11 +82,11 @@ func TestReplySuggestLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, replySuggestPersona("ja"), replySuggestPrompt(oneShotLiveTurns(), "ja"), replySuggestModel())
+	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, sessionx.ReplySuggestPersona("ja"), sessionx.ReplySuggestPrompt(oneShotLiveTurns(), "ja"), sessionx.ReplySuggestModel())
 	if err != nil {
 		t.Fatalf("chatx.OneShotHeadless: %v", err)
 	}
-	list := cleanSuggestedReplies(reply)
+	list := sessionx.CleanSuggestedReplies(reply)
 	if len(list) == 0 {
 		t.Fatalf("返信候補が空: reply=%q", reply)
 	}

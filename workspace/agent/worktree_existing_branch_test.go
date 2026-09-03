@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,7 +33,7 @@ func TestWorktreeExistingBranchGuard(t *testing.T) {
 	gitInit(t, parent) // on "main", plus a "feature" branch
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /sessions", handleCreateSession)
+	mux.HandleFunc("POST /sessions", sessionx.HandleCreateSession)
 	mux.HandleFunc("POST /repos/{name}/checkout", gitx.HandleRepoCheckout)
 	mux.HandleFunc("GET /repos/{name}/branches", gitx.HandleRepoBranches)
 	srv := httptest.NewServer(mux)
