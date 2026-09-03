@@ -79,8 +79,14 @@ var sessionWireBinding = map[string]string{
 	"Carried":              "carried",
 }
 
-// TestSessionWireFieldBinding は「同じ型の 2 つを入れ替える」取り違えを捕まえる。
-func TestSessionWireFieldBinding(t *testing.T) {
+// sessionWireFields は sessionWire の実際の「Go フィールド名 → json キー」を reflect で読む。
+//
+// 🔴 **下の 2 本はどちらもここを originalとする。**②が `sessionWireBinding`（手書きの表）を
+// 材料にしていると、**構造体を直しても②に届かない**——免除の寿命を見張る逆検査が
+// 「Go 側から消えた／増えた」に鳴らなくなる（実測で緑になった）。
+// 表は①が守るもので、②が読むものではない。
+func sessionWireFields(t *testing.T) map[string]string {
+	t.Helper()
 	got := map[string]string{}
 	rt := reflect.TypeOf(sessionWire{})
 	for i := 0; i < rt.NumField(); i++ {
@@ -94,6 +100,12 @@ func TestSessionWireFieldBinding(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("sessionWire から json タグを 1 つも読めなかった＝この検査が無言化している")
 	}
+	return got
+}
+
+// TestSessionWireFieldBinding は「同じ型の 2 つを入れ替える」取り違えを捕まえる。
+func TestSessionWireFieldBinding(t *testing.T) {
+	got := sessionWireFields(t)
 	for name, want := range sessionWireBinding {
 		g, ok := got[name]
 		if !ok {
@@ -145,7 +157,7 @@ var goOnlyExempt = map[string]string{
 func TestSessionWireMatchesConsoleType(t *testing.T) {
 	tsKeys := consoleInterfaceFields(t, consoleSessionTS, "Session")
 	goKeys := map[string]bool{}
-	for _, k := range sessionWireBinding {
+	for _, k := range sessionWireFields(t) { // 🔴 表ではなく実際の struct から
 		goKeys[k] = true
 	}
 
@@ -178,13 +190,27 @@ func TestSessionWireMatchesConsoleType(t *testing.T) {
 			"——Console からは型の上で見えない", k)
 	}
 
-	// 🔴 免除の寿命の逆検査（README §4）。両側が揃った免除は、その場で外させる。
+	// 🔴 免除の寿命の逆検査（README §4）。
+	//
+	// **免除が要らなくなる道は「揃う」と「消える」の 2 つある。片方だけ見ると片肺になる。**
+	// consoleOnlyExempt（TS に在って Go に無い）は、**Go が出すようになった**ときだけでなく
+	// **TS 側から消された**ときにも要らなくなる。後者を見ていないと、
+	// **免除に書いた理由が嘘のまま黙って残る**——`model` / `path` はまさに「消す」方向で
+	// 検討されているので、この向きが本命である。goOnlyExempt も対称に 2 方向を見る。
 	for k, why := range consoleOnlyExempt {
 		if goKeys[k] {
 			t.Errorf("免除 %q (%s) はもう要らない——sessionWire が出すようになった。consoleOnlyExempt から外すこと", k, why)
 		}
+		if !tsKeys[k] {
+			t.Errorf("免除 %q (%s) はもう要らない——console/src/types/session.ts の Session から消えた"+
+				"（両側に無いキーの免除は理由ごと嘘になる）。consoleOnlyExempt から外すこと", k, why)
+		}
 	}
 	for k, why := range goOnlyExempt {
+		if !goKeys[k] {
+			t.Errorf("免除 %q (%s) はもう要らない——sessionWire が出さなくなった"+
+				"（両側に無いキーの免除は理由ごと嘘になる）。goOnlyExempt から外すこと", k, why)
+		}
 		if tsKeys[k] {
 			t.Errorf("免除 %q (%s) はもう要らない——Console の Session が宣言するようになった。goOnlyExempt から外すこと", k, why)
 		}
