@@ -124,6 +124,13 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
       ok ? toast(tr("repo.branch_copied", { branch: b }), { kind: "success" }) : toast(tr("common.copy_failed")),
     );
   };
+  // 作業コピーは ~/repos の直下にしか作られない（Agent の GetRepos は repos ルートを
+  // 1 階層だけ走査する）ので、フォルダ名がそのまま repos からの相対パス。
+  const copyDir = () => {
+    void copyText(r.name).then((ok) =>
+      ok ? toast(tr("repo.dir_copied", { dir: r.name }), { kind: "success" }) : toast(tr("common.copy_failed")),
+    );
+  };
 
   // Context menu: open at the cursor, clamp within the rail, close on outside
   // click / Esc / window blur. Clamped every render (no deps): the JSX re-applies
@@ -166,6 +173,9 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
         tabIndex={-1}
         title={
           (running ? tr("repo.row_title_running") + "\n" : tr("repo.row_title") + "\n") +
+          // WT 行はブランチ名を名前として出す（identity はブランチ）ので、どの
+          // フォルダなのかが行からは読めない。ツールチップでディレクトリ名を明示する。
+          (r.worktree ? tr("repo.dir_line", { dir: r.name }) + "\n" : "") +
           (r.path || "") +
           (isSvn && r.url ? "\n" + r.url : "") +
           (r.provider ? "\n" + tr("repo.remote_line", { remote: r.remote || providerLabel(r.provider) }) : "")
@@ -189,7 +199,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               the current branch inline in muted small type — the old second meta
               line (branch + provider) is gone; the provider lives in the tooltip. */}
           <span className="repo-id">
-            <span className="repo-name" title={r.worktree ? r.name : undefined}>
+            <span className="repo-name" title={r.worktree ? tr("repo.dir_line", { dir: r.name }) : undefined}>
               {/* Folder-flavored icons (shared with the ファイル tree's top level):
                   base clone = root-folder, worktree = git-branch. */}
               <Icon name={r.worktree ? "git-branch" : "root-folder"} />
@@ -378,6 +388,11 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </button>
               </li>
             )}
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); copyDir(); }}>
+                <Icon name="copy" /> {tr("repo.copy_dir")}
+              </button>
+            </li>
             {!isSvn && onFF && !canFastForwardFromParent(r) && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onFF(); }}>
@@ -424,14 +439,18 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </button>
               </li>
             )}
-            <li className="ui-menu-sep" role="separator" />
-            {kinds.map((k) => (
-              <li key={k}>
-                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onLaunch(k, false); }}>
-                  <Icon name={kindIcon(k)} /> {tr("repo.launch_kind", { label: kindLabel(k) })}
-                </button>
-              </li>
-            ))}
+            {/* 起動はモーダル（起動）と ▼ クイックメニューの担当。ここに全種別を並べても
+                同じ導線の重複なので、モーダルに出ない shell だけを残す。 */}
+            {kinds.includes("shell") && (
+              <>
+                <li className="ui-menu-sep" role="separator" />
+                <li>
+                  <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onLaunch("shell", false); }}>
+                    <Icon name={kindIcon("shell")} /> {tr("repo.launch_kind", { label: kindLabel("shell") })}
+                  </button>
+                </li>
+              </>
+            )}
             {/* 作業グループ (docs/log/52): membership toggles — base rows only. */}
             {!r.worktree && wsets.length > 0 && (
               <>
