@@ -118,7 +118,7 @@ func handleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		if _, err := mcpx.StartManagedSession(d, m); err != nil {
 			m.Driver = prev
 			session.WriteMeta(m)
-			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			writeRuntimeErr(w, err)
 			return
 		}
 	} else {

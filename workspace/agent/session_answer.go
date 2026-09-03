@@ -127,7 +127,7 @@ func handleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 		}
 		h, err := d.Resume(meta)
 		if err != nil {
-			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			writeRuntimeErr(w, err)
 			return
 		}
 		labels, err := applyManagedAnswerAll(h, name, req.Choices)

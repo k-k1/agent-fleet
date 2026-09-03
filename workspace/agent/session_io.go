@@ -607,7 +607,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	}
 	h, err := d.Resume(meta)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		writeRuntimeErr(w, err)
 		return
 	}
 	// TUI 側と同じ理由で、由来は送る前に記録する（recordInjection のコメント）。managed は
@@ -622,7 +622,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 				"a question is awaiting an answer; answer it via the question card, not free text")
 			return
 		}
-		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		writeRuntimeErr(w, err)
 		return
 	}
 	markSessionWorking(meta.Name)

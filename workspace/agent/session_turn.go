@@ -136,13 +136,13 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 	}
 	h, err := d.Resume(meta)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		writeRuntimeErr(w, err)
 		return
 	}
 	switch req.Op {
 	case "interrupt":
 		if err := h.Interrupt(); err != nil {
-			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			writeRuntimeErr(w, err)
 			return
 		}
 	default: // start / steer
@@ -164,7 +164,7 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 					"a question is awaiting an answer; answer it via the question card, not free text")
 				return
 			}
-			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			writeRuntimeErr(w, err)
 			return
 		}
 		// 楽観 working は tui と同じ動機（送信直後のポーリングが古い idle を読まない）。
@@ -216,7 +216,7 @@ func handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := d.Resume(meta)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		writeRuntimeErr(w, err)
 		return
 	}
 	if err := h.Respond(reply); err != nil {
@@ -266,12 +266,12 @@ func handleSessionSettingsGet(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := d.Resume(meta)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		writeRuntimeErr(w, err)
 		return
 	}
 	snap, err := h.Snapshot()
 	if err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		writeRuntimeErr(w, err)
 		return
 	}
 	caps := d.Capabilities()
@@ -328,7 +328,7 @@ func handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := d.Resume(meta)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		writeRuntimeErr(w, err)
 		return
 	}
 	patch := agents.ThreadSettings{
@@ -336,7 +336,7 @@ func handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 		ClearModel: req.ClearModel, ClearEffort: req.ClearEffort,
 	}
 	if err := h.UpdateSettings(patch); err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		writeRuntimeErr(w, err)
 		return
 	}
 	// Persist the desired next-turn settings only after the native update succeeds.

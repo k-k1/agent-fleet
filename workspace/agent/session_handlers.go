@@ -757,7 +757,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		d, _ := driverOf(meta)
 		h, err := mcpx.StartManagedSession(d, meta)
 		if err != nil {
-			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			writeRuntimeErr(w, err)
 			return
 		}
 		session.WriteMeta(meta)
@@ -938,7 +938,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, err := mcpx.StartManagedSession(d, meta); err != nil {
-			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			writeRuntimeErr(w, err)
 			return
 		}
 		session.WriteMeta(meta)
@@ -1211,7 +1211,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		if _, err := mcpx.StartManagedSession(d, newMeta); err != nil {
 			m.Archived = false
 			session.WriteMeta(m)
-			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			writeRuntimeErr(w, err)
 			return
 		}
 		session.WriteMeta(newMeta)
