@@ -59,7 +59,22 @@ func TestWireMapGolden(t *testing.T) {
 		t.Logf("wrote %s (%d 行 / %d サイト)", wireMapGoldenPath, len(got), len(sites))
 		return
 	}
-	assertGoldenLines(t, wireMapGoldenPath, got)
+	assertWireMapGoldenLines(t, wireMapGoldenPath, got)
+}
+
+// assertWireMapGoldenLines — routes/wire 用の assertGoldenLines と同じ突き合わせだが、
+// **直し方の案内をこのゴールデンのものにする**。
+// 共有ヘルパは `-update-routes-golden` を案内するので、そのまま使うと
+// **赤を見た人に間違ったフラグを教える**（しかもそのフラグは何も直さない）。
+func assertWireMapGoldenLines(t *testing.T, path string, got []string) {
+	t.Helper()
+	if diff := lineDiff(readGoldenLines(t, path), got); diff != "" {
+		t.Errorf("%s と一致しない:\n%s\n"+
+			"意図した増減なら -update-wiremap-golden で撮り直し、**撮り直した理由を PR に書く**。\n"+
+			"  行が消えた = その map サイトが struct になった（変換したなら意図どおり）か、消えた。\n"+
+			"  キーが増減した = ワイヤが変わった可能性そのもの。等価テストで示せていないなら止まること。",
+			path, diff)
+	}
 }
 
 // TestWireMapGoldenActuallyOpensMaps は「撮れているつもりで空」を防ぐ。
@@ -76,12 +91,29 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 	}
 
 	t.Run("同一形状が複数サイトあることを数えている", func(t *testing.T) {
-		// handleFSLineMarks は同じキー集合を複数の分岐から書き出す。
-		// 🔴 件数を数えていないと**そのうち 1 つを消しても差分が出ない**
+		// 🔴 件数を数えていないと**同じ形状の N サイトのうち 1 つを消しても差分が出ない**
 		//（assertGoldenLines の突き合わせは集合演算なので）。
-		got := byFunc["handleFSLineMarks"]
-		if len(got) < 2 {
-			t.Fatalf("handleFSLineMarks の書き出し地点が %d 件しか取れていない（複数あるはず）", len(got))
+		//
+		// ⚠️ **標本に「変換対象のサイト」を選んではいけない。**
+		// 最初は handleFSLineMarks を名指ししていたが、**この track がそれを struct 化した
+		// 瞬間にこの保証ごと落ちた**（実測）。**自分の仕事で消える標本は保証にならない。**
+		// 名指しは dyn 印つき（＝構造的に struct 化できない＝消えない）ものから採り、
+		// 併せて「複数サイトを持つ関数が 1 つ以上ある」ことを性質として見る。
+		multi := 0
+		for _, ss := range byFunc {
+			if len(ss) >= 2 {
+				multi++
+			}
+		}
+		if multi == 0 {
+			t.Fatal("同一関数から複数サイトを書き出している関数が 1 つも無い＝件数の数え上げが効いていない")
+		}
+		t.Logf("複数サイトを持つ関数: %d 個", multi)
+
+		// handleAgentRTKGain は 4 サイトのうち 1 つが dyn（rtk の出力をそのまま中継）で、
+		// **構造的に struct 化できないので変換で消えない。**
+		if got := byFunc["handleAgentRTKGain"]; len(got) < 2 {
+			t.Errorf("handleAgentRTKGain の書き出し地点が %d 件しか取れていない（複数あるはず）", len(got))
 		}
 	})
 
