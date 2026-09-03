@@ -282,7 +282,7 @@ func TestUnreadableOpencodeConfigIsLeftAloneAndReported(t *testing.T) {
 		t.Fatalf("failure not reported: %v", instrErrs)
 	}
 	st := instrState()
-	for _, tgt := range st["targets"].([]instrTarget) {
+	for _, tgt := range st.Targets {
 		if tgt.Kind == "opencode" && (tgt.Applied || tgt.Error == "") {
 			t.Fatalf("opencode row must show it is not in effect: %+v", tgt)
 		}
@@ -341,7 +341,7 @@ func TestKiroLeavesOtherSteeringFilesAlone(t *testing.T) {
 
 func TestStateListsUnsupportedKindsWithReasons(t *testing.T) {
 	instrEnv(t)
-	targets := instrState()["targets"].([]instrTarget)
+	targets := instrState().Targets
 	// cursor だけは実装待ちではなく**構造的に配れない**（ローカルに user 層が無い）。
 	want := map[string]string{"cursor": "no_user_scope"}
 	for _, tgt := range targets {

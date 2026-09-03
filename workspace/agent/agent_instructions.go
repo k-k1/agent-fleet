@@ -140,7 +140,7 @@ func errCode(err error) string {
 
 // instrState builds the REST snapshot, checking each artifact on disk so "applied"
 // is measured rather than assumed.
-func instrState() map[string]any {
+func instrState() instrStateWire {
 	st := userinstr.Load()
 	targets := make([]instrTarget, 0, len(instrSupportedKinds)+len(instrUnsupported))
 	for _, kind := range instrSupportedKinds {
@@ -171,15 +171,15 @@ func instrState() map[string]any {
 	for _, u := range instrUnsupported {
 		targets = append(targets, instrTarget{Kind: u.kind, Reason: u.reason})
 	}
-	return map[string]any{
-		"text":      st.Text,
-		"bytes":     len(st.Text),
-		"max_bytes": userinstr.MaxBytes,
-		"enabled":   st.Enabled(),
-		"path":      userinstr.NotesPath(),
-		"targets":   targets,
+	return instrStateWire{
+		Text:     st.Text,
+		Bytes:    len(st.Text),
+		MaxBytes: userinstr.MaxBytes,
+		Enabled:  st.Enabled(),
+		Path:     userinstr.NotesPath(),
+		Targets:  targets,
 		// フリート方針を read-only で覗く導線（なぜ上書きできないかが画面で分かる）。
-		"fleet_bytes": len(userinstr.FleetNotes()),
+		FleetBytes: len(userinstr.FleetNotes()),
 	}
 }
 
@@ -293,4 +293,24 @@ func handleUserNotesPreview(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"kind": kind, "path": path, "exists": err == nil, "content": string(body),
 	})
+}
+
+// instrStateWire — GET/PUT /instructions のレスポンス（Console の `Payload`、
+// console/src/features/settings/personal/InstructionsTab.tsx）。
+//
+// 旧: map[string]any{"text":…, "bytes":…, "max_bytes":…, "enabled":…, "path":…,
+//
+//	"targets":…, "fleet_bytes":…}
+//
+// 7 キーとも無条件なので **omitempty は付けない**。text は空文字を取りうる（未記入）ので、
+// 付けるとキーごと消えて Console の初期表示が変わる。
+// 形状関数なので、これ 1 つで 2 サイト（GET と PUT）が型を得る。
+type instrStateWire struct {
+	Text       string        `json:"text"`
+	Bytes      int           `json:"bytes"`
+	MaxBytes   int           `json:"max_bytes"`
+	Enabled    bool          `json:"enabled"`
+	Path       string        `json:"path"`
+	Targets    []instrTarget `json:"targets"`
+	FleetBytes int           `json:"fleet_bytes"`
 }
