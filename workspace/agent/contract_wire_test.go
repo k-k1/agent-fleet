@@ -181,6 +181,7 @@ func TestContractFamilies(t *testing.T) {
 	}
 }
 
+// ===== 共有機構ここから（control-plane と workspace/agent で byte 一致・下の検査が見張る）=====
 // contractFamily は 1 家系分の契約。
 type contractFamily struct {
 	name string // 家系名（エラーメッセージ用）
@@ -759,3 +760,5 @@ func TestGoStructFieldsFromSourceGuards(t *testing.T) {
 		t.Error("json タグ 0 件で error にならない＝この経路が無言化しうる")
 	}
 }
+
+// ===== 共有機構ここまで =====
