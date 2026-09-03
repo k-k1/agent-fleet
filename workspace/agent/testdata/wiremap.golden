@@ -5,7 +5,7 @@
 #   dyn     = 非リテラルのキーがある（キー集合は静的に確定しない＝struct 化できない）
 #   partial = 変数が複数回代入されており、キー集合を開けきれていない
 # 🔴 キーが減った/増えた差分は、ワイヤが変わった可能性そのもの。撮り直す理由を PR に書くこと。
-# count: 187
+# count: 184
 agent_instructions.go handleUserNotesPreview x1 {content,exists,kind,path}
 agent_models.go handleAgentModels x1 {models}
 agent_rtk.go handleAgentRTKGain x1 {available}
@@ -127,11 +127,9 @@ internal/gitx/git_view.go HandleRepoShow x1 {author,body,date,diff,files,hash,sh
 internal/gitx/git_view.go HandleRepoSubmodules x3 {submodules}
 internal/gitx/git_view.go gitPathsOp x1 {changes}
 internal/mcpx/mcp_servers.go HandleServerDelete x1 {deleted}
-internal/mcpx/mcp_servers.go HandleServersGet x1 {servers,shadowed,tenantFetchedAt}
 internal/mcpx/mcp_tenant.go HandleTenantRefresh x1 {fetch,servers,shadowed,tenantFetchedAt}
 internal/memoryx/memory_export.go HandleMemoryExport x1 {error,secrets}
 internal/memoryx/memory_handlers.go HandleMemoryDiff x1 {diff,from,path,to}
-internal/memoryx/memory_handlers.go HandleMemoryRoots x1 {auto,autoLocked,inactive,lastSnapshot,roots} cond{lastSnapshot}
 internal/memoryx/memory_handlers.go HandleMemorySettings x1 {auto,autoLocked}
 internal/memoryx/memory_handlers.go HandleMemorySnapshots x1 {snapshots}
 internal/memoryx/memory_handlers.go HandleMemoryTree x1 {kinds,projects,rev}
@@ -171,7 +169,6 @@ internal/sessionx/session_transcript.go HandleSessionMessages x1 {alive,answers,
 internal/sessionx/session_transcript.go handleGenericMessages x1 {alive,context,cursor,files,firstLine,hasMore,jsonlLines,jsonlMatches,jsonlMtime,jsonlPath,messages,mode,name,pendingQuestions,queuedPrompts,reset,status,suggestedTitle,tasks,terminalState} cond{context,files,firstLine,hasMore,mode,pendingQuestions,queuedPrompts,suggestedTitle,tasks,terminalState}
 internal/sessionx/session_turn.go HandleSessionRespond x1 {id,responded}
 internal/sessionx/session_turn.go HandleSessionSettings x1 {effort,mode,model,updated}
-internal/sessionx/session_turn.go HandleSessionSettingsGet x1 {dynamicEffort,dynamicMode,dynamicModel,effort,mode,model}
 internal/sessionx/session_turn.go HandleSessionTurn x2 {op,sent}
 internal/sessionx/session_turn.go handleManagedTurn x1 {op,sent}
 internal/sessionx/session_usage.go HandleSessionsUsage x1 {sessions}

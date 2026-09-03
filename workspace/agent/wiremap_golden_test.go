@@ -27,6 +27,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -148,6 +149,95 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 	})
 }
 
+// TestWireMapScanExclusionsAreJustified — 走査の除外に付けた理由を機械で検査する。
+//
+// 🔴 除外の理由は「製品バイナリの依存グラフに入らない」。**主張ではなく `go list -deps` で示す**
+// （`git grep` では「入らない」は言えない）。**main からも ./... のどこからも辿れないこと**を見る。
+// 誰かが製品コードから import した瞬間にここが赤くなり、除外は取り消される。
+//
+// これは免除の寿命の逆検査（§4）と同じ形——**除外が要らなくなる／許されなくなる道を機械が見張る。**
+func TestWireMapScanExclusionsAreJustified(t *testing.T) {
+	if len(wireMapScanExcluded) == 0 {
+		t.Skip("除外なし")
+	}
+	// 🔴 go が無ければ Skip ではなく Fatal。Skip に落ちると
+	// 「理由が検査されていない」ことに誰も気付かないまま緑になる。
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Fatalf("go が無いので除外の理由を検査できない: %v", err)
+	}
+	mod, err := exec.Command("go", "list", "-m").Output()
+	if err != nil {
+		t.Fatalf("go list -m: %v", err)
+	}
+	modPath := strings.TrimSpace(string(mod))
+
+	// 検査 1: 製品バイナリ（main）の依存グラフに入らない。
+	out, err := exec.Command("go", "list", "-deps", ".").Output()
+	if err != nil {
+		t.Fatalf("go list -deps .: %v", err)
+	}
+	deps := strings.Fields(string(out))
+	for pkg, why := range wireMapScanExcluded {
+		full := modPath + "/" + pkg
+		for _, d := range deps {
+			if d == full {
+				t.Errorf("走査から外している %s が `go list -deps .` に出る。\n"+
+					"  外してよい理由は %q だったが、**製品バイナリから辿れるようになっている**。\n"+
+					"  除外を取り消して走査対象に戻すか、import を外すこと。", pkg, why)
+			}
+		}
+	}
+	t.Logf("go list -deps .: %d パッケージ（除外対象は不在）", len(deps))
+
+	// 検査 2: 非テストの import 元が自分以外に居ない。
+	// 🔴 `go list -deps ./...` は**そのパッケージ自身を必ず含む**ので、
+	// 「出るか出ないか」では判定できない（最初これで書いて偽の赤を出した）。
+	// .Imports は**テストファイルの import を含まない**ので、
+	// 「非テストの誰かが import したか」はここで見るのが正しい。
+	lst, err := exec.Command("go", "list", "-f", "{{.ImportPath}} {{join .Imports \" \"}}", "./...").Output()
+	if err != nil {
+		t.Fatalf("go list -f ./...: %v", err)
+	}
+	nchecked := 0
+	for _, line := range strings.Split(string(lst), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		importer, imports := fields[0], fields[1:]
+		nchecked++
+		for pkg, why := range wireMapScanExcluded {
+			full := modPath + "/" + pkg
+			if importer == full {
+				continue // 自分自身は数えない
+			}
+			for _, im := range imports {
+				if im == full {
+					t.Errorf("%s が非テストコードから %s を import している。\n"+
+						"  外してよい理由は %q だった。**テスト専用ではなくなっている。**",
+						importer, pkg, why)
+				}
+			}
+		}
+	}
+	if nchecked == 0 {
+		t.Fatal("go list が 1 パッケージも返さなかった（検査が空回りしている）")
+	}
+	t.Logf("非テスト import を検査したパッケージ: %d", nchecked)
+}
+
+// TestWireMapScanExclusionsActuallySkip — 除外が**実際に効いている**ことを見る。
+// 🔴 除外表に書いただけで走査側に繋がっていなければ、上の理由検査は
+// 「使われていない表」を検査しているだけになる（#345 で踏んだ「写しを検査していた」と同族）。
+func TestWireMapScanExclusionsActuallySkip(t *testing.T) {
+	for _, s := range scanWireMapSites(t, ".") {
+		dir := filepath.ToSlash(filepath.Dir(s.File))
+		if why, skip := wireMapScanExcluded[dir]; skip {
+			t.Errorf("%s は除外対象（%s）なのに走査結果に出ている＝除外が効いていない", s.File, why)
+		}
+	}
+}
+
 // --- ゴールデンの行 ---
 
 // wireMapLines は 1 行 = 「同じ関数・同じキー集合のサイト群」。
@@ -230,6 +320,18 @@ type wireMapSite struct {
 	Partial  bool
 }
 
+// wireMapScanExcluded — 走査から外すパッケージと、**外してよい理由**。
+//
+// 🔴 「テスト用だから」を人間の言葉で書いただけでは、次に誰かが internal/ 直下に
+// テスト用でないものを置いたとき一緒に素通りする。**理由そのものを機械で検査する**
+// （TestWireMapScanExclusionsAreJustified）。理由が成り立たなくなったら赤くなる。
+//
+// ⚠️ ここは**パッケージの完全一致**で照合する。前方一致にすると
+// `internal/wiretestfoo` のような別物まで巻き込む。
+var wireMapScanExcluded = map[string]string{
+	"internal/wiretest": "テストからしか import されない共有ハーネスで、製品バイナリの依存グラフに入らない",
+}
+
 // wireMapHelpers — ヘルパ本体の中の書き出しは数えない（封筒であって DTO ではない）。
 var wireMapHelpers = map[string]bool{
 	"writeJSON": true, "WriteJSON": true, "writeAPIErr": true, "WriteErr": true, "writeErr": true,
@@ -246,6 +348,9 @@ func scanWireMapSites(t *testing.T, root string) []wireMapSite {
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 			return err
+		}
+		if _, skip := wireMapScanExcluded[filepath.ToSlash(filepath.Dir(strings.TrimPrefix(p, "./")))]; skip {
+			return nil
 		}
 		f, perr := parser.ParseFile(fset, p, nil, 0)
 		if perr != nil {

@@ -87,18 +87,18 @@ func HandleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 		}
 		views = append(views, v)
 	}
-	out := map[string]any{
-		"roots": views,
+	out := memoryRootsWire{
+		Roots: views,
 		// 宣言はあるが今は有効でないルート（codex memories が未有効 等）を理由付きで
 		// 返す。黙って落とすと Console が「なぜ出てこないか」も「どう有効化するか」も
 		// 示せない（docs/log/39 P4）。
-		"inactive": memoryInactiveRoots(),
-		"auto":     memoryAutoEnabled(),
+		Inactive: memoryInactiveRoots(),
+		Auto:     memoryAutoEnabled(),
 		// locked = 運用側が AF_MEMORY_SNAPSHOT で止めている（UI トグルでは戻せない）。
-		"autoLocked": memoryAutoLocked(),
+		AutoLocked: memoryAutoLocked(),
 	}
 	if head := memoryHeadTime(); !head.IsZero() {
-		out["lastSnapshot"] = head.Format(time.RFC3339)
+		out.LastSnapshot = head.Format(time.RFC3339)
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -324,4 +324,24 @@ func HandleMemoryImportApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// memoryRootsWire — GET /memory/roots のレスポンス（Console の `RootsPayload`、
+// console/src/features/settings/memory/memoryTypes.ts）。
+//
+// 旧: map[string]any{"roots":…, "inactive":…, "auto":…, "autoLocked":…} ＋
+//
+//	head が非ゼロのときだけ "lastSnapshot" を足す。
+//
+// 🔴 **lastSnapshot だけが条件付きキー**なので、そこだけ omitempty を付ける。
+// これが忠実なのは、**値が RFC3339 の書式で必ず非空**だから——「在って空文字」という
+// 状態を取れないので、omitempty が消すのは「無い」場合だけになる。
+// （値が空文字を取りうるキーに omitempty を付けると、**在るのに消える**。）
+// 他の 4 キーは無条件なので付けない。
+type memoryRootsWire struct {
+	Roots        []memoryRootView     `json:"roots"`
+	Inactive     []memoryInactiveRoot `json:"inactive"`
+	Auto         bool                 `json:"auto"`
+	AutoLocked   bool                 `json:"autoLocked"`
+	LastSnapshot string               `json:"lastSnapshot,omitempty"`
 }
