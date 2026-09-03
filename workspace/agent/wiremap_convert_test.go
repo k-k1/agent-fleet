@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/wiretest"
 )
 
 // --- ① handleFSLineMarks（Console: LineMarks）---
@@ -35,7 +37,7 @@ func TestWireEquivLineMarks(t *testing.T) {
 		// nil は `null`・空は `[]` で別物なので、空スライスの形を明示的に測る。
 		{Added: []int{}, Modified: []int{}, Deleted: []int{}},
 	}
-	got := assertWireEquiv(t, "handleFSLineMarks", inputs,
+	got := wiretest.AssertEquiv(t, "handleFSLineMarks", inputs,
 		func(in lineMarksIn) any { // 旧（fs_git.go の map リテラルの写し）
 			return map[string]any{"added": in.Added, "modified": in.Modified, "deleted": in.Deleted}
 		},
@@ -67,7 +69,7 @@ func TestWireEquivInstrState(t *testing.T) {
 		// nil（`null`）と空（`[]`）は別物なので両方の形を測る。
 		{Text: "", MaxBytes: 8192, Enabled: false, Path: "/x", Targets: []instrTarget{}, FleetBytes: 0},
 	}
-	got := assertWireEquiv(t, "instrState", inputs,
+	got := wiretest.AssertEquiv(t, "instrState", inputs,
 		func(in instrStateIn) any { // 旧（agent_instructions.go の map リテラルの写し）
 			return map[string]any{
 				"text":        in.Text,
@@ -96,9 +98,14 @@ func TestWireEquivInstrState(t *testing.T) {
 // json タグを改名しても**ゴールデンも旧駆動テストも PASS**で、
 // **赤くなるのは等価テストだけ**。だから「等価テストが在ること」自体を検査する。
 func TestWireEquivConvertedSitesAreAllCovered(t *testing.T) {
+	// 🔴 モジュール全体の一覧。等価テストが**別パッケージに在るもの**も並べる
+	// （wire 型は非公開なので、証明はそれぞれのパッケージの中にしか置けない）。
 	covered := map[string]string{
-		"lineMarksWire":  "TestWireEquivLineMarks",
-		"instrStateWire": "TestWireEquivInstrState",
+		"lineMarksWire":             "TestWireEquivLineMarks（package main）",
+		"instrStateWire":            "TestWireEquivInstrState（package main）",
+		"mcpRegistryWire":           "TestWireEquivMCPRegistry（internal/mcpx）",
+		"memoryRootsWire":           "TestWireEquivMemoryRoots（internal/memoryx）",
+		"managedThreadSettingsWire": "TestWireEquivManagedThreadSettings（internal/sessionx）",
 	}
 	declared := wiremapConvertedWireTypes(t, ".")
 	for _, name := range declared {
