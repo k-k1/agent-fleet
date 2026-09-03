@@ -1,0 +1,198 @@
+# map[string]any を直に返している JSON 書き出し地点のキー集合。生成物 —— 手で編集しない。
+# 更新: cd workspace/agent && go test -run TestWireMapGolden -update-wiremap-golden ./...
+# 形式: <ファイル> <関数> x<同一形状の件数> {キー集合} [cond{条件付きキー}] [dyn|partial]
+#   cond    = 条件文の中で足されるキー（struct 化するなら omitempty の要否を判断する対象）
+#   dyn     = 非リテラルのキーがある（キー集合は静的に確定しない＝struct 化できない）
+#   partial = 変数が複数回代入されており、キー集合を開けきれていない
+# 🔴 キーが減った/増えた差分は、ワイヤが変わった可能性そのもの。撮り直す理由を PR に書くこと。
+# count: 190
+agent_instructions.go handleUserNotesGet x1 {bytes,enabled,fleet_bytes,max_bytes,path,targets,text}
+agent_instructions.go handleUserNotesPreview x1 {content,exists,kind,path}
+agent_instructions.go handleUserNotesPut x1 {bytes,enabled,fleet_bytes,max_bytes,path,targets,text}
+agent_models.go handleAgentModels x1 {models}
+agent_rtk.go handleAgentRTKGain x1 {available}
+agent_rtk.go handleAgentRTKGain x1 {available} dyn
+agent_rtk.go handleAgentRTKGain x2 {available,error}
+agent_rtk.go handleAgentRTKGet x1 {agy_rtk,codex_rtk,copilot_rtk,opencode_rtk,rtk_available}
+agent_rtk.go handleAgentRTKPut x1 {agy_rtk,codex_rtk,copilot_rtk,opencode_rtk,rtk_available}
+assistant_turn.go handleAssistantTurn x1 {conv,reply,slug}
+assistants.go handleAssistantDelete x1 {ok}
+assistants.go handleAssistantsList x1 {assistants}
+cleanup_ops.go handleDeleteBranch x1 {archive,deleted}
+cleanup_ops.go handleDeleteSession x1 {archive,deleted}
+cleanup_ops.go handleDeleteSession x1 {deleted}
+cleanup_ops.go handleListCleanupArchives x1 {archives}
+cleanup_ops.go handlePurgeCleanupArchive x1 {purged}
+cleanup_ops.go handleRestoreCleanupArchive x1 {restored}
+connections.go handleConnectionsGet x1 {agy,aws,bitbucket,claude,cloudwatch,codex,copilot,cursor,discord,github,grafana,internal,jira,kiro,opencode,pagerduty,slack,svn}
+connections.go handleDeleteAWSMCPConn x1 {disconnected}
+connections.go handleDeleteCloudWatchConn x1 {disconnected}
+connections.go handleDeleteDiscordConn x1 {disconnected}
+connections.go handleDeleteGitConn x1 {disconnected}
+connections.go handleDeleteGrafanaConn x1 {disconnected}
+connections.go handleDeletePagerDutyConn x1 {disconnected}
+connections.go handleDiscordGuilds x1 {guilds}
+connections.go handleDiscordInspect x1 {applicationId,botName,inviteUrl}
+connections.go handlePutAWSMCPConn x1 {connected,endpoint,profile,region,sso,write} cond{region,sso}
+connections.go handlePutCloudWatchConn x1 {connected,profile,region,sso} cond{region,sso}
+connections.go handlePutDiscordConn x1 {botName,channelId,connected,events,fullText,mention,mentionUserId,mirrorInput,mode,notify,operator,receive,test,testError,threads} cond{botName,channelId,fullText,mention,mentionUserId,mirrorInput,mode,operator,receive,test,testError,threads}
+connections.go handlePutGitConn x1 {connected,host,username,warn} cond{warn}
+connections.go handlePutGrafanaConn x1 {connected,url}
+connections.go handlePutPagerDutyConn x1 {connected,host} cond{host}
+connections_jira.go handleDeleteJiraConn x1 {disconnected}
+connections_jira.go handleJiraOAuthStore x1 {account,authKind,cloudId,connected,email,site,sites} cond{account,cloudId,email,sites}
+connections_jira.go handlePutJiraConn x1 {account,authKind,cloudId,connected,email,site,sites} cond{account,cloudId,email,sites}
+connections_jira.go handlePutJiraSite x1 {account,authKind,cloudId,connected,email,site,sites} cond{account,cloudId,email,sites}
+connections_slack.go handleDeleteSlackConn x1 {disconnected}
+connections_slack.go handlePutSlackConn x1 {botName,channelId,connected,events,fullText,mirrorInput,mode,notify,operator,receive,teamName,test,testError,threads,userId} cond{botName,channelId,fullText,mirrorInput,mode,operator,receive,teamName,test,testError,threads,userId}
+connections_slack.go handleSlackChannels x1 {channels,resolvedUserId} cond{resolvedUserId}
+connections_slack.go handleSlackInspect x1 {botName,botUserId,teamName}
+env_tool_versions.go handleToolVersions x1 {checkedAt,tools}
+env_toolchains.go handleToolchainsGet x1 {agentUpdate,go,go_options,java,java_available,java_installed,node,node_options,timezone,tz_options}
+fs.go handleFSDelete x1 {deleted}
+fs.go handleFSMkdir x1 {path}
+fs.go handleFSNewFile x1 {path}
+fs.go handleFSRename x1 {path}
+fs.go handleFSTree x1 {entries,path,root}
+fs.go handleFSUpload x2 {conflicts,path,written}
+fs_file_api.go handleFSFile x1 {binary,content,editabilityReason,editable,lfs,path,revision,size,truncated} cond{binary,content,editabilityReason,editable,lfs,revision,truncated}
+fs_git.go handleFSChanges x2 {changes}
+fs_git.go handleFSLineMarks x5 {added,deleted,modified}
+fs_resolve.go handleFSResolve x1 {resolved}
+fs_search.go handleFSSearch x1 {results,root,truncated}
+fs_search.go handleFSSearch x3 {results,truncated}
+fs_suggest_edit.go handleFSSuggestEdit x1 {replacement,summary}
+internal/agents/agy/auth.go HandleComplete x1 {connected}
+internal/agents/agy/auth.go HandleDisconnect x1 {disconnected}
+internal/agents/agy/auth.go HandleStart x1 {flow_id,url}
+internal/agents/agy/usage.go HandleUsage x1 {account,ageSec,authed,error,groups,ok,plan} cond{account,ageSec,groups,ok,plan}
+internal/agents/agy/usage.go HandleUsage x1 {account,ageSec,authed,groups,ok,plan}
+internal/agents/agy/usage.go HandleUsage x1 {authed,ok}
+internal/agents/claude/auth.go HandleComplete x1 {connected}
+internal/agents/claude/auth.go HandleDisconnect x1 {disconnected}
+internal/agents/claude/auth.go HandleStart x1 {flow_id,url}
+internal/agents/claude/settings.go HandleSettingsGet x1 {memories,memories_ready,rate_limit_model_nudge}
+internal/agents/claude/settings.go HandleSettingsPut x1 {memories,memories_ready,rate_limit_model_nudge}
+internal/agents/claude/usage.go HandleUsage x1 {ageSec,authed,fiveHour,ok,plan,sevenDay,user} cond{ageSec,fiveHour,ok,plan,sevenDay,user}
+internal/agents/codex/auth.go HandleAPIKey x1 {connected}
+internal/agents/codex/auth.go HandleDevicePoll x2 {connected}
+internal/agents/codex/auth.go HandleDeviceStart x1 {flow_id,url,user_code}
+internal/agents/codex/auth.go HandleDisconnect x1 {disconnected}
+internal/agents/codex/settings.go HandleSettingsGet x1 {memories,memories_ready,rate_limit_model_nudge}
+internal/agents/codex/settings.go HandleSettingsPut x2 {memories,memories_ready,rate_limit_model_nudge}
+internal/agents/codex/usage.go HandleUsage x1 {ageSec,authed,fiveHour,ok,planType,resetCredits,sevenDay,user} cond{ageSec,ok,planType,resetCredits,user}
+internal/agents/copilot/usage.go HandleUsage x1 {ageSec,authed,canUpgrade,error,ok,plan,quotas,resetsAt,sku,user} cond{ageSec,canUpgrade,ok,plan,quotas,resetsAt,sku,user}
+internal/agents/copilot/usage.go HandleUsage x1 {ageSec,authed,canUpgrade,ok,plan,quotas,resetsAt,sku,user}
+internal/agents/copilot/usage.go HandleUsage x1 {authed,ok}
+internal/agents/cursor/auth.go HandleDisconnect x1 {disconnected}
+internal/agents/cursor/auth.go HandlePoll x2 {connected}
+internal/agents/cursor/auth.go HandleStart x1 {flow_id,url}
+internal/agents/kiro/auth.go HandleDisconnect x1 {disconnected}
+internal/agents/kiro/auth.go HandlePoll x2 {connected}
+internal/agents/kiro/auth.go HandleStart x1 {flow_id,url,user_code}
+internal/agents/opencode/auth.go HandleDeleteConn x1 {disconnected}
+internal/agents/opencode/auth.go HandlePutConn x1 {connected,env}
+internal/agents/opencode/oauth.go HandleOAuthCancel x1 {cancelled}
+internal/agents/opencode/oauth.go HandleOAuthDisconnect x2 {disconnected}
+internal/agents/opencode/oauth.go HandleOAuthPoll x1 {connected,message,status} cond{message}
+internal/agents/opencode/oauth.go HandleOAuthStart x1 {expires,flow_id,instructions,mode,url,user_code}
+internal/agents/opencode/workspaceid.go HandlePutWorkspace x1 {workspace_id,workspace_url}
+internal/chatx/chat_handlers.go HandleChatAsk x1 {assistant,reply}
+internal/chatx/chat_handlers.go HandleChatDelete x1 {ok}
+internal/chatx/chat_handlers.go HandleChatList x1 {conversations}
+internal/chatx/chat_handlers.go HandleChatSend x1 {conversation,message}
+internal/chatx/chat_handlers.go HandleChatStop x1 {stopped}
+internal/chatx/chat_plan.go HandleChatPlanGet x1 {plan,plan_updated_at}
+internal/chatx/chat_report.go HandleChatReport x1 {accepted,reported}
+internal/chatx/chat_report.go HandleChatReport x1 {hinted,reported}
+internal/chatx/chat_report.go HandleChatReport x1 {interim,reported}
+internal/chatx/chat_report.go HandleChatReport x1 {reported}
+internal/chatx/chat_suggest_reply.go HandleChatSuggestReplies x1 {suggestions}
+internal/chatx/chat_title.go HandleChatSuggestTitle x1 {suggestedTitle}
+internal/gitx/git.go HandleCloneRepo x1 {job}
+internal/gitx/git.go HandleDeleteRepo x3 {deleted}
+internal/gitx/git.go HandleInitRepo x1 {repo}
+internal/gitx/git.go HandleListRepos x1 {repos}
+internal/gitx/git.go HandleRepoBranches x1 {branches,current}
+internal/gitx/git.go WriteBranchInUse x1 {error}
+internal/gitx/git_identity.go HandleGitProviderIdentityPut x1 {email,host,name}
+internal/gitx/git_identity.go HandleGlobalIdentityGet x1 {email,name}
+internal/gitx/git_identity.go HandleRepoIdentityGet x1 {effective,override,provider,source}
+internal/gitx/git_identity.go HandleRepoIdentityPut x2 {effective,override,provider,source}
+internal/gitx/git_oauth.go HandleBitbucketStore x1 {connected}
+internal/gitx/git_remote.go HandleListRemoteBranches x2 {branches,default}
+internal/gitx/git_remote.go HandleListRemoteRepos x2 {host,repos}
+internal/gitx/git_view.go HandleRepoChanges x1 {changes}
+internal/gitx/git_view.go HandleRepoDiff x1 {diff,truncated}
+internal/gitx/git_view.go HandleRepoGraph x1 {commits,current}
+internal/gitx/git_view.go HandleRepoLog x2 {commits}
+internal/gitx/git_view.go HandleRepoShow x1 {author,body,date,diff,files,hash,short,subject,truncated} cond{author,body,date,hash,short,subject}
+internal/gitx/git_view.go HandleRepoSubmodules x3 {submodules}
+internal/gitx/git_view.go gitPathsOp x1 {changes}
+internal/mcpx/mcp_servers.go HandleServerDelete x1 {deleted}
+internal/mcpx/mcp_servers.go HandleServersGet x1 {servers,shadowed,tenantFetchedAt}
+internal/mcpx/mcp_tenant.go HandleTenantRefresh x1 {fetch,servers,shadowed,tenantFetchedAt}
+internal/memoryx/memory_export.go HandleMemoryExport x1 {error,secrets}
+internal/memoryx/memory_handlers.go HandleMemoryDiff x1 {diff,from,path,to}
+internal/memoryx/memory_handlers.go HandleMemoryRoots x1 {auto,autoLocked,inactive,lastSnapshot,roots} cond{lastSnapshot}
+internal/memoryx/memory_handlers.go HandleMemorySettings x1 {auto,autoLocked}
+internal/memoryx/memory_handlers.go HandleMemorySnapshots x1 {snapshots}
+internal/memoryx/memory_handlers.go HandleMemoryTree x1 {kinds,projects,rev}
+internal/sessionx/locks.go HandleChatLock x1 {id,locked}
+internal/sessionx/locks.go HandleRepoLock x1 {locked,name}
+internal/sessionx/locks.go HandleSessionKeepAwake x1 {keepAwakeUntil,name}
+internal/sessionx/locks.go HandleSessionLock x1 {locked,name}
+internal/sessionx/session_answer.go HandleSessionAnswerQuestion x2 {answered,picked}
+internal/sessionx/session_answer.go HandleSessionPlanRespond x1 {decision,feedback_delivered,hint,responded} cond{feedback_delivered,hint}
+internal/sessionx/session_answer.go HandleSessionPlanRespond x1 {decision,responded}
+internal/sessionx/session_carried.go HandleSessionCarriedAnswer x1 {discarded}
+internal/sessionx/session_carried.go HandleSessionCarriedAnswer x2 {delivering,kind,prompt}
+internal/sessionx/session_cleanup.go HandleSessionsCleanup x1 {candidates,counts}
+internal/sessionx/session_files.go HandleSessionCommittedFiles x1 {committed,repo}
+internal/sessionx/session_handlers.go HandleArchiveSession x1 {archived}
+internal/sessionx/session_handlers.go HandleIdempotencyLookup x1 {status}
+internal/sessionx/session_handlers.go HandleListArchived x1 {sessions}
+internal/sessionx/session_handlers.go HandleListSessions x1 {repoJobs,sessions}
+internal/sessionx/session_handlers.go HandleSessionCatalog x1 {sessions}
+internal/sessionx/session_handlers.go HandleStopSession x1 {stopped}
+internal/sessionx/session_handoff_proposal.go HandleSessionHandoffProposal x1 {proposals}
+internal/sessionx/session_handoff_proposal.go HandleSessionHandoffProposal x2 {proposal}
+internal/sessionx/session_io.go HandleSessionInput x1 {queued}
+internal/sessionx/session_io.go HandleSessionInput x3 {sent}
+internal/sessionx/session_io.go HandleSessionOutput x2 {alive,clipped,cursor,name,output,status}
+internal/sessionx/session_io.go HandleSessionStatus x1 {alive,kind,name,plan,questions,ready,status} cond{plan,questions}
+internal/sessionx/session_io.go handleManagedInputPrompt x1 {sent}
+internal/sessionx/session_marks.go HandleSessionMarks x1 {marks}
+internal/sessionx/session_marks.go HandleSessionMarks x2 {mark}
+internal/sessionx/session_paste.go SavePastedImageTo x1 {name,path}
+internal/sessionx/session_skills.go HandleSessionSkills x2 {skills}
+internal/sessionx/session_ssm.go HandleStartSession x1 {ok}
+internal/sessionx/session_suggest_reply.go HandleSuggestReplies x1 {suggestions}
+internal/sessionx/session_title.go HandleSessionSuggestBranch x1 {branch}
+internal/sessionx/session_title.go HandleSuggestTitle x1 {suggestedTitle}
+internal/sessionx/session_transcript.go HandleSessionMessages x1 {alive,answers,backgroundBusy,backgroundBusyReason,compactProgress,cursor,files,firstLine,hasMore,jsonlLines,jsonlMatches,jsonlMtime,jsonlPath,messages,mode,name,queuedPrompts,reset,status,suggestedTitle,tasks,terminalState} cond{answers,backgroundBusy,backgroundBusyReason,compactProgress,files,firstLine,hasMore,mode,queuedPrompts,suggestedTitle,tasks,terminalState} dyn
+internal/sessionx/session_transcript.go handleGenericMessages x1 {alive,context,cursor,files,firstLine,hasMore,jsonlLines,jsonlMatches,jsonlMtime,jsonlPath,messages,mode,name,pendingQuestions,queuedPrompts,reset,status,suggestedTitle,tasks,terminalState} cond{context,files,firstLine,hasMore,mode,pendingQuestions,queuedPrompts,suggestedTitle,tasks,terminalState}
+internal/sessionx/session_turn.go HandleSessionRespond x1 {id,responded}
+internal/sessionx/session_turn.go HandleSessionSettings x1 {effort,mode,model,updated}
+internal/sessionx/session_turn.go HandleSessionSettingsGet x1 {dynamicEffort,dynamicMode,dynamicModel,effort,mode,model}
+internal/sessionx/session_turn.go HandleSessionTurn x2 {op,sent}
+internal/sessionx/session_turn.go handleManagedTurn x1 {op,sent}
+internal/sessionx/session_usage.go HandleSessionsUsage x1 {sessions}
+jdk_install_http.go handleJDKInstall x3 {error,java_available,java_installed,major,state}
+kiro_install_http.go handleKiroInstall x1 {error,installed,pin,state,updateAvailable,version} cond{installed,pin,updateAvailable,version}
+kiro_install_http.go handleKiroInstall x3 {state}
+main.go handleHealth x1 {ok}
+memo_paste.go handleMemoImageGC x1 {removed}
+notifications.go handleNotifications x1 {notifications}
+repo_jobs.go handleDeleteRepoJob x1 {canceled}
+repo_jobs.go handleDeleteRepoJob x1 {dismissed}
+repo_jobs.go handleListRepoJobs x1 {jobs}
+repo_prompts.go handleRepoPromptTemplates x1 {groups}
+share_operation.go handleShareOperationLookup x1 {state,statusCode,updatedAt}
+ssm_instances.go handleSSMInstances x1 {instances}
+svn.go handleDeleteSvnConn x1 {forgot}
+svn.go handleSvnCheckout x1 {job}
+ui_prefs.go handleGetUIPrefs x1 {} dyn
+ui_prefs.go handlePutUIPrefs x1 {} dyn
+workitems.go handleWorkItemsFetch x2 {errors,items}
+workitems_comment.go handleWorkItemsComment x1 {url}

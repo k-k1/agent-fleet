@@ -132,13 +132,29 @@ func splitLabels(s string) []string {
 	return out
 }
 
+// workItemsPayloadWire — GET /api/workitems（と 更新 ボタンの POST）のレスポンス
+// （Console の `WorkItemPayload`、console/src/features/workitems/read.ts）。
+//
+// 旧: map[string]any{"items":…, "queries":…, "sessions":…, "fetchedAt":…, "running":…}
+// 5 キーとも無条件なので **omitempty は付けない**。3 つのスライスは呼び出し側で
+// make(…, 0, n) 済み＝**nil にならないので `[]` が出る**（nil なら `null` になり別物）。
+// この形状は 3 サイト（list ×1 / refresh ×2）が共有しているので、
+// ここを 1 つ直すと 3 サイトが同時に型を得る。
+type workItemsPayloadWire struct {
+	Items     []workItemDTO        `json:"items"`
+	Queries   []workItemQueryDTO   `json:"queries"`
+	Sessions  []workItemSessionDTO `json:"sessions"`
+	FetchedAt string               `json:"fetchedAt"`
+	Running   bool                 `json:"running"`
+}
+
 // workItemsPayload composes the GET /api/work-items body, shared by the REST handler and
 // the /api/events push channel so both emit the identical shape.
 //
 // state is passed in because the events tick already resolved it — on ecs-ec2 State() is
 // live AWS calls, and pulling it twice per tick doubles them (same reasoning as
 // statsPayload).
-func (a workItemsAPI) workItemsPayload(ctx context.Context, res *resolved, state string) (map[string]any, *apiError) {
+func (a workItemsAPI) workItemsPayload(ctx context.Context, res *resolved, state string) (workItemsPayloadWire, *apiError) {
 	mid := res.mv.MembershipID
 	if state == "running" {
 		// Fire-and-forget: the tick must never block on a provider round trip. The
@@ -147,15 +163,15 @@ func (a workItemsAPI) workItemsPayload(ctx context.Context, res *resolved, state
 	}
 	queries, err := a.store.ListWorkItemQueries(ctx, mid)
 	if err != nil {
-		return nil, internalErr(err)
+		return workItemsPayloadWire{}, internalErr(err)
 	}
 	items, err := a.store.ListWorkItems(ctx, mid)
 	if err != nil {
-		return nil, internalErr(err)
+		return workItemsPayloadWire{}, internalErr(err)
 	}
 	sessions, err := a.store.ListWorkItemSessions(ctx, mid)
 	if err != nil {
-		return nil, internalErr(err)
+		return workItemsPayloadWire{}, internalErr(err)
 	}
 	qOut := make([]workItemQueryDTO, 0, len(queries))
 	fetchedAt := ""
@@ -175,9 +191,9 @@ func (a workItemsAPI) workItemsPayload(ctx context.Context, res *resolved, state
 	for _, s := range sessions {
 		sOut = append(sOut, workItemSessionToDTO(s))
 	}
-	return map[string]any{
-		"items": iOut, "queries": qOut, "sessions": sOut,
-		"fetchedAt": fetchedAt, "running": state == "running",
+	return workItemsPayloadWire{
+		Items: iOut, Queries: qOut, Sessions: sOut,
+		FetchedAt: fetchedAt, Running: state == "running",
 	}, nil
 }
 
