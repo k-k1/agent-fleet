@@ -242,11 +242,13 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 	}
 
 	// --- ② TS 側のキー集合を表に固定する（走査が壊れたことを捕まえるのはここだけ）---
-	scanned := consoleInterfaceFields(t, f.tsPath, f.tsName, len(f.tsKeys))
+	scanned := consoleInterfaceFields(t, f.tsPath, f.tsName)
 	for k := range f.tsKeys {
 		if !scanned[k] {
-			t.Errorf("%s: %s の %q を走査が拾えていない"+
-				"——TS の書き方が変わったか、走査が壊れている（走査の壊れ全般は合成標本の対照が見る）",
+			t.Errorf("%s: %s の %q が表に在るのに TS 側で見つからない。原因は 2 つのどちらか——"+
+				"(a) キーを意図して消した → tsKeys の表と免除表も直すこと（同じ実行の下のほうに"+
+				"「免除はもう要らない」が出ているはず）／(b) 走査が壊れた → 合成標本の対照"+
+				"（TestTSInterfaceFieldsParser）も一緒に赤くなっているはず",
 				f.name, f.tsName, k)
 		}
 	}
@@ -566,7 +568,7 @@ func TestTSInterfaceFieldsParser(t *testing.T) {
 }
 
 // consoleInterfaceFields は TS の `interface <name> { ... }` の**深さ 1 の**フィールド名を返す。
-func consoleInterfaceFields(t *testing.T, path, name string, wantAtLeast int) map[string]bool {
+func consoleInterfaceFields(t *testing.T, path, name string) map[string]bool {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -577,14 +579,23 @@ func consoleInterfaceFields(t *testing.T, path, name string, wantAtLeast int) ma
 	if err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
-	// 🔴 「0 件でした」を結果として採らないための下限。
-	// **下限は家系ごとに、固定したキー数そのもの**にしてある（定数の 10 にすると、
-	// キーが 6〜7 個の小さい家系で必ず落ち、逆に大きい家系では数個の取りこぼしを見逃す）。
-	// ⚠️ **この下限は「一部の行だけ複数キー」を捕まえない**——どの家系でも数個の取りこぼしは
-	// 素通りしうる。そちらは TestTSInterfaceFieldsParser（合成標本）の担当。
-	if len(out) < wantAtLeast {
-		t.Fatalf("interface %s のフィールドを %d 個しか読めなかった（表は %d 個）＝TS の書き方が変わって走査が壊れている",
-			name, len(out), wantAtLeast)
+	// 🔴 **件数の下限は「0 件」しか見ない。これは抜けではなく、意図してこうしてある。**
+	//
+	// 以前は「表に固定したキー数」を下限にして Fatal していたが、**診断が誤った方向を指した**——
+	// TS からキーが 1 つ消えると必ず Fatal し、文言は「走査が壊れている」。**実際の原因は
+	// 「キーが意図して消された」で走査は無傷**であり、しかも Fatal が後続を止めるので
+	// **「免除を外せ」という正しい指示が出なかった**（死んだ TS 宣言を消す作業がこの経路を通る）。
+	//
+	// 件数ガードが要らない理由: **呼び出し側の②（キー集合を表と突き合わせる）が、同じ面を
+	// 「どのキーが」まで含めて見ている。**走査が痩せれば、読めなかったキーが②で名指しで赤くなり、
+	// ③でも「Go のみ」として出る。**件数は情報を足していない**どころか、キーが 6〜7 個の
+	// 小さい家系（SsmHost / SsmProfileEntry / GitOAuthApp）を誤って Fatal させていた。
+	// **下限が無いのを見て足しに来ないこと。**
+	//
+	// ⚠️ 走査の壊れ全般を捕まえるのは②でも③でもなく **TestTSInterfaceFieldsParser（合成標本）**。
+	// 実入力はどの家系も 1 行 1 フィールドで、壊れた枝を通らない（実測）。
+	if len(out) == 0 {
+		t.Fatalf("interface %s のフィールドを 1 つも読めなかった＝走査が無言化している", name)
 	}
 	return out
 }
