@@ -60,8 +60,22 @@ func handleFSChanges(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": out})
 }
 
-func emptyMarks() map[string]any {
-	return map[string]any{"added": []int{}, "modified": []int{}, "deleted": []int{}}
+// lineMarksWire — GET /fs/line-marks のレスポンス（Console の `LineMarks`、
+// console/src/features/viewer/CodeView.tsx）。
+//
+// 旧: map[string]any{"added":…, "modified":…, "deleted":…}
+// 3 キーとも無条件なので **omitempty は付けない**。
+// ⚠️ 3 つとも **nil ではなく空スライス**でなければならない（nil は JSON で `null`、
+// 空は `[]`）。emptyMarks / parseDiffMarks / 未追跡経路のいずれも make か []int{} で
+// 初期化しており、nil を返す経路は無い。
+type lineMarksWire struct {
+	Added    []int `json:"added"`
+	Modified []int `json:"modified"`
+	Deleted  []int `json:"deleted"`
+}
+
+func emptyMarks() lineMarksWire {
+	return lineMarksWire{Added: []int{}, Modified: []int{}, Deleted: []int{}}
 }
 
 // handleFSLineMarks returns gutter marks for a working-tree file under ~/repos,
@@ -92,7 +106,7 @@ func handleFSLineMarks(w http.ResponseWriter, r *http.Request) {
 		for i := 1; i <= n; i++ {
 			added = append(added, i)
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"added": added, "modified": []int{}, "deleted": []int{}})
+		httpx.WriteJSON(w, http.StatusOK, lineMarksWire{Added: added, Modified: []int{}, Deleted: []int{}})
 		return
 	}
 	// --unified=0: hunks are pure deletion/addition runs (no context) => simple map.
@@ -102,7 +116,7 @@ func handleFSLineMarks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	added, modified, deleted := parseDiffMarks(out)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"added": added, "modified": modified, "deleted": deleted})
+	httpx.WriteJSON(w, http.StatusOK, lineMarksWire{Added: added, Modified: modified, Deleted: deleted})
 }
 
 var hunkRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)`)

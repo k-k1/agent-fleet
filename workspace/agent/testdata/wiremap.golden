@@ -5,10 +5,8 @@
 #   dyn     = 非リテラルのキーがある（キー集合は静的に確定しない＝struct 化できない）
 #   partial = 変数が複数回代入されており、キー集合を開けきれていない
 # 🔴 キーが減った/増えた差分は、ワイヤが変わった可能性そのもの。撮り直す理由を PR に書くこと。
-# count: 190
-agent_instructions.go handleUserNotesGet x1 {bytes,enabled,fleet_bytes,max_bytes,path,targets,text}
+# count: 187
 agent_instructions.go handleUserNotesPreview x1 {content,exists,kind,path}
-agent_instructions.go handleUserNotesPut x1 {bytes,enabled,fleet_bytes,max_bytes,path,targets,text}
 agent_models.go handleAgentModels x1 {models}
 agent_rtk.go handleAgentRTKGain x1 {available}
 agent_rtk.go handleAgentRTKGain x1 {available} dyn
@@ -57,7 +55,6 @@ fs.go handleFSTree x1 {entries,path,root}
 fs.go handleFSUpload x2 {conflicts,path,written}
 fs_file_api.go handleFSFile x1 {binary,content,editabilityReason,editable,lfs,path,revision,size,truncated} cond{binary,content,editabilityReason,editable,lfs,revision,truncated}
 fs_git.go handleFSChanges x2 {changes}
-fs_git.go handleFSLineMarks x5 {added,deleted,modified}
 fs_resolve.go handleFSResolve x1 {resolved}
 fs_search.go handleFSSearch x1 {results,root,truncated}
 fs_search.go handleFSSearch x3 {results,truncated}
