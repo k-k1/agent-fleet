@@ -5,7 +5,7 @@
 #   dyn     = 非リテラルのキーがある（キー集合は静的に確定しない＝struct 化できない）
 #   partial = 変数が複数回代入されており、キー集合を開けきれていない
 # 🔴 キーが減った/増えた差分は、ワイヤが変わった可能性そのもの。撮り直す理由を PR に書くこと。
-# count: 131
+# count: 126
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
@@ -19,7 +19,6 @@ egress.go egressAPI.allowlistList x1 {allowlist,defaults}
 egress.go egressAPI.mode x2 {enforce,mode}
 egress.go egressAPI.policy x1 {allowlist,enforce}
 egress.go egressAPI.stats x1 {days,egress,enforce,mode}
-egress_member.go egressAPI.checkHosts x1 {configured,enforce,hosts,mode}
 egress_member.go egressAPI.propose x1 {already,entry,id,state}
 egress_member.go egressAPI.propose x1 {already,entry,state}
 egress_member.go egressAPI.propose x1 {entry,id,state}
@@ -64,7 +63,6 @@ internal_git_browse.go gitServerAPI.commits x2 {commits,path,ref}
 internal_git_browse.go gitServerAPI.tree x2 {entries,path,ref}
 login_provider_api.go loginProviderAPI.list x1 {providers}
 memo.go memoAPI.flush x1 {ids,sent,sentAt}
-metrics.go adminAPI.hostStats x1 {load1,mem_total,mem_used,ncpu}
 metrics.go workspaceAPI.stats x1 {cpu_pct,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
 notification.go notificationAPI.list x1 {items,maxSeq,sourceState,unseenCount}
 oauth_bitbucket.go config.handleBitbucketOAuthStart x1 {authorize_url}
@@ -119,12 +117,9 @@ tts.go ttsAdminAPI.put x1 {dict,enabled,engine,managed,polly}
 tts.go ttsAdminAPI.putDict x1 {dict,enabled,engine,managed,polly}
 update.go updateApply x2 {error}
 update.go updateApply x2 {mode,ok,to}
-update.go updateStatus x1 {current,installed,restartRequired,systemd}
 usage.go adminAPI.usage x1 {days,from,to,totals}
 workitems.go workItemsAPI.deleteQuery x1 {ok}
 workitems.go workItemsAPI.deleteSession x1 {ok}
-workitems.go workItemsAPI.list x1 {fetchedAt,items,queries,running,sessions}
-workitems.go workItemsAPI.refresh x2 {fetchedAt,items,queries,running,sessions} partial
 workspace_handlers.go workspaceAPI.cleanHome x1 {name,state}
 workspace_handlers.go workspaceAPI.get x1 {bootPhase,name,stale,state} cond{bootPhase,stale}
 workspace_handlers.go workspaceAPI.recreate x1 {name,state}

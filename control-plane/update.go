@@ -56,12 +56,26 @@ func registerUpdateRoutes(mux *http.ServeMux, _ config) {
 // auth-exempt (same stance as /api/version).
 func updateStatus(w http.ResponseWriter, _ *http.Request) {
 	installed := stagedVersion()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"current":         buildVersion,
-		"installed":       installed,
-		"restartRequired": installed != "" && installed != buildVersion,
-		"systemd":         os.Getenv("AF_SYSTEMD_UNIT") != "",
+	writeJSON(w, http.StatusOK, hostUpdateStatusWire{
+		Current:         buildVersion,
+		Installed:       installed,
+		RestartRequired: installed != "" && installed != buildVersion,
+		Systemd:         os.Getenv("AF_SYSTEMD_UNIT") != "",
 	})
+}
+
+// hostUpdateStatusWire — GET /api/update/status のレスポンス（Console の
+// `HostUpdateStatus`、console/src/features/settings/hostUpdate.ts）。
+//
+// 旧: map[string]any{"current":…, "installed":…, "restartRequired":…, "systemd":…}
+// 4 キーとも無条件なので **omitempty は付けない**。とくに `installed` は
+// 「staged が無い」を **空文字で**表しており、omitempty を付けるとキーごと消えて
+// Console 側の「更新なし」判定が変わる（キーの有無とゼロ値は別物）。
+type hostUpdateStatusWire struct {
+	Current         string `json:"current"`
+	Installed       string `json:"installed"`
+	RestartRequired bool   `json:"restartRequired"`
+	Systemd         bool   `json:"systemd"`
 }
 
 // updateApply applies a staged update by restarting so the new symlink target is
