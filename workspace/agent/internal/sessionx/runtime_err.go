@@ -1,4 +1,4 @@
-package main
+package sessionx
 
 // managed runtime（共有 daemon）の起動失敗を Console へ返すときの分類。
 //
@@ -16,6 +16,11 @@ package main
 //
 // 分類に使うのは各 package が export しているセンチネルだけ。メッセージの文字列一致は
 // 使わない（上流の文言が変わった瞬間に黙って一時扱いへ戻るため）。
+//
+// `runtime_failed` の側だけ literal なのは、これが**この 1 箇所からしか出ない**ため
+// （errcodes.go の横断表は「main の 15 ファイルが引く」ものだけを載せている）。恒久側は
+// Console の i18n と対になる新しい綴りなので、他のコードと同じく errcodes.go に置き、
+// deps 経由で受け取る（deps.go の「sessionx 側で定義し直さない」）。
 
 import (
 	"errors"

@@ -60,7 +60,10 @@ const launch = async () => {
   await act(async () => {
     await start!(
       { dir: "/repos/x", repo: "x" },
-      { kind: "codex", driver: "managed", model: "", effort: "", startMode: "", prompt: "", worktree: false },
+      {
+        kind: "codex", driver: "managed", model: "", effort: "", startMode: "normal",
+        prompt: "", title: "", images: [], subdir: "", base: "", newBranch: "", worktree: false,
+      },
     );
   });
 };

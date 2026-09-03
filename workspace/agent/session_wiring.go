@@ -52,6 +52,7 @@ func sessionDeps() sessionx.Deps {
 		MCPConvID:       func() string { return mcpConvID },
 		RunOperatorTurn: runOperatorTurn,
 
+		ErrCodeAgentNotConnected:      errCodeAgentNotConnected,
 		ErrCodeChatConversationNotFnd: errCodeChatConversationNotFnd,
 		ErrCodeForkAtUnsupported:      errCodeForkAtUnsupported,
 		ErrCodeForkBadAnchor:          errCodeForkBadAnchor,

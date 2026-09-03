@@ -171,6 +171,32 @@ export function useModelOptions(kind: string): ModelOption[] | null {
   return null;
 }
 
+// useModelCatalogSettled は「この kind のカタログ取得が一度決着したか」。静的 kind
+// （claude）は常に true。
+//
+// 「選べるモデルが 1 つも無い」という注記を出すためだけの状態で、**取得中は false** に
+// する必要がある: useModelOptions は解決するまで 既定 だけを返すので、settled を見ずに
+// 「既定のみ」と書くと、開いた直後に必ず一瞬出てから消える。
+//
+// fetchModels は cache / inflight で重複を畳むので、useModelOptions と同じ kind で
+// 二重に呼んでも取得は 1 回きり。
+export function useModelCatalogSettled(kind: string): boolean {
+  const [settled, setSettled] = useState(() => !isDynamic(kind) || cache.has(kind));
+  useEffect(() => {
+    if (!isDynamic(kind)) {
+      setSettled(true);
+      return;
+    }
+    let alive = true;
+    setSettled(cache.has(kind));
+    void fetchModels(kind).then(() => alive && setSettled(true));
+    return () => {
+      alive = false;
+    };
+  }, [kind]);
+  return settled;
+}
+
 // visibleModelOptions は選択肢から除外モデルを落とす。"" （既定）は id ではないので常に残す。
 function visibleModelOptions(
   hiddenModels: Record<string, string[]> | undefined,

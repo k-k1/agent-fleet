@@ -171,6 +171,7 @@ func testDeps() Deps {
 		// 🔥 **本物の綴りをここに写す。** 適当な文字列を置くと、コードを本文に出す検査が
 		// 「何かが入っている」だけで緑になる。綴りが本物と一致していることは main 側の
 		// session_wiring_test.go が errcodes.go と突き合わせて守っている。
+		ErrCodeAgentNotConnected:      "agent_not_connected",
 		ErrCodeChatConversationNotFnd: "chat_conversation_not_found",
 		ErrCodeForkAtUnsupported:      "fork_at_unsupported",
 		ErrCodeForkBadAnchor:          "fork_bad_anchor",

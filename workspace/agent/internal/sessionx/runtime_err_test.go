@@ -1,4 +1,4 @@
-package main
+package sessionx
 
 import (
 	"encoding/json"
