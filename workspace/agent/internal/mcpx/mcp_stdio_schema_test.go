@@ -3,7 +3,11 @@ package mcpx
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,6 +19,8 @@ import (
 // hand-written approximation would have accepted enum:null, which Anthropic rejects
 // before starting the Claude turn.
 func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
+	const expectedAdvertisedToolCount = 52
+
 	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
 	oldChromium, oldPeer := sessionChromiumEnabled(), mcpPeerMessagingEnabled
 	t.Cleanup(func() {
@@ -34,12 +40,14 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		{name: "session-all", selfReport: true, chromium: true, peer: true},
 	}
 
+	advertised := make(map[string]struct{})
 	for _, variant := range variants {
 		t.Run(variant.name, func(t *testing.T) {
 			setFlags(variant.write, variant.selfReport, variant.chromium)
 			mcpPeerMessagingEnabled = variant.peer
 			for _, tool := range mcpStdioToolList() {
 				name := tool["name"].(string)
+				advertised[name] = struct{}{}
 				schema, ok := tool["inputSchema"].(map[string]any)
 				if !ok {
 					t.Errorf("%s: inputSchema が object ではない: %T", name, tool["inputSchema"])
@@ -51,6 +59,63 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 			}
 		})
 	}
+
+	declared, err := declaredMCPToolNames()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(declared) != expectedAdvertisedToolCount || !reflect.DeepEqual(advertised, declared) {
+		t.Errorf("広告ツールの被覆が変わった (advertised=%d, declared=%d, want=%d): ツールかゲートを足したなら variants も見直せ", len(advertised), len(declared), expectedAdvertisedToolCount)
+	}
+}
+
+// declaredMCPToolNames finds the source-of-truth tool literals independently of
+// capability gates. This makes a newly declared tool visible to the test even when
+// its new gate defaults to false in every variant above.
+func declaredMCPToolNames() (map[string]struct{}, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "mcp_stdio.go", nil, 0)
+	if err != nil {
+		return nil, fmt.Errorf("mcp_stdio.go を解析: %w", err)
+	}
+
+	names := make(map[string]struct{})
+	ast.Inspect(file, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		var name string
+		hasInputSchema := false
+		for _, element := range literal.Elts {
+			pair, ok := element.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			key, ok := pair.Key.(*ast.BasicLit)
+			if !ok || key.Kind != token.STRING {
+				continue
+			}
+			keyValue, err := strconv.Unquote(key.Value)
+			if err != nil {
+				continue
+			}
+			switch keyValue {
+			case "name":
+				value, ok := pair.Value.(*ast.BasicLit)
+				if ok && value.Kind == token.STRING {
+					name, _ = strconv.Unquote(value.Value)
+				}
+			case "inputSchema":
+				hasInputSchema = true
+			}
+		}
+		if name != "" && hasInputSchema {
+			names[name] = struct{}{}
+		}
+		return true
+	})
+	return names, nil
 }
 
 // TestMCPInputSchemaValidationRejectsKnownBadShapes is the negative control for
