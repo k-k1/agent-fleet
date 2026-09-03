@@ -72,7 +72,7 @@ const (
 
 // abortResumeState is one cut-off episode for one session: it opens when the transcript
 // tail is a retryable abort and closes when the tail is no longer one (＝再開できた／
-// 利用者が自分で進めた／正常に終わった). 専用ファイルなのは RateLimitState と同じ理由。
+// 利用者が自分で進めた／正常に終わった). 専用ファイルなのは rateLimitState と同じ理由。
 type abortResumeState struct {
 	At           string `json:"at"`                     // エピソード開始（中断レコードの時刻、無ければ検知時刻）
 	Msg          string `json:"msg,omitempty"`          // 中断の文言（ログ・打ち切り時の理由）
@@ -205,7 +205,7 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 	}
 	prompt := abortResumePrompt()
 	// 送る前に記録する: 途中で落ちても回数が巻き戻らないようにして、撃ち続けない
-	// （RateLimitRecover と同じ理由）。
+	// （rateLimitRecover と同じ理由）。
 	st.Attempts++
 	st.LastTry = now.Format(time.RFC3339)
 	_ = abortResumeStates.Write(m.Name, st)

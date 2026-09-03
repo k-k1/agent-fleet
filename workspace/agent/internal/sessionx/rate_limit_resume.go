@@ -20,7 +20,7 @@ package sessionx
 //
 // 順序は「②→①」。①が成功するとメニューは消え、この検知経路は二度と開かないので、
 // 先に再開を仕込んでおく。仕込み損ねた場合だけ、状態ファイルを見て後続の tick が
-// リトライする（RateLimitFollowUp）。
+// リトライする（rateLimitFollowUp）。
 
 import (
 	"encoding/json"
@@ -44,34 +44,34 @@ import (
 )
 
 const (
-	RateLimitNoticeReached = "rate-limit-reached"
-	RateLimitNoticeResumed = "rate-limit-resumed"
-	// RateLimitWatchInterval is the sweep cadence. 1 分で十分 — 相手は数時間単位の待ちで、
+	rateLimitNoticeReached = "rate-limit-reached"
+	rateLimitNoticeResumed = "rate-limit-resumed"
+	// rateLimitWatchInterval is the sweep cadence. 1 分で十分 — 相手は数時間単位の待ちで、
 	// この間隔がそのまま「メニューが出てから解除するまでの最大遅延」になる。
-	RateLimitWatchInterval = time.Minute
-	// MaxRateLimitDismissTries bounds the Enter presses per episode. 解除できないのは
+	rateLimitWatchInterval = time.Minute
+	// maxRateLimitDismissTries bounds the Enter presses per episode. 解除できないのは
 	// 選択が 2 に動いている（人が触っている）か TUI の形が変わったときで、どちらも
 	// 叩き続けて直るものではない。上限に達したら人待ちの blocked に戻すだけ。
-	MaxRateLimitDismissTries = 3
-	// MaxRateLimitScheduleTries bounds the CP registration attempts per episode (CP が
+	maxRateLimitDismissTries = 3
+	// maxRateLimitScheduleTries bounds the CP registration attempts per episode (CP が
 	// 一時的に届かないだけなら次の tick で通る)。
-	MaxRateLimitScheduleTries = 5
-	// RateLimitResumeLead is the floor on how soon a resume may be scheduled. リセット
+	maxRateLimitScheduleTries = 5
+	// rateLimitResumeLead is the floor on how soon a resume may be scheduled. リセット
 	// 時刻が既に過ぎている（メニューが何時間も放置されていた）ときの即時再開もここを通る
 	// — スケジューラの tick が 1 分刻みなので、それ以下を指定しても意味が無い。
-	RateLimitResumeLead = 2 * time.Minute
-	// RateLimitCleanupGrace is how long after the scheduled instant the episode is kept
+	rateLimitResumeLead = 2 * time.Minute
+	// rateLimitCleanupGrace is how long after the scheduled instant the episode is kept
 	// before the spent once-schedule is deleted and the state file dropped.
-	RateLimitCleanupGrace = 30 * time.Minute
-	// RateLimitEpisodeTTL drops an episode that never got a resume time (自動再開 OFF、
+	rateLimitCleanupGrace = 30 * time.Minute
+	// rateLimitEpisodeTTL drops an episode that never got a resume time (自動再開 OFF、
 	// あるいは時刻を決められなかった）so a stale file can't suppress the next episode.
-	RateLimitEpisodeTTL = 12 * time.Hour
+	rateLimitEpisodeTTL = 12 * time.Hour
 )
 
-// RateLimitState is one usage-limit episode for one session: it exists from the moment
+// rateLimitState is one usage-limit episode for one session: it exists from the moment
 // the menu is seen until the scheduled resume has come and gone. 専用ファイルにするのは
 // resumeState と同じ理由 — 複数の書き手が居る Meta に相乗りしない。
-type RateLimitState struct {
+type rateLimitState struct {
 	At            string `json:"at"`                      // エピソード検知時刻（RFC3339）
 	Menu          bool   `json:"menu,omitempty"`          // メニューを伴う上限（＝アカウントの窓）
 	DismissTries  int    `json:"dismissTries,omitempty"`  // Enter を送った回数
@@ -83,18 +83,18 @@ type RateLimitState struct {
 	ScheduleTries int    `json:"scheduleTries,omitempty"` // 登録試行回数
 	// Spend: 支出・残高の上限（claude.LimitSpend）で開いたエピソード。窓の上限と違って
 	// **時刻では終わらない**ので、予約もしなければ ResumeAt も持たず、畳むのは転写の末尾が
-	// 上限でなくなったときだけ（EpisodeStale / RateLimitFollowUp）。
+	// 上限でなくなったときだけ（episodeStale / rateLimitFollowUp）。
 	Spend bool `json:"spend,omitempty"`
 }
 
-var RateLimitStates = fstore.JSON[RateLimitState](paths.AgentConfigDir, "session-rate-limit", ".json")
+var RateLimitStates = fstore.JSON[rateLimitState](paths.AgentConfigDir, "session-rate-limit", ".json")
 
 // 副作用は差し替え可能にしておく（テストは tmux も CP も持たない）。
 var (
-	DismissRateLimitModal = tmuxx.DismissRateLimitModal
-	PutRateLimitSchedule  = createRateLimitSchedule
-	DropRateLimitSchedule = deleteRateLimitSchedule
-	RateLimitResetAt      = claude.ResetAt
+	dismissRateLimitModal = tmuxx.DismissRateLimitModal
+	putRateLimitSchedule  = createRateLimitSchedule
+	dropRateLimitSchedule = deleteRateLimitSchedule
+	rateLimitResetAt      = claude.ResetAt
 	claudeUsageLimitAbort = claude.UsageLimitAbort
 )
 
@@ -108,7 +108,7 @@ func StartRateLimitWatch() {
 		time.Sleep(45 * time.Second) // 起動直後の tmux/CP 立ち上がりを待つ
 		for {
 			rateLimitTick(time.Now())
-			time.Sleep(RateLimitWatchInterval)
+			time.Sleep(rateLimitWatchInterval)
 		}
 	}()
 }
@@ -133,26 +133,26 @@ func rateLimitTick(now time.Time) {
 		if alive {
 			if tmuxx.ReadPane(m.Name).RateLimitMenu {
 				// メニューを出すのはアカウントの窓だけ（＝待てば解ける側）。
-				RateLimitRecover(m, st, now, true, claude.LimitWindow)
+				rateLimitRecover(m, st, now, true, claude.LimitWindow)
 				continue
 			}
 			if _, kind, atLimit := claudeUsageLimitAbort(session.UUID(m.Dir, m.Name)); atLimit {
-				RateLimitRecover(m, st, now, false, kind)
+				rateLimitRecover(m, st, now, false, kind)
 				continue
 			}
 		}
 		if has {
-			RateLimitFollowUp(m, st, now, alive)
+			rateLimitFollowUp(m, st, now, alive)
 		}
 	}
 }
 
-// RateLimitRecover handles a session stopped by its usage limit. onMenu says which form it
+// rateLimitRecover handles a session stopped by its usage limit. onMenu says which form it
 // is: true = ペインが /rate-limit-options メニューで固定されている、false = 転写の末尾が
 // 上限で切れたターン（メニューは無く、セッションは入力を受け付けられる）。
-func RateLimitRecover(m session.Meta, st RateLimitState, now time.Time, onMenu bool, kind claude.LimitKind) {
-	if EpisodeStale(st, now) {
-		st = RateLimitState{} // 前のエピソードは終わっている — 新しい上限として扱う
+func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu bool, kind claude.LimitKind) {
+	if episodeStale(st, now) {
+		st = rateLimitState{} // 前のエピソードは終わっている — 新しい上限として扱う
 	}
 	if st.At == "" {
 		st.At = now.Format(time.RFC3339)
@@ -183,17 +183,17 @@ func RateLimitRecover(m session.Meta, st RateLimitState, now time.Time, onMenu b
 	st = scheduleRateLimitResume(m, st, now)
 	notifyRateLimitReached(m, st)
 
-	if onMenu && !st.Dismissed && st.DismissTries < MaxRateLimitDismissTries && !triedRecently(st, now) {
+	if onMenu && !st.Dismissed && st.DismissTries < maxRateLimitDismissTries && !triedRecently(st, now) {
 		st.DismissTries++
 		st.LastTry = now.Format(time.RFC3339)
 		// 送る前に記録する: 途中で落ちても回数が巻き戻らないようにして、キーを撃ち続けない。
 		_ = RateLimitStates.Write(m.Name, st)
-		if DismissRateLimitModal(m.Name) {
+		if dismissRateLimitModal(m.Name) {
 			st.Dismissed = true
 			log.Printf("rate-limit: %s の利用上限メニューを解除した（1. リセットまで待つ）", m.Name)
 		} else {
 			log.Printf("rate-limit: %s のメニューを解除できなかった（%d/%d 回目）",
-				m.Name, st.DismissTries, MaxRateLimitDismissTries)
+				m.Name, st.DismissTries, maxRateLimitDismissTries)
 		}
 	}
 	_ = RateLimitStates.Write(m.Name, st)
@@ -203,11 +203,11 @@ func RateLimitRecover(m session.Meta, st RateLimitState, now time.Time, onMenu b
 // survives the CP draining the outbox, so a menu that remains visible across many watcher
 // ticks cannot keep reappearing as unread. This event intentionally says only that the
 // limit was reached: scheduling may be disabled or may still succeed on a later retry.
-func notifyRateLimitReached(m session.Meta, st RateLimitState) {
+func notifyRateLimitReached(m session.Meta, st rateLimitState) {
 	if st.At == "" {
 		return
 	}
-	ev := notice.New(RateLimitNoticeReached, m.Name, m.Kind, session.Display(m))
+	ev := notice.New(rateLimitNoticeReached, m.Name, m.Kind, session.Display(m))
 	if at, err := time.Parse(time.RFC3339, st.At); err == nil {
 		ev.CreatedAt = at.UTC().Format(time.RFC3339)
 	}
@@ -216,11 +216,11 @@ func notifyRateLimitReached(m session.Meta, st RateLimitState) {
 	}
 }
 
-// NotifyRateLimitResumeDelivered records a resume only after /input's delivery
+// notifyRateLimitResumeDelivered records a resume only after /input's delivery
 // confirmation succeeded. The schedule instant alone is insufficient: overlap/target
 // guards may skip it, and delivery may fail. The open episode + exact internal prompt +
 // scheduler source keep an ordinary scheduled or Console prompt from impersonating it.
-func NotifyRateLimitResumeDelivered(name, prompt, source string, now time.Time) {
+func notifyRateLimitResumeDelivered(name, prompt, source string, now time.Time) {
 	if injectionSource(source) != TurnSourceSchedule || !isRateLimitResumePrompt(prompt) {
 		return
 	}
@@ -232,7 +232,7 @@ func NotifyRateLimitResumeDelivered(name, prompt, source string, now time.Time) 
 	if !ok || NormalizeKind(m.Kind) != session.KindClaude {
 		return
 	}
-	ev := notice.New(RateLimitNoticeResumed, m.Name, m.Kind, session.Display(m))
+	ev := notice.New(rateLimitNoticeResumed, m.Name, m.Kind, session.Display(m))
 	ev.CreatedAt = now.UTC().Format(time.RFC3339)
 	ev.Payload["resumeAt"] = st.ResumeAt
 	if err := notice.PutOnce("rate-limit-resumed:"+st.ScheduleID, ev); err != nil {
@@ -240,9 +240,9 @@ func NotifyRateLimitResumeDelivered(name, prompt, source string, now time.Time) 
 	}
 }
 
-// RateLimitFollowUp runs for a session with an open episode whose menu is already gone:
+// rateLimitFollowUp runs for a session with an open episode whose menu is already gone:
 // retry a registration that failed while the menu was still up, then retire the episode.
-func RateLimitFollowUp(m session.Meta, st RateLimitState, now time.Time, alive bool) {
+func rateLimitFollowUp(m session.Meta, st rateLimitState, now time.Time, alive bool) {
 	if st.Spend {
 		// 支出の上限は時刻で終わらないので、ここへ来たこと自体が唯一の終了条件:
 		// 生きているセッションの転写の末尾がもう上限ではない＝増枠された／別のターンが
@@ -257,23 +257,23 @@ func RateLimitFollowUp(m session.Meta, st RateLimitState, now time.Time, alive b
 		st = next
 		_ = RateLimitStates.Write(m.Name, st)
 	}
-	if !EpisodeStale(st, now) {
+	if !episodeStale(st, now) {
 		return
 	}
 	// 使い切った once スケジュールを残さない（Console の一覧に無効な行が溜まる）。
 	if st.ScheduleID != "" {
-		DropRateLimitSchedule(st.ScheduleID)
+		dropRateLimitSchedule(st.ScheduleID)
 	}
 	RateLimitStates.Remove(m.Name)
 }
 
 // scheduleRateLimitResume registers the one-shot resume when it is wanted and not yet
 // in place. 返り値は更新後の状態（呼び出し側が書く）。
-func scheduleRateLimitResume(m session.Meta, st RateLimitState, now time.Time) RateLimitState {
-	if st.ScheduleID != "" || !uiprefs.RateLimitAutoResume() || st.ScheduleTries >= MaxRateLimitScheduleTries {
+func scheduleRateLimitResume(m session.Meta, st rateLimitState, now time.Time) rateLimitState {
+	if st.ScheduleID != "" || !uiprefs.RateLimitAutoResume() || st.ScheduleTries >= maxRateLimitScheduleTries {
 		return st
 	}
-	at, source, ok := RateLimitResetAt(session.UUID(m.Dir, m.Name), now)
+	at, source, ok := rateLimitResetAt(session.UUID(m.Dir, m.Name), now)
 	// メニューを伴わない上限では、時刻はバナー（そのセッションが実際に受け取った文言）
 	// からしか信用しない。resolveResetAt のフォールバックは statusline 捕捉＝アカウントの
 	// 5時間 / 週次の窓だが、モデル別の上限はそれとは**別の窓**で、statusline には出て
@@ -290,12 +290,12 @@ func scheduleRateLimitResume(m session.Meta, st RateLimitState, now time.Time) R
 		log.Printf("rate-limit: %s のリセット時刻が読めなかったので自動再開は仕込まない", m.Name)
 		return st
 	}
-	if floor := now.Add(RateLimitResumeLead); at.Before(floor) {
+	if floor := now.Add(rateLimitResumeLead); at.Before(floor) {
 		at = floor // 既に過ぎている / 直前 — スケジューラの刻みに合わせて最短で回す
 	}
 	st.ScheduleTries++
 	st.ResumeAt, st.Source = at.Format(time.RFC3339), source
-	id, err := PutRateLimitSchedule(m, at)
+	id, err := putRateLimitSchedule(m, at)
 	if err != nil {
 		log.Printf("rate-limit: %s の自動再開を登録できなかった: %v", m.Name, err)
 		return st
@@ -326,7 +326,7 @@ func scheduleRateLimitResume(m session.Meta, st RateLimitState, now time.Time) R
 // 変わる）ので、「上限が解けたことを知る別経路」は要らない — StateBlocked と同じ設計。
 func rateLimitWaiting(m session.Meta, now time.Time) (state, resumeAt string, ok bool) {
 	st, has := RateLimitStates.Read(m.Name)
-	if !has || EpisodeStale(st, now) {
+	if !has || episodeStale(st, now) {
 		return "", "", false
 	}
 	_, kind, atLimit := claudeUsageLimitAbort(session.UUID(m.Dir, m.Name))
@@ -340,26 +340,26 @@ func rateLimitWaiting(m session.Meta, now time.Time) (state, resumeAt string, ok
 }
 
 // triedRecently rate-limits the Enter presses inside one episode.
-func triedRecently(st RateLimitState, now time.Time) bool {
+func triedRecently(st rateLimitState, now time.Time) bool {
 	t, err := time.Parse(time.RFC3339, st.LastTry)
-	return err == nil && now.Sub(t) < RateLimitWatchInterval/2
+	return err == nil && now.Sub(t) < rateLimitWatchInterval/2
 }
 
-// EpisodeStale reports whether an episode is finished: its resume time (plus the grace
+// episodeStale reports whether an episode is finished: its resume time (plus the grace
 // for the scheduler to fire) has passed, or it never got one and has aged out.
-func EpisodeStale(st RateLimitState, now time.Time) bool {
+func episodeStale(st rateLimitState, now time.Time) bool {
 	if st.At == "" {
 		return true
 	}
 	if st.Spend {
-		return false // 時刻では終わらない — 転写が変わったときだけ畳む（RateLimitFollowUp）
+		return false // 時刻では終わらない — 転写が変わったときだけ畳む（rateLimitFollowUp）
 	}
 	if st.ResumeAt != "" {
 		t, err := time.Parse(time.RFC3339, st.ResumeAt)
-		return err != nil || now.After(t.Add(RateLimitCleanupGrace))
+		return err != nil || now.After(t.Add(rateLimitCleanupGrace))
 	}
 	t, err := time.Parse(time.RFC3339, st.At)
-	return err != nil || now.After(t.Add(RateLimitEpisodeTTL))
+	return err != nil || now.After(t.Add(rateLimitEpisodeTTL))
 }
 
 // createRateLimitSchedule books the resume with the CP scheduler (docs/log/38).
@@ -434,10 +434,10 @@ func deleteRateLimitSchedule(id string) {
 // （docs/log/47 §3-4 の再開文と同じ方針）。言語は表示言語に合わせる — 会話ごとの言語を
 // 持たない以上、その利用者が読み書きしている言語が最良の推定。
 func rateLimitResumePrompt() string {
-	return RateLimitResumePromptFor(uiprefs.Locale())
+	return rateLimitResumePromptFor(uiprefs.Locale())
 }
 
-func RateLimitResumePromptFor(locale string) string {
+func rateLimitResumePromptFor(locale string) string {
 	if locale == "en" {
 		return "The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
 			"This is an automatic resume — there is no new instruction. " +
@@ -450,8 +450,8 @@ func RateLimitResumePromptFor(locale string) string {
 
 func isRateLimitResumePrompt(prompt string) bool {
 	prompt = strings.TrimSpace(prompt)
-	return prompt == strings.TrimSpace(RateLimitResumePromptFor("ja")) ||
-		prompt == strings.TrimSpace(RateLimitResumePromptFor("en"))
+	return prompt == strings.TrimSpace(rateLimitResumePromptFor("ja")) ||
+		prompt == strings.TrimSpace(rateLimitResumePromptFor("en"))
 }
 
 func rateLimitScheduleLabel(name string) string {

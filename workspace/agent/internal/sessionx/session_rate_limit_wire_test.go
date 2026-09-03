@@ -37,7 +37,7 @@ func atLimitProbe(t *testing.T, kind claude.LimitKind) *int {
 }
 
 // limitedMeta writes a claude meta and opens a usage-limit episode for it.
-func limitedMeta(t *testing.T, name string, st RateLimitState) session.Meta {
+func limitedMeta(t *testing.T, name string, st rateLimitState) session.Meta {
 	t.Helper()
 	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
 	session.WriteMeta(m)
@@ -54,7 +54,7 @@ func TestWireSessionShowsRateLimitWait(t *testing.T) {
 	calls := atLimitProbe(t, claude.LimitWindow)
 	now := time.Now()
 	resume := now.Add(2 * time.Hour).Format(time.RFC3339)
-	m := limitedMeta(t, "rlwire1", RateLimitState{
+	m := limitedMeta(t, "rlwire1", rateLimitState{
 		At: now.Format(time.RFC3339), Menu: true, Dismissed: true, ResumeAt: resume, ScheduleID: "sch_x",
 	})
 
@@ -81,7 +81,7 @@ func TestWireSessionShowsSpendLimit(t *testing.T) {
 	isolateAgentState(t)
 	atLimitProbe(t, claude.LimitSpend)
 	now := time.Now()
-	m := limitedMeta(t, "rlwire6", RateLimitState{At: now.Format(time.RFC3339), Spend: true})
+	m := limitedMeta(t, "rlwire6", rateLimitState{At: now.Format(time.RFC3339), Spend: true})
 
 	s := wireSession(m, true)
 	if s.State != agents.StateSpendLimit {
@@ -101,7 +101,7 @@ func TestWireSessionSpendKindComesFromTranscript(t *testing.T) {
 	isolateAgentState(t)
 	atLimitProbe(t, claude.LimitWindow)
 	now := time.Now()
-	m := limitedMeta(t, "rlwire7", RateLimitState{
+	m := limitedMeta(t, "rlwire7", rateLimitState{
 		At: now.Format(time.RFC3339), Spend: true, // 古い記録は支出のまま
 		ResumeAt: now.Add(time.Hour).Format(time.RFC3339),
 	})
@@ -118,7 +118,7 @@ func TestWireSessionRateLimitClearedByTranscript(t *testing.T) {
 	isolateAgentState(t)
 	atLimitProbe(t, "")
 	now := time.Now()
-	m := limitedMeta(t, "rlwire2", RateLimitState{
+	m := limitedMeta(t, "rlwire2", rateLimitState{
 		At: now.Format(time.RFC3339), ResumeAt: now.Add(time.Hour).Format(time.RFC3339),
 	})
 
@@ -136,9 +136,9 @@ func TestWireSessionRateLimitEpisodeExpired(t *testing.T) {
 	isolateAgentState(t)
 	calls := atLimitProbe(t, claude.LimitWindow)
 	now := time.Now()
-	m := limitedMeta(t, "rlwire3", RateLimitState{
+	m := limitedMeta(t, "rlwire3", rateLimitState{
 		At:       now.Add(-6 * time.Hour).Format(time.RFC3339),
-		ResumeAt: now.Add(-RateLimitCleanupGrace - time.Hour).Format(time.RFC3339),
+		ResumeAt: now.Add(-rateLimitCleanupGrace - time.Hour).Format(time.RFC3339),
 	})
 
 	if s := wireSession(m, true); s.State == agents.StateLimited {
@@ -172,7 +172,7 @@ func TestWireSessionRateLimitOnlyWhileAlive(t *testing.T) {
 	isolateAgentState(t)
 	atLimitProbe(t, claude.LimitWindow)
 	now := time.Now()
-	m := limitedMeta(t, "rlwire5", RateLimitState{
+	m := limitedMeta(t, "rlwire5", rateLimitState{
 		At: now.Format(time.RFC3339), ResumeAt: now.Add(time.Hour).Format(time.RFC3339),
 	})
 

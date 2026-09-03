@@ -4,7 +4,7 @@ package sessionx
 //
 // 移送前、rate_limit_resume_test.go は package main で走っており、chatx は本番の
 // `chat_wiring.go` の init が配線していた。sessionx のテストバイナリには main が居ないので、
-// `chatx.Configure` を自分で呼ばないと `deps.RateLimitState` が nil で落ちる
+// `chatx.Configure` を自分で呼ばないと `deps.rateLimitState` が nil で落ちる
 // （実測: TestRateLimitResumeNoteOnFailedReport が chat_report.go:226 で SIGSEGV）。
 //
 // 🔥 **44 フィールドを手で並べない。** 手書きの一覧は chatx.Deps が増えた日に漏れ、
@@ -13,7 +13,7 @@ package sessionx
 // （internal/gitx/deps_test.go の `unreached` と同じ考え方。作り物の戻り値を置くと、
 // 将来ここへ到達する検査が増えたときに**嘘の値で静かに緑になる**）。
 //
-// 実際に踏むのは **RateLimitState ただ 1 本**（測定して確かめた）。そこだけ本物と同じ
+// 実際に踏むのは **rateLimitState ただ 1 本**（測定して確かめた）。そこだけ本物と同じ
 // 読み方をする —— sessionx の `RateLimitStates` ストアを引く。main 側の
 // `chat_wiring.go` も同じストアを引いているので、写しではなく**同じ出所**である。
 

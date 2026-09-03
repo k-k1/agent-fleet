@@ -536,7 +536,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	}
 	// 利用上限の自動再開は、予約時刻ではなく配達確認が通ったここを「再開した」の
 	// 真実源にする。重複防止と内部プロンプトの照合は rate_limit_resume.go が担う。
-	NotifyRateLimitResumeDelivered(name, body.Prompt, body.Source, time.Now())
+	notifyRateLimitResumeDelivered(name, body.Prompt, body.Source, time.Now())
 	// Each delivered instruction ADDS one ledger row (docs/log/51 Phase 2 — 指示1件=報告1回。
 	// 追加であって上書きではないので、キュー投入で先行指示が潰れない)。carrying report_to
 	// (operator / scheduler) それ自体は、ミラーが user ターンにバッジを付けるための由来
