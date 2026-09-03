@@ -44,6 +44,12 @@ export const errors = {
   "err.workspace_starting": "ワークスペースを起動中です。準備ができてからもう一度お試しください。",
   "err.driver_unavailable": "このエージェントではマネージド実行を利用できません。",
   "err.runtime_failed": "エージェントを起動できませんでした。しばらく待ってから再試行してください。",
+  // ↑ は「待てば直る」失敗のための文言。共有 daemon が未認証で起こされなかった場合は
+  // 待っても直らないので、runtime_failed に潰さず専用コードで出す（workspace/agent の
+  // runtime_err.go と対）。何のログインが要るかは kind ごとに違うので、詳細は
+  // errDetail() がサーバの message を併記して伝える。
+  "err.agent_not_connected":
+    "このエージェントにログインしていないため起動できませんでした。設定 > エージェント から接続してください。",
   "err.send_failed": "送信に失敗しました",
   "err.network": "通信エラー",
   "err.unknown": "不明なエラーが発生しました",
@@ -86,6 +92,7 @@ export const errors = {
   "err.chat_nothing_to_compact": "まだ圧縮できるコンテキストがありません（最初の応答の後に使えます）",
   "err.conn_api_key_required": "API キーを入力してください",
   "err.conn_grafana_fields_required": "Grafana の URL とサービスアカウントトークンを入力してください",
+  "err.conn_jira_fields_required": "Jira のアカウントメールアドレスと API トークンを入力してください",
   "err.conn_url_scheme": "URL は http(s):// で始めてください",
   "err.conn_aws_profile_required": "AWS プロファイルを指定してください",
   "err.conn_sso_region_missing": "SSO リージョンがありません（SSM プロファイルの設定を確認してください）",

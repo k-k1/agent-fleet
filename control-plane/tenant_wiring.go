@@ -1,6 +1,12 @@
 package main
 
-// alias_tenant.go — tenant 家系（`internal/tenantsrv`）の**切断面**。3 つのものを持つ。
+// tenant_wiring.go — tenant 家系（`internal/tenantsrv`）の**切断面**。3 つのものを持つ。
+//
+// 🔴 **ここに「素の別名」は 1 本も無い**（RECLAIM-D で 0 を確認）。元は `alias_tenant.go` という
+// 名前だったが、**エイリアスを持たないので実態と合わず**、姉妹（`git_wiring.go` /
+// `mcp_wiring.go` / `memory_wiring.go` / `session_wiring.go`）に合わせて改名した。
+// **`alias_*.go` が残っていると「回収の剥がし残し」と誤読される**——回収の完了は
+// 「`alias_*.go` が消えたこと」で測られてきたため。
 //
 //  1. `tenantAPI` / `adminAPI` の**型そのもの**。エイリアスにはできない: `adminAPI` は
 //     cloudcost.go / usage.go / audit.go / admin_stats.go / admin_sessions.go /

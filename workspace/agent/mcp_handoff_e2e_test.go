@@ -24,6 +24,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -78,7 +79,7 @@ func TestE2EHandoffProposalLandsUnderTheCallingSession(t *testing.T) {
 					t.Fatalf("tools/call = %+v, want a refusal mentioning %q", resp, tc.wantRefusal)
 				}
 				for name := range tc.alive {
-					if list, _ := readHandoffProposals(name); len(list) != 0 {
+					if list, _ := sessionx.ReadHandoffProposals(name); len(list) != 0 {
 						t.Fatalf("a proposal was filed under %q despite the refusal: %+v", name, list)
 					}
 				}
@@ -87,7 +88,7 @@ func TestE2EHandoffProposalLandsUnderTheCallingSession(t *testing.T) {
 			if resp.isError {
 				t.Fatalf("tools/call failed: %s", resp.text)
 			}
-			list, err := readHandoffProposals(tc.wantOwner)
+			list, err := sessionx.ReadHandoffProposals(tc.wantOwner)
 			if err != nil || len(list) != 1 {
 				t.Fatalf("no proposal under %q (err=%v, list=%+v) — the card would never appear in "+
 					"that session's mirror", tc.wantOwner, err, list)
@@ -100,7 +101,7 @@ func TestE2EHandoffProposalLandsUnderTheCallingSession(t *testing.T) {
 				if name == tc.wantOwner {
 					continue
 				}
-				if other, _ := readHandoffProposals(name); len(other) != 0 {
+				if other, _ := sessionx.ReadHandoffProposals(name); len(other) != 0 {
 					t.Fatalf("the proposal ALSO landed under %q — a handoff was filed in "+
 						"somebody else's session", name)
 				}
@@ -138,8 +139,8 @@ func newHandoffE2E(t *testing.T, bin string, alive map[string]bool) *handoffE2E 
 
 	mux := http.NewServeMux()
 	// The route under test: production's own handler, writing production's own file.
-	mux.HandleFunc("POST /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
-	mux.HandleFunc("GET /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
+	mux.HandleFunc("POST /sessions/{name}/handoff-proposal", sessionx.HandleSessionHandoffProposal)
+	mux.HandleFunc("GET /sessions/{name}/handoff-proposal", sessionx.HandleSessionHandoffProposal)
 	// Stub: real aliveness needs tmux or a managed daemon (see the file comment).
 	mux.HandleFunc("GET /sessions/{name}/status", func(w http.ResponseWriter, r *http.Request) {
 		a := alive[r.PathValue("name")]

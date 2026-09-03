@@ -45,6 +45,13 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.workspace_starting": "The workspace is still starting. Try again once it is ready.",
   "err.driver_unavailable": "Managed execution isn't available for this agent.",
   "err.runtime_failed": "Couldn't start the agent. Wait a moment and try again.",
+  // The line above is for failures that waiting fixes. A shared daemon that was not
+  // started because the CLI is not signed in never fixes itself, so it gets its own
+  // code instead of collapsing into runtime_failed (paired with runtime_err.go on the
+  // Agent). Which login is missing differs per kind — errDetail() appends the server's
+  // message for that.
+  "err.agent_not_connected":
+    "Couldn't start: you aren't signed in to this agent. Connect it from Settings > Agents.",
   "err.send_failed": "Failed to send.",
   "err.network": "Network error",
   "err.unknown": "An unknown error occurred.",
@@ -87,6 +94,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.chat_nothing_to_compact": "Nothing to compact yet (available after the first reply).",
   "err.conn_api_key_required": "Enter an API key.",
   "err.conn_grafana_fields_required": "Enter the Grafana URL and service account token.",
+  "err.conn_jira_fields_required": "Enter the Jira account email and API token.",
   "err.conn_url_scheme": "The URL must start with http(s)://.",
   "err.conn_aws_profile_required": "Specify an AWS profile.",
   "err.conn_sso_region_missing": "No SSO region found (check the SSM profile configuration).",

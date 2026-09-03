@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -120,7 +121,7 @@ func awaitCodexPlanTransition(t *testing.T, tn string) (string, string) {
 	lastMode, lastPane := "", ""
 	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
-		lastMode = paneMode(session.KindCodex, tn)
+		lastMode = sessionx.PaneMode(session.KindCodex, tn)
 		lastPane = capturePane(tn)
 		if lastMode == "Plan" || strings.Contains(lastPane, "for Plan mode.") {
 			return lastMode, lastPane
@@ -158,7 +159,7 @@ func awaitPaneMode(t *testing.T, tn, want string) string {
 	last := ""
 	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
-		if last = paneMode(session.KindCodex, tn); last == want {
+		if last = sessionx.PaneMode(session.KindCodex, tn); last == want {
 			return last
 		}
 		time.Sleep(250 * time.Millisecond)

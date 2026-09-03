@@ -10,6 +10,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"os"
 	"strings"
@@ -64,7 +65,7 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 			"session is locked against deletion; unlock it first")
 		return
 	}
-	if sessionAlive(m) {
+	if sessionx.SessionAlive(m) {
 		httpx.WriteErr(w, http.StatusConflict, "session_running",
 			"session is running; stop it before deleting")
 		return
@@ -107,8 +108,8 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 // Neither is part of the cleanup archive — they are annotations about a conversation
 // that is being deleted, so a restore does not want them back either.
 func removeSessionSideFiles(name string) {
-	removeHandoffProposals(name)
-	removeSessionMarks(name)
+	sessionx.RemoveHandoffProposals(name)
+	sessionx.RemoveSessionMarks(name)
 }
 
 // archiveSessionForDelete bundles a session's meta + jsonl(s) into a cleanup archive

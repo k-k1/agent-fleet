@@ -5,7 +5,7 @@ package main
 // 🔥 `sessionx.Configure` が捕まえるのは**未配線**（nil / 零値）だけで、**間違った配線**は
 // 捕まえられない。しかも session 家系の Deps は**同じ型のフィールドが固まっている**:
 //
-//   - `string` が 11 本（エラーコード）
+//   - `string` が 12 本（エラーコード）
 //   - `func() string` が 2 本（BrowseRoot / ToolchainShellPrefix）
 //
 // **同じ型どうしを入れ替えても、型検査も `Configure` の reflect 網羅検査も鳴らない。**
@@ -74,7 +74,10 @@ func TestSessionWiringIsLive(t *testing.T) {
 
 		// エラーコードは errcodes.go の**本物と同一の綴り**であること。
 		// ここが違うと Console の i18n が引けず、生のコードが画面に出る。
-		// **11 本とも同じ型なので、入れ替えを止められるのはこの 11 行だけである。**
+		// **12 本とも同じ型なので、入れ替えを止められるのはこの 12 行だけである。**
+		"ErrCodeAgentNotConnected": func(t *testing.T) {
+			sameSessionCode(t, w.ErrCodeAgentNotConnected, errCodeAgentNotConnected)
+		},
 		"ErrCodeChatConversationNotFnd": func(t *testing.T) {
 			sameSessionCode(t, w.ErrCodeChatConversationNotFnd, errCodeChatConversationNotFnd)
 		},
@@ -131,7 +134,7 @@ func TestSessionWiringIsLive(t *testing.T) {
 	}
 }
 
-// TestSessionWiringErrorCodesAreDistinct は、11 本のエラーコードが**互いに違う綴り**で
+// TestSessionWiringErrorCodesAreDistinct は、12 本のエラーコードが**互いに違う綴り**で
 // あることを見る。
 //
 // 🔥 これが要る理由: 上の 1 本ずつの突き合わせは「本物と同じか」しか見ないので、
@@ -163,8 +166,8 @@ func TestSessionWiringErrorCodesAreDistinct(t *testing.T) {
 		seen[code] = f.Name
 	}
 	// 🔥 走査本数の下限（#320 の「1 件も見つからなければ何も検査しない」対策）。
-	if n != 11 {
-		t.Fatalf("string のフィールドを %d 本しか見ていない（want 11）＝この検査が無言化している", n)
+	if n != 12 {
+		t.Fatalf("string のフィールドを %d 本しか見ていない（want 12）＝この検査が無言化している", n)
 	}
 }
 

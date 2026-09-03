@@ -5,6 +5,8 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"log"
 	"net/http"
 	"os"
@@ -75,7 +77,7 @@ func main() {
 	}
 	// claude hook helper: records session working/idle/question state.
 	if len(os.Args) > 1 && os.Args[1] == "session-status" {
-		runSessionStatusHook(os.Args[2:])
+		sessionx.RunSessionStatusHook(os.Args[2:])
 		return
 	}
 	// Pane exit recorder: `workspace-agent record-exit <name> <code>`, appended after
@@ -168,7 +170,7 @@ func main() {
 	// （応答あり notice ＋ docs/log/30 のオペレーター報告）へ流す。driver は
 	// internal/agents 配下で package main を import できないため、判定の 1 実装を
 	// ここで seam に登録する。app-server 起動と reconcile より前に張ること。
-	agents.SetStateNotifier(recordSessionNotification)
+	agents.SetStateNotifier(sessionx.RecordSessionNotification)
 	// 完了報告の消費判定（docs/log/51 Phase 1 / ADR 0035）。フック・notify seam・
 	// record-exit の kick は起床ヒントでしかなく、「指示が完了したか」を決めるのは
 	// このリコンサイラの tick だけ。ヒントが死んでも次の tick が同じ状態をレベルで
@@ -223,19 +225,19 @@ func main() {
 	// エージェントメモリの自動 snapshot（docs/log/39 / ADR 0022 P1）: claude/codex の
 	// メモリ md を bare repo へ差分保存する。ポーリング契機（memory_trigger.go）で、
 	// 変更が静穏かつ対象セッションが非稼働のときだけ積む。AF_MEMORY_SNAPSHOT=off で無効。
-	startMemorySnapshotLoop()
+	memoryx.StartMemorySnapshotLoop()
 
 	// 利用上限で止まった claude セッションの自動復帰（docs/log/47 §4-4）: メニューを既定の
 	// 「リセットまで待つ」で解除し、上限が解ける時刻に「続けて」を送る一回限りの
 	// スケジュールを CP へ預ける。誰も画面を見ていないときに効く必要があるので、
 	// 一覧ポーリングではなく専用のループで回す。
-	startRateLimitWatch()
+	sessionx.StartRateLimitWatch()
 
 	// 再送で直る中断（接続断・一時的なレート制限・ストリームの番犬）からの自動再開
 	// （docs/log/47 §4-6）: 転写の末尾が retryable な中断で終わっている claude セッションへ
 	// Agent 自身が「続けて」を送る。アシスタント会話を持たないセッションでも効き、
 	// 打ち切ったときだけ報告としてアシスタント／利用者へ上がる。
-	startAbortResumeWatch()
+	sessionx.StartAbortResumeWatch()
 
 	// Chat-bridge delivery loop (docs/log/37 P1): drains the on-disk queue that
 	// notice.Put / record-exit enqueue into (possibly from hook subprocesses)
@@ -245,7 +247,7 @@ func main() {
 	// Chat-bridge receive (docs/log/37 P2a): the Discord Gateway supervisor that routes the
 	// bound user's thread replies back into sessions. No-op until a user opts into receive
 	// (Discord.Receive) — bounds the WSS connection to opted-in users only.
-	startBridgeReceiver()
+	sessionx.StartBridgeReceiver()
 
 	log.Printf("workspace-agent %s listening on %s", buildVersion, addr)
 	if err := http.ListenAndServe(addr, httpx.LogRequests(httpx.Gzip(httpx.RequireToken(mux)))); err != nil {

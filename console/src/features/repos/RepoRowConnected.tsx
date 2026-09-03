@@ -3,7 +3,7 @@
 // copy appears (the flat Repos list, each node of the project tree). All the launch
 // / clone-target / delete / fast-forward / open-SCM logic that used to live inline
 // in ReposSection lives here once.
-import { apiJSON, raw, errText, repoSetLock } from "../../core/api/client.ts";
+import { apiJSON, raw, errDetail, errText, repoSetLock } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
@@ -182,7 +182,8 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
           res = await apiJSON("api/sessions", "POST", body);
         }
         if (res && res.error) {
-          toast(tr("rp.launch_failed", { err: errText(res.error) }));
+          // errDetail: 汎用コード（runtime_failed 等）は「なぜ」を message にしか持たない。
+          toast(tr("rp.launch_failed", { err: errDetail(res.error) }));
           return;
         }
         writeRepoLast(r.name, kind, hasModel ? model : undefined, effort, startMode);

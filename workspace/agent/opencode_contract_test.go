@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,7 +97,7 @@ func TestContractOpencodeTUIPaneMode(t *testing.T) {
 	var got string
 	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
-		if got = paneMode(session.KindOpencode, name); got != "" {
+		if got = sessionx.PaneMode(session.KindOpencode, name); got != "" {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -116,7 +117,7 @@ func TestContractOpencodeTUIPaneMode(t *testing.T) {
 	}
 	deadline = time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		if got = paneMode(session.KindOpencode, name); got == "Plan" {
+		if got = sessionx.PaneMode(session.KindOpencode, name); got == "Plan" {
 			return
 		}
 		time.Sleep(300 * time.Millisecond)

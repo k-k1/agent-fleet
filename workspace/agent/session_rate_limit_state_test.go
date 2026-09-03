@@ -11,6 +11,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"os"
 	"os/exec"
 	"sync/atomic"
@@ -108,7 +109,7 @@ func TestDriveStateRateLimitModalBlocks(t *testing.T) {
 	// 本番と同じ初期条件: ターンは開始済み（working）で Stop は鳴っていない。
 	status.Persist(sid, "working")
 
-	if got := driveState(m, true, true); got != agents.StateBlocked {
+	if got := sessionx.DriveState(m, true, true); got != agents.StateBlocked {
 		t.Fatalf("driveState = %q, want %q（上限メニューは 進行中 ではない）", got, agents.StateBlocked)
 	}
 	// 自己修復が通っていること。ここが効かないのが元のバグで、マーカーが working のまま
@@ -117,7 +118,7 @@ func TestDriveStateRateLimitModalBlocks(t *testing.T) {
 		t.Error("status marker はまだ working — 自己修復が走っていない（元の貼り付きと同じ状態）")
 	}
 	// メニューが出ている間は何度 poll しても blocked のまま（状態が振動しない）。
-	if got := driveState(m, true, true); got != agents.StateBlocked {
+	if got := sessionx.DriveState(m, true, true); got != agents.StateBlocked {
 		t.Errorf("2 回目の driveState = %q, want %q", got, agents.StateBlocked)
 	}
 }
@@ -127,7 +128,7 @@ func TestDriveStateRateLimitModalBlocks(t *testing.T) {
 func TestDriveStateIdlePaneNotBlocked(t *testing.T) {
 	isolateAgentState(t)
 	m := paneShowing(t, "ratelimit2", "internal/tmuxx/testdata/footers/idle_bypass_hint.txt")
-	if got := driveState(m, true, true); got == agents.StateBlocked {
+	if got := sessionx.DriveState(m, true, true); got == agents.StateBlocked {
 		t.Fatalf("driveState = %q — 通常の待機ペインを上限メニューと誤判定している", got)
 	}
 }

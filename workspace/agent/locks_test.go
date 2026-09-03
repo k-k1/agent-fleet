@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,15 +20,15 @@ import (
 // the real handlers over HTTP rather than calling internals.
 func lockMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /sessions", handleListSessions)
-	mux.HandleFunc("POST /sessions/{name}/lock", handleSessionLock)
-	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
-	mux.HandleFunc("POST /sessions/{name}/archive", handleArchiveSession)
+	mux.HandleFunc("GET /sessions", sessionx.HandleListSessions)
+	mux.HandleFunc("POST /sessions/{name}/lock", sessionx.HandleSessionLock)
+	mux.HandleFunc("POST /sessions/{name}/stop", sessionx.HandleStopSession)
+	mux.HandleFunc("POST /sessions/{name}/archive", sessionx.HandleArchiveSession)
 	mux.HandleFunc("DELETE /sessions/{name}", handleDeleteSession)
 	mux.HandleFunc("GET /repos", gitx.HandleListRepos)
-	mux.HandleFunc("POST /repos/{name}/lock", handleRepoLock)
+	mux.HandleFunc("POST /repos/{name}/lock", sessionx.HandleRepoLock)
 	mux.HandleFunc("DELETE /repos/{name}", gitx.HandleDeleteRepo)
-	mux.HandleFunc("POST /chat/conversations/{id}/lock", handleChatLock)
+	mux.HandleFunc("POST /chat/conversations/{id}/lock", sessionx.HandleChatLock)
 	mux.HandleFunc("DELETE /chat/conversations/{id}", chatx.HandleChatDelete)
 	return mux
 }
@@ -97,7 +98,7 @@ func TestListMetaWriteKeepsNewerSessionLock(t *testing.T) {
 	fresh.Locked = true
 	session.WriteMeta(fresh)
 	stale.StoppedAt = time.Now().Format(time.RFC3339)
-	writeSessionMetaKeepingLock(stale)
+	sessionx.WriteSessionMetaKeepingLock(stale)
 
 	got, ok := session.ReadMeta("slot01")
 	if !ok || !got.Locked {
@@ -234,7 +235,7 @@ func TestWorktreeLockBlocksAutoPrune(t *testing.T) {
 		t.Fatalf("worktree add: %v: %s", err, out)
 	}
 
-	if err := setRepoLock(wt, true); err != nil {
+	if err := sessionx.SetRepoLock(wt, true); err != nil {
 		t.Fatal(err)
 	}
 	gitx.MaybePruneWorktree(wt)
@@ -242,7 +243,7 @@ func TestWorktreeLockBlocksAutoPrune(t *testing.T) {
 		t.Fatal("locked worktree was auto-pruned")
 	}
 	// Same call once unlocked removes it — proving the test's prune really would fire.
-	if err := setRepoLock(wt, false); err != nil {
+	if err := sessionx.SetRepoLock(wt, false); err != nil {
 		t.Fatal(err)
 	}
 	gitx.MaybePruneWorktree(wt)

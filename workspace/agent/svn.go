@@ -20,6 +20,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"os"
 	"os/exec"
@@ -524,7 +525,7 @@ func handleSvnUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if running := liveSessionsInDir(dir); len(running) > 0 {
+	if running := sessionx.LiveSessionsInDir(dir); len(running) > 0 {
 		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunning,
 			fmt.Sprintf("%d session(s) are running in this working copy (%s); finish or stop them before updating.",
 				len(running), strings.Join(running, ", ")))

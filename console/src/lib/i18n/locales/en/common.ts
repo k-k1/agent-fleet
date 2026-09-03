@@ -305,6 +305,12 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "ui.claude_registered_model": "Select a registered model",
   "ui.select_from_count": "Select from {count}",
   "ui.no_matching_models": "No matching models",
+  // Shown when a dynamic kind's catalog resolved to no selectable model. It must stay
+  // true for EVERY reason that produces it — not signed in, signed in but unable to
+  // reach the provider, a plan that only offers the default (Copilot Free is Auto-only,
+  // where empty is correct), or everything excluded in settings. The Agent does not say
+  // which, so this must not name a cause.
+  "ui.model_default_only": "Only the default model is available (check this agent's connection and plan).",
   "ui.count_items": "{count} items",
   "ui.cancel": "Cancel",
   "ui.run": "Run",

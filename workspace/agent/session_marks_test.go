@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,7 +21,7 @@ func marksCall(t *testing.T, name, method, query, body string) *httptest.Respons
 	r := httptest.NewRequest(method, url, strings.NewReader(body))
 	r.SetPathValue("name", name)
 	w := httptest.NewRecorder()
-	handleSessionMarks(w, r)
+	sessionx.HandleSessionMarks(w, r)
 	return w
 }
 
@@ -78,7 +79,7 @@ func TestSessionMarksRoundTrip(t *testing.T) {
 		t.Fatalf("mark survived delete: %+v", list)
 	}
 	// The empty list leaves no file behind.
-	if _, err := os.Stat(sessionMarksPath(name)); !os.IsNotExist(err) {
+	if _, err := os.Stat(sessionx.SessionMarksPath(name)); !os.IsNotExist(err) {
 		t.Fatalf("marks file should be gone, stat err=%v", err)
 	}
 }
@@ -130,14 +131,14 @@ func TestSessionMarksValidation(t *testing.T) {
 	}
 
 	// 長すぎる引用は弾かずに切る（アンカーとしては先頭で足りる）。
-	long := strings.Repeat("あ", markQuoteMaxRunes+50)
+	long := strings.Repeat("あ", sessionx.MarkQuoteMaxRunes+50)
 	body := `{"id":"mk_00000005","turn":"t","part":0,"kind":"text","quote":"` + long + `","nth":0,"color":"green"}`
 	if got := marksCall(t, name, http.MethodPost, "", body); got.Code != http.StatusOK {
 		t.Fatalf("long quote status=%d body=%s", got.Code, got.Body.String())
 	}
 	list := decodeMarks(t, marksCall(t, name, http.MethodGet, "", "").Body.String())
-	if q, _ := list[0]["quote"].(string); len([]rune(q)) != markQuoteMaxRunes {
-		t.Fatalf("quote not truncated to %d runes: %d", markQuoteMaxRunes, len([]rune(q)))
+	if q, _ := list[0]["quote"].(string); len([]rune(q)) != sessionx.MarkQuoteMaxRunes {
+		t.Fatalf("quote not truncated to %d runes: %d", sessionx.MarkQuoteMaxRunes, len([]rune(q)))
 	}
 }
 
@@ -182,16 +183,16 @@ func TestRemoveSessionSideFilesOnDelete(t *testing.T) {
 	if got := marksCall(t, name, http.MethodPost, "", body); got.Code != http.StatusOK {
 		t.Fatalf("seed status=%d body=%s", got.Code, got.Body.String())
 	}
-	if _, err := addHandoffProposal(name, "next", "title"); err != nil {
+	if _, err := sessionx.AddHandoffProposal(name, "next", "title"); err != nil {
 		t.Fatalf("seed handoff: %v", err)
 	}
 
 	removeSessionSideFiles(name)
 
-	if _, err := os.Stat(sessionMarksPath(name)); !os.IsNotExist(err) {
+	if _, err := os.Stat(sessionx.SessionMarksPath(name)); !os.IsNotExist(err) {
 		t.Fatalf("marks file survived deletion, stat err=%v", err)
 	}
-	if _, err := os.Stat(handoffProposalPath(name)); !os.IsNotExist(err) {
+	if _, err := os.Stat(sessionx.HandoffProposalPath(name)); !os.IsNotExist(err) {
 		t.Fatalf("handoff file survived deletion, stat err=%v", err)
 	}
 }

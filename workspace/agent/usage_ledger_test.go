@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -238,7 +239,7 @@ func TestFoldTurnRowsMatchesAggregateUsage(t *testing.T) {
 		{Role: "user", Text: "1"},
 		asst("claude-haiku-4-5", 100, 10, 5, 20, false),
 		asst("claude-haiku-4-5", 150, 30, 5, 25, false), // 同一論理ターンの2イベント目
-		{Role: "user", Text: "2", Source: turnSourceOperator},
+		{Role: "user", Text: "2", Source: sessionx.TurnSourceOperator},
 		asst("claude-haiku-4-5", 200, 40, 10, 0, false),
 		asst("claude-haiku-4-5", 300, 60, 0, 0, true), // サブエージェント（別グループ）
 		{Role: "user", Text: "3"},
@@ -268,12 +269,12 @@ func TestFoldTurnRowsMatchesAggregateUsage(t *testing.T) {
 	for _, r := range all {
 		sum += usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out)
 	}
-	want := aggregateUsage(turns).Cumulative.Spend
+	want := sessionx.AggregateUsage(turns).Cumulative.Spend
 	if sum != want {
 		t.Fatalf("台帳 spend 合計 = %d, get_session_usage = %d", sum, want)
 	}
-	if len(all) != aggregateUsage(turns).Cumulative.Turns {
-		t.Fatalf("論理ターン数 = %d, get_session_usage = %d", len(all), aggregateUsage(turns).Cumulative.Turns)
+	if len(all) != sessionx.AggregateUsage(turns).Cumulative.Turns {
+		t.Fatalf("論理ターン数 = %d, get_session_usage = %d", len(all), sessionx.AggregateUsage(turns).Cumulative.Turns)
 	}
 }
 
@@ -344,10 +345,10 @@ func TestFoldMatchesSessionUsageLive(t *testing.T) {
 	useTempUsageDir(t)
 	checked := 0
 	for _, m := range session.ListMetas() {
-		if !agentOf(m.Kind).Caps().CanTranscript {
+		if !sessionx.AgentOf(m.Kind).Caps().CanTranscript {
 			continue
 		}
-		turns := usageTurns(m)
+		turns := sessionx.UsageTurns(m)
 		if len(turns) == 0 {
 			continue
 		}
@@ -357,7 +358,7 @@ func TestFoldMatchesSessionUsageLive(t *testing.T) {
 		for _, r := range rows {
 			sum += usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out)
 		}
-		cum := aggregateUsage(turns).Cumulative
+		cum := sessionx.AggregateUsage(turns).Cumulative
 		if sum != cum.Spend || len(rows) != cum.Turns {
 			t.Errorf("%s(%s): 台帳 spend=%d turns=%d / get_session_usage spend=%d turns=%d",
 				m.Name, m.Kind, sum, len(rows), cum.Spend, cum.Turns)
@@ -403,20 +404,20 @@ func TestUsageMeasuredForKind(t *testing.T) {
 func TestCreateOriginResolution(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		req      createReq
+		req      sessionx.CreateReq
 		want     string
 		wantConv string
 	}{
-		{"Console（無印）", createReq{}, session.OriginUser, ""},
-		{"MCP create_session", createReq{Origin: "operator", OriginConv: "conv-1"}, session.OriginOperator, "conv-1"},
-		{"定時実行", createReq{Source: turnSourceSchedule}, session.OriginSchedule, ""},
-		{"手動発火", createReq{Source: turnSourceScheduleManual}, session.OriginSchedule, ""},
-		{"未知の値は user へ縮退", createReq{Origin: "hacked"}, session.OriginUser, ""},
+		{"Console（無印）", sessionx.CreateReq{}, session.OriginUser, ""},
+		{"MCP create_session", sessionx.CreateReq{Origin: "operator", OriginConv: "conv-1"}, session.OriginOperator, "conv-1"},
+		{"定時実行", sessionx.CreateReq{Source: sessionx.TurnSourceSchedule}, session.OriginSchedule, ""},
+		{"手動発火", sessionx.CreateReq{Source: sessionx.TurnSourceScheduleManual}, session.OriginSchedule, ""},
+		{"未知の値は user へ縮退", sessionx.CreateReq{Origin: "hacked"}, session.OriginUser, ""},
 		// origin=operator 以外では会話 slug に意味が無いので落とす。
-		{"conv は operator の時だけ", createReq{Origin: "user", OriginConv: "conv-1"}, session.OriginUser, ""},
+		{"conv は operator の時だけ", sessionx.CreateReq{Origin: "user", OriginConv: "conv-1"}, session.OriginUser, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, conv := createOrigin(&tc.req)
+			got, conv := sessionx.CreateOrigin(&tc.req)
 			if got != tc.want || conv != tc.wantConv {
 				t.Fatalf("origin = %q/%q, want %q/%q", got, conv, tc.want, tc.wantConv)
 			}
@@ -436,12 +437,12 @@ func TestOriginOfDefaultsToUnknown(t *testing.T) {
 
 func TestUsageTriggerFromTurnSource(t *testing.T) {
 	for src, want := range map[string]string{
-		"":                       usagex.TriggerUser,
-		turnSourceOperator:       usagex.TriggerOperator,
-		turnSourceDiscord:        usagex.TriggerBridge,
-		turnSourceSlack:          usagex.TriggerBridge,
-		turnSourceSchedule:       usagex.TriggerSchedule,
-		turnSourceScheduleManual: usagex.TriggerSchedule,
+		"":                                usagex.TriggerUser,
+		sessionx.TurnSourceOperator:       usagex.TriggerOperator,
+		sessionx.TurnSourceDiscord:        usagex.TriggerBridge,
+		sessionx.TurnSourceSlack:          usagex.TriggerBridge,
+		sessionx.TurnSourceSchedule:       usagex.TriggerSchedule,
+		sessionx.TurnSourceScheduleManual: usagex.TriggerSchedule,
 	} {
 		if got := usageTriggerFromTurnSource(src); got != want {
 			t.Errorf("%q -> %q, want %q", src, got, want)

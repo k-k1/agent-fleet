@@ -12,7 +12,7 @@
 // 気付けない。インタフェースなら埋め忘れは**コンパイルエラー**なので、検査そのものが要らない。
 // （CP-MCP の internal/mcpsrv が同じ形で 26 依存を 1 本にまとめた先例。）
 //
-// 逆向き（main が tenantsrv を呼ぶ側）は control-plane/alias_tenant.go 1 枚で吸収する。
+// 逆向き（main が tenantsrv を呼ぶ側）は control-plane/tenant_wiring.go 1 枚で吸収する。
 // ハンドラは `adminAPI` / `tenantAPI` の**非公開メソッド**として登録されており（routes.go）、
 // 非公開メソッドは境界を越えられないので、あちらは素の別名ではなく**薄いラッパ**になる。
 //
@@ -34,7 +34,7 @@ import (
 )
 
 // CP is everything tenantsrv needs from the control plane. The implementation is
-// control-plane/alias_tenant.go's adapter over *manager.
+// control-plane/tenant_wiring.go's adapter over *manager.
 type CP interface {
 	// --- 素材 ------------------------------------------------------------------
 	// Store is the CP metadata store. The tenant/admin handlers span most sub-stores

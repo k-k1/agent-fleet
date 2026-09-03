@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"log"
 	"strings"
 
@@ -40,10 +41,10 @@ func runOperatorTurn(conv, text string) (string, error) {
 
 // runOperatorTurnAs is runOperatorTurn with an explicit usage tag.
 func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
-	en := bridgeAnswerEN()
+	en := sessionx.BridgeAnswerEN()
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return "", errInjectEmpty
+		return "", sessionx.ErrInjectEmpty
 	}
 	unlock := chatx.LockConv(conv)
 	defer unlock()
@@ -52,12 +53,12 @@ func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
 	// the mcp-stdio subprocess's destructive tools gate on a Discord approval button. Console
 	// operator chat (handleChatSend) never arms this, so it is never gated. Self-clears on a
 	// TTL if the process dies before the defer runs.
-	armOperatorTurn(conv)
-	defer disarmOperatorTurn(conv)
+	sessionx.ArmOperatorTurn(conv)
+	defer sessionx.DisarmOperatorTurn(conv)
 
 	c, err := chatx.LoadConv(conv)
 	if err != nil {
-		return fb(en, "⚠️ オペレーター会話が見つかりません", "⚠️ Operator conversation not found"), err
+		return sessionx.Fb(en, "⚠️ オペレーター会話が見つかりません", "⚠️ Operator conversation not found"), err
 	}
 	prov := chatx.ChatProviderFor(c)
 	actualAgent := chatx.ChatProviderKind(c, prov)
@@ -69,7 +70,7 @@ func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
 
 	// A longer ceiling than Console chat (chatTimeout): a Discord-driven turn may pause on a
 	// human approval (bridgeApprovalTimeout), which must fit inside the turn.
-	ctx, cancel := context.WithTimeout(context.Background(), operatorTurnTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), sessionx.OperatorTurnTimeout)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, tag)                     // 使用量台帳（ADR 0029 §3）
 	deregister := chatx.RegisterLiveTurn(conv, cancel) // Stop button / in_progress work as usual
@@ -97,7 +98,7 @@ func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
 		}
 		c.UpdatedAt = chatx.NowMs()
 		_ = chatx.SaveConv(c) // persist the user turn + resume handle so a retry continues
-		return fb(en, "⚠️ オペレーターの応答に失敗しました。時間をおいて試すか Console で確認してください",
+		return sessionx.Fb(en, "⚠️ オペレーターの応答に失敗しました。時間をおいて試すか Console で確認してください",
 			"⚠️ The operator turn failed — retry later or check the Console"), err
 	}
 	chatx.MarkReportsDelivered(pendingReports)

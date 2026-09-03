@@ -89,6 +89,10 @@ type Deps struct {
 	//
 	// Console の i18n カタログ（console/src/core/api/client.ts の ERR_TEXT）と対に
 	// なっている文字列。**sessionx 側で定義し直さない。**
+	// 恒久要因（未ログイン／未接続）で共有 daemon を起こさなかったとき。runtime_failed
+	// （一時的な失敗）と分かれているのは、Console の文言も isTransientErr の判定も
+	// 「待てば直るか」で変わるため（runtime_err.go）。
+	ErrCodeAgentNotConnected      string
 	ErrCodeChatConversationNotFnd string
 	ErrCodeForkAtUnsupported      string
 	ErrCodeForkBadAnchor          string
@@ -110,7 +114,7 @@ var deps Deps
 // 🔥 **網羅は reflect で取る。手書きの一覧にしない。** 手で並べた map はフィールドが
 // 増えたときに漏れ、しかも漏れても何も起きない。危ないのは**値型**である: 関数型なら
 // 未配線は nil 参照で落ちるが、`ErrCodeLocked` のような文字列は**空のまま静かに走り**、
-// Console には `""` というコードが届く。この構造体は既に値型を 11 個持っている。
+// Console には `""` というコードが届く。この構造体は既に値型を 12 個持っている。
 //
 // 例外を作るときは**フィールドに `sessionx:"optional"` と書く**（一覧を別に持たない。
 // 例外が見えるのは常に宣言のところ）。
@@ -132,6 +136,7 @@ func Configure(d Deps) {
 		panic(fmt.Sprintf("sessionx.Configure: 配線されていない依存がある: %v", missing))
 	}
 	deps = d
+	errCodeAgentNotConnected = d.ErrCodeAgentNotConnected
 	errCodeChatConversationNotFnd = d.ErrCodeChatConversationNotFnd
 	errCodeForkAtUnsupported = d.ErrCodeForkAtUnsupported
 	errCodeForkBadAnchor = d.ErrCodeForkBadAnchor
@@ -149,13 +154,14 @@ func Configure(d Deps) {
 // ための読み出し口で、sessionx 自身は使わない。
 //
 // 🔥 Configure が捕まえるのは**未配線**だけで、**間違った配線**は捕まえられない。
-// とくに 11 本のエラーコードは**全部同じ `string` 型**なので、2 つ入れ替えても
+// とくに 12 本のエラーコードは**全部同じ `string` 型**なので、2 つ入れ替えても
 // 型検査も reflect の網羅検査も鳴らない（2026-09-03 に独立 3 例が出た形）。
 // そこは main 側の session_wiring_test.go が本物の定数と突き合わせて止める。
 func Wired() Deps { return deps }
 
 // 値で受け取るもの。Configure が 1 回だけ書く（以後は読むだけ）。
 var (
+	errCodeAgentNotConnected      string
 	errCodeChatConversationNotFnd string
 	errCodeForkAtUnsupported      string
 	errCodeForkBadAnchor          string
