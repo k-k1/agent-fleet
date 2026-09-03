@@ -104,14 +104,15 @@ var catalogExempt = map[string]string{
 	// （タイムアウト / 切断を mutex 取得時に検出）、生きた画面がこれを描くことは無い。
 	"write_cancelled": "生きたクライアントに届かない（errcodes.go の宣言に明記）",
 
-	// ⚠️ 以下 2 件は**意図された免除ではなく、この検査が見つけた実際の穴**。
-	// 免除に入れているのは「塞ぎ方に判断が要る」ため（司令塔へ確認中）:
-	// errText は `err.<code>` が在るとサーバの message を**捨てて**カタログ文言を使う
-	// （client.ts:159）。conn_jira_rejected は message に Jira 側の生の理由を載せているので、
-	// 一般化した和文を足すと**いま出ている具体的な理由が消える**（＝情報が減る）。
-	// いまの実害は「和文にならず英語の message が出る」で、[object Object] にはならない。
-	"conn_jira_fields_required": "未カタログ（穴）。和文を足すか message 優先にするか要判断",
-	"conn_jira_rejected":        "未カタログ（穴）。カタログ化すると Jira の生の理由を捨てる",
+	// 🔴 **カタログを足すと、かえって情報が減る**ので意図して免除している 1 件。
+	// `errText` は `localized ?? error.message`（client.ts:159）なので、`err.<code>` が
+	// 在るとサーバの message を**捨てて**カタログ文言を使う。`conn_jira_rejected` は
+	// message に **Jira 側の生の理由**（`err.Error()`）を載せており、一般化した和文を
+	// 足すと**いま出ている具体的な理由が消える**。
+	// いまの実害は「和文にならず英語の message が出る」だけで、落ちはしない。
+	// **恒久対応は `errDetail` 化（カタログ文言＋生 message の併記）だが、呼び出し側の
+	// 変更が要るので別 PR。**（同型の 1 例目 `runtime_failed` が #336 で進行中）
+	"conn_jira_rejected": "message に Jira 側の生の理由が載っており、カタログを足すと errText がそれを隠すため。恒久対応は errDetail 化＝呼び出し側の変更が要るので別 PR",
 }
 
 func TestEmittedErrCodesHaveConsoleCatalogEntry(t *testing.T) {
