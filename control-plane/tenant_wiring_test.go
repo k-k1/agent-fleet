@@ -1,6 +1,6 @@
 package main
 
-// alias_tenant.go の `cpTenant`（`tenantsrv.CP` の実装）は、33 本とも「1 行で本物へ
+// tenant_wiring.go の `cpTenant`（`tenantsrv.CP` の実装）は、33 本とも「1 行で本物へ
 // 委譲するだけ」のアダプタである。**型の守りも `var _ tenantsrv.CP = cpTenant{}` も
 // 「在ること」しか見ない**ので、**同じ型の 2 本を入れ替えても何も鳴らない。**
 //
@@ -22,7 +22,7 @@ package main
 //	   ①の表を突き合わせる（メソッドが増えたのに検査を足さなければ赤）
 //
 // 🔴 **①の期待値は「本物の綴り」を文字列で握っている。**変異試験を当てるときは
-// **実装（alias_tenant.go）だけに当てること**——検査の中のリテラルまで一緒に書き換えると、
+// **実装（tenant_wiring.go）だけに当てること**——検査の中のリテラルまで一緒に書き換えると、
 // 実装と検査条件が同時に直って両側緑になる（README §4 の落とし穴 3）。
 
 import (
@@ -93,12 +93,12 @@ func bodyNames(fd *ast.FuncDecl) map[string]bool {
 	return names
 }
 
-// cpTenantMethods parses alias_tenant.go and returns its cpTenant methods.
+// cpTenantMethods parses tenant_wiring.go and returns its cpTenant methods.
 func cpTenantMethods(t *testing.T) map[string]*ast.FuncDecl {
 	t.Helper()
 	f, err := parser.ParseFile(token.NewFileSet(), "tenant_wiring.go", nil, 0)
 	if err != nil {
-		t.Fatalf("alias_tenant.go を読めない: %v", err)
+		t.Fatalf("tenant_wiring.go を読めない: %v", err)
 	}
 	out := map[string]*ast.FuncDecl{}
 	for _, d := range f.Decls {
@@ -119,12 +119,12 @@ func TestCPTenantAdaptersDelegateToMatchingTarget(t *testing.T) {
 	methods := cpTenantMethods(t)
 	// 🔥 「1 本も見つからなければ何も検査しない」形を先に塞ぐ（#320）。
 	if len(methods) == 0 {
-		t.Fatal("alias_tenant.go に cpTenant のメソッドを 1 本も見つけられなかった＝この検査が無言化している")
+		t.Fatal("tenant_wiring.go に cpTenant のメソッドを 1 本も見つけられなかった＝この検査が無言化している")
 	}
 	for name, want := range cpTenantDelegates {
 		fd, ok := methods[name]
 		if !ok {
-			t.Errorf("cpTenant.%s が alias_tenant.go に無い（改名したなら表も直すこと）", name)
+			t.Errorf("cpTenant.%s が tenant_wiring.go に無い（改名したなら表も直すこと）", name)
 			continue
 		}
 		if !bodyNames(fd)[want] {

@@ -14,7 +14,7 @@ import (
 // 切断面を跨ぐ唯一の struct に当てている。
 //
 // 🔴 なぜ要るか: PUT /api/admin/tenants/{slug}/limits は blob を**丸ごと書き換える**。
-// limits.go にフィールドが 1 本増えて写しに増えなければ、alias_tenant.go の
+// limits.go にフィールドが 1 本増えて写しに増えなければ、tenant_wiring.go の
 // tenantLimitsIn がそれを埋めないまま marshal し、**保存のたびに既存の設定が
 // 静かに消える**。ビルドもテストも通り、消えるのは運用者が入れた値だけ、という
 // 一番高くつく壊れ方なので、フィールド集合の一致そのものを検査する。
