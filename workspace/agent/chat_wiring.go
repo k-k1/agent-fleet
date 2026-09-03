@@ -65,7 +65,7 @@ func init() {
 			// chatx は main の replyMsg を名指しできないので、ここで詰め替える。
 			out := make([]replyMsg, 0, len(msgs))
 			for _, m := range msgs {
-				out = append(out, replyMsg{role: m.Role, text: m.Text})
+				out = append(out, replyMsg{Role: m.Role, Text: m.Text})
 			}
 			replySuggestWindow(b, out)
 		},
