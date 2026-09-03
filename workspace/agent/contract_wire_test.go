@@ -902,6 +902,9 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 	type innerDup struct {
 		P string `json:"p"`
 	}
+	type innerDup2 struct {
+		P2 string `json:"p"` // Go 名は違うが json 名は innerDup と同じ
+	}
 	type deep2 struct{ inner }
 	type MyDur int64
 
@@ -920,9 +923,13 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 		}{}, false},
 		// ③ は同一 struct 内で json 名が重なる形。
 		// 📌 **この形はソースに書くと `go vet`（structtag）が弾く**ので、実行時に組んで渡す。
-		// ＝**同一 struct 内の重複は vet が既に守っている。**この走査の検査が要るのは
-		// **④⑤ の「昇格したキーと外側／別の埋め込みが重なる」形**で、
-		// **そちらは 2 つの struct にまたがるので vet は見ない。**
+		//
+		// 🔴 **vet との役割分担（実測して切り分け直した。#351 のコメントは誤りだった）**:
+		//   vet が見る  … ③ 同一 struct 内 ／ **⑤ 埋め込み同士**（昇格したタグの重複まで見る）
+		//   vet が見ない … **④ 外側のフィールドと埋め込み** ／ ⑥ 2 段の埋め込み
+		//                  ／ ⑨ 公開された非 struct の埋め込み ／ ⑩ タグ無しの公開フィールド
+		// #351 で「④⑤ は struct を跨ぐので vet は見ない」と書いたが、**⑤ は見ていた。**
+		// **この走査でしか守れないのは ④⑥⑨⑩ の 4 形。**
 		{"③ 別の Go 名・同じ json 名（実行時に組む）", reflect.New(reflect.StructOf([]reflect.StructField{
 			{Name: "X", Type: reflect.TypeOf(""), Tag: `json:"a"`},
 			{Name: "Y", Type: reflect.TypeOf(""), Tag: `json:"a"`},
@@ -931,10 +938,23 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 			A string `json:"a"`
 			inner
 		}{}, true},
-		{"⑤ 同深さの 2 つの埋め込みが同じ json 名", struct {
+		// ⑤-a は**衝突しない**側の対照（埋め込みは 1 つ・json:"-" は出ない）。
+		// 📌 ラベルを中身に合わせてある——**雛形ではラベルと本文の不一致が、
+		// 実装の誤りと同じだけ伝播する**（#342 の罠 ⑤ 欠番・#343 の存在しない testdata と同じ族）。
+		{"⑤-a 埋め込み 1 つ・衝突なし（json:\"-\" は出ない）", struct {
 			innerDup
 			Other struct{} `json:"-"`
-		}{}, false}, // 衝突が無いので一致する側
+		}{}, false},
+		// ⑤-b が本来の「同深さの 2 つの埋め込みが同じ json 名」。
+		// 🔴 encoding/json は**どちらも出さない**ので、走査は error に倒す。
+		// **実装は元から正しかったが、常設の対照にこの形が無かった**——
+		// `putJSONField` の条件や走査順を触ったときに戻っても気付けない状態だった。
+		// 📌 ③ と同じく**ソースに書くと `go vet`(structtag) が弾く**ので実行時に組む。
+		{"⑤-b 同深さの 2 つの埋め込みが同じ json 名（実行時に組む）",
+			reflect.New(reflect.StructOf([]reflect.StructField{
+				{Name: "InnerDupA", Type: reflect.TypeOf(innerDup{}), Anonymous: true},
+				{Name: "InnerDupB", Type: reflect.TypeOf(innerDup2{}), Anonymous: true},
+			})).Elem().Interface(), true},
 		{"⑥ 2 段の埋め込み", struct {
 			Z string `json:"z"`
 			deep2
