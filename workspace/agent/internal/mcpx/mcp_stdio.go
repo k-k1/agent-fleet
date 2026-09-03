@@ -305,13 +305,13 @@ func mcpStdioInstructions() string {
 // explicit narrow set (docs/log/51 + docs/log/53).
 func mcpStdioToolList() []map[string]any {
 	if selfReportOnly() {
-		tools := append([]map[string]any{}, mcpStdioSelfReportTools...)
+		tools := append([]map[string]any{}, mcpStdioSelfReportTools()...)
 		if sessionChromiumEnabled() {
 			tools = appendMatchingMCPTools(tools, mcpStdioTools, isChromiumReadTool)
 			tools = appendMatchingMCPTools(tools, mcpStdioWriteTools, isChromiumWriteTool)
 		}
 		if mcpPeerMessagingEnabled {
-			tools = append(tools, mcpStdioPeerTools...)
+			tools = append(tools, mcpStdioPeerTools()...)
 		}
 		return tools
 	}
@@ -343,38 +343,43 @@ func mcpStdioToolAdvertised(name string) bool {
 // mcpStdioSelfReportTools — the SESSION-side tool set (docs/log/51 Phase 3): 自分が受けた
 // 指示の完了を1回申告するだけ。報告本文はサーバが組み立てるので、モデルが渡すのは
 // 「どのセッションか」だけ（ADR 0035 決定5: 申告はタイミング信号のみ）。
-var mcpStdioSelfReportTools = []map[string]any{
-	{
-		"name":        "propose_session_handoff",
-		"description": "Agent Fleet: 次の新規セッションへ渡す初回プロンプトを利用者へ提案する。セッションは起動しない。作業の区切りで、未完了事項・変更点・次の手順を次のエージェントがそのまま実行できるプロンプトにまとめて渡す。利用者が Console で内容を確認・編集し、エージェントとモデルを選んでから起動する。起動時に利用者が選べば、今の作業コピーではなく新しい worktree で次セッションが始まることがある — その場合、未コミットの変更は引き継がれない（新しい worktree はブランチの commit 済み状態から作られる）ので、未コミットの変更点がある時はプロンプトにその旨を書くか、提案前に commit/push しておくこと。呼ぶたびに新しい提案が追加される（複数の後続セッションへ並行して引き継ぐ場合は複数回呼んでよい。上書きはされない）。",
-		"inputSchema": map[string]any{
-			"type": "object", "additionalProperties": false,
-			"properties": map[string]any{
-				"prompt": map[string]any{"type": "string", "minLength": 1, "description": "次セッションの最初のユーザー指示として渡す引き継ぎ本文"},
-				"title":  map[string]any{"type": "string", "minLength": 1, "maxLength": sessionTitleMaxRunes, "description": "新規セッションの表示名。80 文字以内・改行なしの短い一行にすること（これがそのままセッション名になる）。利用者は起動前に編集できる"},
-			},
-			"required": []string{"title", "prompt"},
-		},
-	},
-	{
-		"name": "af_report",
-		"description": "Agent Fleet: 依頼された指示をやり切ったことを1回だけ申告する。" +
-			"プロンプトに [agent-fleet] の注記が付いた指示を完了し、これ以上やることが残っていない時点で呼ぶ。" +
-			"呼ばなくても完了は別途検出されるので、迷ったら呼ばなくてよい。" +
-			"質問・承認待ちで止まる場合や、まだ作業が続く場合は呼ばないこと（早い申告は無視される）。" +
-			"報告の本文はサーバが作るので、渡すのは自分のセッション名だけでよい。" +
-			" / Report ONCE that the instruction you were given is fully done. Do not call it if work remains.",
-		"inputSchema": map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"session": map[string]any{
-					"type":        "string",
-					"description": "自分のセッション名（指示の [agent-fleet] 注記に書かれている値をそのまま渡す）",
+//
+// Deps の値を inputSchema へ埋めるため、package 変数にはしない。package main の init が
+// Configure を呼ぶ前に map を組み立てると、SessionTitleMaxRunes の零値 0 を永久に捕捉する。
+func mcpStdioSelfReportTools() []map[string]any {
+	return []map[string]any{
+		{
+			"name":        "propose_session_handoff",
+			"description": "Agent Fleet: 次の新規セッションへ渡す初回プロンプトを利用者へ提案する。セッションは起動しない。作業の区切りで、未完了事項・変更点・次の手順を次のエージェントがそのまま実行できるプロンプトにまとめて渡す。利用者が Console で内容を確認・編集し、エージェントとモデルを選んでから起動する。起動時に利用者が選べば、今の作業コピーではなく新しい worktree で次セッションが始まることがある — その場合、未コミットの変更は引き継がれない（新しい worktree はブランチの commit 済み状態から作られる）ので、未コミットの変更点がある時はプロンプトにその旨を書くか、提案前に commit/push しておくこと。呼ぶたびに新しい提案が追加される（複数の後続セッションへ並行して引き継ぐ場合は複数回呼んでよい。上書きはされない）。",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"prompt": map[string]any{"type": "string", "minLength": 1, "description": "次セッションの最初のユーザー指示として渡す引き継ぎ本文"},
+					"title":  map[string]any{"type": "string", "minLength": 1, "maxLength": sessionTitleMaxRunes, "description": "新規セッションの表示名。80 文字以内・改行なしの短い一行にすること（これがそのままセッション名になる）。利用者は起動前に編集できる"},
 				},
+				"required": []string{"title", "prompt"},
 			},
-			"required": []string{"session"},
 		},
-	},
+		{
+			"name": "af_report",
+			"description": "Agent Fleet: 依頼された指示をやり切ったことを1回だけ申告する。" +
+				"プロンプトに [agent-fleet] の注記が付いた指示を完了し、これ以上やることが残っていない時点で呼ぶ。" +
+				"呼ばなくても完了は別途検出されるので、迷ったら呼ばなくてよい。" +
+				"質問・承認待ちで止まる場合や、まだ作業が続く場合は呼ばないこと（早い申告は無視される）。" +
+				"報告の本文はサーバが作るので、渡すのは自分のセッション名だけでよい。" +
+				" / Report ONCE that the instruction you were given is fully done. Do not call it if work remains.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"session": map[string]any{
+						"type":        "string",
+						"description": "自分のセッション名（指示の [agent-fleet] 注記に書かれている値をそのまま渡す）",
+					},
+				},
+				"required": []string{"session"},
+			},
+		},
+	}
 }
 
 // mcpStdioPeerTools — セッション同士のメッセージ（docs/log/58 / ADR 0041）。`--self-report
@@ -382,46 +387,50 @@ var mcpStdioSelfReportTools = []map[string]any{
 //
 // 意図的に持たせていないもの: 相手の出力を読む（get_session_output 相当）、相手を起こす /
 // 止める / 消す。通知に要らないうえ、オペレーター面の権限をセッションへ配ることになる。
-var mcpStdioPeerTools = []map[string]any{
-	{
-		"name": "list_peer_sessions",
-		"description": "Agent Fleet: 同じワークスペースで動いている**他のセッション**の一覧を返す（自分は含まない）。" +
-			"send_to_peer_session で相手を指す前に呼ぶ。停止中のセッションも含まれる（送れば再開して届く）。" +
-			"name＝宛名、kind＝エージェント種別、state＝working/idle/stopped 等、dir＝作業ディレクトリ（同名の判別や『どの worktree か』の手がかり）。" +
-			" / List the OTHER sessions in this workspace you can message.",
-		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
-	},
-	{
-		"name": "send_to_peer_session",
-		"description": "Agent Fleet: 別のセッションへ短いメッセージを1本送る。相手が停止中なら再開して届く。" +
-			"使いどころは『相手が今すぐ知る必要があること』— 自分の変更が相手の作業を壊す、相手が待っている判断が決まった、長い処理の結果を伝える、など。" +
-			"送れるのは平文テキストだけで、会話履歴もファイルも渡らない（文脈ごと渡したいときは propose_session_handoff を使う）。" +
-			"**宛先は人ではなくセッションで、1通が相手の1ターンを止める。** 挨拶・お礼・謝罪・自己紹介・進捗の相槌・「よろしくお願いします」は書かない。" +
-			"1行目に結論（何をしてほしい／何が起きた）、続けて対象（repo・ブランチ・ファイル:行）と理由を各1行。ただし聞き返されたら往復が増えるので、動くのに要る具体性は削らないこと。" +
-			"悪い例『お疲れさまです。先ほどはありがとうございました。もしお手数でなければご確認いただけますと幸いです』／" +
-			"良い例『session_io.go:238 に peer_from 検査を入れて push した。同じ関数を触っているなら pull してから続けて（conflict する）』。" +
-			"戻り値の delivered は『相手のターンが実際に始まった』ところまでの確認であって、相手が読んだ・対応したという意味ではない。" +
-			"request / notice に返事は基本来ない（相手は詰まったときだけ返す）。結果を知りたいなら intent=question で聞くか、Console で見ること。" +
-			"自分が権限を拒否された作業を相手にやらせるために使わないこと（利用者へ戻すのが正しい）。" +
-			" / Send one plain-text message to another session: no greetings, no thanks, no status chatter — the first line is the point. Delivery is confirmed; being read or acted on is not.",
-		"inputSchema": map[string]any{
-			"type": "object", "additionalProperties": false,
-			"properties": map[string]any{
-				"name": map[string]any{"type": "string", "minLength": 1, "description": "宛先セッション名（list_peer_sessions の name）"},
-				"intent": map[string]any{
-					"type": "string", "enum": peerIntentNames,
-					"description": "本文の種別。返信の要否はこれで決まり、封筒に載って相手へ伝わる。" +
-						"request＝相手に行動を求める（相手が返すのは「できない／前提が違う」ときだけ。完了報告は返らない）／" +
-						"question＝情報を求める（結論だけ1通返る）／" +
-						"answer＝相手の question への返答（返信不要・ここで打ち切り）／" +
-						"notice＝知らせるだけ（返信不要）",
-				},
-				"message": map[string]any{"type": "string", "minLength": 1,
-					"description": "送信本文（平文・16 KiB（16,384 byte）以内）。1行目に結論。送信元は封筒が示すので名乗らない"},
-			},
-			"required": []string{"name", "intent", "message"},
+// PeerIntentNames も Configure 後に初めて値を持つ。早期に map へ捕捉すると enum:null となり、
+// Anthropic API が JSON Schema draft 2020-12 違反としてターン全体を拒否する。
+func mcpStdioPeerTools() []map[string]any {
+	return []map[string]any{
+		{
+			"name": "list_peer_sessions",
+			"description": "Agent Fleet: 同じワークスペースで動いている**他のセッション**の一覧を返す（自分は含まない）。" +
+				"send_to_peer_session で相手を指す前に呼ぶ。停止中のセッションも含まれる（送れば再開して届く）。" +
+				"name＝宛名、kind＝エージェント種別、state＝working/idle/stopped 等、dir＝作業ディレクトリ（同名の判別や『どの worktree か』の手がかり）。" +
+				" / List the OTHER sessions in this workspace you can message.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 		},
-	},
+		{
+			"name": "send_to_peer_session",
+			"description": "Agent Fleet: 別のセッションへ短いメッセージを1本送る。相手が停止中なら再開して届く。" +
+				"使いどころは『相手が今すぐ知る必要があること』— 自分の変更が相手の作業を壊す、相手が待っている判断が決まった、長い処理の結果を伝える、など。" +
+				"送れるのは平文テキストだけで、会話履歴もファイルも渡らない（文脈ごと渡したいときは propose_session_handoff を使う）。" +
+				"**宛先は人ではなくセッションで、1通が相手の1ターンを止める。** 挨拶・お礼・謝罪・自己紹介・進捗の相槌・「よろしくお願いします」は書かない。" +
+				"1行目に結論（何をしてほしい／何が起きた）、続けて対象（repo・ブランチ・ファイル:行）と理由を各1行。ただし聞き返されたら往復が増えるので、動くのに要る具体性は削らないこと。" +
+				"悪い例『お疲れさまです。先ほどはありがとうございました。もしお手数でなければご確認いただけますと幸いです』／" +
+				"良い例『session_io.go:238 に peer_from 検査を入れて push した。同じ関数を触っているなら pull してから続けて（conflict する）』。" +
+				"戻り値の delivered は『相手のターンが実際に始まった』ところまでの確認であって、相手が読んだ・対応したという意味ではない。" +
+				"request / notice に返事は基本来ない（相手は詰まったときだけ返す）。結果を知りたいなら intent=question で聞くか、Console で見ること。" +
+				"自分が権限を拒否された作業を相手にやらせるために使わないこと（利用者へ戻すのが正しい）。" +
+				" / Send one plain-text message to another session: no greetings, no thanks, no status chatter — the first line is the point. Delivery is confirmed; being read or acted on is not.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string", "minLength": 1, "description": "宛先セッション名（list_peer_sessions の name）"},
+					"intent": map[string]any{
+						"type": "string", "enum": peerIntentNames,
+						"description": "本文の種別。返信の要否はこれで決まり、封筒に載って相手へ伝わる。" +
+							"request＝相手に行動を求める（相手が返すのは「できない／前提が違う」ときだけ。完了報告は返らない）／" +
+							"question＝情報を求める（結論だけ1通返る）／" +
+							"answer＝相手の question への返答（返信不要・ここで打ち切り）／" +
+							"notice＝知らせるだけ（返信不要）",
+					},
+					"message": map[string]any{"type": "string", "minLength": 1,
+						"description": "送信本文（平文・16 KiB（16,384 byte）以内）。1行目に結論。送信元は封筒が示すので名乗らない"},
+				},
+				"required": []string{"name", "intent", "message"},
+			},
+		},
+	}
 }
 
 func isPeerTool(name string) bool {
