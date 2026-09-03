@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -24,8 +25,8 @@ func TestChatPasteImageRoundtrip(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /chat/conversations/{id}/paste-image", handleChatPasteImage)
-	mux.HandleFunc("GET /chat/conversations/{id}/pasted/{file}", handleChatPastedImage)
+	mux.HandleFunc("POST /chat/conversations/{id}/paste-image", sessionx.HandleChatPasteImage)
+	mux.HandleFunc("GET /chat/conversations/{id}/pasted/{file}", sessionx.HandleChatPastedImage)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 

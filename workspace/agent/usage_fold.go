@@ -17,6 +17,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"log"
 	"os"
 	"path/filepath"
@@ -173,13 +174,13 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 // 分けるための対応表。
 func usageTriggerFromTurnSource(src string) string {
 	switch src {
-	case turnSourceOperator:
+	case sessionx.TurnSourceOperator:
 		return usagex.TriggerOperator
-	case turnSourceDiscord, turnSourceSlack:
+	case sessionx.TurnSourceDiscord, sessionx.TurnSourceSlack:
 		return usagex.TriggerBridge
-	case turnSourceSchedule, turnSourceScheduleManual:
+	case sessionx.TurnSourceSchedule, sessionx.TurnSourceScheduleManual:
 		return usagex.TriggerSchedule
-	case turnSourceAutoResume:
+	case sessionx.TurnSourceAutoResume:
 		return usagex.TriggerRecovery // 中断からの自動再開（docs/log/47 §4-6）は自己修復の消費
 	}
 	return usagex.TriggerUser
@@ -202,10 +203,10 @@ func usageMeasuredForKind(kind string) string {
 // includeTrailing=true は「転写がもう伸びない」と分かっている時（削除・アーカイブ）だけ。
 // usageFoldMu 保持前提。
 func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing bool) (int, error) {
-	if !agentOf(m.Kind).Caps().CanTranscript {
+	if !sessionx.AgentOf(m.Kind).Caps().CanTranscript {
 		return 0, nil // shell/ssm には転写が無い
 	}
-	return foldSessionUsageWithTurns(m, st, usageTurns(m), includeTrailing)
+	return foldSessionUsageWithTurns(m, st, sessionx.UsageTurns(m), includeTrailing)
 }
 
 // foldSessionUsageWithTurns は転写ロードを切り離した本体（実転写なしで冪等性を検証できる）。

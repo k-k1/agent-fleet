@@ -6,6 +6,7 @@ package main
 // chatx は main を import できないので、これが唯一の方法（internal/chatx/deps.go）。
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
@@ -39,51 +40,51 @@ func init() {
 		ChatAutoTurnLimit: chatAutoTurnLimit,
 		ChatAutoTurnModel: chatAutoTurnModel,
 
-		FilterVisibleModels: filterVisibleModels,
-		VisibleModel:        visibleModel,
-		VisibleModelIDs:     visibleModelIDs,
+		FilterVisibleModels: sessionx.FilterVisibleModels,
+		VisibleModel:        sessionx.VisibleModel,
+		VisibleModelIDs:     sessionx.VisibleModelIDs,
 
 		AssistantDeps:          assistantDeps,
 		EnsureBuiltinKnowledge: ensureBuiltinKnowledge,
 
-		CleanSuggestedTitle:      cleanSuggestedTitle,
-		TitleModel:               titleModel,
-		TitleSuggestFooter:       titleSuggestFooter,
-		TitleSuggestInstructions: titleSuggestInstructions,
-		TitleSuggestPersona:      titleSuggestPersona,
-		TitleSuggestTimeout:      titleSuggestTimeout,
+		CleanSuggestedTitle:      sessionx.CleanSuggestedTitle,
+		TitleModel:               sessionx.TitleModel,
+		TitleSuggestFooter:       sessionx.TitleSuggestFooter,
+		TitleSuggestInstructions: sessionx.TitleSuggestInstructions,
+		TitleSuggestPersona:      sessionx.TitleSuggestPersona,
+		TitleSuggestTimeout:      sessionx.TitleSuggestTimeout,
 
-		CleanSuggestedReplies:    cleanSuggestedReplies,
-		ReplyCounterpartChat:     replyCounterpartChat,
-		ReplySuggestEnabled:      replySuggestEnabled,
-		ReplySuggestInstructions: replySuggestInstructions,
-		ReplySuggestLogHeader:    replySuggestLogHeader,
-		ReplySuggestModel:        replySuggestModel,
-		ReplySuggestPersona:      replySuggestPersona,
-		ReplySuggestTimeout:      replySuggestTimeout,
+		CleanSuggestedReplies:    sessionx.CleanSuggestedReplies,
+		ReplyCounterpartChat:     sessionx.ReplyCounterpartChat,
+		ReplySuggestEnabled:      sessionx.ReplySuggestEnabled,
+		ReplySuggestInstructions: sessionx.ReplySuggestInstructions,
+		ReplySuggestLogHeader:    sessionx.ReplySuggestLogHeader,
+		ReplySuggestModel:        sessionx.ReplySuggestModel,
+		ReplySuggestPersona:      sessionx.ReplySuggestPersona,
+		ReplySuggestTimeout:      sessionx.ReplySuggestTimeout,
 		ReplySuggestWindow: func(b *strings.Builder, msgs []chatx.ReplyMsg) {
 			// chatx は main の replyMsg を名指しできないので、ここで詰め替える。
-			out := make([]replyMsg, 0, len(msgs))
+			out := make([]sessionx.ReplyMsg, 0, len(msgs))
 			for _, m := range msgs {
-				out = append(out, replyMsg{Role: m.Role, Text: m.Text})
+				out = append(out, sessionx.ReplyMsg{Role: m.Role, Text: m.Text})
 			}
-			replySuggestWindow(b, out)
+			sessionx.ReplySuggestWindow(b, out)
 		},
 
-		AbortResumeHolds: abortResumeHolds,
+		AbortResumeHolds: sessionx.AbortResumeHolds,
 		ChatTurnUsageTag: func(convID, seedVerb, trigger string) usagex.Tag {
 			return usagex.Tag{
 				Feature: usagex.FeatureAssistantChat, Trigger: trigger, Ref: convID, Verb: seedVerb,
 			}
 		},
-		CleanTitle:             cleanTitle,
-		NormalizeKind:          normalizeKind,
+		CleanTitle:             sessionx.CleanTitle,
+		NormalizeKind:          sessionx.NormalizeKind,
 		SafeBrowsePath:         safeBrowsePath,
 		MaybePushOperatorReply: maybePushOperatorReply,
 		// 🔥 遠側（rate_limit_resume.go）が **var** なので、値ではなく**読み口**を渡す。
 		// エイリアス変数で受けると写しになり、書き換えが届かない。
 		RateLimitState: func(name string) (scheduleID, resumeAt string, ok bool) {
-			st, found := rateLimitStates.Read(name)
+			st, found := sessionx.RateLimitStates.Read(name)
 			if !found {
 				return "", "", false
 			}

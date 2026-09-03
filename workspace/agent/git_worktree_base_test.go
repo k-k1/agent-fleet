@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -182,7 +183,7 @@ func TestCreateSessionWorktreeStartsAtOriginTip(t *testing.T) {
 	stale := gitRev(t, parent, "main")
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /sessions", handleCreateSession)
+	mux.HandleFunc("POST /sessions", sessionx.HandleCreateSession)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 

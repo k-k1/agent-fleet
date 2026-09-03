@@ -14,7 +14,7 @@ import (
 
 // Tenants serves the caller-facing tenant picker（docs/log/23 残③: CP の解決 +
 // TenantStore の narrow view。登録側で withIdentity に包む）。CP 側の受け皿は
-// control-plane/alias_tenant.go の tenantAPI で、そちらが memberAuth を埋め込む。
+// control-plane/tenant_wiring.go の tenantAPI で、そちらが memberAuth を埋め込む。
 type Tenants struct {
 	cp    CP
 	store store.TenantStore
@@ -74,7 +74,7 @@ func (a Tenants) List(w http.ResponseWriter, r *http.Request, ident store.Identi
 // withSuperAdmin; per-tenant ones gate mid-handler via CP.TenantAdminFor
 // (slug comes from the path on some routes and the body on others).
 //
-// ⚠️ The CP's own adminAPI (control-plane/alias_tenant.go) carries MORE than this:
+// ⚠️ The CP's own adminAPI (control-plane/tenant_wiring.go) carries MORE than this:
 // the deployment-wide admin views (usage.go, audit.go, admin_sessions.go,
 // admin_stats.go, metrics.go hostStats, cloudcost.go) are still its methods and
 // stayed in package main. Only the tenant family moved here.

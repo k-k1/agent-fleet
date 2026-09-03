@@ -12,6 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
@@ -38,22 +39,22 @@ var (
 // 承認ゲートが未配線のまま素通りする方が、起動しないことより悪い。
 func init() {
 	mcpx.Configure(mcpx.Deps{
-		CleanTitle:           cleanTitle,
-		SessionTitleMaxRunes: sessionTitleMaxRunes,
+		CleanTitle:           sessionx.CleanTitle,
+		SessionTitleMaxRunes: sessionx.SessionTitleMaxRunes,
 
-		PeerIntentNames:       peerIntentNames,
-		PeerReachableSessions: peerReachableSessions,
+		PeerIntentNames:       sessionx.PeerIntentNames,
+		PeerReachableSessions: sessionx.PeerReachableSessions,
 
 		ReportKindSelfReport: chatx.ReportKindSelfReport,
 
-		ApprovalGate:      bridgeApprovalGate,
-		ApprovalLabel:     approvalLabel,
-		ShellCreateTarget: shellCreateTarget,
-		ShellSendTarget:   shellSendTarget,
-		SessionIsShell:    sessionIsShell,
+		ApprovalGate:      sessionx.BridgeApprovalGate,
+		ApprovalLabel:     sessionx.ApprovalLabel,
+		ShellCreateTarget: sessionx.ShellCreateTarget,
+		ShellSendTarget:   sessionx.ShellSendTarget,
+		SessionIsShell:    sessionx.SessionIsShell,
 
 		ReadUIPrefs:                uiprefs.Read,
-		EnsureClaudeSettingsWiring: ensureClaudeSettingsWiring,
+		EnsureClaudeSettingsWiring: sessionx.EnsureClaudeSettingsWiring,
 
 		RepoAnyDirFromPath: gitx.RepoAnyDirFromPath,
 
@@ -61,7 +62,7 @@ func init() {
 		AgentFleetShareDir: agentFleetShareDir,
 		InstallGrafanaMCP:  installGrafanaMCP,
 
-		WriteSSMConfig: writeSSMConfig,
+		WriteSSMConfig: sessionx.WriteSSMConfig,
 
 		WriteEnabled:              func() bool { return mcpWriteEnabled },
 		SetWriteEnabled:           func(v bool) { mcpWriteEnabled = v },

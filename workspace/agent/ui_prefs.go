@@ -7,6 +7,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"io"
 	"log"
 	"net/http"
@@ -33,11 +34,11 @@ import (
 // Console 側だけの解決にすると「設定でオフにしたのに、定時実行で立ったセッションだけ
 // bypass で走る」が起きる。
 func skipPermissionsPref(kind string) (bool, bool) {
-	k := normalizeKind(kind)
+	k := sessionx.NormalizeKind(kind)
 	// 承認待ちを Console から答えられない kind（codex / opencode）は選択の対象外。
 	// 古い/壊れた prefs がその kind に false を書いていても、ここで落として従来どおり
 	// bypass で起動する — 答えようのない承認ダイアログで固まるより確実に良い。
-	if !agentOf(k).Caps().PermissionChoice {
+	if !sessionx.AgentOf(k).Caps().PermissionChoice {
 		return false, false
 	}
 	defs, ok := uiprefs.Read()["agentLaunchDefaults"].(map[string]any)
@@ -129,7 +130,7 @@ func assistantModelPref(key, kind string) (string, bool) {
 	// 「使わないモデル」で除外された値が設定に残っていても採用しない（model_deny.go）。
 	// 未設定扱いに落とすことで、呼び出し側は推奨／CLI 既定へ退避する。
 	// "recommended" は実モデル id ではない番兵なのでそのまま通す。
-	if v != chatx.AssistantRecommendedModel && modelHidden(kind, v) {
+	if v != chatx.AssistantRecommendedModel && sessionx.ModelHidden(kind, v) {
 		return "", false
 	}
 	return v, true
@@ -191,7 +192,7 @@ func chatAutoTurnModel() string {
 	v, _ := uiprefs.Read()["assistantAutoTurnModel"].(string)
 	// claude 専用の設定なので claude の除外リストで判定する。除外されていれば空＝
 	// 会話のモデルのまま（model_deny.go）。
-	return visibleModel(session.KindClaude, strings.TrimSpace(v))
+	return sessionx.VisibleModel(session.KindClaude, strings.TrimSpace(v))
 }
 
 func handleGetUIPrefs(w http.ResponseWriter, r *http.Request) {

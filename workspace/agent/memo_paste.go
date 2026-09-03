@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -27,13 +28,13 @@ func memoImagesDir() string {
 // handleMemoPasteImage saves one uploaded memo image (multipart, field "file") and
 // returns {path, name}. The path is absolute so a later flush can reference it.
 func handleMemoPasteImage(w http.ResponseWriter, r *http.Request) {
-	savePastedImageTo(w, r, memoImagesDir())
+	sessionx.SavePastedImageTo(w, r, memoImagesDir())
 }
 
 // handleMemoPastedImage serves a stored memo image by basename (GET) for the Console
 // thumbnail / preview.
 func handleMemoPastedImage(w http.ResponseWriter, r *http.Request) {
-	servePastedImageFrom(w, memoImagesDir(), r.PathValue("file"))
+	sessionx.ServePastedImageFrom(w, memoImagesDir(), r.PathValue("file"))
 }
 
 // handleMemoImageGC prunes memo images no longer referenced by any memo. The Console —

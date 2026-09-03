@@ -23,6 +23,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -40,14 +41,14 @@ func TestGitWiringIsLive(t *testing.T) {
 	w := gitx.Wired()
 
 	checks := map[string]func(t *testing.T){
-		"AbsPath":        func(t *testing.T) { sameGitFunc(t, w.AbsPath, absPath) },
-		"RepoLocked":     func(t *testing.T) { sameGitFunc(t, w.RepoLocked, repoLocked) },
-		"LockedRepoDirs": func(t *testing.T) { sameGitFunc(t, w.LockedRepoDirs, lockedRepoDirs) },
+		"AbsPath":        func(t *testing.T) { sameGitFunc(t, w.AbsPath, sessionx.AbsPath) },
+		"RepoLocked":     func(t *testing.T) { sameGitFunc(t, w.RepoLocked, sessionx.RepoLocked) },
+		"LockedRepoDirs": func(t *testing.T) { sameGitFunc(t, w.LockedRepoDirs, sessionx.LockedRepoDirs) },
 
-		"LiveSessionsInDir":   func(t *testing.T) { sameGitFunc(t, w.LiveSessionsInDir, liveSessionsInDir) },
-		"LockedSessionsInDir": func(t *testing.T) { sameGitFunc(t, w.LockedSessionsInDir, lockedSessionsInDir) },
-		"WorktreeHasSessions": func(t *testing.T) { sameGitFunc(t, w.WorktreeHasSessions, worktreeHasSessions) },
-		"ManagedAlive":        func(t *testing.T) { sameGitFunc(t, w.ManagedAlive, managedAlive) },
+		"LiveSessionsInDir":   func(t *testing.T) { sameGitFunc(t, w.LiveSessionsInDir, sessionx.LiveSessionsInDir) },
+		"LockedSessionsInDir": func(t *testing.T) { sameGitFunc(t, w.LockedSessionsInDir, sessionx.LockedSessionsInDir) },
+		"WorktreeHasSessions": func(t *testing.T) { sameGitFunc(t, w.WorktreeHasSessions, sessionx.WorktreeHasSessions) },
+		"ManagedAlive":        func(t *testing.T) { sameGitFunc(t, w.ManagedAlive, sessionx.ManagedAlive) },
 
 		"FinalizeSessionUsage": func(t *testing.T) { sameGitFunc(t, w.FinalizeSessionUsage, finalizeSessionUsage) },
 

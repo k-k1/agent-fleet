@@ -21,6 +21,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"os"
 	"os/exec"
 	"strings"
@@ -129,7 +130,7 @@ func awaitPaneModeKind(t *testing.T, kind, tn, want string) string {
 				continue
 			}
 		}
-		if last = paneMode(kind, tn); last == want {
+		if last = sessionx.PaneMode(kind, tn); last == want {
 			return last
 		}
 		time.Sleep(250 * time.Millisecond)

@@ -24,6 +24,7 @@ package main
 // 検査を足さなければここが落ちる。
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"reflect"
 	"runtime"
 	"testing"
@@ -40,8 +41,8 @@ func TestMCPWiringIsLive(t *testing.T) {
 	checks := map[string]func(t *testing.T){
 		// --- 値で渡しているもの（本物の定数と同じであること） ---
 		"SessionTitleMaxRunes": func(t *testing.T) {
-			if w.SessionTitleMaxRunes != sessionTitleMaxRunes {
-				t.Fatalf("件名の上限 = %d, want %d", w.SessionTitleMaxRunes, sessionTitleMaxRunes)
+			if w.SessionTitleMaxRunes != sessionx.SessionTitleMaxRunes {
+				t.Fatalf("件名の上限 = %d, want %d", w.SessionTitleMaxRunes, sessionx.SessionTitleMaxRunes)
 			}
 		},
 		"ReportKindSelfReport": func(t *testing.T) {
@@ -50,26 +51,26 @@ func TestMCPWiringIsLive(t *testing.T) {
 			}
 		},
 		"PeerIntentNames": func(t *testing.T) {
-			if !reflect.DeepEqual(w.PeerIntentNames, peerIntentNames) {
-				t.Fatalf("intent の一覧 = %v, want %v", w.PeerIntentNames, peerIntentNames)
+			if !reflect.DeepEqual(w.PeerIntentNames, sessionx.PeerIntentNames) {
+				t.Fatalf("intent の一覧 = %v, want %v", w.PeerIntentNames, sessionx.PeerIntentNames)
 			}
 		},
 
 		// --- 関数（本物と同一であること） ---
-		"CleanTitle":                 func(t *testing.T) { sameFunc(t, w.CleanTitle, cleanTitle) },
-		"PeerReachableSessions":      func(t *testing.T) { sameFunc(t, w.PeerReachableSessions, peerReachableSessions) },
-		"ApprovalGate":               func(t *testing.T) { sameFunc(t, w.ApprovalGate, bridgeApprovalGate) },
-		"ApprovalLabel":              func(t *testing.T) { sameFunc(t, w.ApprovalLabel, approvalLabel) },
-		"ShellCreateTarget":          func(t *testing.T) { sameFunc(t, w.ShellCreateTarget, shellCreateTarget) },
-		"ShellSendTarget":            func(t *testing.T) { sameFunc(t, w.ShellSendTarget, shellSendTarget) },
-		"SessionIsShell":             func(t *testing.T) { sameFunc(t, w.SessionIsShell, sessionIsShell) },
+		"CleanTitle":                 func(t *testing.T) { sameFunc(t, w.CleanTitle, sessionx.CleanTitle) },
+		"PeerReachableSessions":      func(t *testing.T) { sameFunc(t, w.PeerReachableSessions, sessionx.PeerReachableSessions) },
+		"ApprovalGate":               func(t *testing.T) { sameFunc(t, w.ApprovalGate, sessionx.BridgeApprovalGate) },
+		"ApprovalLabel":              func(t *testing.T) { sameFunc(t, w.ApprovalLabel, sessionx.ApprovalLabel) },
+		"ShellCreateTarget":          func(t *testing.T) { sameFunc(t, w.ShellCreateTarget, sessionx.ShellCreateTarget) },
+		"ShellSendTarget":            func(t *testing.T) { sameFunc(t, w.ShellSendTarget, sessionx.ShellSendTarget) },
+		"SessionIsShell":             func(t *testing.T) { sameFunc(t, w.SessionIsShell, sessionx.SessionIsShell) },
 		"ReadUIPrefs":                func(t *testing.T) { sameFunc(t, w.ReadUIPrefs, uiprefs.Read) },
-		"EnsureClaudeSettingsWiring": func(t *testing.T) { sameFunc(t, w.EnsureClaudeSettingsWiring, ensureClaudeSettingsWiring) },
+		"EnsureClaudeSettingsWiring": func(t *testing.T) { sameFunc(t, w.EnsureClaudeSettingsWiring, sessionx.EnsureClaudeSettingsWiring) },
 		"RepoAnyDirFromPath":         func(t *testing.T) { sameFunc(t, w.RepoAnyDirFromPath, gitx.RepoAnyDirFromPath) },
 		"ReadBuildPins":              func(t *testing.T) { sameFunc(t, w.ReadBuildPins, readBuildPins) },
 		"AgentFleetShareDir":         func(t *testing.T) { sameFunc(t, w.AgentFleetShareDir, agentFleetShareDir) },
 		"InstallGrafanaMCP":          func(t *testing.T) { sameFunc(t, w.InstallGrafanaMCP, installGrafanaMCP) },
-		"WriteSSMConfig":             func(t *testing.T) { sameFunc(t, w.WriteSSMConfig, writeSSMConfig) },
+		"WriteSSMConfig":             func(t *testing.T) { sameFunc(t, w.WriteSSMConfig, sessionx.WriteSSMConfig) },
 
 		// --- 写しにできない 4 組（往復で見る） ---
 		"WriteEnabled":      func(t *testing.T) { roundTripBool(t, &mcpWriteEnabled, w.WriteEnabled, w.SetWriteEnabled) },

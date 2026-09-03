@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -83,7 +84,7 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	session.WriteMeta(m)
 	sid := session.UUID(m.Dir, m.Name)
 
-	chatx.AddInstruction(m.Name, conv.ID, turnSourceOperator) // create_session / send_to_session with report_to
+	chatx.AddInstruction(m.Name, conv.ID, sessionx.TurnSourceOperator) // create_session / send_to_session with report_to
 
 	status.Persist(sid, "working") // the operator's instruction starts a turn
 	// A real turn leaves a FRESH main transcript behind (the answer was just written).
@@ -98,7 +99,7 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	status.Remove(sid) // …the pane heal wipes the marker mid-turn
-	runSessionStatusHook([]string{"idle", sid})
+	sessionx.RunSessionStatusHook([]string{"idle", sid})
 
 	// deliverSessionReport finishes in a goroutine off the handler. Read under the
 	// conversation lock like every real reader does: saveConv is a plain (non-atomic)
@@ -167,9 +168,9 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chatx.AddInstruction(m.Name, conv.ID, turnSourceOperator)
+	chatx.AddInstruction(m.Name, conv.ID, sessionx.TurnSourceOperator)
 	status.Persist(sid, "working")
-	runSessionStatusHook([]string{"idle", sid}) // Stop right after the BG launch → kick
+	sessionx.RunSessionStatusHook([]string{"idle", sid}) // Stop right after the BG launch → kick
 
 	countReports := func() int {
 		unlock := chatx.LockConv(conv.ID)
@@ -275,9 +276,9 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	}
 	writeMainAt(t, time.Now()) // freshly appended (the turn is still running)
 
-	chatx.AddInstruction(m.Name, conv.ID, turnSourceOperator)
+	chatx.AddInstruction(m.Name, conv.ID, sessionx.TurnSourceOperator)
 	status.Persist(sid, "working")
-	runSessionStatusHook([]string{"idle", sid}) // early Stop → kick → deferred (BG busy)
+	sessionx.RunSessionStatusHook([]string{"idle", sid}) // early Stop → kick → deferred (BG busy)
 
 	countReports := func() int {
 		unlock := chatx.LockConv(conv.ID)
@@ -355,7 +356,7 @@ func TestHaltDisarmsReportOnlyWhenFlagged(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/halt", strings.NewReader(body))
 		req.SetPathValue("name", name)
 		rec := httptest.NewRecorder()
-		handleHaltSession(rec, req)
+		sessionx.HandleHaltSession(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("halt %s: status = %d, body = %s", name, rec.Code, rec.Body.String())
 		}
@@ -363,7 +364,7 @@ func TestHaltDisarmsReportOnlyWhenFlagged(t *testing.T) {
 
 	for _, name := range []string{"slot11", "slot12"} {
 		session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
-		chatx.AddInstruction(name, conv.ID, turnSourceOperator)
+		chatx.AddInstruction(name, conv.ID, sessionx.TurnSourceOperator)
 	}
 
 	halt("slot11", `{"disarm_report":true}`)

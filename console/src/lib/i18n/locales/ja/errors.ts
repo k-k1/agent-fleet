@@ -92,6 +92,7 @@ export const errors = {
   "err.chat_nothing_to_compact": "まだ圧縮できるコンテキストがありません（最初の応答の後に使えます）",
   "err.conn_api_key_required": "API キーを入力してください",
   "err.conn_grafana_fields_required": "Grafana の URL とサービスアカウントトークンを入力してください",
+  "err.conn_jira_fields_required": "Jira のアカウントメールアドレスと API トークンを入力してください",
   "err.conn_url_scheme": "URL は http(s):// で始めてください",
   "err.conn_aws_profile_required": "AWS プロファイルを指定してください",
   "err.conn_sso_region_missing": "SSO リージョンがありません（SSM プロファイルの設定を確認してください）",
