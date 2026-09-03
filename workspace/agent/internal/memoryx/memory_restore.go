@@ -1,4 +1,4 @@
-package main
+package memoryx
 
 // エージェントメモリの版管理（docs/log/39 ④ / ADR 0022 決定 4）— restore。
 //

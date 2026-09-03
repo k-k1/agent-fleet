@@ -1,4 +1,4 @@
-package main
+package memoryx
 
 // エージェントメモリの版管理（docs/log/39 / ADR 0022）— 自動 snapshot の契機。
 //
@@ -182,10 +182,10 @@ func memoryBusyKinds() map[string]bool {
 // memoryKindsBusy は「対象 kind に 1 つでも working がいるか」（自動 snapshot の先送り判定）。
 func memoryKindsBusy() bool { return len(memoryBusyKinds()) > 0 }
 
-// startMemorySnapshotLoop は自動 snapshot のポーリングループを起こす。
+// StartMemorySnapshotLoop は自動 snapshot のポーリングループを起こす。
 // 環境変数で強制 OFF のときだけループ自体を建てない — UI トグルは実行中に切り替わる
 // ので、そちらは毎 tick 読み直す（再起動を要求しない）。
-func startMemorySnapshotLoop() {
+func StartMemorySnapshotLoop() {
 	if memoryAutoLocked() {
 		log.Printf("memory-snapshot: auto snapshot disabled (AF_MEMORY_SNAPSHOT)")
 		return

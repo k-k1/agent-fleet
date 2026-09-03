@@ -1,9 +1,8 @@
-package main
+package memoryx
 
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -475,16 +474,5 @@ func TestMemoryAutoToggle(t *testing.T) {
 	}
 }
 
-func TestMemoryP2RoutesRegistered(t *testing.T) {
-	mux := buildMux()
-	for _, c := range []struct{ method, path, want string }{
-		{"GET", "/agents/memory/tree", "GET /agents/memory/tree"},
-		{"POST", "/agents/memory/restore", "POST /agents/memory/restore"},
-		{"PUT", "/agents/memory/settings", "PUT /agents/memory/settings"},
-	} {
-		req := httptest.NewRequest(c.method, c.path, nil)
-		if _, pattern := mux.Handler(req); pattern != c.want {
-			t.Errorf("%s %s resolved to %q, want %q", c.method, c.path, pattern, c.want)
-		}
-	}
-}
+// ★ TestMemoryP2RoutesRegistered は package main（memory_routes_test.go）に残してある
+// （memory_handlers_test.go の同じ印を参照）。

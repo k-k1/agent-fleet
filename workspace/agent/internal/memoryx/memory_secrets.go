@@ -1,4 +1,4 @@
-package main
+package memoryx
 
 // エージェントメモリの版管理（docs/log/39 ★4 / 先行 OSS 調査の取り込み点 1）— export 時の
 // secret スキャン。

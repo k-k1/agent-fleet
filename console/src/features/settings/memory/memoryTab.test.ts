@@ -83,7 +83,7 @@ describe("設定モーダルのエージェントメモリタブ", () => {
   it("移設（履歴ごと取り込み）の mode 値が Agent 側の定数と一致する", () => {
     // apply は REST を増やさず mode 1 キーで分岐する（新 REST は CP の許可リスト登録漏れ
     // という既知の罠を踏むため）。綴りがずれると 400 になるので両側を突き合わせる。
-    const importGo = read("../../../../../workspace/agent/memory_import.go");
+    const importGo = read("../../../../../workspace/agent/internal/memoryx/memory_import.go");
     expect(importGo).toContain('memoryImportModeMigrate = "migrate"');
     expect(importGo).toContain('memoryImportModeReplace = "replace"');
     expect(tab).toContain('useState<"replace" | "migrate">("replace")');

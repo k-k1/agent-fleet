@@ -1,9 +1,8 @@
-package main
+package memoryx
 
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -18,28 +17,11 @@ func memoryAPIHandler(t *testing.T) http.Handler {
 	return httpx.RequireToken(buildMux())
 }
 
-func TestMemoryRoutesRegistered(t *testing.T) {
-	mux := buildMux()
-	for _, c := range []struct{ method, path, want string }{
-		{"GET", "/agents/memory/roots", "GET /agents/memory/roots"},
-		{"GET", "/agents/memory/snapshots", "GET /agents/memory/snapshots"},
-		{"POST", "/agents/memory/snapshots", "POST /agents/memory/snapshots"},
-		{"GET", "/agents/memory/diff", "GET /agents/memory/diff"},
-		{"GET", "/agents/memory/tree", "GET /agents/memory/tree"},
-		{"POST", "/agents/memory/restore", "POST /agents/memory/restore"},
-		{"PUT", "/agents/memory/settings", "PUT /agents/memory/settings"},
-		{"GET", "/agents/memory/export", "GET /agents/memory/export"},
-		{"POST", "/agents/memory/import", "POST /agents/memory/import"},
-		{"POST", "/agents/memory/import/apply", "POST /agents/memory/import/apply"},
-		// 既存のパターンルートと共存できていること（{kind} に食われない）。
-		{"GET", "/agents/codex/models", "GET /agents/{kind}/models"},
-	} {
-		req := httptest.NewRequest(c.method, c.path, nil)
-		if _, pattern := mux.Handler(req); pattern != c.want {
-			t.Errorf("%s %s resolved to %q, want %q", c.method, c.path, pattern, c.want)
-		}
-	}
-}
+// ★ TestMemoryRoutesRegistered は package main（memory_routes_test.go）に残してある。
+// **本物の mux でしか確かめられないこと**——memory の 10 本が既存の
+// `/agents/{kind}/models` を食い潰していない——を見ているので、memoryx の自前 mux へ
+// 持ってくると検査が空回りする。memoryx 側の写しの検査は mux_test.go の
+// TestMemoryRoutesMatchAgentRouteTable。
 
 func TestMemoryAPIRoundTrip(t *testing.T) {
 	h := memoryAPIHandler(t)
