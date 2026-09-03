@@ -5,6 +5,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"log"
 	"net/http"
@@ -224,7 +225,7 @@ func main() {
 	// エージェントメモリの自動 snapshot（docs/log/39 / ADR 0022 P1）: claude/codex の
 	// メモリ md を bare repo へ差分保存する。ポーリング契機（memory_trigger.go）で、
 	// 変更が静穏かつ対象セッションが非稼働のときだけ積む。AF_MEMORY_SNAPSHOT=off で無効。
-	startMemorySnapshotLoop()
+	memoryx.StartMemorySnapshotLoop()
 
 	// 利用上限で止まった claude セッションの自動復帰（docs/log/47 §4-4）: メニューを既定の
 	// 「リセットまで待つ」で解除し、上限が解ける時刻に「続けて」を送る一回限りの

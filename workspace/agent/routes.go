@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 
@@ -275,18 +276,18 @@ func buildMux() *http.ServeMux {
 	// エージェントメモリの版管理（docs/log/39 / ADR 0022 P1〜P3）: claude/codex のメモリ md を
 	// bare repo へ snapshot し、履歴・差分・指定時点への巻き戻し・環境間の移送を提供する。
 	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
-	mux.HandleFunc("GET /agents/memory/roots", handleMemoryRoots)
-	mux.HandleFunc("GET /agents/memory/snapshots", handleMemorySnapshots)
-	mux.HandleFunc("POST /agents/memory/snapshots", handleMemorySnapshotCreate)
-	mux.HandleFunc("GET /agents/memory/diff", handleMemoryDiff)
-	mux.HandleFunc("GET /agents/memory/tree", handleMemoryTree)
-	mux.HandleFunc("POST /agents/memory/restore", handleMemoryRestore)
-	mux.HandleFunc("PUT /agents/memory/settings", handleMemorySettings)
+	mux.HandleFunc("GET /agents/memory/roots", memoryx.HandleMemoryRoots)
+	mux.HandleFunc("GET /agents/memory/snapshots", memoryx.HandleMemorySnapshots)
+	mux.HandleFunc("POST /agents/memory/snapshots", memoryx.HandleMemorySnapshotCreate)
+	mux.HandleFunc("GET /agents/memory/diff", memoryx.HandleMemoryDiff)
+	mux.HandleFunc("GET /agents/memory/tree", memoryx.HandleMemoryTree)
+	mux.HandleFunc("POST /agents/memory/restore", memoryx.HandleMemoryRestore)
+	mux.HandleFunc("PUT /agents/memory/settings", memoryx.HandleMemorySettings)
 	// export は secret スキャン（★4）を通してから DL させる。import は独立系譜として
 	// 受けてから、選んだ範囲だけを live へ適用する（P3）。
-	mux.HandleFunc("GET /agents/memory/export", handleMemoryExport)
-	mux.HandleFunc("POST /agents/memory/import", handleMemoryImport)
-	mux.HandleFunc("POST /agents/memory/import/apply", handleMemoryImportApply)
+	mux.HandleFunc("GET /agents/memory/export", memoryx.HandleMemoryExport)
+	mux.HandleFunc("POST /agents/memory/import", memoryx.HandleMemoryImport)
+	mux.HandleFunc("POST /agents/memory/import/apply", memoryx.HandleMemoryImportApply)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
