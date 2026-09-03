@@ -41,7 +41,6 @@ const ALLOW_DIRS = ["lib/i18n/locales/"];
 // 丸ごと対象外にするファイル（src/ 起点）。翻訳ではなくロジック/データのもの。
 const ALLOW_FILES = new Set([
   "features/chat/ttsText.ts", // TTS 読み変換の内部（発音辞書ロジック・docs/log/28 §4）
-  "features/chat/ttsDict.ts", // 読み辞書データ
   // ⚠️ ここは ALLOW_DIRS と違って**完全一致**（下の ALLOW_FILES.has(rel)）。ファイルを割ると
   // 割った先が免除から外れるので、面ごとに分けたら 1 枚ずつここへ足す。接頭辞にはしない —
   // parts/ には今後 UI のファイルも入るので、接頭辞だと新規が黙って免除される（カタログの
