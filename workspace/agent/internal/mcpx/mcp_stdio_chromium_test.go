@@ -110,6 +110,33 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 	}
 }
 
+// inputSchema は Configure 後の依存値で組み立てること。tool slice を package 変数に
+// すると、package main の init より先に零値を捕捉し、enum:null が Anthropic API の
+// JSON Schema draft 2020-12 検証で拒否されて Claude の全ターンが止まる。
+func TestMCPSessionToolSchemasUseConfiguredDependencyValues(t *testing.T) {
+	withMCPFlags(t, false, true, true)
+	oldPeer := mcpPeerMessagingEnabled
+	mcpPeerMessagingEnabled = true
+	t.Cleanup(func() { mcpPeerMessagingEnabled = oldPeer })
+
+	tools := map[string]map[string]any{}
+	for _, tool := range mcpStdioToolList() {
+		tools[tool["name"].(string)] = tool
+	}
+
+	handoffProps := tools["propose_session_handoff"]["inputSchema"].(map[string]any)["properties"].(map[string]any)
+	title := handoffProps["title"].(map[string]any)
+	if got := title["maxLength"]; got != deps.SessionTitleMaxRunes {
+		t.Fatalf("propose_session_handoff title maxLength = %v, want configured %d", got, deps.SessionTitleMaxRunes)
+	}
+
+	peerProps := tools["send_to_peer_session"]["inputSchema"].(map[string]any)["properties"].(map[string]any)
+	intent := peerProps["intent"].(map[string]any)
+	if got := intent["enum"]; !reflect.DeepEqual(got, deps.PeerIntentNames) {
+		t.Fatalf("send_to_peer_session intent enum = %#v, want configured %#v", got, deps.PeerIntentNames)
+	}
+}
+
 func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 	type hit struct {
 		method string
