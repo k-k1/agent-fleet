@@ -12,8 +12,14 @@
 // 万能ではない。
 //
 // **意図して変えたときの撮り直し**:
-//     UPDATE_CHATVIEW_GOLDEN=1 npx vitest run src/features/chat/ChatView.dom.test.tsx
+//     npx vitest run src/features/chat/ChatView.dom.test.tsx -u
 // 差分は PR に載せること（routes.golden / wire.golden と同じ運用）。
+//
+// 🔴 **撮り直しの合図は環境変数にしない。** 以前は `UPDATE_CHATVIEW_GOLDEN=1` を見ていたが、
+// **環境変数は一度 export すると以後ずっと効く**ので、その手元では毎回ゴールデンが上書きされ、
+// **この検査が永久に赤くならない**（しかも本人には緑にしか見えない）。Go 側の
+// `-update-routes-golden` がテストフラグなのと同じ理由で、**引数で渡すものは漏れ込まない。**
+// vitest 自身の `-u` に相乗りしているので、独自フラグを増やしてもいない。
 //
 // 時刻とロケールは固定する — ゴールデンにローカル時刻や既定ロケールが焼かれると、
 // **開発機の状態で赤くなるテスト**になる（TZ を beforeAll で入れても遅い）。
@@ -26,6 +32,9 @@ import { fileURLToPath } from "node:url";
 import type { Conversation } from "../../types/chat.ts";
 
 const GOLDEN = path.join(path.dirname(fileURLToPath(import.meta.url)), "testdata", "chatview.golden.html");
+
+// 撮り直しは vitest の `-u`（--update）だけで起きる。**環境変数は読まない**（上記の理由）。
+const UPDATE_GOLDEN = process.argv.includes("-u") || process.argv.includes("--update");
 
 // 4 つの role・作業過程（語り＋単発ツール＋連続ツールの束）・計画・コンテキストバー・
 // 貼り付け画像・サジェスト（ピン留め込み）が 1 本の会話に全部出るように組んだ fixture。
@@ -114,14 +123,16 @@ describe("ChatView の DOM", () => {
     await act(async () => root.unmount());
     host.remove();
 
-    if (process.env.UPDATE_CHATVIEW_GOLDEN) {
-      fs.mkdirSync(path.dirname(GOLDEN), { recursive: true });
-      fs.writeFileSync(GOLDEN, dom);
-    }
     // 空振り防止: ゴールデンが白紙でないこと（fixture の中身が実際に出ていること）を先に見る。
     // 「一致した」だけでは、両側とも何も描けていない場合と区別できない。
+    // 🔴 **撮り直しより前に置く。**後ろに置くと、白紙の DOM をそのままゴールデンへ焼けてしまい、
+    // 以後この検査は「白紙と白紙が一致する」で永久に緑になる。
     for (const needle of ["chat-msg role-report", "chat-msg role-notice", "chat-suggest-chip", "テスト会話", "報告本文"]) {
       expect(dom).toContain(needle);
+    }
+    if (UPDATE_GOLDEN) {
+      fs.mkdirSync(path.dirname(GOLDEN), { recursive: true });
+      fs.writeFileSync(GOLDEN, dom);
     }
     expect(dom).toBe(fs.readFileSync(GOLDEN, "utf8"));
   });
