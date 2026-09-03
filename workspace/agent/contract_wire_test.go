@@ -111,11 +111,13 @@ func agentContractFamilies() []contractFamily {
 			tsPath:  "../../console/src/features/settings/memory/memoryTypes.ts",
 			tsName:  "ImportPreview",
 			tsKeys: keySet("importId", "format", "head", "headTs", "snapshots", "kinds",
-				"projects", "unavailable", "rejected", "secrets"),
+				"projects", "unavailable", "rejected", "secrets", "secretScanFailed"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{
-				"ref":              "【穴】取り込み元の ref。Console の ImportPreview に宣言が無い。",
-				"secretScanFailed": "【穴】秘密の走査が失敗したことを伝える旗。宣言が無い＝画面は「秘密 0 件」と区別できない。",
+				"ref": "【穴】取り込み元の ref。Console の ImportPreview に宣言が無い。",
+				// 🔴 `secretScanFailed` の免除は**この PR で外した**。#339 で入れた
+				// 「免除の寿命の逆検査」が実際に「もう要らない」を検出したのが直す動機で、
+				// この家系がその仕組みの最初の実例になる（穴を塞いだ瞬間に免除表が縮む）。
 			},
 		},
 
@@ -182,6 +184,10 @@ func TestContractFamilies(t *testing.T) {
 }
 
 // ===== 共有機構ここから（control-plane と workspace/agent で byte 一致・下の検査が見張る）=====
+// 🔴 **両モジュールで共有する道具は、必ずこの区間の中に置くこと。**
+// 検査が守っているのは「この区間」であって「ファイル」ではない——**区間の外に足した共有ヘルパは
+// 片側だけに在っても緑のまま通る**（#346 のレビュワーが実測）。見ない場所を作った以上、
+// どこが見られているかを人に伝える文言が要る（免除表に理由を書くのと同じ構造）。
 // contractFamily は 1 家系分の契約。
 type contractFamily struct {
 	name string // 家系名（エラーメッセージ用）

@@ -617,6 +617,7 @@ export const tools = {
   "mem.import_rejected": "対象外として取り込まなかった項目が{n}件あります。",
   "mem.import_unavailable": "この環境に受け皿がないため取り込めません: {kinds}",
   "mem.import_secrets": "取り込む内容に、秘密情報らしき記述が{n}件あります。",
+  "mem.import_secret_scan_failed": "取り込む内容の秘密情報スキャンに失敗しました。「秘密は無い」ことは確認できていません。",
   "mem.import_do": "取り込む",
   "mem.import_mode_label": "適用のしかた",
   "mem.import_mode_replace": "選んだ範囲だけ置き換える（履歴はこの環境のまま）",
