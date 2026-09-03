@@ -31,6 +31,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // agentContractFamilies は workspace/agent 側の家系。
@@ -136,7 +137,62 @@ func agentContractFamilies() []contractFamily {
 				"title": "【穴】ページのタイトルを返しているが、Console の BrowserPageResult に宣言が無い。",
 			},
 		},
+
+		// 転写の 1 断片（mirror が描く最小単位）。
+		{
+			name:    "transcript.Part",
+			goType:  reflect.TypeOf(transcript.Part{}),
+			binding: transcriptPartBinding,
+			tsPath:  "../../console/src/features/mirror/transcript/types.ts",
+			tsName:  "Part",
+			tsKeys: keySet("kind", "text", "tool", "info", "cause", "output", "prompt",
+				"agentType", "status", "model", "file", "edits", "verb", "questions",
+				"answer", "declined", "plan", "qid", "files", "caption", "stderr"),
+			tsOnly: map[string]string{
+				"stderr": "【穴】Console の Part が宣言しているが transcript.Part は出さない。Console 側の実読みの有無は未調査。",
+			},
+			goOnly: map[string]string{},
+		},
+
+		// 転写の 1 ターン。
+		{
+			name:    "transcript.Turn",
+			goType:  reflect.TypeOf(transcript.Turn{}),
+			binding: transcriptTurnBinding,
+			tsPath:  "../../console/src/features/mirror/transcript/types.ts",
+			tsName:  "Turn",
+			tsKeys: keySet("role", "text", "ts", "endTs", "idx", "anchorId", "pending",
+				"queued", "source", "peerFrom", "parts", "sidechain", "compact", "bash",
+				"cmd", "model", "effort", "ctxWindow", "branch", "cwd", "inTok", "outTok",
+				"cacheRead", "cacheCreate"),
+			tsOnly: map[string]string{
+				// 🔴 4 件とも**穴ではない**可能性が高い——Console 側で組み立てる描画用の値に見える
+				// （bash/cmd は「! シェルコマンドのブロック」、pending/queued は送信状態）。
+				// **ただし実読みまでは追っていない**ので、そう書いてある以上の主張はしない。
+				"bash":    "Console 側で組み立てる描画用の値に見える（! シェルコマンドのブロック）。transcript.Turn は出さない。実読みは未調査",
+				"cmd":     "同上。",
+				"pending": "送信状態（未送信）を Console 側が持つ値に見える。transcript.Turn は出さない。実読みは未調査",
+				"queued":  "同上（送信待ち）。",
+			},
+			goOnly: map[string]string{},
+		},
 	}
+}
+
+var transcriptPartBinding = map[string]string{
+	"Kind": "kind", "Text": "text", "Tool": "tool", "Info": "info", "Cause": "cause",
+	"Output": "output", "Prompt": "prompt", "AgentType": "agentType", "Status": "status",
+	"Model": "model", "Questions": "questions", "Answer": "answer", "Declined": "declined",
+	"Plan": "plan", "File": "file", "Edits": "edits", "Verb": "verb", "Files": "files",
+	"Caption": "caption", "QID": "qid",
+}
+
+var transcriptTurnBinding = map[string]string{
+	"Role": "role", "Parts": "parts", "Text": "text", "Source": "source",
+	"PeerFrom": "peerFrom", "Model": "model", "Effort": "effort", "CtxWindow": "ctxWindow",
+	"Sidechain": "sidechain", "Branch": "branch", "Cwd": "cwd", "InTok": "inTok",
+	"OutTok": "outTok", "CacheRead": "cacheRead", "CacheCreate": "cacheCreate",
+	"TS": "ts", "Idx": "idx", "AnchorID": "anchorId", "EndTS": "endTs", "Compact": "compact",
 }
 
 var memoryImportPreviewBinding = map[string]string{
@@ -175,7 +231,7 @@ var browserAttachmentBinding = map[string]string{
 func TestContractFamilies(t *testing.T) {
 	fams := agentContractFamilies()
 	// 🔴 走査の母数を見張る（#320 型）。家系が黙って消えたらここで気付く。
-	if len(fams) != 6 {
+	if len(fams) != 8 {
 		t.Fatalf("家系が %d 件しかない＝表から落ちている（足したなら本数も直すこと）", len(fams))
 	}
 	for _, f := range fams {
@@ -325,19 +381,72 @@ func contractGoFields(t *testing.T, f contractFamily) map[string]string {
 	if f.goPath != "" {
 		return goStructFieldsFromSource(t, f.goPath, f.goName)
 	}
-	out := map[string]string{}
-	for i := 0; i < f.goType.NumField(); i++ {
-		fl := f.goType.Field(i)
-		tag := fl.Tag.Get("json")
-		if tag == "" || tag == "-" {
-			continue
-		}
-		out[fl.Name] = splitJSONName(tag)
+	out, err := reflectJSONFields(f.goType, 0)
+	if err != nil {
+		t.Fatalf("%s: %v", f.name, err)
 	}
 	if len(out) == 0 {
 		t.Fatalf("%s から json タグを 1 つも読めなかった＝この検査が無言化している", f.goType)
 	}
 	return out
+}
+
+// reflectJSONFields は struct の「Go フィールド名 → json キー」を返す。
+//
+// 🔴 **埋め込み（無名フィールド）は encoding/json と同じく昇格する。**
+// 素朴に `Tag.Get("json")` が空なら飛ばす書き方だと、**タグの無い埋め込みごと飛ばして
+// 昇格したキーを丸ごと落とす**——実例 `usageHourPoint`（control-plane/usage_hourly.go:55）は
+// `store.UsageHourCounters` を埋め込んでおり、飛ばすと **8 キーのうち 7 つが消えて**
+// 「TS のみ」が 7 件に化ける。**浅く読んで偽の赤を出すのが、この面のいちばん怖い壊れ方。**
+//
+// 🔴 **追えない形に出会ったら浅い結果を返さずに落ちる**（AST 経路と同じ規律）:
+// 2 段以上の埋め込みと、キーがぶつかる昇格は error にしてある。
+// **json の昇格規則はもっと複雑**（深さ優先・同深さの衝突は両方消えるなど）なので、
+// **近似で通さず、想定外はすべて落とす。**
+func reflectJSONFields(rt reflect.Type, depth int) (map[string]string, error) {
+	if rt.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("%s は struct ではない", rt)
+	}
+	out := map[string]string{}
+	for i := 0; i < rt.NumField(); i++ {
+		fl := rt.Field(i)
+		tag := fl.Tag.Get("json")
+		if fl.Anonymous && tag == "" {
+			// タグの無い埋め込み＝昇格。1 段だけ許す。
+			et := fl.Type
+			if et.Kind() == reflect.Pointer {
+				et = et.Elem()
+			}
+			if et.Kind() != reflect.Struct {
+				continue // 埋め込まれた非 struct（json では扱いが別）。キーを増やさない。
+			}
+			if depth > 0 {
+				return nil, fmt.Errorf("%s に 2 段以上の埋め込みが在る（%s）"+
+					"——json の昇格規則は深さ優先で衝突の扱いも複雑なので、近似で通さない。"+
+					"この家系は埋め込みを解いた型を指すか、経路を作り直すこと", rt, et)
+			}
+			sub, err := reflectJSONFields(et, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			for k, v := range sub {
+				if _, dup := out[k]; dup {
+					return nil, fmt.Errorf("%s: 昇格したフィールド %s が外側とぶつかる"+
+						"——json の衝突規則（同深さなら両方消える）を近似で通さない", rt, k)
+				}
+				out[k] = v
+			}
+			continue
+		}
+		if tag == "" || tag == "-" {
+			continue
+		}
+		if _, dup := out[fl.Name]; dup {
+			return nil, fmt.Errorf("%s: フィールド名 %s が重複している", rt, fl.Name)
+		}
+		out[fl.Name] = splitJSONName(tag)
+	}
+	return out, nil
 }
 
 // --- 別パッケージの非公開型を読む経路（go/ast）---
@@ -494,6 +603,13 @@ export interface Tricky {
   t3: string;
 }
 
+// ⑤-a type 別名（interface と同じだけ普通に使われる。UptimePoint が実際にこの形）
+export type AliasShape = {
+  al1: string;
+  al2?: number;
+  al3: boolean;
+};
+
 // ⑤ 名前が前方一致する別の型（Session と SessionContextUsage の関係）
 export interface Pre {
   p1: string;
@@ -534,6 +650,8 @@ func TestTSInterfaceFieldsParser(t *testing.T) {
 		// コメント／文字列の中の `t9` を拾ってはいけない。
 		{"Tricky", []string{"t1", "t2", "t3"}},
 		// 前方一致する別の型を掴んではいけない（Pre が PreExtra を拾わない）。
+		// type 別名も interface と同じに読めること（読めないと家系ごと Fatal する）。
+		{"AliasShape", []string{"al1", "al2", "al3"}},
 		{"Pre", []string{"p1", "p2", "p3"}},
 		{"PreExtra", []string{"x1", "x2", "x3"}},
 	} {
@@ -618,7 +736,14 @@ func consoleInterfaceFields(t *testing.T, path, name string) map[string]bool {
 // **深さを見るしかない。**
 func tsInterfaceFields(src, name string) (map[string]bool, error) {
 	start := -1
-	for _, pre := range []string{"export interface " + name, "interface " + name} {
+	// `interface X { … }` と `type X = { … }` の両方を見る。
+	// 🔴 **`type` 別名を見ないと、その家系だけ「見つからない」で Fatal する**——
+	// 実例 `UptimePoint`（console/src/features/usage/uptime.ts:11）は `export type … = { … }`。
+	// TS ではどちらの書き方も同じだけ普通なので、片方しか見ない走査は家系を選べない。
+	for _, pre := range []string{
+		"export interface " + name, "interface " + name,
+		"export type " + name, "type " + name,
+	} {
 		for i := 0; i+len(pre) <= len(src); i++ {
 			if !strings.HasPrefix(src[i:], pre) {
 				continue
@@ -640,7 +765,7 @@ func tsInterfaceFields(src, name string) (map[string]bool, error) {
 		}
 	}
 	if start < 0 {
-		return nil, fmt.Errorf("interface %s が見つからない＝この検査が無言化している", name)
+		return nil, fmt.Errorf("interface / type %s が見つからない＝この検査が無言化している", name)
 	}
 
 	out := map[string]bool{}
@@ -726,6 +851,67 @@ func tsInterfaceFields(src, name string) (map[string]bool, error) {
 
 func isTSIdentRune(r rune) bool {
 	return r == '_' || r == '$' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+}
+
+// TestReflectJSONFieldsEmbedding は **reflect 経路の埋め込みの扱いの陽性対照**。
+//
+// 🔴 素朴に「json タグが空なら飛ばす」と書くと、**タグの無い埋め込みごと飛ばして
+// 昇格したキーを丸ごと落とす**。実入力（usageHourPoint）は 1 段の埋め込みなので、
+// **昇格が壊れても「TS のみ」が 7 件出るだけで、原因が埋め込みだとは読めない。**
+// だから合成型で、昇格すること・追えない形では落ちることを固定する。
+func TestReflectJSONFieldsEmbedding(t *testing.T) {
+	type inner struct {
+		A string `json:"a"`
+		B int    `json:"b,omitempty"`
+	}
+	type deeper struct{ inner }
+	type flat struct {
+		X string `json:"x"`
+		Y string // タグ無し＝ワイヤに出ない
+	}
+
+	// ① 1 段の埋め込みは昇格する。
+	type promoted struct {
+		Hour string `json:"hour"`
+		inner
+	}
+	got, err := reflectJSONFields(reflect.TypeOf(promoted{}), 0)
+	if err != nil {
+		t.Fatalf("1 段の埋め込みを読めない: %v", err)
+	}
+	if len(got) != 3 || got["Hour"] != "hour" || got["A"] != "a" || got["B"] != "b" {
+		t.Fatalf("昇格の結果が違う: %v（外側 1 ＋ 昇格 2 のはず）", got)
+	}
+
+	// ② タグ無しフィールドは落とす（この対照が空を測っていないことの確認も兼ねる）。
+	got, err = reflectJSONFields(reflect.TypeOf(flat{}), 0)
+	if err != nil || len(got) != 1 || got["X"] != "x" {
+		t.Fatalf("タグ無しフィールドの扱いが違う: %v (%v)", got, err)
+	}
+
+	// ③ 🔴 2 段以上の埋め込みは**浅い結果ではなく error**。
+	type twoLevel struct {
+		Z string `json:"z"`
+		deeper
+	}
+	if _, err := reflectJSONFields(reflect.TypeOf(twoLevel{}), 0); err == nil {
+		t.Error("2 段の埋め込みで error にならない" +
+			"——json の昇格規則は深さ優先で衝突の扱いも複雑なので、近似で通してはいけない")
+	}
+
+	// ④ 昇格が外側とぶつかったら error（json は同深さの衝突で両方消える）。
+	type clash struct {
+		A string `json:"outerA"`
+		inner
+	}
+	if _, err := reflectJSONFields(reflect.TypeOf(clash{}), 0); err == nil {
+		t.Error("昇格したフィールド名が外側とぶつかっているのに error にならない")
+	}
+
+	// ⑤ struct でないものを渡したら error（無言で空を返さない）。
+	if _, err := reflectJSONFields(reflect.TypeOf(""), 0); err == nil {
+		t.Error("struct でない型で error にならない＝この経路が無言化しうる")
+	}
 }
 
 // TestGoStructFieldsFromSourceGuards は **AST 経路そのものの陽性対照**。
