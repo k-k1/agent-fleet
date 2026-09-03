@@ -29,6 +29,7 @@ package main
 // `ok (cached)` が出る＝**変異を当てたのに緑に見える**）。
 
 import (
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -394,7 +395,16 @@ func reflectJSONFields(rt reflect.Type, depth int) (map[string]string, error) {
 				et = et.Elem()
 			}
 			if et.Kind() != reflect.Struct {
-				continue // 埋め込まれた非 struct（json では扱いが別）。キーを増やさない。
+				// 🔴 **公開された非 struct の埋め込みは、json が「型名」をキーにして出す**
+				// （`MyDur int64` を埋め込むと `{"MyDur":0}`）。飛ばすと**取りこぼし**になる。
+				// 非公開なら json も出さないが、**出す／出さないを型名の公開性で判断するのは
+				// この走査の役目ではない**ので、まとめて落とす。
+				if fl.IsExported() {
+					return nil, fmt.Errorf("%s に公開された非 struct の埋め込みが在る（%s %s）"+
+						"——json は型名をキーにして出すが、この走査は追わない。"+
+						"この家系は埋め込みを解いた型を指すこと", rt, fl.Name, et)
+				}
+				continue
 			}
 			if depth > 0 {
 				return nil, fmt.Errorf("%s に 2 段以上の埋め込みが在る（%s）"+
@@ -406,21 +416,24 @@ func reflectJSONFields(rt reflect.Type, depth int) (map[string]string, error) {
 				return nil, err
 			}
 			for k, v := range sub {
-				if _, dup := out[k]; dup {
-					return nil, fmt.Errorf("%s: 昇格したフィールド %s が外側とぶつかる"+
-						"——json の衝突規則（同深さなら両方消える）を近似で通さない", rt, k)
+				if err := putJSONField(out, rt, k, v); err != nil {
+					return nil, err
 				}
-				out[k] = v
 			}
 			continue
 		}
-		if tag == "" || tag == "-" {
-			continue
+		if tag == "-" || (tag == "" && !fl.IsExported()) {
+			continue // json:"-" と非公開はワイヤに出ない
 		}
-		if _, dup := out[fl.Name]; dup {
-			return nil, fmt.Errorf("%s: フィールド名 %s が重複している", rt, fl.Name)
+		// 🔴 **タグ無しの公開フィールドは、json が「Go のフィールド名」をキーにして出す。**
+		// 「タグが空なら飛ばす」と書くと取りこぼす（差分試験で実測）。
+		name := splitJSONName(tag)
+		if name == "" {
+			name = fl.Name
 		}
-		out[fl.Name] = splitJSONName(tag)
+		if err := putJSONField(out, rt, fl.Name, name); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -829,6 +842,134 @@ func isTSIdentRune(r rune) bool {
 	return r == '_' || r == '$' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
 
+// putJSONField は 1 件足す。🔴 **重複判定は「Go フィールド名」ではなく「json 名」で行う。**
+// `encoding/json` の衝突規則は json 名で決まる——**Go 名が違っても json 名が同じなら、
+// json は（同深さなら）どちらも出さない。**Go 名で見ていると
+// **「json は出さないのにこちらは出す」**という最悪の向きの食い違いになる
+// （レビュワーが json.Marshal との差分試験で実測。#350 参考 1）。
+func putJSONField(out map[string]string, rt reflect.Type, field, jsonName string) error {
+	for f, j := range out {
+		if j == jsonName {
+			return fmt.Errorf("%s: json 名 %q が %s と %s で重なる"+
+				"——encoding/json は同深さの衝突でどちらも出さない。近似で通さない", rt, jsonName, f, field)
+		}
+	}
+	if _, dup := out[field]; dup {
+		return fmt.Errorf("%s: フィールド名 %s が重複している", rt, field)
+	}
+	out[field] = jsonName
+	return nil
+}
+
+// TestReflectJSONFieldsMatchesEncodingJSON は **仕様の実装そのものと差分試験する**。
+//
+// 🔥 `reflectJSONFields` の目標は「`encoding/json` の昇格規則に合わせる」ことなので、
+// **目標そのものが手元で動く**——机上で規則を読むより、合成型を両方に通して出力を比べるほうが
+// 速くて強い。**レビュワーがこの方法で 3 件の食い違いを見つけた**（#350 参考 1）。
+//
+// 期待は 2 通りだけ書ける: **json と同じキー集合になる**か、**error（＝安全側に倒す）**か。
+// 🔴 **「json は出さないのにこちらは出す」は許さない**——それは検査が実在しないキーを
+// 契約に載せることで、免除表に偽の穴が生える。
+func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
+	type inner struct {
+		A string `json:"a"`
+		B int    `json:"b"`
+	}
+	type innerDup struct {
+		P string `json:"p"`
+	}
+	type deep2 struct{ inner }
+	type MyDur int64
+
+	for _, tc := range []struct {
+		name    string
+		v       any
+		wantErr bool // true = 追えない形なので error に倒す（json より狭くてよい）
+	}{
+		{"① 素の 1 段埋め込み", struct {
+			Hour string `json:"hour"`
+			inner
+		}{}, false},
+		{"② タグ付き埋め込み（入れ子になる）", struct {
+			Hour  string `json:"hour"`
+			Inner inner  `json:"inner"`
+		}{}, false},
+		// ③ は同一 struct 内で json 名が重なる形。
+		// 📌 **この形はソースに書くと `go vet`（structtag）が弾く**ので、実行時に組んで渡す。
+		// ＝**同一 struct 内の重複は vet が既に守っている。**この走査の検査が要るのは
+		// **④⑤ の「昇格したキーと外側／別の埋め込みが重なる」形**で、
+		// **そちらは 2 つの struct にまたがるので vet は見ない。**
+		{"③ 別の Go 名・同じ json 名（実行時に組む）", reflect.New(reflect.StructOf([]reflect.StructField{
+			{Name: "X", Type: reflect.TypeOf(""), Tag: `json:"a"`},
+			{Name: "Y", Type: reflect.TypeOf(""), Tag: `json:"a"`},
+		})).Elem().Interface(), true},
+		{"④ 同じ json 名が外側と昇格でぶつかる", struct {
+			A string `json:"a"`
+			inner
+		}{}, true},
+		{"⑤ 同深さの 2 つの埋め込みが同じ json 名", struct {
+			innerDup
+			Other struct{} `json:"-"`
+		}{}, false}, // 衝突が無いので一致する側
+		{"⑥ 2 段の埋め込み", struct {
+			Z string `json:"z"`
+			deep2
+		}{}, true},
+		// ⚠️ ポインタ埋め込みは **nil だと json がフィールドを出さない**ので、
+		// 非 nil の値で比べる（対照の作りの問題であって、規則の違いではない）。
+		{"⑦ ポインタ埋め込み（非 nil）", struct {
+			Hour string `json:"hour"`
+			*inner
+		}{Hour: "h", inner: &inner{}}, false},
+		{"⑨ 公開された非 struct の埋め込み", struct {
+			MyDur
+			C string `json:"c"`
+		}{}, true},
+		{"⑩ タグ無しの公開フィールド（json は Go 名で出す）", struct {
+			Plain string
+			C     string `json:"c"`
+		}{}, false},
+	} {
+		got, err := reflectJSONFields(reflect.TypeOf(tc.v), 0)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%s: error になるはずが %v を返した（json との食い違いを安全側に倒せていない）", tc.name, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: 追えるはずの形で error: %v", tc.name, err)
+			continue
+		}
+		// json.Marshal が実際に出すキー集合と比べる。
+		b, mErr := json.Marshal(tc.v)
+		if mErr != nil {
+			t.Errorf("%s: marshal: %v", tc.name, mErr)
+			continue
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(b, &raw); err != nil {
+			t.Errorf("%s: unmarshal: %v", tc.name, err)
+			continue
+		}
+		mine := map[string]bool{}
+		for _, jn := range got {
+			mine[jn] = true
+		}
+		for k := range raw {
+			if !mine[k] {
+				t.Errorf("%s: json は %q を出すのに走査が落としている（取りこぼし）", tc.name, k)
+			}
+		}
+		for k := range mine {
+			if _, ok := raw[k]; !ok {
+				t.Errorf("%s: 走査が %q を出すのに json は出さない"+
+					"——契約に実在しないキーが載り、免除表に偽の穴が生える", tc.name, k)
+			}
+		}
+	}
+}
+
 // TestReflectJSONFieldsEmbedding は **reflect 経路の埋め込みの扱いの陽性対照**。
 //
 // 🔴 素朴に「json タグが空なら飛ばす」と書くと、**タグの無い埋め込みごと飛ばして
@@ -843,7 +984,8 @@ func TestReflectJSONFieldsEmbedding(t *testing.T) {
 	type deeper struct{ inner }
 	type flat struct {
 		X string `json:"x"`
-		Y string // タグ無し＝ワイヤに出ない
+		Y string // タグ無しの公開フィールド＝json は "Y" で出す
+		z string // 非公開＝出ない
 	}
 
 	// ① 1 段の埋め込みは昇格する。
@@ -859,9 +1001,13 @@ func TestReflectJSONFieldsEmbedding(t *testing.T) {
 		t.Fatalf("昇格の結果が違う: %v（外側 1 ＋ 昇格 2 のはず）", got)
 	}
 
-	// ② タグ無しフィールドは落とす（この対照が空を測っていないことの確認も兼ねる）。
+	// ② タグ無しの**公開**フィールドは json が Go 名をキーにして出すので、こちらも出す。
+	// 非公開はワイヤに出ないので落とす。
+	// 📌 **この対照は当初「タグ無しは落とす」と書いていて誤っていた**——
+	// json.Marshal との差分試験（TestReflectJSONFieldsMatchesEncodingJSON）が正で、
+	// **手で書いた期待値のほうが間違っていた。**規則の正は常に標準ライブラリ側にある。
 	got, err = reflectJSONFields(reflect.TypeOf(flat{}), 0)
-	if err != nil || len(got) != 1 || got["X"] != "x" {
+	if err != nil || len(got) != 2 || got["X"] != "x" || got["Y"] != "Y" {
 		t.Fatalf("タグ無しフィールドの扱いが違う: %v (%v)", got, err)
 	}
 
