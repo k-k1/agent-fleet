@@ -17,9 +17,14 @@ package main
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -95,7 +100,52 @@ func agentContractFamilies() []contractFamily {
 				"viewer":  "【穴】同上。",
 			},
 		},
+
+		// メモリ取り込みの下見。
+		// 🔴 **AST 経路**——`memoryImportPreview` は internal/memoryx の**非公開**型。
+		{
+			name:    "memoryImportPreview",
+			goPath:  "internal/memoryx/memory_import.go",
+			goName:  "memoryImportPreview",
+			binding: memoryImportPreviewBinding,
+			tsPath:  "../../console/src/features/settings/memory/memoryTypes.ts",
+			tsName:  "ImportPreview",
+			tsKeys: keySet("importId", "format", "head", "headTs", "snapshots", "kinds",
+				"projects", "unavailable", "rejected", "secrets"),
+			tsOnly: map[string]string{},
+			goOnly: map[string]string{
+				"ref":              "【穴】取り込み元の ref。Console の ImportPreview に宣言が無い。",
+				"secretScanFailed": "【穴】秘密の走査が失敗したことを伝える旗。宣言が無い＝画面は「秘密 0 件」と区別できない。",
+			},
+		},
+
+		// ブラウザのページ 1 枚。
+		// 🔴 **AST 経路**——`browserPageResponse` は internal/browserx の**非公開**型。
+		{
+			name:    "browserPageResponse",
+			goPath:  "internal/browserx/browser_types.go",
+			goName:  "browserPageResponse",
+			binding: browserPageBinding,
+			tsPath:  "../../console/src/features/browser/controller.ts",
+			tsName:  "BrowserPageResult",
+			tsKeys:  keySet("id", "port", "url", "state"),
+			tsOnly:  map[string]string{},
+			goOnly: map[string]string{
+				"title": "【穴】ページのタイトルを返しているが、Console の BrowserPageResult に宣言が無い。",
+			},
+		},
 	}
+}
+
+var memoryImportPreviewBinding = map[string]string{
+	"ImportID": "importId", "Format": "format", "Ref": "ref", "Head": "head",
+	"HeadTs": "headTs", "Snapshots": "snapshots", "Kinds": "kinds", "Projects": "projects",
+	"Unavailable": "unavailable", "Rejected": "rejected", "Secrets": "secrets",
+	"SecretScanFailed": "secretScanFailed",
+}
+
+var browserPageBinding = map[string]string{
+	"ID": "id", "Port": "port", "URL": "url", "Title": "title", "State": "state",
 }
 
 var chatMessageBinding = map[string]string{
@@ -123,7 +173,7 @@ var browserAttachmentBinding = map[string]string{
 func TestContractFamilies(t *testing.T) {
 	fams := agentContractFamilies()
 	// 🔴 走査の母数を見張る（#320 型）。家系が黙って消えたらここで気付く。
-	if len(fams) != 4 {
+	if len(fams) != 6 {
 		t.Fatalf("家系が %d 件しかない＝表から落ちている（足したなら本数も直すこと）", len(fams))
 	}
 	for _, f := range fams {
@@ -131,11 +181,17 @@ func TestContractFamilies(t *testing.T) {
 	}
 }
 
+// ===== 共有機構ここから（control-plane と workspace/agent で byte 一致・下の検査が見張る）=====
 // contractFamily は 1 家系分の契約。
 type contractFamily struct {
 	name string // 家系名（エラーメッセージ用）
 
-	goType  reflect.Type      // Go 側のワイヤ型
+	// Go 側のワイヤ型。**経路は 2 つあり、選び方は機械的**（下の goStructFieldsFromSource の
+	// コメント参照）: 同じパッケージから届くなら goType（reflect）、
+	// 別パッケージの非公開型なら goPath + goName（go/ast）。**両方を埋めてはいけない。**
+	goType  reflect.Type
+	goPath  string            // reflect で届かないときだけ。宣言ファイルへの相対パス
+	goName  string            // 同上。struct 名
 	binding map[string]string // Go フィールド名 → json キー（①の原本）
 
 	tsPath string          // Console の手書き型の在り処
@@ -166,18 +222,7 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 	t.Helper()
 
 	// --- ① Go フィールド名 ↔ json キーの結び付き ---
-	goFields := map[string]string{}
-	for i := 0; i < f.goType.NumField(); i++ {
-		fl := f.goType.Field(i)
-		tag := fl.Tag.Get("json")
-		if tag == "" || tag == "-" {
-			continue
-		}
-		goFields[fl.Name] = splitJSONName(tag)
-	}
-	if len(goFields) == 0 {
-		t.Fatalf("%s から json タグを 1 つも読めなかった＝この検査が無言化している", f.goType)
-	}
+	goFields := contractGoFields(t, f)
 	for name, want := range f.binding {
 		got, ok := goFields[name]
 		if !ok {
@@ -197,11 +242,13 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 	}
 
 	// --- ② TS 側のキー集合を表に固定する（走査が壊れたことを捕まえるのはここだけ）---
-	scanned := consoleInterfaceFields(t, f.tsPath, f.tsName, len(f.tsKeys))
+	scanned := consoleInterfaceFields(t, f.tsPath, f.tsName)
 	for k := range f.tsKeys {
 		if !scanned[k] {
-			t.Errorf("%s: %s の %q を走査が拾えていない"+
-				"——TS の書き方が変わったか、走査が壊れている（走査の壊れ全般は合成標本の対照が見る）",
+			t.Errorf("%s: %s の %q が表に在るのに TS 側で見つからない。原因は 2 つのどちらか——"+
+				"(a) キーを意図して消した → tsKeys の表と免除表も直すこと（同じ実行の下のほうに"+
+				"「免除はもう要らない」が出ているはず）／(b) 走査が壊れた → 合成標本の対照"+
+				"（TestTSInterfaceFieldsParser）も一緒に赤くなっているはず",
 				f.name, f.tsName, k)
 		}
 	}
@@ -232,20 +279,20 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 	for _, k := range tsOnly {
 		if _, ok := f.tsOnly[k]; !ok {
 			t.Errorf("%s: %s が %q を宣言しているが %s は出さない"+
-				"——Console は常に undefined を読む（optional なので型検査は鳴らない）", f.name, f.tsName, k, f.goType)
+				"——Console は常に undefined を読む（optional なので型検査は鳴らない）", f.name, f.tsName, k, f.name)
 		}
 	}
 	for _, k := range goOnly {
 		if _, ok := f.goOnly[k]; !ok {
 			t.Errorf("%s: %s が %q を出すが %s に宣言が無い——Console からは型の上で見えない",
-				f.name, f.goType, k, f.tsName)
+				f.name, f.name, k, f.tsName)
 		}
 	}
 
 	// --- 免除の寿命（4 方向。「揃った」だけでなく「消えた」も見る）---
 	for k, why := range f.tsOnly {
 		if goKeys[k] {
-			t.Errorf("%s: 免除 %q (%s) はもう要らない——%s が出すようになった", f.name, k, why, f.goType)
+			t.Errorf("%s: 免除 %q (%s) はもう要らない——%s が出すようになった", f.name, k, why, f.name)
 		}
 		if !scanned[k] {
 			t.Errorf("%s: 免除 %q (%s) はもう要らない——%s から消えた（両側に無いキーの免除は理由ごと嘘になる）",
@@ -255,12 +302,137 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 	for k, why := range f.goOnly {
 		if !goKeys[k] {
 			t.Errorf("%s: 免除 %q (%s) はもう要らない——%s が出さなくなった（両側に無いキーの免除は理由ごと嘘になる）",
-				f.name, k, why, f.goType)
+				f.name, k, why, f.name)
 		}
 		if scanned[k] {
 			t.Errorf("%s: 免除 %q (%s) はもう要らない——%s が宣言するようになった", f.name, k, why, f.tsName)
 		}
 	}
+}
+
+// contractGoFields は家系の経路に従って「Go フィールド名 → json キー」を取る。
+func contractGoFields(t *testing.T, f contractFamily) map[string]string {
+	t.Helper()
+	if (f.goType == nil) == (f.goPath == "") {
+		t.Fatalf("%s: goType と goPath はどちらか一方だけを埋めること（両方 or どちらも空）", f.name)
+	}
+	if f.goPath != "" {
+		return goStructFieldsFromSource(t, f.goPath, f.goName)
+	}
+	out := map[string]string{}
+	for i := 0; i < f.goType.NumField(); i++ {
+		fl := f.goType.Field(i)
+		tag := fl.Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		out[fl.Name] = splitJSONName(tag)
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s から json タグを 1 つも読めなかった＝この検査が無言化している", f.goType)
+	}
+	return out
+}
+
+// --- 別パッケージの非公開型を読む経路（go/ast）---
+//
+// 🔴 **どちらの経路を使うかは機械的に決まる。迷ったら分岐条件を読むこと。**
+//
+//	同じパッケージから届く（package main の型・別パッケージの公開型） → reflect（goType）
+//	別パッケージの**非公開**型                                        → go/ast（goPath + goName）
+//
+// reflect で届かない型のためだけの経路である。**届くなら必ず reflect を使う**——
+// reflect は「実際の型」を見るが、AST は**ソースの見た目**しか見ないので、
+// 埋め込み・型別名・生成コードのぶんだけ弱い。
+//
+// 🔴 **AST が追えない構文に出会ったら、浅い結果を返さずに落ちること。**
+// 「今日の入力には埋め込みが 0 件だから AST と reflect は等価」という実測は
+// **今日の入力に対してだけ**成立する。**次に誰かが埋め込みを足した日に黙って浅く読む**ので、
+// 埋め込みを見つけたら Fatal にしてある。パスが移送で変わったときも同じ（Skip で黙らせない）。
+
+// goStructFieldsFromSource は parseGoStructFields の薄い包み。読めなければ **Fatal**。
+// （Skip で黙らせない。移送でパスが変わったら家系表の goPath を直すこと。）
+func goStructFieldsFromSource(t *testing.T, path, name string) map[string]string {
+	t.Helper()
+	out, err := parseGoStructFields(path, name)
+	if err != nil {
+		t.Fatalf("%v——移送でパスが変わったなら家系表の goPath を直すこと（Skip で黙らせない）", err)
+	}
+	return out
+}
+
+// parseGoStructFields は <path> の `type <name> struct` を読み、
+// 「Go フィールド名 → json キー」を返す。**追えない構文に出会ったら浅い結果ではなく error。**
+//
+// 📌 **error を返す形にしてあるのは、落ちること自体を対照で確かめられるようにするため**
+// （TestGoStructFieldsFromSourceGuards）。Fatal のままだと「落ちるはず」を検査できない。
+func parseGoStructFields(path, name string) (map[string]string, error) {
+	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		return nil, fmt.Errorf("%s を読めない: %v", path, err)
+	}
+	var st *ast.StructType
+	ast.Inspect(f, func(n ast.Node) bool {
+		ts, ok := n.(*ast.TypeSpec)
+		if !ok || ts.Name.Name != name {
+			return true
+		}
+		if s, ok := ts.Type.(*ast.StructType); ok {
+			st = s
+		}
+		return false
+	})
+	if st == nil {
+		return nil, fmt.Errorf("%s に type %s struct が見つからない＝この検査が無言化している", path, name)
+	}
+	out := map[string]string{}
+	for _, fl := range st.Fields.List {
+		// 🔴 埋め込み（無名フィールド）。AST では中身を追えないので、
+		// **浅い結果を返さずに落ちる**。reflect なら見える差なので、
+		// 埋め込みが要るようになったらこの家系は reflect 経路へ移すこと。
+		if len(fl.Names) == 0 {
+			return nil, fmt.Errorf("%s の %s に埋め込みフィールドが在る（%s）"+
+				"——AST では埋め込み先の json タグを追えない。浅く読むと「TS のみ」の見落としと"+
+				"「Go のみ」の偽の赤が同時に出るので、この家系は reflect 経路へ移すこと",
+				path, name, exprString(fl.Type))
+		}
+		if fl.Tag == nil {
+			continue
+		}
+		tv, err := strconv.Unquote(fl.Tag.Value)
+		if err != nil {
+			return nil, fmt.Errorf("%s の %s: タグを読めない (%s): %v", path, name, fl.Tag.Value, err)
+		}
+		jt := reflect.StructTag(tv).Get("json")
+		if jt == "" || jt == "-" {
+			continue
+		}
+		key := splitJSONName(jt)
+		if key == "" {
+			continue
+		}
+		for _, id := range fl.Names {
+			if id.IsExported() {
+				out[id.Name] = key
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s の %s から json タグを 1 つも読めなかった＝この検査が無言化している", path, name)
+	}
+	return out, nil
+}
+
+func exprString(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.SelectorExpr:
+		return exprString(x.X) + "." + x.Sel.Name
+	case *ast.StarExpr:
+		return "*" + exprString(x.X)
+	}
+	return "?"
 }
 
 func splitJSONName(tag string) string {
@@ -396,7 +568,7 @@ func TestTSInterfaceFieldsParser(t *testing.T) {
 }
 
 // consoleInterfaceFields は TS の `interface <name> { ... }` の**深さ 1 の**フィールド名を返す。
-func consoleInterfaceFields(t *testing.T, path, name string, wantAtLeast int) map[string]bool {
+func consoleInterfaceFields(t *testing.T, path, name string) map[string]bool {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -407,14 +579,23 @@ func consoleInterfaceFields(t *testing.T, path, name string, wantAtLeast int) ma
 	if err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
-	// 🔴 「0 件でした」を結果として採らないための下限。
-	// **下限は家系ごとに、固定したキー数そのもの**にしてある（定数の 10 にすると、
-	// キーが 6〜7 個の小さい家系で必ず落ち、逆に大きい家系では数個の取りこぼしを見逃す）。
-	// ⚠️ **この下限は「一部の行だけ複数キー」を捕まえない**——どの家系でも数個の取りこぼしは
-	// 素通りしうる。そちらは TestTSInterfaceFieldsParser（合成標本）の担当。
-	if len(out) < wantAtLeast {
-		t.Fatalf("interface %s のフィールドを %d 個しか読めなかった（表は %d 個）＝TS の書き方が変わって走査が壊れている",
-			name, len(out), wantAtLeast)
+	// 🔴 **件数の下限は「0 件」しか見ない。これは抜けではなく、意図してこうしてある。**
+	//
+	// 以前は「表に固定したキー数」を下限にして Fatal していたが、**診断が誤った方向を指した**——
+	// TS からキーが 1 つ消えると必ず Fatal し、文言は「走査が壊れている」。**実際の原因は
+	// 「キーが意図して消された」で走査は無傷**であり、しかも Fatal が後続を止めるので
+	// **「免除を外せ」という正しい指示が出なかった**（死んだ TS 宣言を消す作業がこの経路を通る）。
+	//
+	// 件数ガードが要らない理由: **呼び出し側の②（キー集合を表と突き合わせる）が、同じ面を
+	// 「どのキーが」まで含めて見ている。**走査が痩せれば、読めなかったキーが②で名指しで赤くなり、
+	// ③でも「Go のみ」として出る。**件数は情報を足していない**どころか、キーが 6〜7 個の
+	// 小さい家系（SsmHost / SsmProfileEntry / GitOAuthApp）を誤って Fatal させていた。
+	// **下限が無いのを見て足しに来ないこと。**
+	//
+	// ⚠️ 走査の壊れ全般を捕まえるのは②でも③でもなく **TestTSInterfaceFieldsParser（合成標本）**。
+	// 実入力はどの家系も 1 行 1 フィールドで、壊れた枝を通らない（実測）。
+	if len(out) == 0 {
+		t.Fatalf("interface %s のフィールドを 1 つも読めなかった＝走査が無言化している", name)
 	}
 	return out
 }
@@ -540,3 +721,55 @@ func tsInterfaceFields(src, name string) (map[string]bool, error) {
 func isTSIdentRune(r rune) bool {
 	return r == '_' || r == '$' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
+
+// TestGoStructFieldsFromSourceGuards は **AST 経路そのものの陽性対照**。
+//
+// 🔴 この経路は「今日の入力に埋め込みが 0 件」という実測に乗っている。
+// **次に誰かが埋め込みを足した日に黙って浅く読む**のが最も怖い壊れ方なので、
+// 合成標本で「落ちること」を固定する。（TS 走査に合成標本を付けたのと同じ理由——
+// 実入力が易しいままだと、壊れても本番の突き合わせは何も言わない。）
+func TestGoStructFieldsFromSourceGuards(t *testing.T) {
+	dir := t.TempDir()
+	write := func(base, body string) string {
+		p := filepath.Join(dir, base)
+		if err := os.WriteFile(p, []byte("package x\n\n"+body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	// 素の形は正しく読めること（この対照が空を測っていないことの確認）。
+	ok := write("ok.go", "type T struct {\n\tA string `json:\"a\"`\n\tB int    `json:\"b,omitempty\"`\n\tC string `json:\"-\"`\n\tD string\n}\n")
+	got, err := parseGoStructFields(ok, "T")
+	if err != nil {
+		t.Fatalf("素の struct を読めない: %v", err)
+	}
+	if len(got) != 2 || got["A"] != "a" || got["B"] != "b" {
+		t.Fatalf("素の struct の読み取りが違う: %v（json:\"-\" とタグ無しは落とす）", got)
+	}
+
+	// 🔴 埋め込み（無名フィールド）→ 浅い結果ではなく error。
+	emb := write("emb.go", "type Base struct {\n\tX string `json:\"x\"`\n}\n\ntype T struct {\n\tBase\n\tA string `json:\"a\"`\n}\n")
+	if _, err := parseGoStructFields(emb, "T"); err == nil {
+		t.Error("埋め込みフィールドが在るのに error にならない" +
+			"——AST は埋め込み先の json タグを追えないので、浅く読むと穴の見落としと偽の赤が同時に出る")
+	}
+
+	// 型が無い → error（無言化しない）。
+	if _, err := parseGoStructFields(ok, "NoSuchType"); err == nil {
+		t.Error("存在しない型で error にならない＝この経路が無言化しうる")
+	}
+
+	// パスが無い → error（移送でパスが変わった場合）。
+	if _, err := parseGoStructFields(filepath.Join(dir, "nope.go"), "T"); err == nil {
+		t.Error("存在しないパスで error にならない＝移送のパス変更を黙って通す")
+	}
+
+	// json タグが 1 つも無い → error（「0 件」を結果として採らない）。
+	none := write("none.go", "type T struct {\n\tA string\n\tB int\n}\n")
+	if _, err := parseGoStructFields(none, "T"); err == nil {
+		t.Error("json タグ 0 件で error にならない＝この経路が無言化しうる")
+	}
+}
+
+// ===== 共有機構ここまで =====
