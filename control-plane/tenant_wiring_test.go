@@ -96,7 +96,7 @@ func bodyNames(fd *ast.FuncDecl) map[string]bool {
 // cpTenantMethods parses alias_tenant.go and returns its cpTenant methods.
 func cpTenantMethods(t *testing.T) map[string]*ast.FuncDecl {
 	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), "alias_tenant.go", nil, 0)
+	f, err := parser.ParseFile(token.NewFileSet(), "tenant_wiring.go", nil, 0)
 	if err != nil {
 		t.Fatalf("alias_tenant.go を読めない: %v", err)
 	}
