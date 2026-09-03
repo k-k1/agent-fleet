@@ -17,7 +17,7 @@ package main
 // ⚠️ **ワイヤは 1 バイトも変えていない。**ここでやっているのは「今のワイヤを書き表す」ことだけ。
 
 import (
-	"bufio"
+	"fmt"
 	"os"
 	"reflect"
 	"sort"
@@ -27,6 +27,13 @@ import (
 
 // consoleSessionTS は Console の手書き型の在り処。
 // 🔴 パターンではなく**解決結果**で存在を見る（この定数を直すときは下の Fatal も見ること）。
+//
+// 🔴 **手元で変異を当てるときは `go test -count=1` を付けること。**
+// この検査は**モジュールの外**（Console の TS）を読む。TS だけを書き換えても
+// テストバイナリは変わらないので、**`go test` のキャッシュに当たって `ok (cached)` が出る**
+// ——**変異を当てたのに緑に見える。**（案 A の家系は全部この性質を持つ。先例の
+// `workspace/agent/errcodes_catalog_test.go` も同じ。）**CI は毎回まっさらなので影響を受けるのは
+// 手元の申告のほうで、「変異を当てたが緑だった」という報告が腐る。
 const consoleSessionTS = "../console/src/types/session.ts"
 
 // --- ① 取り違え検査: Go フィールド ↔ json キーの結び付きを固定する ---
@@ -217,73 +224,262 @@ func TestSessionWireMatchesConsoleType(t *testing.T) {
 	}
 }
 
+// tsProbeFixture は走査の陽性対照に使う合成標本。**実際に踏んだ／踏みかけた形だけ**を並べてある。
+//
+// 📌 別ファイル（testdata/*.ts）ではなく定数に畳んである理由: この 1 枚は検査と一体で、
+// 分けると移送で孤児になるうえ、所有権の単位も分かれる（`console/src/types/*` とは別物）。
+const tsProbeFixture = `
+// ① 1 行 1 フィールド（Session が実際にこの形。ここだけ通っても意味がない）
+export interface OnePerLine {
+  a1: string;
+  a2?: number;
+  a3: boolean;
+}
+
+// ② 一部の行だけ複数キー。🔴 これが最も危ない —— 行単位の走査は b11 を落とすが、
+// 総数は 10 を超えるので「フィールドが少なすぎる」Fatal に落ちず、黙って穴が開く。
+export interface Mixed {
+  b01: string;
+  b02: string;
+  b03: string;
+  b04: string;
+  b05: string;
+  b06: string;
+  b07: string;
+  b08: string;
+  b09: string;
+  b10: string; b11?: number;
+}
+
+// ③ 入れ子の 1 行オブジェクト。🔴 行を「;」で割る直し方をすると、
+// nested の中の name / display をこの型の直下のキーとして数えてしまう（測定器で実際に踏んだ）。
+export interface Nested {
+  n1: string;
+  n2?: { name: string; display?: string }[];
+  n3: boolean;
+}
+
+// ④ コメント・文字列リテラルに 「:」「;」「{」「}」が入る形（深さと文頭の判定を狂わせにくる）
+export interface Tricky {
+  // これはコメント: セミコロン; と波括弧 { } を含む
+  t1: "a;b" | "c:{d}" | string;
+  /* ブロックコメント: t9: string; ← これは拾ってはいけない */
+  t2?: string;
+  t3: string;
+}
+
+// ⑤ 名前が前方一致する別の型（Session と SessionContextUsage の関係）
+export interface Pre {
+  p1: string;
+  p2: string;
+  p3: string;
+}
+
+export interface PreExtra {
+  x1: string;
+  x2: string;
+  x3: string;
+}
+`
+
+// TestTSInterfaceFieldsParser は**走査そのものの陽性対照**。
+//
+// 🔴 この検査が要る理由: `Session` は 1 行 1 フィールドなので、**走査が壊れていても
+// Session だけは通ってしまう。**案 A を他の家系へ写したとき、`a: string; b?: number;` の形が
+// 1 つでもあると、**取りこぼしたキーが「TS に無い」に化けて偽の赤／穴の見落としになる。**
+// 合成標本（testdata/contract_ts_probe.ts）は、実際に踏んだ形だけを並べてある。
+func TestTSInterfaceFieldsParser(t *testing.T) {
+	src := tsProbeFixture
+	for _, tc := range []struct {
+		name string
+		want []string
+	}{
+		{"OnePerLine", []string{"a1", "a2", "a3"}},
+		// 同じ行に 2 キー。行単位の走査は b11 を落とす（総数 11 なので Fatal には落ちない）。
+		{"Mixed", []string{"b01", "b02", "b03", "b04", "b05", "b06", "b07", "b08", "b09", "b10", "b11"}},
+		// 入れ子の name / display を拾ってはいけない。
+		{"Nested", []string{"n1", "n2", "n3"}},
+		// コメント／文字列の中の `t9` を拾ってはいけない。
+		{"Tricky", []string{"t1", "t2", "t3"}},
+		// 前方一致する別の型を掴んではいけない（Pre が PreExtra を拾わない）。
+		{"Pre", []string{"p1", "p2", "p3"}},
+		{"PreExtra", []string{"x1", "x2", "x3"}},
+	} {
+		got, err := tsInterfaceFields(src, tc.name)
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		want := map[string]bool{}
+		for _, k := range tc.want {
+			want[k] = true
+		}
+		for k := range want {
+			if !got[k] {
+				t.Errorf("%s: %q を落としている（走査が壊れている）", tc.name, k)
+			}
+		}
+		for k := range got {
+			if !want[k] {
+				t.Errorf("%s: %q を余計に拾っている（入れ子・コメント・文字列を巻き込んでいる）", tc.name, k)
+			}
+		}
+	}
+
+	// TS のテンプレートリテラル型（バッククォート）でも深さを見失わないこと。
+	// 上の標本は raw string なので、この 1 例だけ通常の文字列で組む。
+	tmpl := "export interface Tmpl {\n  m1: `a;b{c}`;\n  m2: string;\n  m3: string;\n}\n"
+	if got, err := tsInterfaceFields(tmpl, "Tmpl"); err != nil {
+		t.Errorf("Tmpl: %v", err)
+	} else if len(got) != 3 || !got["m1"] || !got["m2"] || !got["m3"] {
+		t.Errorf("Tmpl: テンプレートリテラルで深さを見失っている: %v", got)
+	}
+
+	// 無いものを探したら Fatal 相当のエラーになること（Skip や空返しで黙らない）。
+	if _, err := tsInterfaceFields(src, "NoSuchInterface"); err == nil {
+		t.Error("存在しない interface でエラーにならない＝この検査が無言化しうる")
+	}
+}
+
 // consoleInterfaceFields は TS の `interface <name> { ... }` の**深さ 1 の**フィールド名を返す。
-// 入れ子のオブジェクト型・コメント・ユニオンは読み飛ばす。
 func consoleInterfaceFields(t *testing.T, path, name string) map[string]bool {
 	t.Helper()
-	f, err := os.Open(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("Console の型を読めない (%s): %v"+
 			"——移送でパスが変わったなら consoleSessionTS を直すこと（Skip で黙らせない）", path, err)
 	}
-	defer f.Close()
-
-	out := map[string]bool{}
-	sc := bufio.NewScanner(f)
-	depth, inside := 0, false
-	for sc.Scan() {
-		line := sc.Text()
-		if !inside {
-			if strings.HasPrefix(strings.TrimSpace(line), "export interface "+name+" ") ||
-				strings.HasPrefix(strings.TrimSpace(line), "interface "+name+" ") {
-				inside = true
-				depth = strings.Count(line, "{") - strings.Count(line, "}")
-			}
-			continue
-		}
-		if depth == 1 {
-			if k := tsFieldName(line); k != "" {
-				out[k] = true
-			}
-		}
-		depth += strings.Count(line, "{") - strings.Count(line, "}")
-		if depth <= 0 {
-			break
-		}
-	}
-	if err := sc.Err(); err != nil {
-		t.Fatalf("scan %s: %v", path, err)
-	}
-	if !inside {
-		t.Fatalf("%s に interface %s が見つからない＝この検査が無言化している", path, name)
+	out, err := tsInterfaceFields(string(b), name)
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
 	}
 	// 🔴 「0 件でした」を結果として採らないための下限（走査が壊れたら Fatal）。
+	// ⚠️ **この下限は「一部の行だけ複数キー」を捕まえない**——数個取りこぼしても 10 は超えるため。
+	// そちらは TestTSInterfaceFieldsParser（合成標本）の担当。
 	if len(out) < 10 {
 		t.Fatalf("interface %s のフィールドを %d 個しか読めなかった＝TS の書き方が変わって走査が壊れている", name, len(out))
 	}
 	return out
 }
 
-// tsFieldName は `  foo?: string; // …` の "foo" を返す。フィールド行でなければ ""。
-func tsFieldName(line string) string {
-	s := strings.TrimSpace(line)
-	if s == "" || strings.HasPrefix(s, "//") || strings.HasPrefix(s, "*") || strings.HasPrefix(s, "/*") {
-		return ""
-	}
-	i := strings.IndexAny(s, ":?")
-	if i <= 0 {
-		return ""
-	}
-	name := strings.TrimSuffix(s[:i], "?")
-	for _, r := range name {
-		if !(r == '_' || r == '$' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
-			return ""
+// tsInterfaceFields は TS の interface 本体を 1 文字ずつ辿り、**深さ 1 の**フィールド名を返す。
+//
+// 🔴 **行単位で「1 行 1 キー」を取ってはいけない。**`a: string; b?: number;` のように
+// 同じ行にキーが並ぶ形を取りこぼす。取りこぼしても総数は 10 を超えるので上の Fatal に落ちず、
+// **「TS のみ」の検出漏れ（＝穴の見落とし）と「Go のみ」の誤検出（＝偽の赤）を同時に起こす。**
+//
+// 🔴 **だからといって行を `;` で割るのも誤り。**入れ子の 1 行オブジェクトを巻き込む——
+// 実例 `sessions?: { name: string; display?: string }[];` を `;` で割ると
+// `name` / `display` を**この型の直下のキーとして数えてしまう**（測定器で実際に踏んだ）。
+// **深さを見るしかない。**
+func tsInterfaceFields(src, name string) (map[string]bool, error) {
+	start := -1
+	for _, pre := range []string{"export interface " + name, "interface " + name} {
+		for i := 0; i+len(pre) <= len(src); i++ {
+			if !strings.HasPrefix(src[i:], pre) {
+				continue
+			}
+			if i > 0 && isTSIdentRune(rune(src[i-1])) {
+				continue // 別の名前の末尾に一致しただけ（SessionFoo など）
+			}
+			// 宣言名の直後は識別子の続きであってはならない（Session と SessionContextUsage）
+			if j := i + len(pre); j < len(src) && isTSIdentRune(rune(src[j])) {
+				continue
+			}
+			if k := strings.IndexByte(src[i:], '{'); k >= 0 {
+				start = i + k
+			}
+			break
+		}
+		if start >= 0 {
+			break
 		}
 	}
-	// `foo?: T` / `foo: T` の形だけ。`foo` の直後が ? か : であることを確かめる。
-	rest := s[i:]
-	if !strings.HasPrefix(rest, ":") && !strings.HasPrefix(rest, "?:") {
-		return ""
+	if start < 0 {
+		return nil, fmt.Errorf("interface %s が見つからない＝この検査が無言化している", name)
 	}
-	return name
+
+	out := map[string]bool{}
+	depth := 0
+	stmt := true // 「文の頭」＝ここから始まる識別子だけがフィールド名になりうる
+	for i := start; i < len(src); i++ {
+		c := src[i]
+		switch {
+		case c == '/' && i+1 < len(src) && src[i+1] == '/':
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+			stmt = true
+			continue
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			if k := strings.Index(src[i+2:], "*/"); k >= 0 {
+				i += 2 + k + 1
+			} else {
+				i = len(src)
+			}
+			continue
+		case c == '"' || c == '\'' || c == '`':
+			q := c
+			for i++; i < len(src); i++ {
+				if src[i] == '\\' {
+					i++
+					continue
+				}
+				if src[i] == q {
+					break
+				}
+			}
+			stmt = false
+			continue
+		case c == '{':
+			depth++
+			stmt = true
+			continue
+		case c == '}':
+			depth--
+			stmt = true
+			if depth == 0 {
+				return out, nil
+			}
+			continue
+		case c == ';' || c == ',' || c == '\n':
+			stmt = true
+			continue
+		case c == ' ' || c == '\t' || c == '\r':
+			continue
+		}
+		if depth != 1 || !stmt {
+			stmt = false
+			continue
+		}
+		// 深さ 1 の文頭。識別子を読み、`?` を挟んで `:` が続けばフィールド名。
+		j := i
+		for j < len(src) && isTSIdentRune(rune(src[j])) {
+			j++
+		}
+		if j > i {
+			k := j
+			for k < len(src) && (src[k] == ' ' || src[k] == '\t') {
+				k++
+			}
+			if k < len(src) && src[k] == '?' {
+				k++
+				for k < len(src) && (src[k] == ' ' || src[k] == '\t') {
+					k++
+				}
+			}
+			if k < len(src) && src[k] == ':' {
+				out[src[i:j]] = true
+			}
+		}
+		if j > i {
+			i = j - 1
+		}
+		stmt = false
+	}
+	return nil, fmt.Errorf("interface %s の本体が閉じていない＝走査が壊れている", name)
+}
+
+func isTSIdentRune(r rune) bool {
+	return r == '_' || r == '$' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
