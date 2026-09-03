@@ -121,4 +121,12 @@ const (
 	errCodeMemoryBadImport      = "memory_bad_import"
 	errCodeMemorySecretDetected = "memory_secret_detected"
 	errCodeMemoryTooLarge       = "memory_too_large"
+
+	// managed runtime（共有 daemon）を起こせなかった理由のうち、**待っても直らない**もの。
+	// CLI にログイン/接続していないので daemon を起こさなかった、が唯一の中身。
+	// runtime_failed（＝一時的な失敗・502）と分けてあるのは、Console の文言も
+	// isTransientErr の判定も「待てば直るか」で変わるため。
+	// 使うのは internal/sessionx/runtime_err.go で、値は session_wiring.go が
+	// sessionx.Deps 経由で渡す（sessionx 側で定義し直さない — deps.go の注記）。
+	errCodeAgentNotConnected = "agent_not_connected"
 )

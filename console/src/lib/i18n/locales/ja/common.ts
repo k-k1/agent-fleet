@@ -308,6 +308,12 @@ export const common = {
   "ui.claude_registered_model": "登録したモデルから選択",
   "ui.select_from_count": "{count} 件から選択",
   "ui.no_matching_models": "一致するモデルなし",
+  // 動的 kind のカタログが解決した結果、選べるモデルが 1 つも無かったとき。**原因は
+  // 断定しない**: このピッカーは「まだログインしていない」「認証はあるがプロバイダへ
+  // 到達できない」「プランが既定のみ（Copilot Free は Auto だけ＝空が正常）」「設定で
+  // 全部除外した」を区別できない（Agent は理由を返さない）。**どの場合にも真である
+  // 一文**にしてあるので、断定形へ書き換えないこと。
+  "ui.model_default_only": "既定のモデルのみ利用できます（接続とプランをご確認ください）",
   "ui.count_items": "{count} 件",
   "ui.cancel": "キャンセル",
   "ui.run": "実行",

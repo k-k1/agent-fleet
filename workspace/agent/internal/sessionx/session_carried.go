@@ -268,7 +268,7 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 		// initial_prompt と同じ経路）。ここは既に ensureSessionTmux（managed では
 		// Resume）を通っているので handle は生きている。
 		if err := sendManagedPrompt(m, prompt); err != nil {
-			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			writeRuntimeErr(w, err)
 			return
 		}
 		markSessionWorking(name)
