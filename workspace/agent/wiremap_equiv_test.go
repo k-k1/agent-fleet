@@ -323,8 +323,11 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 			want: "flag: キーが増えた",
 		},
 		{
-			// ① 裏返し。要らない omitempty を足すと、ゼロ値でキーが消える。
-			trap: "① 余計な omitempty",
+			// ①⑤ 裏返し。要らない omitempty を足すと、ゼロ値でキーが消える。
+			// これは⑤（キーの有無とゼロ値の区別）の対照でもある——Console が
+			// `if (x.foo)` で見ていると「キーが無い」と `""` は潰れて同じに見えるが、
+			// ワイヤは違う。ハーネスは両者を別の差として出す。
+			trap: "①⑤ 余計な omitempty（キーの有無とゼロ値）",
 			newF: func(f equivFixture) any {
 				return struct {
 					Name string   `json:"name,omitempty"`

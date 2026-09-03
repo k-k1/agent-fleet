@@ -59,7 +59,22 @@ func TestWireMapGolden(t *testing.T) {
 		t.Logf("wrote %s (%d 行 / %d サイト)", wireMapGoldenPath, len(got), len(sites))
 		return
 	}
-	assertGoldenLines(t, wireMapGoldenPath, got)
+	assertWireMapGoldenLines(t, wireMapGoldenPath, got)
+}
+
+// assertWireMapGoldenLines — routes/wire 用の assertGoldenLines と同じ突き合わせだが、
+// **直し方の案内をこのゴールデンのものにする**。
+// 共有ヘルパは `-update-routes-golden` を案内するので、そのまま使うと
+// **赤を見た人に間違ったフラグを教える**（しかもそのフラグは何も直さない）。
+func assertWireMapGoldenLines(t *testing.T, path string, got []string) {
+	t.Helper()
+	if diff := lineDiff(readGoldenLines(t, path), got); diff != "" {
+		t.Errorf("%s と一致しない:\n%s\n"+
+			"意図した増減なら -update-wiremap-golden で撮り直し、**撮り直した理由を PR に書く**。\n"+
+			"  行が消えた = その map サイトが struct になった（変換したなら意図どおり）か、消えた。\n"+
+			"  キーが増減した = ワイヤが変わった可能性そのもの。等価テストで示せていないなら止まること。",
+			path, diff)
+	}
 }
 
 // TestWireMapGoldenActuallyOpensMaps は「撮れているつもりで空」を防ぐ。
