@@ -20,6 +20,11 @@ import (
 // primitive deliverInitialPrompt uses, so a regression cannot fix launches while leaving
 // the mid-session sends broken (codex eats an Enter bundled into a fast literal stream).
 func TestHandleSessionInputUsesBracketedPasteForCodex(t *testing.T) {
+	// AF_SESSIONS_DIR だけでは足りない: HandleSessionInput は status ストアと資格情報
+	// ストアも触るので、隔離しないと**利用者の実 ~/.config/agent-fleet** に
+	// session-status/<sid>.json と secrets.enc.lock を残す（実測。この家系の他のテストは
+	// もう withTempHome を通している）。
+	withTempHome(t)
 	bin := t.TempDir()
 	logPath := filepath.Join(bin, "tmux.log")
 	stdinPath := filepath.Join(bin, "tmux.stdin")

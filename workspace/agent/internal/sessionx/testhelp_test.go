@@ -59,6 +59,7 @@ func withTempHome(t *testing.T) string {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Cleanup(chatx.WaitInterimDeliveries)
+	t.Cleanup(WaitInputMirrors) // 同上。こちらは secrets ストア（実測: secrets.enc.lock）
 	return dir
 }
 

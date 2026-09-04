@@ -128,8 +128,31 @@ func newTestHandle(t *testing.T) (*threadHandle, *fakeACP) {
 	h.cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(h.cl, id, method, params)
 	}
+	// t.Cleanup は LIFO なので、上の t.Setenv("HOME", …) より後に積んだこの待ちが
+	// HOME 復帰より先に走る（前に積むと復帰の後＝手遅れ）。
+	t.Cleanup(func() { waitPumpIdle(t, h) })
 	h.cl.onNotify = h.onNotify
 	return h, f
+}
+
+// waitPumpIdle blocks until the handle's turn goroutine has drained（キューも走行中の
+// turn も無い状態）。**HOME の隔離は待って初めて成立する**: テストが turn を走らせたまま
+// 返ると、`t.Setenv` の復帰後に MarkTurnEnd → status.Persist が走り、書き先が
+// 実 `~/.config/agent-fleet` になる（実測: 利用者の session-status/ に slot-1.json が
+// 残っていた）。落ちる方向は安全側 — 待てないまま抜けると実環境を汚すので失敗させる。
+func waitPumpIdle(t *testing.T, h *threadHandle) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		h.mu.Lock()
+		busy := h.pumping || h.running
+		h.mu.Unlock()
+		if !busy {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Error("turn がテスト終了後も走っている: このまま HOME を戻すと実 ~/.config/agent-fleet へ書く")
 }
 
 func waitState(t *testing.T, h *threadHandle, want agents.TurnState) {
