@@ -34,6 +34,37 @@ git config core.hooksPath .githooks   # once per clone; worktrees share it
 Anything it flags is fixed in the file *before* the commit, never in a follow-up
 one. Don't reach for `--no-verify`.
 
+## Comments
+
+**Write every comment in English** — Go, TypeScript, CSS, SQL, shell alike. (Commit
+messages stay Japanese; see above.) Japanese belongs in user-visible strings, i18n
+catalogues, test fixtures and golden files — never in a comment. When a comment has to
+name a Japanese UI label, give the English term and put the literal in parentheses only
+when the reader needs it to find the string.
+
+A comment earns its place by saying what the code cannot:
+
+- **Why this exists, and what breaks without it.**
+- **Invariants, prohibitions, preconditions** — "never compare versions here", "blocking
+  here is latency before that key echoes back", "when in doubt, answer false".
+- **The one line of evidence that makes a rule stick** — "measured: re-pushing provenance
+  alone moves the digest". Without it the next reader deletes the rule.
+- Non-obvious trade-offs, and pointers to `docs/decisions/` or `guide/ref/`.
+
+Leave out:
+
+- **Chronology and attribution** — "originally only docker had one", "#343 found that…",
+  "removed on 2026-07-28", "was: `map[string]any{…}`". That history lives in `docs/log/`.
+- **Restating what the next few lines plainly do.**
+- Emphasis theatre — ★, 🔴, bold shouting, the same warning three times.
+- Change logs in a file header.
+
+When a paragraph of history carries nothing but a reason, keep the reason as one sentence
+and drop the story. Go doc comments still open with the identifier's name.
+
+The house style is already in the tree: `control-plane/reaper.go` and
+`control-plane/internal/runtime/runtime_ecs_stale.go` are written to it.
+
 ## `console/node_modules` in a worktree
 
 Installing it is ~350 MB per worktree, and sessions usually get one worktree each. When this
