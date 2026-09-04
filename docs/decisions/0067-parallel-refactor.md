@@ -2,7 +2,8 @@
 
 English | [日本語](0067-parallel-refactor.ja.md)
 
-- Status: **accepted — in progress** (2026-09-02). Phase 0 first; the waves follow.
+- Status: **accepted — done** (2026-09-04). Phase 0 → waves A–D → alias collection → typing the
+  contract. What came of it, and how the decisions actually held, is in "Outcome" at the end.
 - Related: [0012-go-internal-refactor.md](0012-go-internal-refactor.md) (what the layering is
   and why the two binaries stay separate — this record does not revisit it) /
   [0011-console-rebuild.md](0011-console-rebuild.md) (the feature-sliced Console layout the
@@ -225,3 +226,59 @@ was never noticed is that `develop` gets its own push trigger, which turns red *
 - The previous layering was merged with every test green and **never verified against a live
   fleet**. This one ends with an image rebuild and one pass through session creation, chat, git,
   LFS and the connection flows before it is called done.
+
+## Outcome (appended 2026-09-04, on completion)
+
+From the Phase 0 merge `9b0336e7` to `develop = 40c9142a`. **57 PRs**, with nothing from outside
+this track slipping into the board. The figures were re-measured at the completion point; how each
+one was counted is in the developer work journal for the 2026-09 parallel refactor.
+
+- **`package main` (non-test `.go` directly under a module)**: control-plane 115 files / 48,505
+  lines → **96 / 28,321**; workspace/agent 149 / 51,177 → **64 / 15,373**. **−55,988 lines (−56%)
+  in total.** The starting figures reproduce the background table above exactly.
+- **`internal/` packages +16** (control-plane 0 → 7, workspace/agent 19 → 28; two of them are
+  contract-test harnesses). Each module as a whole grew by **+16.7k lines** — **only `main` shrank,
+  and what grew is checks.**
+- **Every wave's aliases were collected back to zero** (A / B 157 / C 190 / D 144 → 0). No
+  `alias_*.go` remains in the repository.
+- **Two live-fleet passes**, and **each one found a real defect that had passed every gate green**
+  (a CloudFormation template over the 51,200-byte limit, which was blocking the production deploy
+  path; and a diagnosability defect that reported a permanent cause as a transient one).
+  **Putting a live pass in the completion criteria was right.**
+- **Typing the contract** (task ④ left over from ADR 0012) added **15 contract-checked families**
+  and turned **27 `map[string]any` sites into structs**, and **found two real bugs** (one fixed
+  within the same wave).
+
+How the decisions held — **including the one that was changed and the ones that were not kept**:
+
+- **Decision 1 (alias transfer) worked**: four parallel tracks, zero merge conflicts caused by a
+  move. 🔴 **But aliases were not the only price.** Turning an outward dependency into wiring moves
+  the moment a value is fixed from package initialisation to `Configure` time. **If the receiver is
+  a top-level `var` initialiser, that one place silently freezes at the zero value** — an MCP
+  `inputSchema` advertised `enum: null` and **stopped live sessions across the board**. Neither the
+  type checker nor `go vet` says anything. **Before the move the same shape was a literal and
+  worked.**
+- **Decision 5 was amended mid-flight** (#317): "take it as an argument" has no force at all
+  depending on how it is implemented. The caveat now in the text above is that amendment, and
+  **it briefly made a PR that had passed the same day non-compliant.**
+- **Decision 6's goldens worked, but left a wide surface unphotographed**: `wire.golden` captures
+  neither type names nor field names, so **swapping two same-typed fields stays green across every
+  net.** Typing the contract is the stage that closed that hole.
+- 🔴 **Decision 7 was changed by operational instruction** (2026-09-02: the commander merges a PR
+  once it passes). The idle gaps disappeared, but **only the reviewer may write the merge queue**,
+  so **the board is structurally one step behind**, and three times a row sat there as "passed,
+  waiting to merge". **Being careful did not fix it; changing the procedure did** (make the step
+  right after `gh pr merge` a notification, always).
+- **Decision 3's mechanical check had a hole**: `git diff --name-only` folds renames into "one
+  destination path", so **carrying a file you do not own into your own area kept the check green**
+  (fixed with `--no-renames`). A glob of `*` in the ownership table **always reports zero
+  violations** — a pass with no information in it. **After plugging it, we went back and measured
+  that the past was clean too.**
+- **Decision 10's ceiling of six was exceeded once** (seven, counting the live-fleet pass). The role
+  runs no heavy gates, so it does not violate what the ceiling is for (memory) — but **the number
+  itself was not kept.**
+
+**The largest thing this produced may not be the moves but the verification practice**: the 30
+rules that accumulated in the operating ledger **came only from defects that passed every existing
+gate green, or from a tool of our own that lied to us**. The full text, with the concrete failure
+behind each rule, is frozen in the work journal.

@@ -73,6 +73,18 @@ Postgres-backed tests skip themselves unless `AF_TEST_DATABASE_URL` is set; ther
 database (and no Docker) in the workspace, so leave them skipped. The full build/reflect matrix
 is `docs/build/10-development.md`.
 
+## Verifying your own work
+
+- **Take exit codes without a pipe** (`cmd > out; echo $?`). `| tail` returns tail's `0` — a red
+  run looks green — and `| grep -v` under `pipefail` returns `1` when it matches nothing, so an
+  all-green run looks red. Both directions have cost us real time here.
+- **Before reporting "0 hits" or "green", show that the tool caught something it should catch.**
+  An empty result and a scanner that never ran look identical, and so do a check that passed and a
+  check that matched nothing.
+
+The long form — 30 rules, each with the concrete defect behind it — is in the developer work
+journal for the 2026-09 parallel refactor.
+
 ## Running the Console tests
 
 **Always run them with `console/` as the working directory.** Invoking `npx vitest`
