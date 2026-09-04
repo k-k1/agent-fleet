@@ -265,6 +265,10 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 		"java_available": javaOptions(),         // offered for selection (installed ∪ installable)
 		"java_installed": installedJavaMajors(), // present on disk now (ready without a download)
 		"node_options":   nodeOptions,
+		// nodeOptions is a FIXED list (18/20/22/24), so — exactly like java — it offers
+		// versions that may not be on disk. Without this the Console cannot tell the two
+		// apart, and selecting an absent one silently did nothing (docs/decisions/0068).
+		"node_installed": installedNodeMajors(),
 		"go_options":     goOptions(), // "system" ∪ build pin ∪ installed on-demand versions
 		"tz_options":     tzOptions,
 	})

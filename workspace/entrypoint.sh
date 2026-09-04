@@ -961,7 +961,7 @@ if [ -n "$GO_VER" ] && [ "$GO_VER" != "system" ]; then
   fi
 fi
 
-# node: install/activate the selected version via nvm (home volume → persists).
+# node: install/activate the selected version (home volume → persists).
 # "system" / empty keeps the image's base node.
 if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
   export NVM_DIR="$HOME/.nvm"
@@ -970,21 +970,32 @@ if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
     curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash >/dev/null 2>&1 \
       || echo "[entrypoint] WARN: nvm install failed (continuing)"
   fi
+  # ⚠️ 版を入れるのは nvm ではなく `workspace-agent install-node` にした。理由は 2 つ:
+  # ① nvm 自体が入らない環境（GitHub へ出られない等）でも選択が効くこと、② Console の
+  # 「導入」ボタンと**同じ経路**であること——JDK で同型の穴（選んだのに入らない）を直した
+  # のと同じ形である（docs/decisions/0068）。置き場は nvm と同じ
+  # ~/.nvm/versions/node/v<full> なので nvm とも共存する。導入済みなら即戻る。
+  # stdout に導入先の bin ディレクトリを返すので、それを PATH の先頭へ置く。
+  # ⚠️ ここで `ls | tail -1` に戻さないこと——それが辞書順で v22.9.0 を掴んだ元のバグで、
+  #    install-node は数値比較で解決している（env_toolchains.go nodeBinFor と同じ規則）。
+  af_node_bin="$(workspace-agent install-node "$NODE_VER" 2>/dev/null || true)"
+  if [ -n "$af_node_bin" ] && [ -x "$af_node_bin/node" ]; then
+    export PATH="$af_node_bin:$PATH"
+  fi
   if [ -s "$NVM_DIR/nvm.sh" ]; then
     # shellcheck disable=SC1091
     . "$NVM_DIR/nvm.sh"
-    nvm install "$NODE_VER" >/dev/null 2>&1 && nvm alias default "$NODE_VER" >/dev/null 2>&1
+    nvm alias default "$NODE_VER" >/dev/null 2>&1
     nvm use "$NODE_VER" >/dev/null 2>&1
-    # ⚠️ 選択した版になったかを必ず突き合わせる。`nvm install` が失敗すると（ネットワーク
-    # 無し・アーキ変更で .nvm を消した直後など）`nvm use` も静かに失敗し、`node -v` は
-    # **イメージの素の node** を答える。突き合わせずに版を出していたので、ログは成功に
-    # 見えるのに選択と違う node が走っている、という状態が無言で通っていた。
-    af_node_now="$(node -v 2>/dev/null)"
-    case "${af_node_now#v}" in
-      "${NODE_VER#v}"|"${NODE_VER#v}".*) echo "[entrypoint] node $af_node_now" ;;
-      *) echo "[entrypoint] WARN: node $NODE_VER を選択しましたが、いま走っているのは ${af_node_now:-不明} です（nvm install 失敗？）" ;;
-    esac
   fi
+  # ⚠️ 選択した版になったかを必ず突き合わせる。導入も `nvm use` も失敗すると `node -v` は
+  # **イメージの素の node** を答える。突き合わせずに版を出していたので、ログは成功に見える
+  # のに選択と違う node が走っている、という状態が無言で通っていた。
+  af_node_now="$(node -v 2>/dev/null)"
+  case "${af_node_now#v}" in
+    "${NODE_VER#v}" | "${NODE_VER#v}".*) echo "[entrypoint] node $af_node_now" ;;
+    *) echo "[entrypoint] WARN: node $NODE_VER を選択しましたが、いま走っているのは ${af_node_now:-不明} です（導入に失敗？）" ;;
+  esac
 fi
 
 # --- アーキ変更の自動復旧（利用者自身の導入物）------------------------------------

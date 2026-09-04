@@ -140,6 +140,13 @@ export const tools = {
     "Temurin {v} はまだこのワークスペースにありません。「インストール」で今すぐ取得します（約 200MB／home ボリュームへ入るので再起動しても残ります）。完了後に起動したセッションから JAVA_HOME に入り、Stop → Start は不要です。",
   "env.java_install_failed": "JDK のインストールに失敗しました: {msg}",
   "env.java_install_timeout": "時間内にダウンロードが終わりませんでした",
+  "env.node_opt_absent": "v{v}（未インストール）",
+  "env.node_install": "インストール",
+  "env.node_installing": "インストール中…",
+  "env.node_install_note":
+    "Node.js v{v} はまだこのワークスペースにありません。「インストール」で今すぐ取得します（home ボリュームへ入るので再起動しても残ります）。完了後に起動したセッションから使われ、Stop → Start は不要です。",
+  "env.node_install_failed": "Node.js のインストールに失敗しました: {msg}",
+  "env.node_install_timeout": "時間内にダウンロードが終わりませんでした",
   "env.go_default": "既定 (image の go)",
   "env.preview_cross_origin_label": "ポート間の呼び出しを許可する",
   "env.preview_cross_origin_note": "3000 の画面から 8080 を直接 fetch する構成のときだけオンにしてください（dev サーバーの proxy や rewrites で 1 オリジンにまとめられるなら、そちらが安全です）。オンにすると URL を知っている第三者のページからも、あなたのブラウザ経由で叩けるようになります。",

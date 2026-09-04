@@ -313,15 +313,7 @@ function Toolchains({
           ))}
         </select>
       </Row>
-      <Row label="Node.js">
-        <select value={d.node || "system"} disabled={!running} onChange={(e) => update({ node: e.target.value })}>
-          {nodeOpts.map((v) => (
-            <option key={v} value={v}>
-              {v === "system" ? tr("env.node_default") : "v" + v}
-            </option>
-          ))}
-        </select>
-      </Row>
+      <NodeRow d={d} update={update} running={running} reload={reload} nodeOpts={nodeOpts} />
       <Row label="Go (GOROOT)">
         <select value={d.go || "system"} disabled={!running} onChange={(e) => update({ go: e.target.value })}>
           {goOpts.map((v) => (
@@ -413,7 +405,7 @@ function JavaRow({
         {javaOpts.length === 0 ? (
           <span className="muted">{tr("env.no_jdk")}</span>
         ) : (
-          <span className="env-java-pick">
+          <span className="env-tool-pick env-java-pick">
             <select
               value={selected}
               disabled={!running || !!installing}
@@ -435,6 +427,110 @@ function JavaRow({
         )}
       </Row>
       {needsInstall && <p className="muted ds-sub">{tr("env.java_install_note", { v: selected })}</p>}
+    </>
+  );
+}
+
+// NodeRow is JavaRow's twin, and exists because node had exactly the same hole.
+// nodeOptions is a FIXED list (18/20/22/24), so the picker always offers versions that
+// may not be on disk — and until now selecting an absent one only wrote the choice.
+// resolvedToolchains() then globbed ~/.nvm/versions/node/v<major>.* , found nothing and
+// injected nothing, so every session kept the old node with no error anywhere; the only
+// thing that ever installed node was the entrypoint's nvm run at container start, so the
+// selection appeared to do nothing until someone happened to Stop → Start
+// (docs/decisions/0068). The button installs it now, and since resolvedToolchains() is
+// re-read at each session/shell launch, the next launch already has the new node.
+function NodeRow({
+  d,
+  update,
+  running,
+  reload,
+  nodeOpts,
+}: {
+  d: any;
+  update: (patch: Record<string, string>) => void;
+  running: boolean;
+  reload: () => void;
+  nodeOpts: string[];
+}) {
+  const tr = useT();
+  const toast = useToast();
+  const poll = usePolling();
+  const [installing, setInstalling] = useState("");
+  const installed: string[] = d.node_installed || [];
+  const selected: string = d.node || "system";
+  // "system" is the image's own node — never an install target.
+  const needsInstall = selected !== "system" && !!selected && !installed.includes(selected);
+
+  const install = async () => {
+    if (!needsInstall) return;
+    setInstalling(selected);
+    const finish = (msg?: string) => {
+      setInstalling("");
+      if (msg) toast(tr("env.node_install_failed", { msg }));
+      reload(); // refresh node_installed either way
+    };
+    const res = await apiJSON("api/env/node-install", "POST", { major: selected });
+    if (!res || res.error) {
+      finish(res?.error?.message || "");
+      return;
+    }
+    if (res.state === "done" || res.state === "error") {
+      finish(res.state === "error" ? res.error || "" : undefined);
+      return;
+    }
+    // ~50MB compressed, so it runs in the background and we poll — same shape as Java.
+    poll({
+      deadlineMs: 10 * 60 * 1000,
+      firstDelayMs: 2000,
+      onExpire: () => finish(tr("env.node_install_timeout")),
+      step: async () => {
+        let p;
+        try {
+          p = await api("api/env/node-install");
+        } catch {
+          p = null;
+        }
+        if (p && p.state === "done") {
+          finish();
+          return { stop: true };
+        }
+        if (p && p.state === "error") {
+          finish(p.error || "");
+          return { stop: true };
+        }
+        return { stop: false, nextMs: 2000 };
+      },
+    });
+  };
+
+  return (
+    <>
+      <Row label="Node.js">
+        <span className="env-tool-pick env-node-pick">
+          <select
+            value={selected}
+            disabled={!running || !!installing}
+            onChange={(e) => update({ node: e.target.value })}
+          >
+            {nodeOpts.map((v) => (
+              <option key={v} value={v}>
+                {v === "system"
+                  ? tr("env.node_default")
+                  : installed.includes(v)
+                    ? "v" + v
+                    : tr("env.node_opt_absent", { v })}
+              </option>
+            ))}
+          </select>
+          {needsInstall && (
+            <button disabled={!running || !!installing} onClick={install}>
+              {installing ? tr("env.node_installing") : tr("env.node_install")}
+            </button>
+          )}
+        </span>
+      </Row>
+      {needsInstall && <p className="muted ds-sub">{tr("env.node_install_note", { v: selected })}</p>}
     </>
   );
 }

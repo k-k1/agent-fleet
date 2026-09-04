@@ -5,7 +5,7 @@
 #   dyn     = 非リテラルのキーがある（キー集合は静的に確定しない＝struct 化できない）
 #   partial = 変数が複数回代入されており、キー集合を開けきれていない
 # 🔴 キーが減った/増えた差分は、ワイヤが変わった可能性そのもの。撮り直す理由を PR に書くこと。
-# count: 184
+# count: 185
 agent_instructions.go handleUserNotesPreview x1 {content,exists,kind,path}
 agent_models.go handleAgentModels x1 {models}
 agent_rtk.go handleAgentRTKGain x1 {available}
@@ -46,7 +46,7 @@ connections_slack.go handlePutSlackConn x1 {botName,channelId,connected,events,f
 connections_slack.go handleSlackChannels x1 {channels,resolvedUserId} cond{resolvedUserId}
 connections_slack.go handleSlackInspect x1 {botName,botUserId,teamName}
 env_tool_versions.go handleToolVersions x1 {checkedAt,tools}
-env_toolchains.go handleToolchainsGet x1 {agentUpdate,go,go_options,java,java_available,java_installed,node,node_options,timezone,tz_options}
+env_toolchains.go handleToolchainsGet x1 {agentUpdate,go,go_options,java,java_available,java_installed,node,node_installed,node_options,timezone,tz_options}
 fs.go handleFSDelete x1 {deleted}
 fs.go handleFSMkdir x1 {path}
 fs.go handleFSNewFile x1 {path}
@@ -177,6 +177,7 @@ kiro_install_http.go handleKiroInstall x1 {error,installed,pin,state,updateAvail
 kiro_install_http.go handleKiroInstall x3 {state}
 main.go handleHealth x1 {ok}
 memo_paste.go handleMemoImageGC x1 {removed}
+node_install.go handleNodeInstall x3 {error,major,node_available,node_installed,state}
 notifications.go handleNotifications x1 {notifications}
 repo_jobs.go handleDeleteRepoJob x1 {canceled}
 repo_jobs.go handleDeleteRepoJob x1 {dismissed}

@@ -313,13 +313,17 @@
 
 /* Java 行（EnvTab）: セレクトの右に「インストール」ボタンが出る。未導入の major を
    選んだときだけ現れるので、常設の幅は取らせない（inline-flex）。 */
-.env-java-pick {
+/* ツールチェーン行の「選択 + インストール」。⚠️ レイアウトは共有クラスで、行ごとの
+   識別クラス（env-java-pick / env-node-pick）は**テストが行を特定するため**に別に付ける。
+   node 行を足したとき java のクラスを流用して、`.env-java-pick select` が node 側の
+   select を掴み、Java のテストが落ちた。見た目が同じでも、行の身元は分けること。 */
+.env-tool-pick {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
-.env-java-pick button {
+.env-tool-pick button {
   font-size: 11.5px;
   padding: 2px 10px;
 }

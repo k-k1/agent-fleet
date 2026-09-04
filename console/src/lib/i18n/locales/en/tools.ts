@@ -142,6 +142,13 @@ export const tools: Record<keyof typeof jaTools, string> = {
     "Temurin {v} is not in this workspace yet. Install downloads it (~200MB) into your home volume, where it persists across restarts; sessions started afterwards get it as JAVA_HOME, with no Stop → Start.",
   "env.java_install_failed": "JDK install failed: {msg}",
   "env.java_install_timeout": "the download did not finish in time",
+  "env.node_opt_absent": "v{v} (not installed)",
+  "env.node_install": "Install",
+  "env.node_installing": "Installing…",
+  "env.node_install_note":
+    "Node.js v{v} is not in this workspace yet. Install downloads it into your home volume, where it persists across restarts; sessions started afterwards use it, with no Stop → Start.",
+  "env.node_install_failed": "Node.js install failed: {msg}",
+  "env.node_install_timeout": "the download did not finish in time",
   "env.go_default": "Default (image's go)",
   "env.preview_cross_origin_label": "Allow calls between ports",
   "env.preview_cross_origin_note": "Turn this on only when the page on 3000 fetches 8080 directly. If a dev-server proxy or rewrites can keep it to one origin, prefer that. With this on, any third-party page that knows the URL can also drive the preview through your browser.",
