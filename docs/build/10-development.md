@@ -51,8 +51,10 @@ ARG now ([04 §4.9](04-agent.md)).
 2. **Bump the ARG** in `workspace/Dockerfile`. Changing an ARG reliably breaks the
    cache, so `--no-cache` is unnecessary.
 3. **Commit and push** — a one-line diff, with a Japanese message.
-4. **Wait for CI to go green.** The push fires the end-to-end workflow, which builds
-   the image and verifies L1 (**the installed version equals the pin**), L2 (fleet
+4. **Wait for CI to go green.** The end-to-end workflow does **not** run on a push (only
+   on PRs to main, a nightly cron and manual dispatch — billing is spread deliberately),
+   so start it on your branch yourself: `gh workflow run e2e.yml --ref <branch>`. It
+   builds the image and verifies L1 (**the installed version equals the pin**), L2 (fleet
    connectivity) and L3 (Console UI). **Do not proceed while it is red.**
 5. **(Larger bumps only) the jobs that use real credentials.** These consume different
    quotas per agent, so the workflows and their inputs are **separate per agent**. Run
@@ -66,9 +68,9 @@ ARG now ([04 §4.9](04-agent.md)).
 
 Two notes:
 
-- **A weekly scheduled run** catches upstream CLI and base-image breakage even when
-  nothing in this repository changed. If it goes red, suspect upstream and use steps
-  4–5 to isolate.
+- **A nightly scheduled run** (04:00 JST, against develop) catches upstream CLI and
+  base-image breakage even when nothing in this repository changed. If it goes red,
+  suspect upstream and use steps 4–5 to isolate.
 - To move a single member forward without rebuilding, there is an opt-in self-update.
   Stop → Start returns them to the baked version.
 
@@ -170,6 +172,10 @@ cd e2e && WS_IMAGE=agent-fleet/workspace:dev go test -v -tags e2e -timeout 15m
 cd console-e2e && npm ci && npx playwright test
 ```
 
+- The workflow runs on PRs to main (relevant paths), a nightly cron against develop, and
+  manual dispatch — **never on a push**. Its image build passes no platform argument, so
+  it covers **amd64 only**: the arm64 assets (the per-arch sha256 pins for agy, cursor and
+  kiro) are not build-verified there.
 - Missing prerequisites cause a skip; CI escalates that to a failure.
 - Safe to run on a development host with a live fleet: each layer uses a separate
   development user, ports are allocated dynamically, and teardown is built in. **One at
@@ -191,7 +197,7 @@ Two complementary systems close it — neither works alone:
 | Watches | the version **number** (pin vs published latest) | the **behaviour**, against the real CLI |
 | Answers | "is it time to look?" | "did it actually break?" |
 | Cost | free | free to subscription quota, by tier |
-| Frequency | daily | on relevant pushes, and weekly |
+| Frequency | daily | PRs to main (relevant paths), a weekly cron, and dispatch (claude, copilot, agy, cursor and kiro are dispatch-only) |
 | Goes red | only if the check itself fails | when a contract breaks |
 
 Drift is **the normal state** — some CLIs move every few days — so the drift workflow
