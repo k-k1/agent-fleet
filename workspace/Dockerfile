@@ -186,7 +186,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/log/35
 # §35.9-7(c)。bump は下の ARG を書き換えて再ビルド）。
-ARG AWSCLI_VERSION=2.36.38
+ARG AWSCLI_VERSION=2.36.39
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -211,7 +211,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # (gh-auth-wrapper.sh) にする。ラッパーが呼び出しのたびに git と同一の cred helper
 # からトークンを取り出し GH_TOKEN に注入するので、`gh auth login` 不要で gh が使える
 # （docs/build/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
-ARG GH_VERSION=2.99.0
+ARG GH_VERSION=2.100.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) gharch="$arch" ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -282,9 +282,9 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.259
+ARG CLAUDE_CODE_VERSION=2.1.260
 ARG OPENCODE_VERSION=1.18.27
-ARG CODEX_VERSION=0.153.0
+ARG CODEX_VERSION=0.153.2
 ARG COPILOT_VERSION=1.0.82
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
