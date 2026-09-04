@@ -216,15 +216,23 @@ func installNode(major string) (string, error) {
 
 // runInstallNode is `workspace-agent install-node <major>` — the CLI face, used by the
 // entrypoint and available in a terminal.
+//
+// ⚠️ It prints the installed bin directory — and nothing else — on STDOUT; all progress
+// goes to stderr. The entrypoint captures that stdout to put the selected node on PATH,
+// so it must stay a bare path. Resolving the directory in shell instead is exactly the
+// `ls | tail -1` lexicographic bug that pinned sessions to v22.9.0 (env_toolchains.go
+// nodeBinFor), which is why the path is handed back from here rather than re-derived.
 func runInstallNode(args []string) {
 	if len(args) < 1 || !majorOnlyRe.MatchString(args[0]) {
 		fmt.Fprintln(os.Stderr, "usage: workspace-agent install-node <major>   (e.g. 22)")
 		os.Exit(2)
 	}
-	if _, err := installNode(args[0]); err != nil {
+	version, err := installNode(args[0])
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "[install-node]", err)
 		os.Exit(1)
 	}
+	fmt.Println(filepath.Join(nvmNodeRoot(), version, "bin"))
 }
 
 // --- HTTP face (設定 → ツールチェーン の「導入」ボタン) -------------------------
