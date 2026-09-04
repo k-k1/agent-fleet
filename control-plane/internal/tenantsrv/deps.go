@@ -1,26 +1,29 @@
-// deps.go — この package が CP から必要とするものを、切断面の**こちら側**で宣言する。
+// deps.go — declares what this package needs from the CP, on this side of the seam.
 //
-// internal/tenantsrv はテナント/メンバーシップの **HTTP・管理層**（`/api/tenants` の
-// テナント選択、`/api/admin/**` のテナント CRUD・ロスター・クォータ・ネットワーク規則・
-// スロットクラス）で、CP の `manager` / `memberAuth` には依存しない。manager は CP の
-// god object で、そのメソッドは resolver.go / workspace_lifecycle.go / reaper.go ほかに
-// 散っている——運べないし、運ぶべきでもない。
+// internal/tenantsrv is the HTTP/admin layer for tenants and memberships (tenant selection
+// under `/api/tenants`; tenant CRUD, roster, quotas, network rules and slot classes under
+// `/api/admin/**`) and does not depend on the CP's `manager` / `memberAuth`. manager is the
+// CP's god object and its methods are spread over resolver.go, workspace_lifecycle.go,
+// reaper.go and others — it cannot be moved here, and should not be.
 //
-// なので外向きの依存は 1 本のインタフェース CP に集める。**struct の公開フィールド
-// （関数フィールドの束）にしていない**のは ADR 0067 決定 5 の但し書きどおり: フィールド
-// を 1 本埋め忘れると nil のまま無言で no-op になり、reflect の網羅検査を別に書かないと
-// 気付けない。インタフェースなら埋め忘れは**コンパイルエラー**なので、検査そのものが要らない。
-// （CP-MCP の internal/mcpsrv が同じ形で 26 依存を 1 本にまとめた先例。）
+// So the outward dependency is collected into the single interface CP. Not a struct of
+// exported function fields, per the proviso in ADR 0067 decision 5: one field left unset
+// stays nil and silently becomes a no-op, which nothing notices without a separate
+// reflect-based completeness check. With an interface, a missing member is a compile
+// error, so the check itself is unnecessary. (internal/mcpsrv collapsed 26 dependencies
+// the same way.)
 //
-// 逆向き（main が tenantsrv を呼ぶ側）は control-plane/tenant_wiring.go 1 枚で吸収する。
-// ハンドラは `adminAPI` / `tenantAPI` の**非公開メソッド**として登録されており（routes.go）、
-// 非公開メソッドは境界を越えられないので、あちらは素の別名ではなく**薄いラッパ**になる。
+// The other direction — main calling into tenantsrv — is absorbed by
+// control-plane/tenant_wiring.go alone. The handlers are registered as unexported methods
+// on `adminAPI` / `tenantAPI` (routes.go), and an unexported method cannot cross the
+// boundary, so that side is thin wrappers rather than plain aliases.
 //
-// 🔴 **認証家系（tenant_idp_api.go / tenant_login.go / tenant_git_oauth*.go /
-// tenant_idp_secret.go）はここに入らない。** それらは internal/auth と往復しており、
-// ADR 0067 決定 1（元パッケージへ手を伸ばし返す家系は外す）で対象外。ただしその家系が
-// 持つ CSV/ドメインのヘルパ（splitCSVLower / splitDomainCSV / joinCSV / domainMatches）は
-// 入口ゲートと**同じ規則**なので、写さずに CP 経由で借りる（写すと二つ目の出所になる）。
+// The auth family (tenant_idp_api.go, tenant_login.go, tenant_git_oauth*.go,
+// tenant_idp_secret.go) does not come here: it goes back and forth with internal/auth, and
+// ADR 0067 decision 1 excludes a family that reaches back into its original package. Its
+// CSV/domain helpers (splitCSVLower / splitDomainCSV / joinCSV / domainMatches) follow the
+// same rules as the entry gate, so they are borrowed through CP rather than copied — a
+// copy would be a second source of truth.
 package tenantsrv
 
 import (
@@ -36,7 +39,7 @@ import (
 // CP is everything tenantsrv needs from the control plane. The implementation is
 // control-plane/tenant_wiring.go's adapter over *manager.
 type CP interface {
-	// --- 素材 ------------------------------------------------------------------
+	// --- Data ------------------------------------------------------------------
 	// Store is the CP metadata store. The tenant/admin handlers span most sub-stores
 	// (tenant / identity / membership / workspace / quota / git / audit), so there is
 	// no narrow view here — that is the same call tenants.go documented for adminAPI.
@@ -46,7 +49,7 @@ type CP interface {
 	// only refuses a provider when the set exists.
 	KnownProviderIDs() map[string]bool
 
-	// --- 解決 / ライフサイクル（manager のメソッド） ------------------------------
+	// --- Resolution / lifecycle (manager's methods) -----------------------------
 	MembershipsFor(ctx context.Context, ident store.Identity) ([]store.MembershipView, *APIError)
 	CountRunningInTenant(ctx context.Context, tenantID string) (int, error)
 	WorkspaceStateByMembership(ctx context.Context, membershipID string) (container, state string)
@@ -69,14 +72,14 @@ type CP interface {
 	PoolStatus(ctx context.Context) (runtime.EC2PoolStatus, bool, error)
 	WorkspaceSizing() runtime.WorkspaceSizing
 
-	// --- HTTP の認可（memberAuth と admin_stats.go） ------------------------------
+	// --- HTTP authorization (memberAuth and admin_stats.go) ---------------------
 	// TenantAdminFor gates the per-tenant admin face. It writes the 401/403 itself
 	// and returns ok=false, exactly as memberAuth does for every other feature API.
 	TenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (store.Identity, store.Tenant, bool)
 	// ResolveMember is admin_stats.go's member lookup (membership + workspace row).
 	ResolveMember(r *http.Request, slug, key string) (mem store.Membership, ws store.Workspace, hasWS bool, aerr *APIError)
 
-	// --- 方針・一次情報（写すと二つ目の出所になるもの） ----------------------------
+	// --- Policy and primary facts (copying these creates a second source) -------
 	// IsSystemTenantSlug is system_tenant.go's reserved-tenant rule.
 	IsSystemTenantSlug(slug string) bool
 	// SanitizeUser is resolver.go's key/slug normalization — the same function that
@@ -94,7 +97,7 @@ type CP interface {
 	// lease" refusal (workspace_handlers.go).
 	WorkspaceLifecycleLeaseError(err error) *APIError
 
-	// --- tenant.limits の blob（**エンコードは main 側の tenantLimits が唯一の出所**）---
+	// --- The tenant.limits blob (main's tenantLimits is the only encoder) -------
 	// ParseLimits parses a stored limits blob; LimitsFor reads and parses a tenant's.
 	// StoreTenantLimits marshals a Limits back through the CP's own tenantLimits and
 	// writes it. Encoding deliberately does NOT happen here: limits.go owns the json
@@ -105,7 +108,7 @@ type CP interface {
 	LimitsFor(ctx context.Context, tenantID string) Limits
 	StoreTenantLimits(ctx context.Context, tenantID string, l Limits) error
 
-	// --- 呼び元のアドレス（clientip.go・ADR 0047） --------------------------------
+	// --- The caller's address (clientip.go, ADR 0047) ---------------------------
 	// TrustedProxyHops is AF_TRUSTED_PROXY_HOPS, read once at boot. It is a func on
 	// the seam rather than a value passed in, because the network handlers read it
 	// per request and the tests in package main set it per case.
@@ -119,7 +122,7 @@ type CP interface {
 // package consumes it — the three fields of the CP's clientIPInfo. Forwarded is here
 // for the same reason it is there: "hops=0 AND an XFF arrived" is the
 // misconfiguration that would otherwise let an administrator allowlist the load
-// balancer and believe they had restricted something (ADR 0047 決定 4).
+// balancer and believe they had restricted something (ADR 0047 decision 4).
 type ClientIP struct {
 	IP        netip.Addr
 	OK        bool

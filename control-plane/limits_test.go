@@ -23,14 +23,15 @@ func TestParseLimitsTerminalHistoryRetention(t *testing.T) {
 	}
 }
 
-// --- テナント上限とスロットプールの突き合わせ（docs/log/64 §64.35 / ADR 0045 決定 25）---
+// --- Tenant quotas against the slot pool (docs/log/64 §64.35 / ADR 0045 decision 25) ---
 //
-// 検証が無かったせいで、**プール上限を超える配分が黙って保存できた**。超過は「枠内なのに
-// 起動に失敗する」か「他テナントのスロットを奪う」という、設定画面から最も遠い形でしか
-// 表に出ない。
+// Without validation, an allocation beyond the pool ceiling saves silently. The excess then
+// surfaces only in the forms furthest from the settings screen: a launch that fails while
+// apparently within quota, or a workspace taking another tenant's slot.
 
-// poolFactory はスロット上限を持つランタイムの替え玉。プールを持たない配備で検査が
-// **空振りで通る**のではなく**存在しない**ことを確かめたいので、上限を持たない方も要る。
+// poolFactory stands in for a runtime that has a slot ceiling. The pool-less counterpart is
+// needed too, so a deployment without a pool can be shown to have no such check at all
+// rather than one that passes vacuously.
 type poolFactory struct{ max int }
 
 func (f *poolFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return nil }
@@ -58,9 +59,10 @@ func budgetFixture(t *testing.T, max int, quotas map[string]int) (*store.SQL, *m
 	return st, mgr
 }
 
-// golden の焼き直しは種と探針で 2 枠を同時に要る（bakeReservedSlots）。全部配ってしまうと
-// **二度と焼けない**——症状は「新しいメンバーの初回起動が遅い」で、数週間後に気づく類の
-// 失敗なので、容量はそこを引いた数で見る。
+// Re-baking the golden needs two slots at the same time, for the seed and the probe
+// (bakeReservedSlots). Hand every slot out and no bake can ever run again; the symptom is
+// "a new member's first launch is slow", noticed weeks later, so capacity is measured with
+// those two subtracted.
 func TestPoolBudgetLeavesRoomForABake(t *testing.T) {
 	_, mgr := budgetFixture(t, 30, map[string]int{"acme": 20, "beta": 8})
 	b, ok, err := mgr.poolBudget(context.Background(), "", 0)
@@ -81,8 +83,9 @@ func TestPoolBudgetLeavesRoomForABake(t *testing.T) {
 	}
 }
 
-// ⚠️ 0 は「無制限」であって「0 台」ではない。1 テナントでもそれが居れば、**合計はもう
-// 上限を縛らない**。「超過」とは別の問題なので、別の言い方で出す必要がある。
+// 0 means unlimited, not zero workspaces. A single such tenant is enough for the sum to stop
+// bounding anything, which is a different problem from being over and has to be reported in
+// a different way.
 func TestPoolBudgetTreatsZeroAsUnlimitedNotZero(t *testing.T) {
 	_, mgr := budgetFixture(t, 30, map[string]int{"acme": 5, "beta": 0})
 	b, _, _ := mgr.poolBudget(context.Background(), "", 0)
@@ -100,14 +103,15 @@ func TestPoolBudgetTreatsZeroAsUnlimitedNotZero(t *testing.T) {
 	}
 }
 
-// 停止中のテナントは何も動かさない。数えると、**止まっているテナントのために動いている
-// テナントを削る**ことになる。
+// A suspended tenant runs nothing. Counting it would shrink the running tenants' share for
+// the sake of a stopped one.
 func TestPoolBudgetSkipsSuspendedTenants(t *testing.T) {
 	ctx := context.Background()
 	st, mgr := budgetFixture(t, 10, map[string]int{"acme": 6, "gone": 6})
 	tn, _, _ := st.GetTenantBySlug(ctx, "gone")
-	// テナントを止める API はまだ無いので、行を直接落とす。列は存在し ListTenants は
-	// 状態で絞らずに返すので、この分岐は「まだ誰も通らない」であって「無い」ではない。
+	// There is no API to suspend a tenant yet, so the row is written directly. The column
+	// exists and ListTenants does not filter on status, so this branch is "nothing reaches
+	// it yet", not "it does not exist".
 	if _, err := st.DB().ExecContext(ctx, `UPDATE tenant SET status='suspended' WHERE id=?`, tn.ID); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
@@ -117,8 +121,9 @@ func TestPoolBudgetSkipsSuspendedTenants(t *testing.T) {
 	}
 }
 
-// プールを持たないランタイムには比べる相手が無い。ok=false は「大丈夫」ではなく
-// 「そういう問いが無い」——空振りで OK を返すと、Fargate 配備で存在しない保証を名乗る。
+// A runtime without a pool has nothing to compare against. ok=false means "the question does
+// not apply", not "everything fits" — answering OK vacuously would claim a guarantee that a
+// Fargate deployment does not have.
 func TestPoolBudgetIsAbsentWithoutAPool(t *testing.T) {
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
@@ -128,8 +133,8 @@ func TestPoolBudgetIsAbsentWithoutAPool(t *testing.T) {
 	}
 }
 
-// 保存前の値で見られること。そうでないと、いま打った数字ではなく**それが置き換えた方**に
-// ついての警告が返る。
+// The value has to be previewable before it is saved, or the warning describes the number it
+// replaced instead of the one just typed.
 func TestPoolBudgetCanPreviewAnUnsavedValue(t *testing.T) {
 	ctx := context.Background()
 	st, mgr := budgetFixture(t, 10, map[string]int{"acme": 4, "beta": 4})
@@ -140,7 +145,7 @@ func TestPoolBudgetCanPreviewAnUnsavedValue(t *testing.T) {
 	}
 }
 
-// --- PUT /api/admin/tenants/{slug}/limits の検証 ---
+// --- Validation of PUT /api/admin/tenants/{slug}/limits ---
 
 func putLimits(mgr *manager, slug string, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodPut, "/api/admin/tenants/"+slug+"/limits", strings.NewReader(body))
@@ -150,10 +155,10 @@ func putLimits(mgr *manager, slug string, body string) *httptest.ResponseRecorde
 	return w
 }
 
-// 0 = 無制限なので、負の数は「小さい上限」ではなく**誰も満たせない上限**である。
-// max_workspaces=-1 は `running >= limit` を誰も起動する前に真にし、そのテナントは
-// 二度と Workspace を開けない。数値欄の打ち間違いを、メンバーの起動失敗で気づくもの
-// にしてはいけない。
+// 0 = unlimited, so a negative number is not a small quota but one nobody can satisfy:
+// max_workspaces=-1 makes `running >= limit` true before anyone has started anything, and
+// the tenant can never open a workspace again. A typo in a number field must not be
+// discovered through a member's failed launch.
 func TestSetTenantLimitsRejectsNegativeQuotas(t *testing.T) {
 	_, mgr := budgetFixture(t, 30, map[string]int{"acme": 4})
 	w := putLimits(mgr, "acme", `{"max_workspaces":-1}`)
@@ -163,17 +168,17 @@ func TestSetTenantLimitsRejectsNegativeQuotas(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "max_workspaces") {
 		t.Errorf("the error must name the field: %s", w.Body.String())
 	}
-	// そして保存されていないこと。
+	// And nothing was written.
 	tn, _, _ := mgr.store.GetTenantBySlug(context.Background(), "acme")
 	if got := parseLimits(tn.Limits).MaxWorkspaces; got != 4 {
 		t.Errorf("max_workspaces = %d, want the old 4 — a rejected PUT must not write", got)
 	}
 }
 
-// ⚠️ 超過は**拒否しない**。これはこのエンドポイントが守れる不変条件ではない
-// （Ec2MaxSlots は CP の env で、下げるときに API 呼び出しは起きない）し、同時に
-// ピークが来ないテナント同士のオーバーサブスクライブは正当な運用でもある。何より、
-// 既に超過している配備が**この画面の他の欄すべて**を編集できなくなる。
+// An over-allocation is not rejected. It is not an invariant this endpoint can hold
+// (Ec2MaxSlots is CP env, and lowering it makes no API call), over-subscribing tenants whose
+// peaks never coincide is legitimate operation, and above all a deployment that is already
+// over would lose the ability to edit every other field on this screen.
 func TestSetTenantLimitsWarnsButSavesAnOverAllocation(t *testing.T) {
 	ctx := context.Background()
 	_, mgr := budgetFixture(t, 10, map[string]int{"acme": 4, "beta": 4})
@@ -199,8 +204,8 @@ func TestSetTenantLimitsWarnsButSavesAnOverAllocation(t *testing.T) {
 	}
 }
 
-// 収まっているときは何も付けない。毎回の保存に「大丈夫です」が付くと、本当に出たときに
-// 読まれなくなる。
+// Nothing is attached when it fits: an "all good" on every save stops being read by the time
+// there is something to read.
 func TestSetTenantLimitsSaysNothingWhenTheBudgetFits(t *testing.T) {
 	_, mgr := budgetFixture(t, 30, map[string]int{"acme": 4, "beta": 4})
 	w := putLimits(mgr, "acme", `{"max_workspaces":6}`)

@@ -33,19 +33,19 @@ import (
 	"testing"
 )
 
-// ===== 共有区間ここから（control-plane と workspace/agent で byte 一致）=====
-// 🔴 この行より下は 2 つのモジュールで **1 バイトも違ってはいけない**
-// （wiretest_dup_test.go が検査する）。番兵より上は package 宣言と import だけで、
-// モジュールパスが違うため一致しない。
+// ===== shared region starts here (byte-identical in control-plane and workspace/agent) =====
+// Below this line the two modules must not differ by a single byte; wiretest_dup_test.go
+// checks it. Above the sentinel are only the package clause and imports, which cannot match
+// because the module paths differ.
 
-// wiretestSentinel — 共有区間の開始行。各ファイルに 1 度だけ現れる。
+// wiretestSentinel is the line that opens the shared region. It appears exactly once per file.
 //
-// 🔴 **連結して書くのは自己参照を切るため。**1 本のリテラルで書くと、
-// **この行自身が 2 個目の番兵として数えられて検査が落ちる**（実際に踏んだ）。
-// 「検査の中の文字列が検査対象に混ざる」形なので、ソース上で分けておく。
-const wiretestSentinel = "// ===== 共有区間ここから" + "（control-plane と workspace/agent で byte 一致）====="
+// Written as a concatenation to break the self-reference: as a single literal this line is
+// itself counted as a second sentinel and the check fails (measured). The checker's own
+// string would otherwise be part of what it checks, so it is split in the source.
+const wiretestSentinel = "// ===== shared region starts here" + " (byte-identical in control-plane and workspace/agent) ====="
 
-// wiretestCopies — 2 つの写しのリポジトリ根からの位置。
+// wiretestCopies locates the two copies relative to the repository root.
 var wiretestCopies = []string{
 	filepath.Join("control-plane", "internal", "wiretest"),
 	filepath.Join("workspace", "agent", "internal", "wiretest"),
@@ -64,9 +64,9 @@ func TestWiretestCopiesDoNotDrift(t *testing.T) {
 	}
 }
 
-// TestWiretestCopiesHaveSameFiles — ①の穴を塞ぐ。
-// 🔴 byte 比較が守るのは**番兵で囲んだ区間**であって**パッケージ**ではない。
-// 片方に新しいファイルを 1 枚足せば、①は全部緑のまま漂流する。
+// TestWiretestCopiesHaveSameFiles closes ①'s hole: the byte comparison guards the region
+// fenced by the sentinel, not the package. Add one new file to a single side and ① stays
+// entirely green while the copies drift.
 func TestWiretestCopiesHaveSameFiles(t *testing.T) {
 	self, peer := selfAndPeer(t)
 	got, want := goFiles(t, self), goFiles(t, peer)
@@ -79,10 +79,11 @@ func TestWiretestCopiesHaveSameFiles(t *testing.T) {
 	}
 }
 
-// selfAndPeer はリポジトリ根を上へ探し、2 つの写しの実パスを返す。
+// selfAndPeer walks up to the repository root and returns the real paths of the two copies.
 //
-// 🔴 相手の位置を定数で持たない。持つと**このファイル自身が 2 つの写しで違う**ことになり、
-// ②（ファイル名集合の一致）を満たすために置いた写しが、①（byte 一致）を壊す。
+// The peer's location is deliberately not a constant: that would make this file differ
+// between the copies, so the copy placed to satisfy ② (equal file-name sets) would break
+// ① (byte equality).
 func selfAndPeer(t *testing.T) (string, string) {
 	t.Helper()
 	wd, err := os.Getwd()
@@ -104,8 +105,8 @@ func selfAndPeer(t *testing.T) (string, string) {
 		}
 		dir = parent
 	}
-	// 🔴 Skip ではなく Fatal。見つからないまま飛ぶと、
-	// 「漂流していない」ではなく「検査していない」が緑になる。
+	// Fatal, not Skip: skipping when nothing is found makes "not checked" green while it
+	// reads as "not drifting".
 	t.Fatalf("リポジトリ根（%v の両方を持つ階層）が %s から見つからない。"+
 		"移動したならこの表を直すこと——見つからないまま緑にはしない。", wiretestCopies, wd)
 	return "", ""
@@ -145,7 +146,8 @@ func goFiles(t *testing.T, dir string) []string {
 	return out
 }
 
-// mustShared は番兵より下を返す。番兵が無い／2 つ以上あるのは検査の失敗として扱う。
+// mustShared returns everything below the sentinel. A missing or repeated sentinel is
+// treated as a failure of the check itself.
 func mustShared(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)

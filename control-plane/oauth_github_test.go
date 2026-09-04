@@ -55,7 +55,7 @@ func newStubGitHub(t *testing.T, s *stubGitHub) *stubGitHub {
 
 	mux.HandleFunc("/login/oauth/access_token", func(w http.ResponseWriter, r *http.Request) {
 		s.tokenHits++
-		// ★ The real GitHub answers in application/x-www-form-urlencoded unless the
+		// The real GitHub answers in application/x-www-form-urlencoded unless the
 		// caller asks for JSON. Reproduce that exactly, so forgetting the header
 		// fails the test rather than silently yielding an empty token (§61.7).
 		if s.ignoreAccep || !strings.Contains(r.Header.Get("Accept"), "application/json") {
@@ -137,7 +137,7 @@ func captureLog(w io.Writer) func() {
 
 // --- the login itself -------------------------------------------------------
 
-// ★ 受入条件: the identity a GitHub login resolves to is keyed on the numeric
+// Acceptance criterion: the identity a GitHub login resolves to is keyed on the numeric
 // account id and the primary VERIFIED address — not on the username (renameable,
 // then claimable by someone else) and not on /user's `email` (no verified flag).
 func TestGitHubLoginUsesTheNumericIDAndPrimaryVerifiedEmail(t *testing.T) {
@@ -179,7 +179,7 @@ func TestGitHubLoginUsesTheNumericIDAndPrimaryVerifiedEmail(t *testing.T) {
 	}
 }
 
-// ★ §61.7 の罠 1: the token endpoint answers in form encoding unless we ask for
+// Trap 1 of §61.7: the token endpoint answers in form encoding unless we ask for
 // JSON, and a JSON decode of that yields no error — just an empty token. The stub
 // mirrors that, so this test fails the moment the Accept header is dropped.
 func TestGitHubTokenExchangeAsksForJSON(t *testing.T) {
@@ -222,7 +222,7 @@ func TestGitHubLoginRefusals(t *testing.T) {
 		setup: func(s *stubGitHub) { s.orgState = map[string]string{"acme": "pending"} },
 		want:  "forbidden",
 	}, {
-		// ★ §61.7 の罠: the org restricts third-party OAuth apps and nobody approved
+		// A trap from §61.7: the org restricts third-party OAuth apps and nobody approved
 		// this one. Everybody is rejected even though the config is right — the
 		// adapter must survive it and log the hint (checked by hand; here we only
 		// pin that it denies rather than 500s).
@@ -252,9 +252,9 @@ func TestGitHubLoginRefusals(t *testing.T) {
 	}
 }
 
-// 会社ドメイン外の primary email は入口で落とす。P1 の改訂で別 email の結合は
-// 作らないと決めたので、通してしまうと本人が気付かないまま別 workspace で
-// 作業を始める（§61.7）。
+// A primary email outside the company domain is refused at the gate. Identities under
+// different addresses are never linked, so letting one through means the person starts
+// working in a second workspace without noticing (§61.7).
 func TestGitHubEmailAllowlistRefusesAnOutsideAddress(t *testing.T) {
 	gh := newStubGitHub(t, &stubGitHub{emails: []map[string]any{
 		{"email": "yamada@personal.dev", "primary": true, "verified": true},
@@ -266,9 +266,9 @@ func TestGitHubEmailAllowlistRefusesAnOutsideAddress(t *testing.T) {
 	}
 }
 
-// org を 1 つも指定していない設定では GitHub を有効にしない。メンバーシップ判定と
-// セットでのみ採用した入口なので（§61.3）、それが無いと「許可リストのドメインの
-// email を GitHub に登録した全人類」が入口に立つ。
+// GitHub stays disabled unless at least one org is configured. This entry point was only
+// adopted together with the membership check (§61.3); without it, anyone in the world who
+// registered an address in an allowlisted domain with GitHub stands at the door.
 func TestGitHubProviderRequiresItsOrgList(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
@@ -279,9 +279,9 @@ func TestGitHubProviderRequiresItsOrgList(t *testing.T) {
 		wantOrgsLowercase []string
 	}{
 		{name: "未設定なら黙って無効", wantProvider: false, wantSilent: true},
-		// ★ 既存デプロイの回帰: GITHUB_OAUTH_CLIENT_ID は git 連携（device flow）が
-		// 前から使っていて .env.example にも載っている。ログインを頼んでいない
-		// デプロイを毎起動 warning で叩いてはいけない。
+		// GITHUB_OAUTH_CLIENT_ID is also the git integration's (device flow) variable and
+		// appears in .env.example, so a deployment that never asked for GitHub login must
+		// not be nagged with a warning on every start.
 		{name: "device flow の client_id だけなら黙って無効", id: "cid", wantProvider: false, wantSilent: true},
 		{name: "secret はあるが org が無ければ警告して無効", id: "cid", secret: "sec", wantProvider: false},
 		{name: "org はあるが secret が無ければ警告して無効", id: "cid", orgs: "acme", wantProvider: false},
@@ -320,8 +320,9 @@ func TestGitHubProviderRequiresItsOrgList(t *testing.T) {
 	}
 }
 
-// ログイン専用の OAuth App を分けたい運用のための上書き。git 連携（device flow）と
-// 同じアプリを org に承認させたくない場合の逃げ道なので、共有 env より強いこと。
+// The override for a deployment that wants a separate OAuth App for login. It is the way
+// out when the org must not be asked to approve the same app the git integration (device
+// flow) uses, so it has to win over the shared env pair.
 func TestGitHubLoginClientIDOverridesTheSharedOne(t *testing.T) {
 	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "device-flow-app")
 	t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "device-flow-secret")
@@ -337,8 +338,8 @@ func TestGitHubLoginClientIDOverridesTheSharedOne(t *testing.T) {
 	}
 }
 
-// AF_OIDC_PROVIDERS に github を書かれても、GitHub アダプタの id を OIDC 実装に
-// 奪わせない（奪われると GitHub のログインが黙って別物にすり替わる）。
+// Writing github into AF_OIDC_PROVIDERS must not let a generic OIDC provider take the
+// GitHub adapter's id: if it did, GitHub login would silently become something else.
 func TestGitHubIDIsReservedAgainstAnOIDCProvider(t *testing.T) {
 	t.Setenv("AF_OIDC_PROVIDERS", "github")
 	t.Setenv("AF_OIDC_GITHUB_ISSUER", "https://github.example.com")
@@ -369,8 +370,9 @@ func TestGitHubIDIsReservedAgainstAnOIDCProvider(t *testing.T) {
 
 // --- the per-request re-check ----------------------------------------------
 
-// 退職・org 除名は次のリクエストで効く必要がある（セッション TTL を待たない）。
-// ただし毎リクエスト API を叩くわけにはいかないので TTL で間引く。
+// Leaving the company or the org has to take effect on the next request rather than
+// waiting out the session TTL — but the API cannot be called on every request, so a TTL
+// thins it out.
 func TestGitHubMembershipIsRecheckedAfterTheTTL(t *testing.T) {
 	gh := newStubGitHub(t, &stubGitHub{})
 	p := stubGitHubProvider(gh)
@@ -381,7 +383,7 @@ func TestGitHubMembershipIsRecheckedAfterTheTTL(t *testing.T) {
 	}
 	hitsAfterLogin := gh.memberHits
 
-	// TTL の内側では API を叩かない。
+	// Inside the TTL the API is not called at all.
 	for range 5 {
 		if ok, err := p.Allowed(t.Context(), pr); !ok || err != nil {
 			t.Fatalf("cached allow: ok=%v err=%v", ok, err)
@@ -391,7 +393,7 @@ func TestGitHubMembershipIsRecheckedAfterTheTTL(t *testing.T) {
 		t.Fatalf("TTL 内で %d 回 API を叩いている", gh.memberHits-hitsAfterLogin)
 	}
 
-	// TTL が切れたら問い合わせ直し、除名がそこで効く。
+	// Once the TTL expires it asks again, and a removal takes effect there.
 	p.TTL = 0
 	gh.orgStatus = map[string]int{"acme": http.StatusNotFound}
 	ok, err := p.Allowed(t.Context(), pr)
@@ -403,12 +405,13 @@ func TestGitHubMembershipIsRecheckedAfterTheTTL(t *testing.T) {
 	}
 }
 
-// ★ CP 再起動でキャッシュも access token も消える。判定材料が無い人を「許可されて
-// いません」と突き放すのは事実と違う（本人は org のメンバーのまま）。再ログインを
-// 求める別のコードを出し、API には 401 を返して SPA の既存経路に乗せる。
+// A CP restart wipes both the cache and the access token. Telling somebody there is no
+// evidence for "not allowed" is untrue — they are still a member of the org — so a
+// distinct code asks for a fresh sign-in, and the API answers 401 so the SPA's existing
+// unauthenticated path handles it.
 func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 	gh := newStubGitHub(t, &stubGitHub{})
-	p := stubGitHubProvider(gh) // キャッシュ空＝再起動直後
+	p := stubGitHubProvider(gh) // empty cache = just after a restart
 	cfg := oauthTestConfig(t, p)
 
 	b, _ := json.Marshal(sessionClaims{
@@ -420,7 +423,7 @@ func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 		t.Error("判定材料が無いのにハンドラまで通した")
 	}))
 
-	// ブラウザのナビゲーション: forbidden ではなく reauth。
+	// A browser navigation: reauth, not forbidden.
 	r := httptest.NewRequest(http.MethodGet, "/api/tenants", nil)
 	r.Header.Set("Accept", "text/html")
 	r.AddCookie(cookie)
@@ -437,7 +440,7 @@ func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 		t.Fatalf("reauth の文言が出ていない: %s", page)
 	}
 
-	// SPA からの XHR: 403 ではなく 401（SPA の未認証経路がログインへ送る）。
+	// An XHR from the SPA: 401, not 403 — the SPA's unauthenticated path sends it to login.
 	r = httptest.NewRequest(http.MethodGet, "/api/tenants", nil)
 	r.AddCookie(cookie)
 	w = httptest.NewRecorder()
@@ -446,7 +449,7 @@ func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 		t.Fatalf("XHR: want 401 got %d (%s)", w.Code, w.Body.String())
 	}
 
-	// 一方、本当に許可されていない人（ドメイン外）は従来どおり forbidden のまま。
+	// Somebody genuinely not allowed (outside the domain) still gets forbidden.
 	b, _ = json.Marshal(sessionClaims{
 		Email: "someone@personal.dev", Exp: time.Now().Add(time.Hour).Unix(),
 		Prov: auth.GithubProviderID, Sub: "4242",

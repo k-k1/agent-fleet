@@ -29,7 +29,7 @@ type TenantLoginRules struct {
 	ID, Slug, Name                                    string
 	AllowedProviders, AutoJoinDomains, AllowedDomains []string
 	// HiddenProviders is not a gate. It only removes buttons from /login/<slug>;
-	// the same method still admits its people (docs/log/61 §61.15.9 + 決定 14).
+	// the same method still admits its people (docs/log/61 §61.15.9 + decision 14).
 	HiddenProviders []string
 	// AllowedCIDRs restricts which source networks may USE this tenant (docs/log/66,
 	// ADR 0047). Empty = no restriction, and that is how the feature is switched off.
@@ -56,12 +56,12 @@ type Membership struct {
 // deployment default". The axes are held as independent numbers rather than as a
 // named size (S/M/L…): the named sizes live in the Console and MCP as a way to
 // PRESENT valid combinations, while storage stays runtime-neutral so docker keeps
-// its byte-exact --memory and --cpus (ADR 0044 決定 1).
+// its byte-exact --memory and --cpus (ADR 0044 decision 1).
 type UserQuota struct {
 	MaxSessions int
 	// DiskGB is the per-workspace working disk in GiB. On ECS it becomes the task's
 	// ephemeral storage (21–200 GiB) or, above that, an ECS-managed EBS volume
-	// (ADR 0044 決定 2). On docker it stays the display-only quota it has always been.
+	// (ADR 0044 decision 2). On docker it stays the display-only quota it has always been.
 	DiskGB int
 	// MemLimit is the per-workspace RAM cap in BYTES (0 = unset → deployment default
 	// WS_MEMORY / AF_ECS_TASK_MEMORY). A tenant_admin sets it within the tenant cap
@@ -79,7 +79,7 @@ type UserQuota struct {
 	// It is a string and not a number because it is not a size — the three axes above
 	// say HOW BIG, this says WHICH LADDER (docs/log/70 §70.4). Still runtime-neutral in the
 	// sense that matters: the id is opaque here, and the operator alone maps it to
-	// instance types and an architecture (ADR 0044 決定 1).
+	// instance types and an architecture (ADR 0044 decision 1).
 	SlotClass string
 }
 
@@ -206,9 +206,10 @@ type SSMHost struct {
 type Memo struct {
 	ID, MembershipID, Repo, Category string
 	Kind, Body, RefPath              string
-	// Attachments is a JSON array of {path,name} image attachments (docs/log/21 画像添付),
-	// "" = none. path is an absolute in-container path under ~/.cache/agent-fleet/
-	// memo-images; the bytes live in the workspace, this only references them.
+	// Attachments is a JSON array of {path,name} image attachments (docs/log/21, image
+	// attachments), "" = none. path is an absolute in-container path under
+	// ~/.cache/agent-fleet/memo-images; the bytes live in the workspace, this only
+	// references them.
 	Attachments       string
 	Position          int
 	CreatedAt, SentAt string
@@ -254,7 +255,7 @@ type WorkItemSession struct {
 	CreatedAt                           string
 }
 
-// MemoCategory persists a memo category as a first-class row (docs/log/21 UI刷新), so a
+// MemoCategory persists a memo category as a first-class row (docs/log/21 UI overhaul), so a
 // category can exist while empty and carry an explicit order. Name is unique within a
 // (MembershipID, Repo) and stays the grouping key that Memo.Category references.
 type MemoCategory struct {
@@ -335,7 +336,7 @@ type ScheduleRun struct {
 type MCPServerRow struct {
 	ID, TenantID         string
 	Name, Label          string
-	Transport            string // always "http" — stdio is refused (ADR0031 決定 2)
+	Transport            string // always "http" — stdio is refused (ADR0031 decision 2)
 	URL                  string
 	HeadersEnc, KeyRef   string
 	Targets, Kinds       string
@@ -368,7 +369,7 @@ type Workspace struct {
 	// adapters stamp `af-tenant` on billable resources and the cost-allocation tag
 	// has to be READABLE in Cost Explorer — an opaque tenant id there would say
 	// nothing the membership id does not already imply (docs/log/67 §67.4, ADR 0048
-	// 決定 3)。Empty on a Workspace built in memory by a test.
+	// decision 3). Empty on a Workspace built in memory by a test.
 	TenantSlug                   string
 	AgentPort, AgentToken, State string
 	CreatedAt, LastActiveAt      string
@@ -405,9 +406,10 @@ type Workspace struct {
 type SessionRow struct {
 	WorkspaceID, Name, Kind, Dir, Repo, Label string
 	CreatedAt, State, LastSeen                string
-	// Carried: 畳まれたときに答えを待っていた対話の種類（docs/log/75 §75.6.5）。停止中の
-	// Workspace ではこのミラーが一覧の唯一のソースなので、ここに無い情報は「無かった」
-	// ことになる。
+	// Carried is the kind of interaction that was still waiting for an answer when the
+	// session was folded away (docs/log/75 §75.6.5). While the Workspace is stopped this
+	// mirror is the list's only source, so anything not recorded here did not happen as
+	// far as the Console is concerned.
 	Carried string
 }
 
@@ -420,20 +422,22 @@ type SharedSessionCatalog struct {
 	ID, WorkspaceID, OwnerMembershipID, Name, Kind, Dir, Repo string
 	WorkingCopyID, Title, Label, CreatedAt, State, LastSeen   string
 	Archived                                                  bool
-	// Worktree/Parent: docs/log/59 の受信側プロジェクト/worktreeツリー表示用。
-	// Parent は worktree の場合のみ、親(ベース)working copy のフォルダ名。
+	// Worktree/Parent drive the recipient-side project/worktree tree (docs/log/59).
+	// Parent is set only for a worktree: the folder name of the parent (base) working copy.
 	Worktree bool
 	Parent   string
-	// ParentWorkingCopyID は worktree の場合のみ、親(ベース)working copy の
-	// workingCopyId。repo 共有はプロジェクト全体(ベース＋その worktree)を対象に
-	// するので、ACL 判定はフォルダ名(Parent)ではなくこの ID で行う — 名前は
-	// 付け替えられるが workingCopyId は作業コピーの世代に固定されるため。
+	// ParentWorkingCopyID is the parent (base) working copy's workingCopyId, set only for
+	// a worktree. Repo sharing covers a whole project (the base plus its worktrees), so the
+	// ACL decision is made on this id and NOT on the folder name (Parent): a folder can be
+	// renamed, while workingCopyId is fixed to the generation of the working copy.
 	ParentWorkingCopyID string
-	// Branch は作業コピーが今チェックアウトしているブランチ(表示専用)。worktree の
-	// フォルダ名はランダム slug なので、受信側はこれが無いとどの作業か分からない。
+	// Branch is the branch the working copy currently has checked out (display only). A
+	// worktree's folder name is a random slug, so without this the recipient cannot tell
+	// which piece of work a row is.
 	Branch string
-	// Activity は Agent の live state(working | idle | question | plan | permission |
-	// blocked | compacting)。State は running/stopped(生存)なので別に持つ。停止中は空。
+	// Activity is the Agent's live state (working | idle | question | plan | permission |
+	// blocked | compacting). Held separately from State, which only says running/stopped
+	// (alive or not). Empty while stopped.
 	Activity string
 }
 
@@ -443,16 +447,18 @@ type SessionShareProposal struct {
 	CreatedAt, ExpiresAt, DecidedAt, DecidedBy                       string
 }
 
-// SessionHandoffOffer は「この続きをやってほしい」を共有先へ差し出したもの（docs/log/77 /
-// ADR 0057）。
+// SessionHandoffOffer is an offer of "please carry this on" held out to a share
+// recipient (docs/log/77 / ADR 0057).
 //
-// ⚠️ SessionShareProposal と方向が逆である。あちらは共有先 → 所有者（提案し、所有者が承認）、
-// こちらは所有者 → 共有先（差し出し、共有先が承認）。owner / recipient の役割が入れ替わるので
-// 表も型も分けてある。
+// It runs in the OPPOSITE direction to SessionShareProposal: that one goes recipient →
+// owner (the recipient proposes, the owner approves), this one goes owner → recipient
+// (the owner offers, the recipient accepts). The owner / recipient roles swap, which is
+// why the table and the type are kept separate.
 //
-// Ciphertext は本文（title は平文の見出し、prompt が中身）。custodian がある環境では暗号化され、
-// 辞退・失効・撤回で空になる。RepoRemote / Branch / HeadSha は Agent が git に聞いた事実で、
-// 受け手が自分の作業コピーを同定するための座標。
+// Ciphertext is the body (Title is the plaintext heading, the prompt is the content). It
+// is encrypted where a custodian exists, and cleared on decline, expiry and withdrawal.
+// RepoRemote / Branch / HeadSha are facts the Agent asked git for — the coordinates the
+// recipient needs to identify the matching working copy on their side.
 type SessionHandoffOffer struct {
 	ID, TenantID, CatalogID, OwnerMembershipID, RecipientMembershipID string
 	Title, Ciphertext, KeyRef                                         string
@@ -475,10 +481,10 @@ type LFSLock struct {
 }
 
 // Store is the MetadataStore port — the union of the feature-scoped sub-
-// interfaces below (docs/log/23 P2-W3). 実装は単一の SQL（sqlite/postgres 共用）
-// のまま。利用側は原則 Store を持つが、独立コンポーネントは必要最小のサブ
-// インターフェース（narrow view）に依存できる（例: git_gc.go）。メソッドの
-// 追加は該当サブインターフェースへ。
+// interfaces below (docs/log/23 P2-W3). The implementation stays a single SQL layer
+// shared by sqlite and postgres. Callers normally hold Store, but a self-contained
+// component may depend on the narrowest sub-interface it needs instead (git_gc.go, for
+// example). A new method goes on the sub-interface it belongs to.
 type Store interface {
 	TenantStore
 	IdentityStore
@@ -532,7 +538,8 @@ type SessionShareStore interface {
 	TransitionSessionShareProposal(ctx context.Context, id, from, to, decidedBy, decidedAt string, clearBody bool) (bool, error)
 	ClaimSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, now, leaseUntil string) (SessionShareProposal, SharedSessionCatalog, string, error)
 	FinalizeSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, decidedAt string) (bool, error)
-	// メンバーへの引き継ぎ（docs/log/77）。共有 ACL の派生物なので同じサブインターフェースに置く。
+	// Handing a session over to another member (docs/log/77). It derives from the share
+	// ACL, so it lives on the same sub-interface.
 	CreateSessionHandoffOffer(ctx context.Context, row SessionHandoffOffer) (bool, error)
 	GetSessionHandoffOffer(ctx context.Context, id string) (SessionHandoffOffer, bool, error)
 	ListSessionHandoffOffersByOwner(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error)
@@ -576,7 +583,7 @@ type TenantStore interface {
 // SQL layer stores and returns it, and tenant_idp.go owns the sealing.
 //
 // ★ Status governs everything. Only "active" rows are turned into a provider, and
-// a row is born "pending" until a super_admin approves it (決定 30). ApprovedBy /
+// a row is born "pending" until a super_admin approves it (decision 30). ApprovedBy /
 // ApprovedAt are the copy of that approval kept next to the row — the audit ledger
 // is the record.
 type TenantIdP struct {
@@ -585,7 +592,7 @@ type TenantIdP struct {
 	// Kind selects the adapter the row is built into and therefore which of the
 	// fields below mean anything: "oidc" (the P4 default) uses Issuer/Trust/
 	// AllowedTIDs, "github" uses AllowedOrgs and pins Issuer to https://github.com
-	// (docs/log/61 §61.15 + 決定 35).
+	// (docs/log/61 §61.15 + decision 35).
 	Kind                        string
 	Issuer, ClientID            string
 	SecretEnc, KeyRef           string
@@ -595,7 +602,7 @@ type TenantIdP struct {
 	// LinkClaim names the stable claim rule 1.5 should match on, for an issuer whose
 	// `sub` is pairwise (docs/log/61 §61.15.10). ★ A tenant may only name a claim from a
 	// closed list (tenantLinkClaims): naming `email` or `upn` would build an
-	// email join inside a shared realm, which is precisely what 決定 32 refuses. The
+	// email join inside a shared realm, which is precisely what decision 32 refuses. The
 	// VALUE is never taken from this row — only the name is configuration.
 	LinkClaim                       string
 	Status                          string // pending | active | suspended
@@ -642,7 +649,7 @@ type TenantIdPStore interface {
 	TenantIdPIssuerInUse(ctx context.Context, issuer, excludeID string) (bool, error)
 	// CountMembersOnlyOnProvider counts a tenant's ACTIVE members whose only proven
 	// sign-in is this provider — the people who would have no way in if it stopped
-	// (docs/log/61 §61.17.4 の順序). Used to warn before suspending, never to refuse:
+	// (docs/log/61 §61.17.4, the ordering). Used to warn before suspending, never to refuse:
 	// stopping a compromised IdP must stay faster than starting one.
 	CountMembersOnlyOnProvider(ctx context.Context, tenantID, providerID string) (int, error)
 }
@@ -654,7 +661,7 @@ type TenantIdPStore interface {
 // ★ There is no status. Unlike TenantIdP, this row declares nothing about who
 // anybody is — it only names the OAuth app a member's "connect GitHub / Bitbucket"
 // button talks to — so it takes effect the moment the tenant_admin saves it
-// (ADR0052 決定 3). An empty SecretEnc is normal for GitHub: its device flow
+// (ADR0052 decision 3). An empty SecretEnc is normal for GitHub: its device flow
 // authenticates with the client_id alone.
 type TenantGitOAuth struct {
 	ID, TenantID, Provider string
@@ -693,7 +700,7 @@ type IdentityLink struct {
 	// to make, because the realm is asserted by the adapter and verified against
 	// that IdP, never taken from the tenant's row (docs/log/61 §61.15).
 	Realm string
-	// RealmClaim / RealmSubject are rule 1.5's SECOND key (docs/log/61 §61.15.10 + 決定
+	// RealmClaim / RealmSubject are rule 1.5's SECOND key (docs/log/61 §61.15.10 + decision
 	// 38). Some IdPs make `sub` pairwise — Entra's is a function of (app registration,
 	// user) — so the same person through two app registrations on one issuer is two
 	// subjects and rule 1.5 never fires. A provider may therefore also name a stable
@@ -739,7 +746,7 @@ type IdentityStore interface {
 	//
 	// ★ EmailJoin selects rule 2 ("this address already belongs to someone — join
 	// that identity"). It is FALSE for a tenant-defined provider (docs/log/61 §61.11 +
-	// 決定 32): its issuer belongs to the subsidiary, not to the operator, so an
+	// decision 32): its issuer belongs to the subsidiary, not to the operator, so an
 	// admin there could otherwise mint a token carrying a colleague's address and
 	// land in that colleague's identity — home, secrets and all. The caller decides,
 	// because the naming rule that distinguishes the two kinds of provider
@@ -755,13 +762,13 @@ type IdentityStore interface {
 	// what the person proved by signing in.
 	ListLinkedProviders(ctx context.Context, identityID string) ([]LinkedProvider, error)
 	// AttachProvider binds an ALREADY-PROVEN (provider, subject) to an EXISTING
-	// identity, at that person's own request (docs/log/61 §61.16 + 決定 37). It differs
+	// identity, at that person's own request (docs/log/61 §61.16 + decision 37). It differs
 	// from LinkIdentity in three ways that are the whole point:
 	//
 	//   - it never creates an identity and never resolves one — the caller passes the
 	//     identity that is already signed in;
 	//   - it never touches the identity row: not the email, and above all not the
-	//     role (決定 31 — a linked method must not be able to hand out a deployment
+	//     role (decision 31 — a linked method must not be able to hand out a deployment
 	//     role, the same reason roleHint is suppressed for tenant-defined providers);
 	//   - it REFUSES rather than re-points when the pair (or the same IdP account
 	//     reached through another button — rule 1.5) already belongs to somebody:
@@ -769,13 +776,13 @@ type IdentityStore interface {
 	//     merge, and a merge cannot be undone (§61.5).
 	AttachProvider(ctx context.Context, identityID string, link IdentityLink) error
 	// DetachProvider removes one sign-in method from a person's account (docs/log/61
-	// §61.16.4, the deferred half of 決定 37). identityID is always in the WHERE, so
+	// §61.16.4, the deferred half of decision 37). identityID is always in the WHERE, so
 	// no caller can reach somebody else's row even with a (provider, subject) it
 	// guessed.
 	//
 	// ★ It REFUSES to remove the last one (ErrLastLoginMethod). An account with no
 	// method left cannot be signed into at all, and there is no recovery path from
-	// the Console — this deployment has no password and no SMTP (決定 28). The count
+	// the Console — this deployment has no password and no SMTP (decision 28). The count
 	// is taken in SQL, in the same statement, because the caller's check and the
 	// delete are otherwise two moments with a browser tab in between.
 	// ErrNoSuchLoginMethod means the pair is not this person's (or not there at all);
@@ -789,7 +796,7 @@ type IdentityStore interface {
 	// DemoteSuperAdmins drops every identity whose deployment role is super_admin
 	// and whose email is NOT in keep back to "user", and returns the demoted
 	// addresses. SUPER_ADMIN_EMAILS is the single source of truth and CP runs this
-	// once at STARTUP (ADR0043 決定 24): a login-time sync would never reach the
+	// once at STARTUP (ADR0043 decision 24): a login-time sync would never reach the
 	// person who left, because the person who left never logs in again. Identities
 	// with an empty email are left alone — they cannot be named in the env, so
 	// demoting them would be unrecoverable by the documented procedure.
@@ -823,7 +830,7 @@ type MembershipStore interface {
 	// SetMembershipStatus deactivates (or restores) a membership. Offboarding is a
 	// LOGICAL delete: the workspace, its home and its secrets survive, but every
 	// path that resolves a membership already requires status='active', so the
-	// person is locked out on the next request (docs/log/61 §61.10.6 / 決定 22).
+	// person is locked out on the next request (docs/log/61 §61.10.6 / decision 22).
 	// This is what offboarding means, and it stays the default: DeleteMembership
 	// below is a second, deliberate step taken later.
 	SetMembershipStatus(ctx context.Context, membershipID, status string) error
@@ -853,7 +860,7 @@ type MembershipStore interface {
 	// tenant-defined provider (docs/log/61 §61.11) may only admit that tenant's own
 	// people, so its entry gate cannot use the deployment-wide answer above: being
 	// on some other subsidiary's roster is not permission to use this subsidiary's
-	// IdP (決定 32-3).
+	// IdP (decision 32-3).
 	EmailHasActiveMembershipInTenant(ctx context.Context, email, tenantID string) (bool, error)
 	// AnyActiveMembership reports whether the deployment has any roster at all —
 	// used by the startup warning, which must no longer claim "every login is
@@ -868,7 +875,7 @@ type WorkspaceStore interface {
 	GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error)
 	CreateWorkspace(ctx context.Context, ws Workspace) error
 	// DeleteWorkspace removes the row and its dependents. Irreversible, and only ever
-	// reached through the explicit destroy operation (ADR 0045 決定 13-2).
+	// reached through the explicit destroy operation (ADR 0045 decision 13-2).
 	DeleteWorkspace(ctx context.Context, workspaceID string) error
 	SetWorkspaceState(ctx context.Context, workspaceID, state string) error
 	RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error)
@@ -1026,7 +1033,7 @@ type UsageStore interface {
 // by the Cost Explorer poller (docs/log/67, ADR 0048). MembershipID=="" is the SHARED
 // bucket — infrastructure that belongs to nobody. Amounts are integer micro-units of
 // Currency; they are never converted to another currency and never divided among
-// people (決定 4 / 決定 6).
+// people (decision 4 / decision 6).
 type CloudCostRow struct {
 	Day, MembershipID, TenantID, Service string
 	Unblended, Amortized                 int64
@@ -1096,7 +1103,7 @@ type MemoStore interface {
 	MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error
 	SweepSentMemos(ctx context.Context, retainBefore string) error
 
-	// Categories (docs/log/21 UI刷新). First-class so they can be created empty, reordered,
+	// Categories (docs/log/21 UI overhaul). First-class so they can be created empty, reordered,
 	// and renamed (the rename cascades onto the memos via ReassignMemoCategory). All
 	// ownership-guarded by membership_id, like the memo methods above.
 	ListCategories(ctx context.Context, membershipID string) ([]MemoCategory, error)

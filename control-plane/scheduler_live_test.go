@@ -20,8 +20,9 @@ import (
 // This is the closest deterministic proof-of-fire available without a running deployment.
 
 // recordingFirer captures fires from the live ticker goroutine; guarded because run() and
-// the test read it from different goroutines. `fires` は発火のたびに 1 つ入る通知
-// （バッファ付き・**送信はノンブロッキング**なので、誰も待っていなくても発火を妨げない）。
+// the test read it from different goroutines. `fires` carries one notification per fire;
+// it is buffered and the send is non-blocking, so a fire is never held up by the fact
+// that nobody is waiting.
 type recordingFirer struct {
 	mu     sync.Mutex
 	fired  []store.Schedule
@@ -40,7 +41,7 @@ func (f *recordingFirer) fire(_ context.Context, sch store.Schedule, _ time.Time
 	if f.fires != nil {
 		select {
 		case f.fires <- struct{}{}:
-		default: // 誰も待っていない / バッファ満杯 —— 記録は fired に残るので落として構わない
+		default: // nobody waiting / buffer full — fired still keeps the record
 		}
 	}
 	if f.status != "" {
@@ -64,21 +65,22 @@ func (f *recordingFirer) first() (store.Schedule, bool) {
 	return f.fired[0], true
 }
 
-// waitFire は発火を **イベントで** 待つ。以前はここが「2 秒まで 10 ms 間隔でポーリング」
-// だったが、それは**負荷で落ちる形**である —— 30 ms の ticker が 2 秒の間に何回回るかは
-// 機械の忙しさ次第で、遅れたことと発火しないことを区別できない。
+// waitFire waits for a fire BY EVENT, not by polling a fixed budget. How many times a
+// 30 ms ticker turns inside a fixed window is a function of how busy the machine is, so a
+// poll loop cannot tell "late" apart from "never fired".
 //
-// ⚠️ **これは「待ち時間を伸ばして緩めた」のではない。** 緑になる速さは変わらない（発火した
-// 瞬間に返る）。締切は「起きなかった」と**断定する**ためだけにあるので、長くしても検査は
-// 弱くならず、短いと嘘をつく。
+// The deadline is not slack. It does not slow the green path down — this returns the
+// instant a fire arrives — and it exists only to ASSERT that nothing happened, so a
+// generous one does not weaken the check while a tight one lies.
 //
-// 🔴 **保証するのは「firer が呼ばれた」ことだけで、台帳が前進したことではない。**
-// 通知は firer の内側（fire の中）から送られるのに対し、台帳の前進 RecordScheduleFire と
-// 実行履歴の追記 AppendScheduleRun は **firer が戻ったあと**に ticker の goroutine が
-// 走らせる（scheduler.go の runOne）。その間には advanceNextRun と SQLite への書き込みが
-// 挟まるので、ここから戻った直後に台帳を読むと**まだ前進していないことがある**。
-// 実測（2026-09-04・8 コア）: 200 反復に 1 回ほど `last_status="" want fired`。
-// **待ち時間の問題ではないので締切を伸ばしても直らない。台帳を読む前に waitLedger を通すこと。**
+// What it guarantees is that the FIRER WAS CALLED, and nothing about the ledger. The
+// notification is sent from inside fire, whereas the ledger advance (RecordScheduleFire)
+// and the run-history append (AppendScheduleRun) run in the ticker goroutine AFTER the
+// firer returns (runOne in scheduler.go), with advanceNextRun and a SQLite write in
+// between. Reading the ledger straight after this returns can therefore find it not yet
+// advanced: measured at roughly 1 iteration in 200 on 8 cores (`last_status="" want
+// fired`). It is not a waiting problem, so a longer deadline does not fix it — go through
+// waitLedger before reading the ledger.
 func (f *recordingFirer) waitFire(t *testing.T, d time.Duration) {
 	t.Helper()
 	select {
@@ -88,23 +90,28 @@ func (f *recordingFirer) waitFire(t *testing.T, d time.Duration) {
 	}
 }
 
-// liveFireDeadline は「発火しなかった」と断定するまでの上限。共有ホストで他のセッションが
-// ビルドを回していても、発火そのものが起きないことは無い。
+// liveFireDeadline is the ceiling before declaring that no fire happened. Generous on
+// purpose: another session running a build on this shared host delays a fire, it never
+// stops one from happening.
 const liveFireDeadline = 30 * time.Second
 
-// waitLedger は台帳が発火を書き終える（cond が真になる）まで待って、その行を返す。
+// waitLedger waits until the ledger has finished writing the fire (cond becomes true) and
+// returns that row.
 //
-// **waitFire と対で使う。** waitFire が保証するのは firer の呼び出しまでで、台帳の前進は
-// その後に別の goroutine（ticker）が走らせるため、2 つの間には必ず窓がある。ここを
-// 「発火した＝台帳も前進済み」と決め打つと、contention で破れる（waitFire の注記を参照）。
+// Use it PAIRED with waitFire. waitFire only guarantees the firer call, while the ledger
+// advance runs afterwards in another goroutine (the ticker), so there is always a window
+// between the two; treating "it fired" as "the ledger has advanced" breaks under
+// contention (see waitFire).
 //
-// ⚠️ **待ち時間を稼ぐための sleep ではない。** cond が真になった瞬間に返るので緑になる速さは
-// 変わらず、締切は「前進しなかった」と**断定する**ためだけにある —— waitFire と同じ考え方。
+// This is not a sleep to buy time. It returns the moment cond is true, so the green path
+// is no slower, and the deadline exists only to ASSERT that nothing advanced — the same
+// reasoning as waitFire.
 //
-// 🔴 **cond には「台帳が前進したか」だけを書き、期待する値そのものを書かないこと。**
-// 例えば `LastStatus == "fired"` を条件にすると、scheduler が `error:...` を書いた場合に
-// 締切まで待たされたうえ「前進しなかった」という**嘘の見出し**で落ちる。「前進したか」で
-// 待ち、値の判定は呼び出し側のアサーションに残す —— そうすれば従来どおりの文言で落ちる。
+// cond must test ONLY whether the ledger advanced, never the expected value itself.
+// Conditioning on `LastStatus == "fired"`, for instance, makes a scheduler that wrote
+// `error:...` wait out the whole deadline and then fail under the FALSE headline "it did
+// not advance". Wait on "advanced" and leave the value judgement to the caller's
+// assertion, which then fails with its own wording.
 func waitLedger(t *testing.T, ctx context.Context, st *store.SQL, id string, d time.Duration, cond func(store.Schedule) bool) store.Schedule {
 	t.Helper()
 	deadline := time.Now().Add(d)
@@ -127,9 +134,9 @@ func waitLedger(t *testing.T, ctx context.Context, st *store.SQL, id string, d t
 	}
 }
 
-// waitRuns は実行履歴が n 行に達するまで待って、その一覧を返す。AppendScheduleRun は
-// RecordScheduleFire の **さらに後**（best-effort）なので、台帳の前進を待っただけでは
-// まだ書かれていないことがある。
+// waitRuns waits until the run history has reached n rows and returns them.
+// AppendScheduleRun runs even later than RecordScheduleFire and is best-effort, so having
+// waited for the ledger to advance is not enough to know it has been written.
 func waitRuns(t *testing.T, ctx context.Context, st *store.SQL, id, membershipID string, n int, d time.Duration) []store.ScheduleRun {
 	t.Helper()
 	deadline := time.Now().Add(d)
@@ -195,9 +202,10 @@ func TestLiveOperatorCreateThenTickerFires(t *testing.T) {
 	}
 
 	// Ledger + history reflect the fire, and a spent `once` disabled itself.
-	// 台帳の前進は firer の呼び出しより後なので、waitFire だけでは足りない（waitLedger の注記）。
+	// The ledger advances after the firer call, so waitFire alone is not enough (see
+	// waitLedger).
 	got := waitLedger(t, ctx, st, dto.ID, liveFireDeadline, func(s store.Schedule) bool {
-		return s.LastStatus != "" // 「前進したか」だけを待つ。値の判定は下のアサーションが持つ
+		return s.LastStatus != "" // wait on "did it advance"; the value is judged below
 	})
 	if got.LastStatus != "fired" {
 		t.Fatalf("last_status=%q want fired", got.LastStatus)
@@ -212,9 +220,10 @@ func TestLiveOperatorCreateThenTickerFires(t *testing.T) {
 
 	// The ticker must not re-fire the now-disabled row.
 	//
-	// ⚠️ ここは 150 ms 眠って数を見ていた。**眠っている間に tick が 1 度も回らなくても
-	// 通る**ので、検査が空振りしていても分からない（負荷が上がるほど空振りしやすい＝
-	// 一番効いてほしいときに効かない）。ループを止め、tick を**同期で 2 回**踏む。
+	// Sleeping and then counting would pass even if no tick ever ran during the sleep,
+	// so a check that tested nothing is indistinguishable from a real pass — and the
+	// busier the host, the likelier that is, i.e. it stops working exactly when it
+	// matters. Stop the loop and step tick synchronously, twice.
 	cancel()
 	firstCount := ff.count()
 	sc.tickAt(ctx, time.Now().UTC())
@@ -249,15 +258,15 @@ func TestLiveRunNowFiresThroughTicker(t *testing.T) {
 	sc := newScheduler(st, ff, 30*time.Millisecond)
 
 	// It must NOT fire on its own (next_run is an hour away).
-	// ⚠️ 眠って「たぶん ticker が回ったはず」で確かめない —— **tick を同期で 1 回踏む**。
-	// 眠るだけだと、その 200 ms に ticker が 1 度も回らなくても緑になる（＝この行が何も
-	// 検査していない状態を、誰も見分けられない）。
+	// Do not sleep and assume the ticker probably turned — step tick synchronously
+	// once. A sleep goes green even if the ticker never turned during it, and nobody
+	// can tell that apart from the check actually holding.
 	sc.tickAt(ctx, time.Now().UTC())
 	if ff.count() != 0 {
 		t.Fatalf("interval fired before run_now: %d", ff.count())
 	}
 
-	// ここからが主題: run_now を **ticker 経由で**拾わせる。
+	// The subject of the test: have the real ticker pick run_now up.
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go sc.run(runCtx)
@@ -270,9 +279,10 @@ func TestLiveRunNowFiresThroughTicker(t *testing.T) {
 	ff.waitFire(t, liveFireDeadline)
 
 	// interval stays enabled with a fresh future next_run after the fire.
-	// 🔴 ここも台帳の前進を待たないと破れる。run_now は next_run を「いま」に戻す
-	// （schedule.go:371-372）ので、**前進する前に読むと next_run はまだ過去のまま**＝
-	// 下の「未来へ進んだか」の判定が偽になる。waitFire から戻った時点では未確定。
+	// This breaks too without waiting for the ledger to advance: run_now resets
+	// next_run to now (schedule.go:371-372), so a read taken before the advance still
+	// sees a next_run in the past and the "moved into the future" check below is false.
+	// Returning from waitFire settles nothing here.
 	got := waitLedger(t, ctx, st, dto.ID, liveFireDeadline, func(s store.Schedule) bool {
 		return s.LastStatus != ""
 	})

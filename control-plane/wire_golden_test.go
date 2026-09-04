@@ -1,19 +1,21 @@
-// wire_golden_test.go — Console が読む代表的なレスポンス DTO の**キー集合**をゴールデン化する。
+// wire_golden_test.go — a golden of the KEY SET of the representative response DTOs the
+// Console reads.
 //
-// なぜ要るか（ADR 0067 決定 6）。ルート表（routes_golden_test.go）が守るのは「窓口が
-// 在るか」だけで、窓口から出てくる JSON の形は守らない。移送で struct を internal/ へ
-// 動かすとき、json タグの打ち直し・field の載せ忘れ・型の取り違えは **Go のコンパイラを
-// 一切鳴らさずに** Console 側だけを壊す。sessionWire は現にこれを 3 回踏んでいる
-// （Title / driver / color・context・exit 系。session_wire_test.go の冒頭に経緯）。
+// Why it exists (ADR 0067 decision 6): the route table (routes_golden_test.go) only guards
+// that an endpoint is there, not the shape of the JSON coming out of it. When a struct is
+// moved into internal/, a retyped json tag, a field left behind or a mistaken type breaks
+// the Console alone without the Go compiler making a sound. sessionWire has hit this three
+// times (Title / driver / color, context, the exit fields).
 //
-// ★ 目的は「json タグが変わったら赤くなる」ことであって、値の網羅ではない。値は
-// 既存の session_wire_test.go のような往復テストの担当。ここはキー・JSON 上の型・
-// omitempty だけを撮る。
+// The point is to go red when a json tag changes, not to cover values — round-trip tests
+// like session_wire_test.go own the values. This captures keys, the JSON-level type and
+// omitempty, nothing else.
 //
-// ★ Go の型名は書かない。移送で型が main から internal/x へ移ると型名は必ず変わるが、
-// **ワイヤは何も変わっていない**——型名を撮ると全移送が偽の赤になる。
+// Go type names are deliberately not captured: moving a type from main to internal/x always
+// changes the name while the wire is unchanged, so recording names would turn every such
+// move into a false red.
 //
-// 更新の仕方（ワイヤを意図して変えたとき）:
+// To update it after an intentional wire change:
 //
 //	cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 package main
@@ -35,14 +37,15 @@ var updateWireGolden = flag.Bool("update-wire-golden", false,
 
 const wireGoldenPath = "testdata/wire.golden"
 
-// wireGoldenTypes は「Console が実際に読む」もののうち代表を選んだもの。全 DTO を
-// 並べるのが目的ではない（それは維持されない）——**壊れると画面が壊れる**ものを置く。
+// wireGoldenTypes picks representatives of what the Console actually reads. Listing every
+// DTO is not the goal — such a list is not maintained — so what belongs here is what breaks
+// the screen when it breaks.
 //
-// ⚠️ ここに無い経路が 2 つある。どちらも struct を持たないので撮れない:
-//   - GET /api/workspace と /api/workspace/stats は map[string]any を組み立てて返す
-//     （workspace_handlers.go workspacePayload / metrics.go workspaceStats）。
-//   - /api/repos 系は Agent への素通しプロキシで、DTO は workspace/agent 側にある
-//     （そちらの wire_golden_test.go が撮っている）。
+// Two routes are absent because neither has a struct to capture:
+//   - GET /api/workspace and /api/workspace/stats build and return a map[string]any
+//     (workspace_handlers.go workspacePayload, metrics.go workspaceStats).
+//   - the /api/repos family is a pass-through proxy to the Agent, whose DTOs live in
+//     workspace/agent and are captured by the wire_golden_test.go over there.
 func wireGoldenTypes() []struct {
 	name string
 	typ  reflect.Type
@@ -51,23 +54,23 @@ func wireGoldenTypes() []struct {
 		name string
 		typ  reflect.Type
 	}{
-		// セッション一覧 / SSE。Agent 応答を decode→再 emit する中継なので、
-		// ここに無い field は silently drop される（前科 3 回）。
+		// Session list / SSE. This is a relay that decodes the Agent's answer and re-emits
+		// it, so a field missing here is dropped silently (it has happened three times).
 		{"sessionWire", reflect.TypeOf(sessionWire{})},
 		{"adminSessionRow", reflect.TypeOf(adminSessionRow{})},
-		// 使用量（管理画面の集計とヒートマップ）。
+		// Usage: the admin aggregates and the heatmap.
 		{"usageTotal", reflect.TypeOf(usageTotal{})},
 		{"usageHourlyResponse", reflect.TypeOf(usageHourlyResponse{})},
-		// 通知センター。
+		// Notification centre.
 		{"notificationDTO", reflect.TypeOf(notificationDTO{})},
-		// 作業アイテム受信箱。
+		// Work-item inbox.
 		{"workItemDTO", reflect.TypeOf(workItemDTO{})},
 		{"workItemQueryDTO", reflect.TypeOf(workItemQueryDTO{})},
 		{"workItemSessionDTO", reflect.TypeOf(workItemSessionDTO{})},
-		// メモキュー / 定時実行。
+		// Memo queue / scheduled execution.
 		{"memoDTO", reflect.TypeOf(memoDTO{})},
 		{"scheduleDTO", reflect.TypeOf(scheduleDTO{})},
-		// 版情報（更新トーストと再起動バッジ）。
+		// Version info behind the update toast and the restart badge.
 		{"imageInfo", reflect.TypeOf(imageInfo{})},
 	}
 }
@@ -87,18 +90,19 @@ func TestWireShapeGolden(t *testing.T) {
 	assertGoldenLines(t, wireGoldenPath, got)
 }
 
-// TestWireShapeGoldenCoversSessionWire は「撮れているつもりで 0 件」を防ぐ。
-// wireShape が黙って空を返す壊れ方をすると、ゴールデンは緑のまま何も守らなくなる。
+// TestWireShapeGoldenCoversSessionWire guards against capturing nothing while looking as if
+// it captured something: if wireShape breaks by silently returning empty, the golden stays
+// green and protects nothing.
 func TestWireShapeGoldenCoversSessionWire(t *testing.T) {
 	lines := wireShape(t, "sessionWire", reflect.TypeOf(sessionWire{}))
 	for _, want := range []string{
-		"sessionWire.exitCode number,omitempty",      // docs/log/26 の exit chip
-		"sessionWire.color string,omitempty",         // SSM の背景色
-		"sessionWire.driver string,omitempty",        // managed 判定
+		"sessionWire.exitCode number,omitempty",      // the docs/log/26 exit chip
+		"sessionWire.color string,omitempty",         // SSM background colour
+		"sessionWire.driver string,omitempty",        // managed-or-not
 		"sessionWire.context raw,omitempty",          // ContextBar
-		"sessionWire.backgroundBusy bool",            // BG 実行中バッジ
-		"sessionWire.locked bool,omitempty",          // 削除ロック
-		"sessionWire.workingCopyId string,omitempty", // 作業コピーの世代
+		"sessionWire.backgroundBusy bool",            // background-running badge
+		"sessionWire.locked bool,omitempty",          // deletion lock
+		"sessionWire.workingCopyId string,omitempty", // working-copy generation
 	} {
 		if !containsLine(lines, want) {
 			t.Errorf("wireShape が %q を返さない（過去に drop 事故を起こした field）", want)
@@ -115,12 +119,12 @@ func containsLine(lines []string, want string) bool {
 	return false
 }
 
-// --- 形状の抽出 ---
+// --- shape extraction ---
 
 var jsonMarshalerType = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
 
-// wireShape は 1 つの型を "<prefix>.<jsonキー> <JSON上の型>[,omitempty]" の行へ畳む。
-// 入れ子は "a.b.c"、struct の配列は "a[].b" と書く。
+// wireShape folds one type into lines of "<prefix>.<json key> <JSON type>[,omitempty]".
+// Nesting is written "a.b.c" and a slice of structs "a[].b".
 func wireShape(t *testing.T, name string, typ reflect.Type) []string {
 	t.Helper()
 	var out []string
@@ -148,7 +152,7 @@ func shapeInto(t *testing.T, prefix string, typ reflect.Type, seen map[reflect.T
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
 		if !f.IsExported() {
-			continue // json は出さない
+			continue // never marshalled
 		}
 		tag := f.Tag.Get("json")
 		if tag == "-" {
@@ -158,7 +162,7 @@ func shapeInto(t *testing.T, prefix string, typ reflect.Type, seen map[reflect.T
 		if key == "" {
 			key = f.Name
 		}
-		// 埋め込み（匿名）で json タグが無いものは field が親へ持ち上がる。
+		// An embedded (anonymous) field with no json tag lifts its fields into the parent.
 		if f.Anonymous && f.Tag.Get("json") == "" && deref(f.Type).Kind() == reflect.Struct {
 			shapeInto(t, prefix, f.Type, seen, out)
 			continue
@@ -174,8 +178,8 @@ func shapeInto(t *testing.T, prefix string, typ reflect.Type, seen map[reflect.T
 func emitField(t *testing.T, path string, typ reflect.Type, suffix string, seen map[reflect.Type]bool, out *[]string) {
 	t.Helper()
 	typ = deref(typ)
-	// 自前 MarshalJSON を持つ型は field 構成と出力が無関係なので、そこで止める
-	// （time.Time / json.RawMessage / 独自エンコーダ）。
+	// A type with its own MarshalJSON emits something unrelated to its fields, so stop
+	// there (time.Time, json.RawMessage, custom encoders).
 	if typ != reflect.TypeOf(json.RawMessage{}) &&
 		(typ.Implements(jsonMarshalerType) || reflect.PointerTo(typ).Implements(jsonMarshalerType)) {
 		*out = append(*out, path+" custom"+suffix)
@@ -188,7 +192,8 @@ func emitField(t *testing.T, path string, typ reflect.Type, suffix string, seen 
 		elem := deref(typ.Elem())
 		switch {
 		case elem.Kind() == reflect.Uint8:
-			// []byte は base64、json.RawMessage は生 JSON。どちらも「中身は撮らない」。
+			// []byte is base64 and json.RawMessage is raw JSON; neither has its contents
+			// captured.
 			if typ == reflect.TypeOf(json.RawMessage{}) {
 				*out = append(*out, path+" raw"+suffix)
 			} else {
@@ -206,8 +211,8 @@ func emitField(t *testing.T, path string, typ reflect.Type, suffix string, seen 
 	}
 }
 
-// jsonKind は Go の型名ではなく **JSON 上の型**を返す。型名を書くと移送
-// （main → internal/x）で必ず変わり、ワイヤが同じでも赤くなる。
+// jsonKind returns the JSON-level type rather than the Go type name. A name always changes
+// when a type moves (main → internal/x), which would go red with an unchanged wire.
 func jsonKind(typ reflect.Type) string {
 	switch typ.Kind() {
 	case reflect.Bool:

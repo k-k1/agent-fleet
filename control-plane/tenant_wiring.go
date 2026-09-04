@@ -1,28 +1,23 @@
 package main
 
-// tenant_wiring.go — tenant 家系（`internal/tenantsrv`）の**切断面**。3 つのものを持つ。
+// tenant_wiring.go — the seam onto the tenant family (`internal/tenantsrv`). It carries
+// three things, and no bare aliases.
 //
-// 🔴 **ここに「素の別名」は 1 本も無い**（RECLAIM-D で 0 を確認）。元は `alias_tenant.go` という
-// 名前だったが、**エイリアスを持たないので実態と合わず**、姉妹（`git_wiring.go` /
-// `mcp_wiring.go` / `memory_wiring.go` / `session_wiring.go`）に合わせて改名した。
-// **`alias_*.go` が残っていると「回収の剥がし残し」と誤読される**——回収の完了は
-// 「`alias_*.go` が消えたこと」で測られてきたため。
+//  1. The `tenantAPI` / `adminAPI` types themselves, which cannot be aliases: cloudcost.go,
+//     usage.go, audit.go, admin_stats.go, admin_sessions.go, metrics.go, usage_hourly.go,
+//     cost_profile.go and workspace_sizing.go all use `adminAPI` as a method receiver, and
+//     Go cannot define a method on another package's type, so the type has to stay in
+//     package main.
+//  2. A thin wrapper per moved handler. routes.go registers unexported methods such as
+//     `adm.listTenants`, and an unexported method cannot cross the package boundary, so an
+//     alias cannot stand in for one. A wrapper is not a bare alias and is counted
+//     separately (ADR 0067 decision 8).
+//  3. The implementation of `tenantsrv.CP` (`cpTenant`). tenantsrv cannot import package
+//     main, so this is the only path to manager / memberAuth / package-level functions.
 //
-//  1. `tenantAPI` / `adminAPI` の**型そのもの**。エイリアスにはできない: `adminAPI` は
-//     cloudcost.go / usage.go / audit.go / admin_stats.go / admin_sessions.go /
-//     metrics.go / usage_hourly.go / cost_profile.go / workspace_sizing.go が
-//     **メソッドのレシーバとして使っている**（Go は他パッケージの型にメソッドを
-//     定義できない）ので、型は package main に残るしかない。
-//  2. 移した各ハンドラの**薄いラッパ**。routes.go の登録は `adm.listTenants` のような
-//     **非公開メソッド**で、非公開メソッドは境界を越えられずエイリアスでも解けない。
-//     ラッパは「素の別名」とは別勘定（ADR 0067 決定 8 / #315 が数を外した箇所）。
-//     🔴 **routes.go は 1 行も変えていない**（`routes.golden` 無変更で担保）。
-//  3. `tenantsrv.CP` の実装（`cpTenant`）。tenantsrv は package main を import できない
-//     ので、manager / memberAuth / package 関数へ届く道はこれ 1 本だけ。
-//
-// ここに製品ロジックは無い。唯一「main 側でしか書けない」のは tenant.limits の
-// エンコード（limits.go の tenantLimits が json タグの唯一の出所）で、その写し漏れは
-// tenants_test.go の reflect 検査が落とす。
+// There is no product logic here. The one thing that can only be written on the main side
+// is the encoding of tenant.limits (limits.go's tenantLimits owns the json tags); a field
+// missed in that copy is caught by the reflect check in tenants_test.go.
 
 import (
 	"context"
@@ -35,10 +30,10 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/tenantsrv"
 )
 
-// --- 受け皿の型（package main に残る。理由は上の 1.）---------------------------------
+// --- The types that stay in package main (reason 1 above) ----------------------------
 
-// tenantAPI serves the caller-facing tenant picker（docs/log/23 残③: memberAuth 埋め
-// 込み + TenantStore の narrow view。登録側で withIdentity に包む）。
+// tenantAPI serves the caller-facing tenant picker: memberAuth embedded plus a narrow view
+// of TenantStore. The registration side wraps it in withIdentity.
 type tenantAPI struct {
 	memberAuth
 	store store.TenantStore
@@ -48,7 +43,7 @@ func newTenantAPI(m *manager) tenantAPI { return tenantAPI{memberAuth{m}, m.stor
 
 func (a tenantAPI) srv() tenantsrv.Tenants { return tenantsrv.NewTenants(cpTenant{a.mgr}, a.store) }
 
-// adminAPI is the tenant/membership admin handler set（docs/log/23 残③）: tenant
+// adminAPI is the tenant/membership admin handler set (docs/log/23): tenant
 // CRUD, memberships, quotas plus the deployment-wide admin views (usage.go,
 // audit.go, admin_sessions.go, admin_stats.go, metrics.go hostStats). The
 // handlers span most sub-stores (tenant / identity / membership / workspace /
@@ -57,16 +52,16 @@ func (a tenantAPI) srv() tenantsrv.Tenants { return tenantsrv.NewTenants(cpTenan
 // withSuperAdmin; per-tenant ones gate mid-handler via memberAuth.tenantAdminFor
 // (slug comes from the path on some routes and the body on others).
 //
-// テナント家系のハンドラ本体は internal/tenantsrv にあり、下のラッパが繋ぐ。
-// 横断ビュー（usage / audit / sessions / stats / cloud cost / host）は今も
-// package main のメソッドのまま。
+// The tenant family's handler bodies live in internal/tenantsrv and the wrappers below
+// connect to them. The cross-cutting views (usage / audit / sessions / stats / cloud cost /
+// host) are still methods on package main.
 type adminAPI struct{ memberAuth }
 
 func newAdminAPI(m *manager) adminAPI { return adminAPI{memberAuth{m}} }
 
 func (a adminAPI) srv() tenantsrv.Admin { return tenantsrv.NewAdmin(cpTenant{a.mgr}) }
 
-// --- 薄いラッパ（19 本。routes.go / 既存テストの呼び出しは 1 行も変わらない）-----------
+// --- The thin wrappers (routes.go and the existing tests call these unchanged) --------
 
 func (a tenantAPI) list(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	a.srv().List(w, r, ident)
@@ -136,7 +131,7 @@ func (a adminAPI) setTenantSlotClass(w http.ResponseWriter, r *http.Request) {
 	a.srv().SetTenantSlotClass(w, r)
 }
 
-// --- 切断面のアダプタ ----------------------------------------------------------------
+// --- The seam adapter -----------------------------------------------------------------
 
 // cpTenant implements tenantsrv.CP over the CP manager. Every method is a one-liner
 // onto something that already existed; nothing here is new behaviour.
@@ -237,7 +232,7 @@ func (d cpTenant) ParseCIDRList(s string) ([]netip.Prefix, []string, *tenantsrv.
 	return prefixes, normalized, tenantAPIError(aerr)
 }
 
-// --- tenant.limits の blob（エンコードは limits.go 側が唯一の出所）---------------------
+// --- The tenant.limits blob (limits.go is its only encoder) ---------------------------
 
 func (d cpTenant) ParseLimits(raw string) tenantsrv.Limits { return tenantLimitsOut(parseLimits(raw)) }
 

@@ -55,9 +55,10 @@ func TestEffectiveSharePermission(t *testing.T) {
 	}
 }
 
-// repo 共有はプロジェクト全体 — ベース直下だけでなく、その配下 worktree のセッションにも
-// 効く(docs/log/59 §1)。所有者の作業は worktree 側で進むので、ここが効かないと「リポジトリを
-// 共有した」のに共有先には何も見えない。逆に worktree 共有はその1つに閉じたままにする。
+// A repo share covers the whole project: sessions directly under the base working copy and
+// sessions in the linked worktrees below it (docs/log/59 §1). The owner's work mostly happens
+// on the worktree side, so without this the recipient of a "shared repository" sees nothing.
+// A worktree share, conversely, stays scoped to that one worktree.
 func TestRepoShareCoversWorktreeSessionsButWorktreeShareStaysNarrow(t *testing.T) {
 	base := store.SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-base", WorkingCopyID: "wc-base"}
 	wt := store.SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-wt", WorkingCopyID: "wc-wt",
@@ -73,8 +74,9 @@ func TestRepoShareCoversWorktreeSessionsButWorktreeShareStaysNarrow(t *testing.T
 	if got := effectivePermission(wtShare, base); got != "" {
 		t.Fatalf("worktree share must not reach the base copy: %q", got)
 	}
-	// 親不明(旧行 / marker 無し)は ParentWorkingCopyID が空。scope_key は空を拒否して
-	// いるので、空同士でどの規則にも吸い寄せられないことを固定する。
+	// A copy with an unknown parent (an old row, or one with no marker) carries an empty
+	// ParentWorkingCopyID. An empty scope_key is rejected on the rule side, so what is
+	// pinned here is that two empty values do not attract each other into any rule.
 	orphan := store.SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-orphan", WorkingCopyID: "wc-x"}
 	if got := effectivePermission(repoShare, orphan); got != "" {
 		t.Fatalf("unrelated copy matched a repo share: %q", got)
@@ -115,9 +117,10 @@ func TestSharedTranscriptDTOAllowsContentAndRejectsEveryUnknownCoordinate(t *tes
 	}
 }
 
-// 保留中の質問／プランは転写から意図的に外されている(hidePendingInteraction)ので、
-// この allowlist を通らなければ共有先には「質問が出ているあいだ何も無い」時間ができる。
-// 中身は本文と選択肢だけ、座標と許可プロンプトは通さない。
+// A pending question or plan is deliberately kept out of the transcript
+// (hidePendingInteraction), so unless it passes this allowlist the recipient sees nothing at
+// all for as long as the question is up. Only the body and the options pass; coordinates and
+// the permission prompt do not.
 func TestSharedTranscriptDTOPassesPendingInteractionButNotPermission(t *testing.T) {
 	v := map[string]any{
 		"pendingQuestions": []any{map[string]any{
@@ -144,19 +147,22 @@ func TestSharedTranscriptDTOPassesPendingInteractionButNotPermission(t *testing.
 			t.Fatalf("private/unknown field %q survived: %s", secret, encoded)
 		}
 	}
-	// 保留が無いときに空配列を生やさない(クライアントの「保留あり」判定が常に真になる)。
+	// No empty array when nothing is pending, or the client's "something is pending" test
+	// is always true.
 	if _, ok := sharedTranscriptDTO(map[string]any{})["pendingQuestions"]; ok {
 		t.Fatal("pendingQuestions present with no pending question")
 	}
 }
 
-// 却下(Escape)された質問は declined でしか見分けられない。落とすと共有先のカードは
-// 「回答済み」を名乗り、エージェントの定型文を選択された答えとして描く。
+// A question declined with Escape can only be told apart by the declined flag. Drop it and
+// the recipient's card badges itself as answered and renders the agent's own decline
+// boilerplate as the answer that was picked.
 func TestSharedTranscriptDTOKeepsDeclinedFlag(t *testing.T) {
 	v := map[string]any{"messages": []any{map[string]any{"role": "assistant", "parts": []any{map[string]any{
 		"kind": "question", "answer": "(No answer provided)", "declined": true, "qid": "toolu_1",
 	}}}},
-		// 回答が窓をまたいで届くケースのための全転写マップ。本文と却下フラグだけを通す。
+		// The whole-transcript map, for an answer that arrives after the window closed.
+		// Only the text and the declined flag pass.
 		"answers": map[string]any{"toolu_1": map[string]any{
 			"text": `"どちらにしますか"="A 案"`, "declined": false, "cwd": "/home/dev/repos/private",
 		}},
@@ -321,8 +327,9 @@ func TestFreshCatalogThrottlesInventoryButNotAuthorization(t *testing.T) {
 	if api.freshCatalog("owner-a", shareCatalogTTL) {
 		t.Fatal("a stamp older than shareCatalogTTL must reconcile")
 	}
-	// 一覧はもっと寛い窓で回り(定期ポーリングを所有者 Workspace へ流し込まない)、明示
-	// リロードだけがそれを飛び越える — ただし押しっぱなし対策の下限は残る。
+	// The list runs on a wider window, so a background poll is not pushed into the owner's
+	// Workspace, and only an explicit reload jumps past it — with the floor that keeps a
+	// held-down button from becoming an amplifier still in place.
 	api.syncedAt["owner-a"] = time.Now().Add(-shareCatalogTTL - time.Second)
 	if !api.freshCatalog("owner-a", shareListCatalogTTL) {
 		t.Fatal("the list window must be wider than the direct-read one")
@@ -405,10 +412,10 @@ func TestSyncCatalogCapturesWorktreeAndParent(t *testing.T) {
 	}
 }
 
-// 受信側の一覧は「今そこにある会話」だけを出す: repo 共有はベース＋配下 worktree の
-// セッションを覆い、所有者がアーカイブした行は(規則は残したまま)隠す。アーカイブ済みが
-// 出続けると、所有者が畳んだ古いセッションが延々と残っているように見える — これが
-// 「削除したはずのセッションが消えない」という報告の実体だった。
+// The recipient's list shows only the conversations that are there now: a repo share covers
+// the base copy plus the sessions in the worktrees below it, and a session the owner
+// archived is hidden while its rule stays. Keeping archived rows in the list reads as old
+// sessions the owner put away lingering forever (docs/log/59 §1).
 func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
@@ -484,13 +491,14 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 		if s.Permission != "ro" {
 			t.Fatalf("permission=%q for %s", s.Permission, s.Name)
 		}
-		// 受信側ツリーは作業コピーをブランチ名で見分ける(worktree のフォルダ名は
-		// ランダム slug なので、これが無いとどの作業か分からない)。
+		// The recipient's tree tells working copies apart by branch name; a worktree's
+		// folder name is a random slug, so without it there is no telling which piece
+		// of work a row belongs to.
 		if want := map[string]string{"base-live": "develop", "wt-live": "feature/x"}[s.Name]; want != s.Branch {
 			t.Fatalf("branch=%q for %s, want %q", s.Branch, s.Name, want)
 		}
-		// 状態バッジ(進行中 / 入力待ち / 質問中)の素。state は生存、activity は Agent の
-		// live state で、CP が捨てていた分。
+		// What the state badge (working / waiting / question) is made of: state is
+		// liveness, activity is the Agent's live state.
 		if s.State != "running" {
 			t.Fatalf("state=%q for %s", s.State, s.Name)
 		}
@@ -505,7 +513,8 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 		t.Fatalf("archived session stayed in the recipient list: %+v", payload.Sessions)
 	}
 
-	// 直リンク(catalog id)からの読みも同じ扱い: 一覧から隠れているものは開けない。
+	// A direct read by catalog id is treated the same way: what the list hides cannot be
+	// opened either.
 	catalog, err := st.ListSharedSessionCatalogByOwner(ctx, owner.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -574,7 +583,7 @@ func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
 		return payload.Members
 	}
 
-	// 空クエリ: 自分以外の全active メンバーが返る(自分は除外)。
+	// Empty query: every active member but the caller comes back.
 	all := search("")
 	if len(all) != 2 {
 		t.Fatalf("empty query members=%v", all)
@@ -585,13 +594,13 @@ func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
 		}
 	}
 
-	// email 部分一致で絞り込める。
+	// A substring of the email narrows it down.
 	filtered := search("acme.example")
 	if len(filtered) != 1 || filtered[0]["email"] != "alice@acme.example" {
 		t.Fatalf("filtered members=%v", filtered)
 	}
 
-	// 大文字小文字は無視される。
+	// Case is ignored.
 	upper := search("ALICE")
 	if len(upper) != 1 || upper[0]["userKey"] != "alice" {
 		t.Fatalf("case-insensitive members=%v", upper)
@@ -887,9 +896,11 @@ func TestLifecycleLeaseHeartbeatAndFencingCheckpoint(t *testing.T) {
 	}
 }
 
-// 引き継ぎ提案の中身(タイトルと本文)は共有先にも見える。転写に残るのはツール行と定型の
-// 完了文だけなので、これを出さないと「引き継いだこと」しか分からない。ただし通すのは
-// 本文と表示に要る時刻だけで、未知フィールドや置き場所は転写と同じく落とす。
+// The contents of a handoff proposal (its title and prompt) are visible to recipients too.
+// All the transcript keeps is the tool line and a boilerplate completion sentence, so
+// without this a recipient can only tell that a handoff happened. Only the body and the
+// timestamps the display needs pass; unknown fields and where it is stored are dropped, as
+// in the transcript.
 func TestSharedHandoffProposalsShowContentAndDropUnknownFields(t *testing.T) {
 	out := sharedHandoffDTO(map[string]any{"path": "/home/dev/.config/agent-fleet/session-handoffs/s.json",
 		"proposals": []any{map[string]any{

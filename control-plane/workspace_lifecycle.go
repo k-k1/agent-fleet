@@ -1,5 +1,5 @@
-// workspace_lifecycle.go — ワークスペースレコードのライフサイクルとワークスペース単位の環境変数導出。
-// manager.go からの機械的分割（docs/log/23 P2-W2）。
+// workspace_lifecycle.go — the lifecycle of a workspace record, and the derivation of the
+// per-workspace container environment.
 package main
 
 import (
@@ -19,9 +19,10 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// createWorkspaceMu serializes port allocation (MaxAgentPort+1) と CreateWorkspace
-// の check-then-act。これが無いと並行 create が同一ポートを二重割当する(TOCTOU)。
-// プロセス内直列化で足りる(CP は単一プロセス)。DB 一意制約による恒久対策は残課題。
+// createWorkspaceMu serializes the check-then-act of port allocation (MaxAgentPort+1) and
+// CreateWorkspace; without it two concurrent creates hand the same port to both (TOCTOU).
+// In-process serialization suffices because the CP is a single process — a DB unique
+// constraint is the durable fix and is still outstanding.
 var createWorkspaceMu sync.Mutex
 
 // createWorkspace allocates a new workspace record for a membership. An existing
@@ -223,9 +224,9 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 // ~/.local shadow to fall back to the baked pin — on a baked image an unattended start
 // would then uninstall ~1.3GB of CLIs that the next interactive start reinstalls. This
 // is a per-boot skip, not a policy change.
-// リテラルは docker アダプタ（internal/runtime/deps.go）が持つ。コンテナの env から
-// 読み戻して health の猶予を決めるので、この文字列は workspace イメージの entrypoint との
-// 契約であり、2 通りの綴りを持つと黙って腐る。
+// The literal itself lives in the docker adapter (internal/runtime/deps.go). It is read back
+// out of the container env to decide the health grace period, so the string is a contract
+// with the workspace image's entrypoint and rots silently if it exists in two spellings.
 
 // runtimeForUnattended rebuilds a workspace's Runtime so its NEXT container start
 // carries unattendedStartEnv. Mirrors the construction in resolveByMembership (the
@@ -249,10 +250,10 @@ func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (runt
 // (docs/log/81 §4 + §8). nil = nothing to do (previews off for this deployment) or the
 // slug could not be minted — the caller then starts with the runtime it already had.
 //
-// ★ なぜ runtime を作り直すのか: コンテナ env は起動の瞬間に確定し、buildResolved が
-// 組んだ runtime はこの起動の slug をまだ知らない。「URL は発行したが、コンテナの中の
-// アプリはそれを知らない」は、Next.js のように自分の公開 URL を env から読む作りでは
-// 半分壊れた状態そのものになる。
+// The runtime has to be rebuilt because container env is fixed at the instant of the start
+// and the runtime buildResolved assembled does not yet know this start's slug. "The URL was
+// issued but the app inside the container does not know it" is exactly a half-broken state
+// for anything that reads its own public URL out of env, Next.js being the usual case.
 func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEnv []string) runtime.Runtime {
 	if m.previewDomain == "" {
 		return nil
@@ -276,12 +277,13 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEn
 
 // rotatePreviewSlug decides which slug THIS start runs under and persists it.
 //
-//   - 既定は毎回引き直す（要件そのもの）。前回の URL はこの瞬間に死ぬ。
-//   - PreviewFixedSlug が ON の Workspace だけは、設定に予約した slug を使い回す
-//     （docs/log/81 §4.1）。外部 IdP の redirect URI 登録が前方一致もワイルドカードも
-//     受け付けないため、これが無いと NextAuth / Auth.js の構成が成立しない。
-//   - ★ 公開モードは起動のたびに必ず OFF へ戻す（fail-closed・決定 12）。この機能の
-//     事故は「公開のままにしていたのを忘れる」以外にほぼ無い。
+//   - By default a fresh slug is drawn every time, which is the requirement itself: the
+//     previous URL dies at this moment.
+//   - Only a workspace with PreviewFixedSlug ON reuses the slug reserved in its settings
+//     (docs/log/81 §4.1). An external IdP's registered redirect URI accepts neither a
+//     prefix match nor a wildcard, so without this a NextAuth / Auth.js setup cannot work.
+//   - Public mode is forced back OFF on every start (fail-closed, decision 12). Nearly the
+//     only accident this feature has is forgetting that it was left public.
 func (m *manager) rotatePreviewSlug(ctx context.Context, ws store.Workspace) (string, error) {
 	raw, _ := m.store.GetWorkspaceSettings(ctx, ws.ID)
 	st := parseWSSettings(raw)
@@ -298,10 +300,10 @@ func (m *manager) rotatePreviewSlug(ctx context.Context, ws store.Workspace) (st
 		}
 		slug = fresh
 		if st.PreviewFixedSlug {
-			st.PreviewReservedSlug = slug // 次の起動からは同じ URL に戻る
+			st.PreviewReservedSlug = slug // the same URL from the next start on
 			dirty = true
 		} else if st.PreviewReservedSlug != "" {
-			st.PreviewReservedSlug = "" // 固定を解除したら予約も捨てる
+			st.PreviewReservedSlug = "" // unpinning drops the reservation too
 			dirty = true
 		}
 	}
@@ -338,12 +340,13 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 	if days := parseLimits(t.Limits).TerminalHistoryRetentionDays; days > 0 {
 		env = append(env, "AF_TERMINAL_HISTORY_RETENTION_DAYS="+strconv.Itoa(days))
 	}
-	// プレビュー用サブドメイン（docs/log/81 §8）。★ これは飾りではない: URL は起動ごとに
-	// 変わるので、自分の公開 URL を env から知る作り（Next.js の NEXTAUTH_URL /
-	// AUTH_URL / metadataBase、Spring の app.base-url）に、正しい値を渡せる場所が
-	// ここしか無い。無いと「URL は出たがアプリが自分の場所を間違える」になる。
-	// ws.PreviewSlug が入るのは起動直前の armPreviewForStart 経由の呼び出しだけで、
-	// 通常の解決（buildResolved）では空 = 何も注入しない。
+	// Preview subdomain (docs/log/81 §8). The URL changes on every start, so this is the
+	// only place that can hand the right value to an app that learns its own public URL
+	// from env (Next.js NEXTAUTH_URL / AUTH_URL / metadataBase, Spring app.base-url);
+	// without it the URL is published but the app is wrong about where it lives.
+	// ws.PreviewSlug is only filled in on the call that goes through armPreviewForStart
+	// just before a start; ordinary resolution (buildResolved) leaves it empty and this
+	// injects nothing.
 	if m.previewDomain != "" && ws.PreviewSlug != "" {
 		ports := previewPortsOf(st)
 		strs := make([]string, 0, len(ports))
@@ -367,7 +370,7 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			"AF_INTERNAL_GIT_TOKEN="+token)
 	}
 	// Memo bridge: inject the CP public base + this membership's memo token so the
-	// in-container フリート・オペレーター can read/write the memo queue over the public
+	// in-container fleet operator can read/write the memo queue over the public
 	// hairpin (memo_bridge.go). Deterministic token → idempotent re-injection. Requires
 	// PUBLIC_BASE_URL (else the bridge is unreachable, so we inject nothing).
 	if m.publicBaseURL != "" && ws.MembershipID != "" {
@@ -416,7 +419,7 @@ const memFloorBytes = 256 * mib
 // The axes are resolved together because they are read from the same two rows; the
 // runtime factory then maps them per backend (docker --memory/--cpus, ECS task size +
 // ephemeral storage). Fargate's valid (cpu, memory) pairs are enforced later by
-// fargateSize, not here — this function is runtime-neutral (ADR 0044 決定 1).
+// fargateSize, not here — this function is runtime-neutral (ADR 0044 decision 1).
 func (m *manager) resolveWorkspaceSize(ctx context.Context, ws store.Workspace) (memBytes int64, cpuUnits, diskGB int) {
 	ul, ok, err := m.store.GetUserLimit(ctx, ws.MembershipID)
 	if err != nil || !ok {
@@ -525,7 +528,7 @@ func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws store.Workspa
 	return b
 }
 
-// destroyWorkspaceByMembership is the irreversible half of ADR 0045 決定 13: it tears
+// destroyWorkspaceByMembership is the irreversible half of ADR 0045 decision 13: it tears
 // down the runtime's resources (home, and on the cloud adapters the ECS service, EFS
 // access points, SSM secrets, EBS volume and any hibernation snapshot) and then removes
 // the DB row. It returns the resources the adapter could NOT remove, for the audit log.

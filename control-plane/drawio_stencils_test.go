@@ -19,7 +19,7 @@ func testStencils(t *testing.T) *drawioStencils {
 	return &drawioStencils{cacheDir: t.TempDir(), loading: map[string]*sync.Mutex{}}
 }
 
-// 台帳が壊れていたら他の全部が意味を失うので、まずそこを見る。
+// The manifest first: if it is broken, nothing else here means anything.
 func TestDrawioManifestLoads(t *testing.T) {
 	m, err := loadDrawioManifest()
 	if err != nil {
@@ -31,7 +31,8 @@ func TestDrawioManifestLoads(t *testing.T) {
 	if len(m.Sets) < 150 {
 		t.Fatalf("セット数 %d —— 台帳を絞ってはいけない（載っていない名前は 404 ＝ 図が黙って劣化する）", len(m.Sets))
 	}
-	// ビューアが要求するのは `<basename>.xml` だけ。それ以外を載せると防壁が緩む。
+	// The viewer only ever asks for `<basename>.xml`. Anything else in the manifest
+	// widens the barrier that keys off it.
 	for name, e := range m.Sets {
 		if !strings.HasSuffix(name, ".xml") {
 			t.Fatalf("%q は .xml ではない", name)
@@ -43,8 +44,9 @@ func TestDrawioManifestLoads(t *testing.T) {
 			t.Fatalf("%q のエントリが不正: %+v", name, e)
 		}
 	}
-	// 実測で見つけた既知の穴: libraries は sap.xml を参照するが upstream に無い。
-	// 「台帳の漏れ」と誤読して手で足さないこと（足すと存在しない URL を叩きに行く）。
+	// A known hole: the libraries reference sap.xml but upstream does not ship it.
+	// Do not read that as a gap in the manifest and add it by hand — the entry would
+	// only send fetches at a URL that does not exist.
 	if _, ok := m.Sets["sap.xml"]; ok {
 		t.Fatalf("sap.xml は upstream v31.1.8 に存在しない —— 台帳に足してはいけない")
 	}
@@ -53,7 +55,8 @@ func TestDrawioManifestLoads(t *testing.T) {
 	}
 }
 
-// 台帳に無い名前は **upstream を一切叩かずに** 404。ここが SSRF の防壁そのもの。
+// A name that is not in the manifest is a 404 without touching upstream at all. This is the
+// SSRF barrier itself.
 func TestDrawioStencilRejectsUnknownName(t *testing.T) {
 	d := testStencils(t)
 	for _, name := range []string{
@@ -61,7 +64,7 @@ func TestDrawioStencilRejectsUnknownName(t *testing.T) {
 		"../../etc/passwd",
 		"http://169.254.169.254/latest/meta-data/",
 		"aws4.xml.bak",
-		"AWS4.XML", // 大小文字を寄せない（台帳の鍵はそのまま）
+		"AWS4.XML", // no case folding: the manifest key is taken as written
 	} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/api/drawio/stencils/"+name, nil)
@@ -73,12 +76,12 @@ func TestDrawioStencilRejectsUnknownName(t *testing.T) {
 	}
 }
 
-// upstream が台帳と違うバイト列を返したら、保存も配布もしない。
+// Bytes from upstream that disagree with the manifest are neither stored nor served.
 func TestDrawioStencilRejectsTamperedBytes(t *testing.T) {
 	body := []byte("<shapes name=\"mxgraph.test\"/>")
 	sum := sha256.Sum256(body)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("<shapes name=\"mxgraph.evil\"/>!!")) // 別物
+		_, _ = w.Write([]byte("<shapes name=\"mxgraph.evil\"/>!!")) // different content
 	}))
 	defer srv.Close()
 
@@ -97,7 +100,7 @@ func TestDrawioStencilRejectsTamperedBytes(t *testing.T) {
 	}
 }
 
-// 2 回目はキャッシュから返り、upstream を叩かない。
+// The second fetch comes from the cache and never reaches upstream.
 func TestDrawioStencilCaches(t *testing.T) {
 	body := []byte("<shapes name=\"mxgraph.test\"><shape name=\"a\"/></shapes>")
 	sum := sha256.Sum256(body)
@@ -124,18 +127,19 @@ func TestDrawioStencilCaches(t *testing.T) {
 	if hits != 1 {
 		t.Fatalf("upstream を %d 回叩いた（1 回であるべき）", hits)
 	}
-	// 置き場所は sha256 の名前（台帳が変われば別ファイルになる）。
+	// Content-addressed by sha256, so a changed manifest lands on a different file.
 	if _, err := os.Stat(filepath.Join(d.cacheDir, entry.SHA256+".xml")); err != nil {
 		t.Fatalf("キャッシュファイルが無い: %v", err)
 	}
 }
 
-// 取れなくても 502 で済ませ、CP は落ちない（閉域での想定された劣化）。
+// A failed fetch is a 502 and nothing more — the CP stays up. Degrading this way is the
+// expected behaviour in an air-gapped deployment.
 func TestDrawioStencilUpstreamDownIs502(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	srv.Close() // 到達不能にする
+	srv.Close() // make it unreachable
 
 	d := testStencils(t)
 	entry := drawioStencilEntry{SHA256: strings.Repeat("0", 64), Size: 10}
@@ -145,8 +149,8 @@ func TestDrawioStencilUpstreamDownIs502(t *testing.T) {
 	}
 }
 
-// 既定束の名前が 1 つでも台帳に無ければ、その行は**黙って何もしない**。
-// 綴りを間違えても動いてしまうので、ここで突き合わせる。
+// A default-bundle name that is missing from the manifest makes that line do nothing at
+// all, and a typo still runs green — so the two lists are checked against each other here.
 func TestDrawioPreseedDefaultBundle(t *testing.T) {
 	m, err := loadDrawioManifest()
 	if err != nil {
@@ -175,34 +179,37 @@ func TestDrawioPreseedDefaultBundle(t *testing.T) {
 	for _, n := range names {
 		total += m.Sets[n].Size
 	}
-	// 既定束は「閉域の管理者がとりあえず入れる分」。全件（40.8 MB）に近づいたら
-	// 既定である意味が無いし、逆に極端に小さければ束の体をなしていない。
+	// The default bundle is what an air-gapped administrator installs without thinking
+	// about it. Approaching the full set (40.8 MB) makes "default" meaningless; far too
+	// small and it is not a bundle at all.
 	if total > 25<<20 {
 		t.Fatalf("既定束が %.1f MB —— 大きすぎる（--all との差が無い）", float64(total)/(1<<20))
 	}
 	if len(names) < 20 {
 		t.Fatalf("既定束が %d 件しかない", len(names))
 	}
-	// 巨大で用途の狭いものは既定に入れない。
+	// Large sets with a narrow audience stay out of the default.
 	for _, n := range names {
 		if strings.HasPrefix(n, "rack/hpe_aruba/") {
 			t.Fatalf("%q（3.67 MB）は既定束に入れない", n)
 		}
 	}
-	// --all は台帳と一致する。
+	// --all must match the manifest exactly.
 	if got := len(drawioPreseedNames(m, true)); got != len(m.Sets) {
 		t.Fatalf("--all が %d 件（台帳は %d 件）", got, len(m.Sets))
 	}
 	t.Logf("既定束 %d 件 / %.1f MB", len(names), float64(total)/(1<<20))
 }
 
-// 事前投入の眼目は「**外に出られなくても配れる**」こと。upstream を到達不能にしたまま
-// 投入済みキャッシュから返せることを見る（これが緑でなければ P1b は何の役にも立たない）。
+// The whole point of preseeding is serving with no way out to the network, so this serves
+// from a preseeded cache while upstream is unreachable. If it is not green, preseeding buys
+// nothing.
 func TestDrawioStencilPreseededServesOffline(t *testing.T) {
 	body := []byte("<shapes name=\"mxgraph.test\"><shape name=\"a\"/></shapes>")
 	sum := sha256.Sum256(body)
 	entry := drawioStencilEntry{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body))}
-	// 台帳の base は解決すらできないホストにしておく。1 本でも外に出たら落ちる。
+	// The manifest base points at a host that cannot even connect, so a single outbound
+	// request fails the test.
 	m := drawioStencilManifest{Base: "http://127.0.0.1:1/", Sets: map[string]drawioStencilEntry{"test.xml": entry}}
 
 	d := testStencils(t)
@@ -218,7 +225,8 @@ func TestDrawioStencilPreseededServesOffline(t *testing.T) {
 		t.Fatalf("中身が違う")
 	}
 
-	// 投入されたものが台帳と食い違っていたら（版ずれ・壊れたコピー）、使わない。
+	// Preseeded bytes that disagree with the manifest (a version skew, a corrupted
+	// copy) are not used.
 	if err := os.WriteFile(d.pathFor(entry), []byte("<shapes/>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -227,8 +235,9 @@ func TestDrawioStencilPreseededServesOffline(t *testing.T) {
 	}
 }
 
-// store は必ず一時名 → rename。書きかけが正規名で見えると、検証済みの顔をした
-// 壊れたバイト列が配られる（事前投入は稼働中の CP と同じディレクトリを触る）。
+// store always writes to a temporary name and renames. A half-written file visible under
+// the real name would be served as verified bytes, and preseeding writes into the same
+// directory a live CP reads from.
 func TestDrawioStencilStoreIsAtomic(t *testing.T) {
 	d := testStencils(t)
 	body := []byte("<shapes/>")
@@ -241,7 +250,7 @@ func TestDrawioStencilStoreIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 一時ファイルが残っていない ＝ rename されている。
+	// No leftover temporary file means the rename happened.
 	if len(ents) != 1 || strings.HasPrefix(ents[0].Name(), ".tmp-") {
 		var names []string
 		for _, e := range ents {
@@ -254,9 +263,9 @@ func TestDrawioStencilStoreIsAtomic(t *testing.T) {
 	}
 }
 
-// upstream の瞬断は再試行する。**1 回の reset で 502 を返すと、Console 側は
-// そのセットを「頼んだ済み」にしたまま二度と要求せず、アイコンだけが欠けたままになる。**
-// 実測でも raw.githubusercontent の connection reset を踏んだ。
+// A momentary upstream failure is retried. Returning 502 on a single reset leaves the
+// Console marking that set as already requested, so it never asks again and the icons stay
+// missing. Observed for real as a connection reset from raw.githubusercontent.
 func TestDrawioStencilRetriesTransient(t *testing.T) {
 	body := []byte("<shapes name=\"mxgraph.test\"><shape name=\"a\"/></shapes>")
 	sum := sha256.Sum256(body)
@@ -265,7 +274,7 @@ func TestDrawioStencilRetriesTransient(t *testing.T) {
 	var tries int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if atomic.AddInt32(&tries, 1) < 3 {
-			// 接続ごと切る（ネットワーク層の失敗＝再試行すべきもの）。
+			// Drop the connection: a network-layer failure, the kind worth retrying.
 			hj, ok := w.(http.Hijacker)
 			if !ok {
 				t.Error("hijack できない")
@@ -295,7 +304,8 @@ func TestDrawioStencilRetriesTransient(t *testing.T) {
 	}
 }
 
-// 逆に、何度やっても同じ失敗は繰り返さない（404 と、完全に取れたうえでの不一致）。
+// The mirror image: a failure that will repeat identically is not retried — a 404, and a
+// mismatch on a response that arrived complete.
 func TestDrawioStencilDoesNotRetryPermanent(t *testing.T) {
 	body := []byte("<shapes/>")
 	sum := sha256.Sum256(body)
@@ -307,9 +317,9 @@ func TestDrawioStencilDoesNotRetryPermanent(t *testing.T) {
 		tries int32
 	}{
 		{"404", func(w http.ResponseWriter) { w.WriteHeader(http.StatusNotFound) }, 1},
-		// 長さは合っているのに中身が違う ＝ 途中で切れたのではなく別物。
+		// Right length, wrong bytes: not a truncated transfer, a different file.
 		{"改竄", func(w http.ResponseWriter) { _, _ = w.Write([]byte("<shapeX/>")) }, 1},
-		// 5xx は一時的なことがあるので再試行する。
+		// A 5xx can be transient, so it is retried.
 		{"503", func(w http.ResponseWriter) { w.WriteHeader(http.StatusServiceUnavailable) }, drawioFetchTries},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

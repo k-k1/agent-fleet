@@ -3,7 +3,8 @@ package main
 import "testing"
 
 func TestEnglishToKana(t *testing.T) {
-	// 代表語の実出力をログしつつ、辞書ロード・変換が動くことを確認する。
+	// Logs the actual output for a spread of words while checking that the dictionary
+	// loads and the conversion runs at all.
 	words := []string{
 		"hello", "world", "cat", "dog", "coffee", "google", "python",
 		"apple", "computer", "banana", "music", "language", "voice",
@@ -19,7 +20,8 @@ func TestEnglishToKana(t *testing.T) {
 }
 
 func TestEnglishToKanaMixed(t *testing.T) {
-	// 日英混在: 日本語・記号・数字はそのまま、英単語のみ変換。
+	// Mixed input: Japanese, punctuation and digits pass through untouched; only the
+	// English words are converted.
 	got := englishToKana("これは pen です。 iPhone を3個。")
 	t.Logf("mixed -> %s", got)
 	if !containsJP(got, "これは") || !containsJP(got, "です") {
@@ -49,7 +51,7 @@ func TestAcronymAndCamel(t *testing.T) {
 }
 
 func TestTechTerms(t *testing.T) {
-	// AWS/開発ジャルゴンのオーバーライド＋略語＋数字ルールの網羅確認。
+	// Covers the AWS / dev-jargon overrides together with the acronym and digit rules.
 	want := map[string]string{
 		"EC2":        "イーシーツー",
 		"S3":         "エススリー",
@@ -73,14 +75,15 @@ func TestTechTerms(t *testing.T) {
 			t.Errorf("%q -> %q, want %q", in, got, exp)
 		}
 	}
-	// 単独の数字は日本語読みのまま（英字と地続きの数字だけ英語読み）。
+	// A standalone digit keeps its Japanese reading; only a digit that runs straight into
+	// letters is read as English.
 	if got := englishToKana("3個"); got != "3個" {
 		t.Errorf("単独数字 3個 -> %q, want 3個", got)
 	}
 }
 
 func TestCorpusTerms(t *testing.T) {
-	// 過去セッションのコーパスから追加した未カバー語（enkana_dict.go 後半）。
+	// Words the base dictionary does not cover (second half of enkana_dict.go).
 	want := map[string]string{
 		"config":   "コンフィグ",
 		"grep":     "グレップ",
@@ -92,7 +95,8 @@ func TestCorpusTerms(t *testing.T) {
 		"codex":    "コーデックス",
 		"voicevox": "ボイスボックス",
 		"zundamon": "ずんだもん",
-		// 小文字略語は大文字表記でも同じ読み（convertWord が小文字化して techKana を引く）。
+		// A lower-case acronym reads the same in upper case: convertWord lower-cases
+		// before looking up techKana.
 		"mcp": "エムシーピー",
 		"MCP": "エムシーピー",
 		"css": "シーエスエス",
@@ -107,8 +111,9 @@ func TestCorpusTerms(t *testing.T) {
 }
 
 func TestProtocolAndBizAcronyms(t *testing.T) {
-	// ネットワーク・開発/ビジネス略語の追加分。CMUdict に実在語として載っていて誤読される
-	// もの（nat/sap/roi/seo 等）が上書きで正しく読めているかも確認する。
+	// Network and dev/business acronyms. Some of them (nat, sap, roi, seo) also exist in
+	// CMUdict as ordinary words and are misread without an override, so the override is
+	// checked here as well.
 	want := map[string]string{
 		"https":  "エイチティーティーピーエス",
 		"tcp":    "ティーシーピー",
@@ -131,7 +136,7 @@ func TestProtocolAndBizAcronyms(t *testing.T) {
 }
 
 func TestNumeronymLikeCombos(t *testing.T) {
-	// 略語＋数字のトークン全体一致（EC2/route53 と同じ扱い）。
+	// Acronym-plus-digit forms match on the whole token, the same as EC2 / route53.
 	want := map[string]string{
 		"b2b":  "ビーツービー",
 		"p2p":  "ピーツーピー",
@@ -146,7 +151,7 @@ func TestNumeronymLikeCombos(t *testing.T) {
 }
 
 func TestCompanyAndToolNames(t *testing.T) {
-	// 企業名・クラウド/インフラツール・言語フレームワークの追加分。
+	// Company names, cloud/infrastructure tools and language frameworks.
 	want := map[string]string{
 		"salesforce":  "セールスフォース",
 		"ubuntu":      "ウブントゥ",
@@ -166,8 +171,8 @@ func TestCompanyAndToolNames(t *testing.T) {
 }
 
 func TestGeneralDevWords(t *testing.T) {
-	// 実機フィードバックの読み希望（version/message/session/setting/status/daemon/console 等）。
-	// CMUdict の音写が慣用カタカナから外れる語を慣用読みで固定できているか。
+	// Everyday development words whose CMUdict transcription drifts away from the katakana
+	// people actually use; each is pinned to the conventional reading.
 	want := map[string]string{
 		"version":  "バージョン",
 		"revision": "リビジョン",
@@ -194,7 +199,8 @@ func TestGeneralDevWords(t *testing.T) {
 }
 
 func TestUnitsAndSignals(t *testing.T) {
-	// 容量単位（二進 MiB / 十進 MB）とシグナル名。キーは小文字化されるので大文字表記でも引く。
+	// Capacity units (binary MiB, decimal MB) and signal names. Keys are lower-cased on
+	// lookup, so an upper-case spelling resolves to the same entry.
 	want := map[string]string{
 		"MiB":     "メビバイト",
 		"GiB":     "ギビバイト",
@@ -214,7 +220,8 @@ func TestUnitsAndSignals(t *testing.T) {
 }
 
 func TestUnixOperatorTerms(t *testing.T) {
-	// UNIX コマンド / オペレータ用語（提案分）。慣用の発音で固定できているか。
+	// UNIX commands and operator jargon, pinned to how they are actually pronounced rather
+	// than how they are spelled.
 	want := map[string]string{
 		"chmod":     "チェンジモッド",
 		"chown":     "チャウン",
@@ -239,9 +246,10 @@ func TestUnixOperatorTerms(t *testing.T) {
 }
 
 func TestSingleUpperLetter(t *testing.T) {
-	// 単独の大文字 1 文字（案A・パターンB 等）は CMUdict の実在語（a/i/o が冠詞・代名詞
-	// として載っている）に化けて誤読される（例: "A"→"ア"）ため、英字名読みに固定する。
-	// 実機フィードバックで "案A" が「あんあ」と読まれる不具合として発覚。
+	// A standalone upper-case letter (option A, pattern B) otherwise hits a real CMUdict
+	// entry — a, i and o are in there as an article and as pronouns — and is read as that
+	// word instead of as a letter, which makes a label like "option A" unintelligible. So
+	// single upper-case letters are pinned to the letter's own name.
 	want := map[string]string{
 		"A": "エー",
 		"B": "ビー",
@@ -253,16 +261,16 @@ func TestSingleUpperLetter(t *testing.T) {
 			t.Errorf("%q -> %q, want %q", in, got, exp)
 		}
 	}
-	// 小文字の単独文字（英文中の "a" 等）は対象外＝CMUdict の英単語読みのまま
-	// （文字名読みに変わらないことを確認）。
+	// A standalone lower-case letter (the "a" of ordinary prose) is out of scope and keeps
+	// its CMUdict word reading rather than becoming a letter name.
 	if got := englishToKana("a"); got == "エー" {
 		t.Errorf("小文字 a が文字名読みになった: %q", got)
 	}
 }
 
 func TestAgentManageFamily(t *testing.T) {
-	// 実機フィードバック: "agent"/"managed" が CMUdict のまま (エイジャント/マナジド) で
-	// 誤読されるため上書き。同根の manage 系も併せて確認。
+	// CMUdict's own reading of "agent" and "managed" is not the katakana anyone recognizes,
+	// so both are overridden; the rest of the manage family is checked alongside them.
 	want := map[string]string{
 		"agent":      "エージェント",
 		"Agent":      "エージェント",
@@ -282,8 +290,9 @@ func TestAgentManageFamily(t *testing.T) {
 }
 
 func TestReadingOverrides(t *testing.T) {
-	// 実機フィードバックの誤読修正。DOM は CMUdict 実在語 dom→ダム に化けるので慣用読み、
-	// good は末尾 D が促音化せず グド になるので固定、well は変異形 "ウェルル" 対策。
+	// Three misreadings pinned to the conventional form: DOM collides with the real CMUdict
+	// word "dom", good loses the geminate before its final D, and well picks up a variant
+	// with a doubled L.
 	want := map[string]string{
 		"DOM":  "ドム",
 		"dom":  "ドム",
@@ -298,7 +307,8 @@ func TestReadingOverrides(t *testing.T) {
 			t.Errorf("%q -> %q, want %q", in, got, exp)
 		}
 	}
-	// "dom" は完全トークン一致のみ（部分一致で kingdom/random/freedom を壊さない）。
+	// "dom" matches only as a whole token, so a substring match cannot break kingdom,
+	// random or freedom.
 	for _, w := range []string{"kingdom", "random", "freedom"} {
 		if got := englishToKana(w); got == "ドム" || containsASCIILetters(got) {
 			t.Errorf("%q が誤変換された: %q", w, got)
@@ -307,7 +317,7 @@ func TestReadingOverrides(t *testing.T) {
 }
 
 func TestReportedWebTermReadings(t *testing.T) {
-	// 実機メモで報告された Web/API 用語の慣用読みを固定する。
+	// Pins the conventional reading of the common Web/API terms.
 	want := map[string]string{
 		"body":      "ボディ",
 		"query":     "クエリ",
@@ -326,8 +336,9 @@ func TestReportedWebTermReadings(t *testing.T) {
 }
 
 func TestContractions(t *testing.T) {
-	// アポストロフィ入りの短縮形。従来は ' で語が分断され "イット'エス" 等に誤読されていた。
-	// ASCII(') とタイプグラフィ(’) の両方を同一視する。
+	// Contractions: the apostrophe must not split the word into two tokens, which reads the
+	// contraction out as its two halves. The ASCII ' and the typographic one are treated
+	// as the same character.
 	want := map[string]string{
 		"It's":     "イッツ",
 		"it's":     "イッツ",
@@ -348,18 +359,20 @@ func TestContractions(t *testing.T) {
 			t.Errorf("%q -> %q, want %q", in, got, exp)
 		}
 	}
-	// 所有格 's は「元の語＋ズ」でフォールバック（辞書 techKana も経由する）。
+	// A possessive 's falls back to the base word's reading plus the plural-style suffix,
+	// with the base still resolved through techKana.
 	poss := map[string]string{
 		"React's": "リアクトズ",
 		"user's":  "ユーザーズ",
-		"API's":   "エーピーアイズ", // API=エーピーアイ(techKana) + ズ
+		"API's":   "エーピーアイズ", // API from techKana, plus the suffix
 	}
 	for in, exp := range poss {
 		if got := englishToKana(in); got != exp {
 			t.Errorf("possessive %q -> %q, want %q", in, got, exp)
 		}
 	}
-	// 文中でも分断されず、周囲の語・句読点は保たれる。
+	// Inside a sentence it is not split either, and the surrounding words and punctuation
+	// survive.
 	if got := englishToKana("It's good, don't worry."); containsASCIILetters(got) {
 		t.Errorf("英字が残った: %q", got)
 	}

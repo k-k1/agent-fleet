@@ -414,7 +414,7 @@ func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...fu
 	defer f.mu.Unlock()
 	for _, r := range in.Resources {
 		// Volumes AND instances: quarantining a slot re-stamps af-role on the INSTANCE
-		// (決定 20), and a fake that only knew about volumes reported "tag written" while
+		// (decision 20), and a fake that only knew about volumes reported "tag written" while
 		// the box stayed in the pool — the implementation looked correct and was not.
 		var tags *[]ec2types.Tag
 		if v := f.volumes[r]; v != nil {
@@ -449,7 +449,7 @@ func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...fu
 	defer f.mu.Unlock()
 	for _, r := range in.Resources {
 		// Instances as well as volumes, for the same reason CreateTags above handles
-		// both: the slot's owner tags (af-membership / af-tenant, ADR 0048 決定 3) are
+		// both: the slot's owner tags (af-membership / af-tenant, ADR 0048 decision 3) are
 		// removed from the INSTANCE on release, and a volumes-only fake would report
 		// "cleared" while the box kept billing its last user forever.
 		var tags *[]ec2types.Tag
@@ -596,7 +596,7 @@ type fakeContainerInstances struct {
 	// to model it rather than leave the ENI there forever.
 	sink *fakeEC2
 	// stickyENI models the opposite: ECS acknowledges the deregistration but the ENI
-	// stays attached. The teardown must then refuse to stop the box (決定 3-3).
+	// stays attached. The teardown must then refuse to stop the box (decision 3-3).
 	stickyENI bool
 }
 
@@ -1249,8 +1249,8 @@ func TestECSEC2LostSlotIsAbandonedAndTheWorkspaceMovesOn(t *testing.T) {
 	}
 }
 
-// ⚠️ The one thing this teardown may NOT do. A slot stopped while ECS still holds a task
-// ENI comes back MULTI-ENI and silently loses its egress (ADR 0045 決定 3-3) — the same
+// The one thing this teardown may NOT do. A slot stopped while ECS still holds a task
+// ENI comes back MULTI-ENI and silently loses its egress (ADR 0045 decision 3-3) — the same
 // trap the sweeper refuses to go near. If the deregistration does not free the ENI, the
 // box stays up and only the HOME is taken back, forcibly, because leaving it bolted to a
 // machine that will never run anything again is the worse outcome.
@@ -1374,7 +1374,7 @@ func TestECSEC2TaskDefinitionShape(t *testing.T) {
 		t.Errorf("placement constraint = %+v, want ec2InstanceId == i-hot", td.PlacementConstraints)
 	}
 	// EC2 reservations are against the instance: reserving here would fence the user
-	// out of the box they have exclusively (ADR 0045 決定 8).
+	// out of the box they have exclusively (ADR 0045 decision 8).
 	if td.Cpu != nil || td.Memory != nil {
 		t.Errorf("task cpu/memory must stay unset on EC2, got %v/%v", aws.ToString(td.Cpu), aws.ToString(td.Memory))
 	}
@@ -1911,7 +1911,7 @@ func TestECSEC2StillEvictsASlotOfTheRightType(t *testing.T) {
 }
 
 // Eviction crosses TENANT boundaries, and that is a decision rather than an oversight
-// (ADR 0045 決定 24). The pool is one deployment-wide resource: forbidding the crossing
+// (ADR 0045 decision 24). The pool is one deployment-wide resource: forbidding the crossing
 // would mean tenant A's dormant box cannot serve tenant B even when nothing else can,
 // which produces the one outcome the operator ruled out — a member who cannot start at
 // all. What bounds a tenant is max_workspaces (how many of its people run AT ONCE), not
@@ -2312,7 +2312,7 @@ func TestECSEC2SweeperLeavesAHomeAloneWhileItsStartIsInFlight(t *testing.T) {
 	})
 }
 
-// --- free slots (docs/log/64 §64.31, ADR 0045 決定 22) ---
+// --- free slots (docs/log/64 §64.31, ADR 0045 decision 22) ---
 //
 // A slot whose home has been released leaves the home walk entirely, so before
 // sweepFreeSlots existed NOTHING stopped it. Measured on the live deployment: three
@@ -2406,9 +2406,9 @@ func TestECSEC2SweeperLeavesAFreshlyFreedSlotAlone(t *testing.T) {
 	}
 }
 
-// ⚠️ The one guard that must never be skipped. A slot stopped while ECS still has a task
+// The one guard that must never be skipped. A slot stopped while ECS still has a task
 // ENI on it comes back MULTI-ENI and silently loses its auto-assigned public IPv4 and, on
-// a deployment without NAT, its egress (ADR 0045 決定 3-3 — reproduced on real hardware
+// a deployment without NAT, its egress (ADR 0045 decision 3-3 — reproduced on real hardware
 // through the occupied path). The free path can reach the same window.
 func TestECSEC2SweeperWaitsForTaskENIsOnAFreeSlot(t *testing.T) {
 	ctx := context.Background()
@@ -2598,7 +2598,7 @@ func TestECSEC2SweeperTerminatesALongDormantSlot(t *testing.T) {
 
 // A terminated instance stays in the cluster as ACTIVE with agentConnected=false, and a
 // ghost that looks ACTIVE still satisfies placement constraints — ECS picks it for a task
-// that then never starts (ADR 0045 決定 3-2, seen again when the three live boxes were
+// that then never starts (ADR 0045 decision 3-2, seen again when the three live boxes were
 // terminated by hand). sweepGhostInstances is the repair path; when the sweeper is itself
 // the one removing the box there is no reason to leave the window open at all.
 func TestECSEC2SweeperDeregistersTheBoxItTerminates(t *testing.T) {
@@ -2745,8 +2745,9 @@ func TestECSEC2SlotTerminateWorksWithSleepingOff(t *testing.T) {
 
 // P0's Destroy deleted the EBS home and stopped there, leaving the ECS service, both EFS
 // access points and both SSM secrets alive for a membership that no longer exists
-// (ADR 0045 決定 13, docs/log/64 §64.18.1). Everything the adapter created has to go — and the
-// hibernation snapshot with it, or a "deleted" home stays restorable and keeps billing.
+// (ADR 0045 decision 13, docs/log/64 §64.18.1). Everything the adapter created has to go —
+// and the hibernation snapshot with it, or a "deleted" home stays restorable and keeps
+// billing.
 func TestECSEC2DestroyFoldsEveryResourceItCreated(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
@@ -2826,7 +2827,7 @@ func TestECSEC2DestroyIsIdempotent(t *testing.T) {
 	}
 }
 
-// --- hibernation (ADR 0045 決定 4 + 決定 13, docs/log/64 §64.18.2) ---
+// --- hibernation (ADR 0045 decisions 4 and 13, docs/log/64 §64.18.2) ---
 
 func hibernateHarness(t *testing.T, dormantFor time.Duration) *ec2Harness {
 	t.Helper()
@@ -3119,7 +3120,7 @@ func TestECSEC2StartRefusesWhileTheHomeIsBeingCaptured(t *testing.T) {
 	}
 }
 
-// --- golden snapshot (ADR 0045 決定 9) ---
+// --- golden snapshot (ADR 0045 decision 9) ---
 
 func (f *fakeEC2) addGolden(id, pool, image string, state ec2types.SnapshotState, started time.Time) {
 	f.snapshots[id] = &ec2types.Snapshot{
@@ -3284,7 +3285,7 @@ func TestECSEC2PoolStatus(t *testing.T) {
 	}
 }
 
-// --- AZ placement (docs/log/64 §64.20.4, ADR 0045「未解決 — AZ の選び方」を閉じる) ---
+// --- AZ placement (docs/log/64 §64.20.4 — closes ADR 0045's open "which AZ" question) ---
 
 // countCalls counts the calls whose text starts with prefix — used where the POINT is how
 // many times something happened, not that it happened.
@@ -3603,7 +3604,7 @@ func TestECSEC2SpreadingFallsBackToTheFixedOrder(t *testing.T) {
 	}
 }
 
-// --- periodic backups (ADR 0045 決定 17) ---
+// --- periodic backups (ADR 0045 decision 17) ---
 
 func backupHarness(t *testing.T) *ec2Harness {
 	t.Helper()
@@ -4132,7 +4133,7 @@ func TestECSEC2ParseSlotSizesOptionalVCPU(t *testing.T) {
 }
 
 // The Console asks the runtime what the three axes mean rather than assuming Fargate
-// (ADR 0045 決定 21). On this one, CPU is not used at all, memory picks a box and the
+// (ADR 0045 decision 21). On this one, CPU is not used at all, memory picks a box and the
 // disk number is the PERSISTENT home — the opposite of what the UI used to say.
 func TestECSEC2SizingProfile(t *testing.T) {
 	f := &ecsEC2Factory{pool: ec2PoolConfig{
@@ -4155,7 +4156,7 @@ func TestECSEC2SizingProfile(t *testing.T) {
 	}
 }
 
-// --- golden candidates (ADR 0045 決定 9-1) ---
+// --- golden candidates (ADR 0045 decision 9-1) ---
 
 func (f *fakeEC2) addGoldenRole(id, pool, image, role string, state ec2types.SnapshotState, started time.Time) {
 	f.snapshots[id] = &ec2types.Snapshot{
@@ -4278,7 +4279,7 @@ func TestECSEC2StaleCandidateIsNotUsed(t *testing.T) {
 	}
 }
 
-// --- 配置できない起動が「なぜ」を言う（docs/log/70 §70.14.6） ---
+// --- an unplaceable start says why (docs/log/70 §70.14.6) ---
 
 func svcWithEvents(desired, running int32, deployAt time.Time, events ...ecstypes.ServiceEvent) ecstypes.Service {
 	return ecstypes.Service{
@@ -4299,9 +4300,9 @@ const unplaceable = "(service af-ws-x) was unable to place a task because no con
 	"instance met all of its requirements. The closest matching (container-instance abc) is " +
 	"missing an attribute required by your task."
 
-// 配置できない起動には期限が無い。ECS は理由をイベントに書いているのに CP がそれを
-// 捨てて素の starting を返していたので、`aws ecs describe-services` を手で読む以外に
-// 原因を知る方法が無かった。
+// A start that cannot be placed has no deadline. ECS writes the reason into the service
+// events; dropping it and answering a bare "starting" leaves reading
+// `aws ecs describe-services` by hand as the only way to find out why.
 func TestECSPlacementBlockedReadsTheCurrentDeployment(t *testing.T) {
 	now := time.Now()
 	deploy := now.Add(-2 * time.Minute)
@@ -4311,21 +4312,23 @@ func TestECSPlacementBlockedReadsTheCurrentDeployment(t *testing.T) {
 		t.Fatalf("the placement failure was not surfaced: %q", got)
 	}
 
-	// 直った後の再デプロイ。古い苦情はイベント一覧に残り続けるので、デプロイより前の
-	// ものを読むと通常のコールドスタートが偽の診断になる。
+	// A redeployment after the fix. The old complaint stays in the event list, so reading
+	// anything older than the current deployment turns an ordinary cold start into a
+	// bogus diagnosis.
 	if got := ecsPlacementBlocked(svcWithEvents(1, 0, now, placeEvent(now.Add(-time.Minute), unplaceable))); got != "" {
 		t.Fatalf("an event older than the current deployment was reported: %q", got)
 	}
 
-	// ふつうに上がってくる最中は何も言わない。
+	// A start that is simply coming up says nothing.
 	if got := ecsPlacementBlocked(svcWithEvents(1, 0, deploy,
 		placeEvent(now, "(service af-ws-x) has started 1 tasks: (task abc)."))); got != "" {
 		t.Fatalf("a healthy start was reported as blocked: %q", got)
 	}
 }
 
-// phase に載って初めて Console に出る。running になったら消えることまでが契約——
-// 消えないと bootPhase != "" のせいで起動ダイアログが出たままになる。
+// It only reaches the Console once it is on the phase, and clearing it when the task
+// starts running is part of the contract: a phase left behind keeps bootPhase != "", and
+// the start dialog stays on screen.
 func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
 	h := newEC2Harness(t)
 	now := time.Now()
@@ -4342,8 +4345,8 @@ func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
 		t.Fatalf("the blocked phase survived the task starting: %q", got)
 	}
 
-	// ⚠️ 進行中の Start が書いた phase は消してはいけない。4 秒ごとのポーリングが
-	// これを消すと、起動ダイアログが起動の最中に真っ白になる。
+	// A phase written by a Start still in flight must not be cleared: if the 4-second poll
+	// wipes it, the start dialog goes blank in the middle of the start.
 	h.rt.setPhase("home: attaching")
 	h.rt.clearBlockedPhase()
 	if got := h.rt.BootPhase(); got != "home: attaching" {
@@ -4419,7 +4422,7 @@ func TestECSEC2EveryServiceCallPinsOneTaskPerWorkspace(t *testing.T) {
 	}
 }
 
-// --- the workspace memory cap (ADR 0045 決定 28, docs/log/64 §64.41) ---
+// --- the workspace memory cap (ADR 0045 decision 28, docs/log/64 §64.41) ---
 
 // The numbers, and why they are these numbers. A cap that is too generous does not
 // contain anything (the incident's whole point was that the daemons had nowhere to

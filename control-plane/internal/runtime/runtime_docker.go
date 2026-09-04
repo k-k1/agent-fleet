@@ -1,5 +1,4 @@
-// runtime_docker.go — ローカル Docker アダプタ（dockerRuntime / dockerFactory）。
-// runtime.go からの機械的分割（docs/log/23 P2-W1）。
+// runtime_docker.go — the local Docker adapter (dockerRuntime / dockerFactory).
 package runtime
 
 import (
@@ -100,7 +99,7 @@ func (d *dockerRuntime) Name() string  { return d.name }
 // `docker run -d` returns with the container already running, so the transient
 // created/restarting statuses collapse into "stopped" as before — but a running
 // CONTAINER is not a reachable AGENT. The entrypoint still has to finish (pinned
-// CLI boot-install, the opt-in self-update: 約60 秒 実測, docs/log/38 ★6) before
+// CLI boot-install, the opt-in self-update: ~60s measured, docs/log/38 ★6) before
 // workspace-agent listens, and during that window every caller that gates on
 // "running" (terminal WS, file proxy, browser, session create) used to be waved
 // through to a socket nobody answers.
@@ -113,7 +112,7 @@ func (d *dockerRuntime) Name() string  { return d.name }
 func (d *dockerRuntime) State(ctx context.Context) string {
 	switch d.inspectOne(ctx, "container", d.name, "{{.State.Status}}") {
 	case "":
-		return "none" // docker inspect が引けない = そんなコンテナは無い
+		return "none" // docker inspect returned nothing = there is no such container
 	case "running":
 		if d.startingMarker().active(ctx, d.Endpoint()) {
 			return "starting"
@@ -133,7 +132,7 @@ func (d *dockerRuntime) startingMarker() agentStartingMarker {
 // Same shape as the native runtime's spawnStamp. Two traps decide both the stamp
 // and WHAT is stamped; both were paid for on the dev fleet.
 //
-// ★ Never compare the running container's `docker inspect {{.Image}}` against the
+// Never compare the running container's `docker inspect {{.Image}}` against the
 //
 //	tag's `docker image inspect {{.Id}}`. Under the containerd image store
 //	(`docker info` → Driver=overlayfs, the default on newer engines) those are
@@ -144,13 +143,13 @@ func (d *dockerRuntime) startingMarker() agentStartingMarker {
 //	    tag :dev             {{.Id}}    = sha256:ff2da9ec…   (built 22:57:53)
 //	    container started 3 min later   {{.Image}} = sha256:02a946de…
 //
-//	The original two-sided check therefore reported 要再起動 permanently on that
-//	host, whatever was (or was not) updated. (The container's digest is not even a
+//	A two-sided check like that therefore reports "restart required" permanently on
+//	such a host, whatever was (or was not) updated. (The container's digest is not even a
 //	usable ref: `docker image inspect <that digest>` answers "No such image", so
 //	there is no way to fingerprint the running image after the fact — the value has
 //	to be recorded at Start.)
 //
-// ★ Stamping the tag's {{.Id}} is not enough either — the ID is a REPRESENTATION,
+// Stamping the tag's {{.Id}} is not enough either — the ID is a REPRESENTATION,
 //
 //	not the content, and it moves without the image changing. Measured 2026-08-16:
 //	a fully cache-hit `docker build -t agent-fleet/workspace:dev` re-exported the
@@ -162,7 +161,7 @@ func (d *dockerRuntime) startingMarker() agentStartingMarker {
 //	    image contents                   = byte-identical (sha256 of workspace-agent,
 //	                                       entrypoint.sh, CLAUDE.md all unchanged)
 //
-//	i.e. 要再起動 for an image where stop→start changes nothing. So stamp the
+//	i.e. "restart required" for an image where stop→start changes nothing. So stamp the
 //	CONTENT identity instead: the layer chain plus the config fields a Dockerfile
 //	can change without producing a layer (ENV/CMD/ENTRYPOINT/USER/WORKDIR/LABEL).
 //	Those are diffIDs and literal values — no digest representation involved.
@@ -271,7 +270,7 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 		return fmt.Errorf("mkdir data home: %w", err)
 	}
 	// Plaintext Claude state (CLAUDE_CONFIG_DIR) lives OUTSIDE the browsable home
-	// so the Console file browser never exposes it (docs/17 P3-5 段2). Persisted
+	// so the Console file browser never exposes it (docs/17 P3-5 stage 2). Persisted
 	// via its own mount; auth still works via the per-session env token.
 	claudeCfg := filepath.Join(d.dataDir, "claude-config")
 	if err := os.MkdirAll(claudeCfg, 0o700); err != nil {
@@ -279,7 +278,7 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	}
 
 	// Each user's container sits alone on a dedicated network, so containers
-	// cannot reach each other (相互不可視, docs/09 §9.7). The Agent is still
+	// cannot reach each other at all (docs/09 §9.7). The Agent is still
 	// reached by the CP via the host-published 127.0.0.1 port; egress (git,
 	// Claude API) works via the network's NAT.
 	if err := d.ensureNetwork(ctx); err != nil {
@@ -327,8 +326,9 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	if d.network != "" {
 		args = append(args, "--network", d.network)
 	}
-	// AGENT_TOKEN / AF_SECRET_KEY(DEK) は argv の `-e` だと /proc/<pid>/cmdline から
-	// 可視になるため、0600 の一時 --env-file 経由で渡す(docker run 完了後に削除)。
+	// AGENT_TOKEN / AF_SECRET_KEY (the DEK) passed as argv `-e` would be readable in
+	// /proc/<pid>/cmdline, so they go through a 0600 temporary --env-file instead,
+	// removed once docker run has returned.
 	if d.token != "" || d.secretKey != "" {
 		ef, err := d.writeSecretEnvFile()
 		if err != nil {
@@ -351,10 +351,11 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	// tell that the tag moved on while it keeps running the old code.
 	d.recordImageStamp(ctx)
 
-	// ここから先は「待つ」だけで、もう起動は確定している。だから到達しなくても
-	// **エラーにしない**（runtime_health.go 冒頭の契約）。印を先に立ててから待つので、
-	// 待っている最中に別経路（Console の 4 秒ポーリング・ターミナル起動）が State() を
-	// 引いても "starting" が返り、死んだソケットに繋ぎに行かない。
+	// From here on this only waits — the start itself is already settled, so failing to
+	// reach the Agent is not an error (the contract at the top of runtime_health.go). The
+	// marker is armed before the wait, so another path calling State() meanwhile (the
+	// Console's 4s poll, a terminal launch) gets "starting" and does not go and connect to
+	// a dead socket.
 	grace := agentHealthWait(d.startHealthWait())
 	marker := d.startingMarker()
 	marker.arm(time.Now().Add(maxDuration(AgentBootBudget, grace)))
@@ -364,11 +365,11 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 		return nil
 	}
 	if ctx.Err() != nil {
-		// 呼び出し側が去った（リクエスト打ち切り・lease 喪失）。コンテナはそのまま
-		// 起き続けるので印は残し、エラーはそのまま返す（後段の checkpoint が判断する）。
+		// The caller went away (request aborted, lease lost). The container stays up, so
+		// leave the marker armed and return the error as it is — a later checkpoint decides.
 		return err
 	}
-	// 予算切れ。失敗ではない — 状態として表に出し、ポーラーに収束を任せる。
+	// Budget spent. Not a failure — surface it as a state and let the poller converge.
 	log.Printf("docker start: container %s is up but the Agent has not answered within %s; still starting (budget %s)",
 		d.name, grace, AgentBootBudget)
 	return nil
@@ -415,7 +416,7 @@ func (d *dockerRuntime) writeSecretEnvFile() (string, error) {
 // Which is why the old 15s / 300s split is gone. The 300s branch existed because a
 // self-updating boot (the entrypoint runs the update SYNCHRONOUSLY before
 // `exec workspace-agent`: npm @latest for the 4 CLIs ~35s cold, agy ~15s, cursor ~6s —
-// 約60 秒 with everything updating, worse on a slow link or a network-backed home)
+// ~60s with everything updating, worse on a slow link or a network-backed home)
 // would otherwise be FAILED at 15s. Nothing fails here now, and a 300s block is the
 // thing the Runtime port forbids: Start runs inside an HTTP request, and a wait past
 // the ingress idle timeout does not deliver a slower success, it deletes the response
@@ -487,12 +488,13 @@ func agentStopGraceSec() int {
 // errors (missing container, wedged daemon) fall back to the old hard remove so
 // Stop still converges.
 func (d *dockerRuntime) Stop(ctx context.Context) error {
-	// 起動途中の停止（利用者が「起動中…」のまま止めた）でも印を残さない。State() は
-	// コンテナが居なければ印を見ないので実害は無いが、次の Start が自分で立て直す
-	// 印を古いまま置いておく理由も無い。
+	// A stop in the middle of a boot (the user stopped it while it still said "starting")
+	// must not leave the marker behind. State() ignores the marker when there is no
+	// container, so it does no harm, but no reason to keep a stale one either — the next
+	// Start writes its own.
 	d.startingMarker().clear()
-	// 「No such container」は冪等成功扱い: 停止済み(=コンテナ無し)WSへの stop API を
-	// 500 にしない。
+	// "No such container" counts as idempotent success: a stop API call against an
+	// already-stopped (i.e. container-less) workspace must not answer 500.
 	noSuch := func(out []byte) bool {
 		return strings.Contains(strings.ToLower(string(out)), "no such container")
 	}
@@ -538,7 +540,7 @@ func (d *dockerRuntime) Destroy(ctx context.Context) ([]string, error) {
 	return nil, nil
 }
 
-// homeKeep are the top-level ~ entries preserved by an admin "home 掃除": connection
+// homeKeep are the top-level ~ entries preserved by an admin "clean home": connection
 // secrets and auth/identity. Everything else under home (repos, caches, dotfiles)
 // is removed. Claude login also survives because it lives outside home (a separate
 // claude-config mount, docs/17 P3-5).
@@ -615,7 +617,7 @@ func RemoveAllContext(ctx context.Context, path string) error {
 }
 
 // DockerInspectOut runs `docker <args...>` and returns its stdout.
-// テスト用シーム（gitBackendServe と同型）。
+// A seam for tests, the same shape as gitBackendServe.
 var DockerInspectOut = func(args ...string) ([]byte, error) {
 	return exec.Command("docker", args...).Output()
 }
@@ -646,5 +648,5 @@ func DockerEnvValue(name, key string) string {
 	return ""
 }
 
-// agentHealthWait / WaitAgentHealthy / agentStartingMarker は runtime_health.go へ
-// 移した（docker と native の両方が使う共通部品なので）。
+// agentHealthWait, WaitAgentHealthy and agentStartingMarker live in runtime_health.go:
+// both the docker and the native adapter use them.

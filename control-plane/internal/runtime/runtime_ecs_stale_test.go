@@ -1,6 +1,7 @@
-// runtime_ecs_stale_test.go — ECS 系の「要再起動」判定の契約テスト。
-// docker で二度踏んだ罠（二辺比較・digest 比較）を ECS でも踏み直さないことと、
-// 判らないときは黙ることを固定する。
+// runtime_ecs_stale_test.go — contract tests for the ECS "restart required" check. They
+// pin that the two traps docker already fell into (comparing the two sides through
+// different queries, and comparing digests) are not repeated here, and that an unknown
+// answer stays silent.
 package runtime
 
 import (
@@ -15,8 +16,8 @@ import (
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
 
-// fakeECR は BatchGetImage だけを返すレジストリ。manifest/digest を差し替えることで
-// 「タグが動いた」「内容は同じまま再 push された」を作り分ける。
+// fakeECR is a registry that answers BatchGetImage and nothing else. Swapping its manifest
+// and digest is how "the tag moved" and "re-pushed with identical content" are told apart.
 type fakeECR struct {
 	manifest string
 	digest   string
@@ -41,9 +42,9 @@ func (f *fakeECR) BatchGetImage(_ context.Context, in *ecr.BatchGetImageInput, _
 	}}}, nil
 }
 
-// index は マルチプラットフォームのインデックス manifest を組み立てる。attest が真の
-// ときは buildx の attestation manifest（platform unknown/unknown）を足す — 内容は
-// 変わらないのに index の digest だけ動く、あの経路。
+// index builds a multi-platform index manifest. With attest set it appends buildx's
+// attestation manifest (platform unknown/unknown) — the path where the index digest moves
+// while the content does not.
 func index(amd64, arm64 string, attest bool) string {
 	entries := fmt.Sprintf(
 		`{"digest":%q,"mediaType":"application/vnd.oci.image.manifest.v1+json","platform":{"architecture":"amd64","os":"linux"}},`+
@@ -68,12 +69,11 @@ func newStaleTestECS(t *testing.T, reg *fakeECR) (*ecsRuntime, *fakeECS) {
 	return rt, fe
 }
 
-// 全体の筋: Start が控えた指紋 vs いまタグを引いた指紋。
-//
-// ★ ここで「走っているタスクの containers[].imageDigest」や「インデックスの digest」を
-//
-//	実体に選ぶと、内容が同じでも表現が動いて恒久点灯する（docker で二度踏んだ）。
-//	provenance だけ付け直した再 push が黙ることを、このテストが担保している。
+// TestECSStaleImageStamp walks the whole shape of the check: the fingerprint Start stamped
+// against the fingerprint the tag resolves to now. Choosing a running task's
+// containers[].imageDigest or an index digest as the content would light the badge
+// permanently whenever a representation moves under identical content — the trap docker fell
+// into twice. What this test guards is that a provenance-only re-push stays silent.
 func TestECSStaleImageStamp(t *testing.T) {
 	orig := Freshness
 	defer func() { Freshness = orig }()
@@ -89,7 +89,7 @@ func TestECSStaleImageStamp(t *testing.T) {
 	rt, fe := newStaleTestECS(t, reg)
 	ctx := context.Background()
 
-	// まだ何も起動していない（サービスが無い）＝判らない → false。
+	// Nothing started yet (no service) = unknown → false.
 	if rt.Stale(ctx) {
 		t.Fatal("no service: stale, want false")
 	}
@@ -98,8 +98,8 @@ func TestECSStaleImageStamp(t *testing.T) {
 	if err := rt.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	// AcceptedMediaTypes は必須。渡さないと ECR は schema1 へ変換した manifest を返し、
-	// 内容比較の土台が崩れる。
+	// AcceptedMediaTypes is mandatory: without it ECR answers with a manifest converted to
+	// schema 1, and the content comparison has nothing left to stand on.
 	if len(reg.lastIn.AcceptedMediaTypes) == 0 {
 		t.Error("BatchGetImage without AcceptedMediaTypes — ECR would answer with a converted schema-1 manifest")
 	}
@@ -110,23 +110,23 @@ func TestECSStaleImageStamp(t *testing.T) {
 		t.Fatal("same image: stale, want false")
 	}
 
-	// 内容は 1 バイトも変わらないまま、attestation が付いて index の digest だけ動いた。
-	// → 停止→起動しても走るコードは変わらないので、出してはいけない。
+	// An attestation was added, moving only the index digest while not a byte of content
+	// changed: a stop→start would run the same code, so nothing may light.
 	reg.manifest, reg.digest = index(amd64Old, arm64Old, true), "sha256:index0002"
 	now = now.Add(2 * ecsStaleTTL)
 	if rt.Stale(ctx) {
 		t.Fatal("provenance-only re-push (same platform manifests): stale, want false")
 	}
 
-	// 本当に新しいイメージが同じタグへ push された → 出す。
+	// A genuinely new image was pushed to the same tag → report stale.
 	reg.manifest, reg.digest = index(amd64New, arm64Old, true), "sha256:index0003"
 	now = now.Add(2 * ecsStaleTTL)
 	if !rt.Stale(ctx) {
 		t.Fatal("tag moved to new content: not stale, want stale")
 	}
 
-	// 利用者が「今すぐ再起動」を押した直後は、TTL の残りに関係なく即座に消えること
-	// （Start がその場で控え直した値でキャッシュを上書きするため）。
+	// Right after the user acts on the badge it must clear at once, whatever the TTL has
+	// left, because Start overwrites the cache with what it just stamped.
 	if err := rt.Stop(ctx); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestECSStaleImageStamp(t *testing.T) {
 		t.Fatal("restarted onto the new image: stale, want false")
 	}
 
-	// タグが引けない（AccessDenied・タグ削除）＝判らない → false。
+	// Unreadable tag (AccessDenied, tag deleted) = unknown → false.
 	reg.err = fmt.Errorf("AccessDeniedException: not authorized to perform ecr:BatchGetImage")
 	now = now.Add(2 * ecsStaleTTL)
 	if rt.Stale(ctx) {
@@ -145,8 +145,9 @@ func TestECSStaleImageStamp(t *testing.T) {
 	}
 }
 
-// 判らない側へ倒す経路をまとめて固定する。どれか一つでも true を返すようになると、
-// 押しても消えないバッジになってバッジ全体の信用が落ちる。
+// TestECSStaleUnknownNeverNags pins every path that must fall to the unknown side. Any one
+// of them returning true produces a badge that stays lit however often it is acted on, and
+// that costs the badge as a whole its credibility.
 func TestECSStaleUnknownNeverNags(t *testing.T) {
 	ctx := context.Background()
 	cases := []struct {
@@ -178,9 +179,9 @@ func TestECSStaleUnknownNeverNags(t *testing.T) {
 				t.Fatalf("Start: %v", err)
 			}
 			tc.setup(rt, fe)
-			// Start が入れたキャッシュを捨てて、素の判定を見る。
+			// Drop the cache Start primed, so the bare check is what is measured.
 			Freshness = &TTLCache{m: map[string]TTLEntry{}}
-			// タグは動いている（＝判定できていれば true になる状況）。
+			// The tag has moved, i.e. a working check would answer true here.
 			reg.manifest, reg.digest = index("sha256:aaaa9999", "sha256:bbbb0001", false), "sha256:index9999"
 			if rt.Stale(ctx) {
 				t.Fatal("stale, want false")
@@ -189,8 +190,9 @@ func TestECSStaleUnknownNeverNags(t *testing.T) {
 	}
 }
 
-// ecs-ec2 は同じ判定を使う（同じ image・同じタスク定義ファミリ）。委譲が外れると
-// EC2 スロット構成だけ静かに検出できなくなるので、経路をここで固定する。
+// TestECSEC2StaleDelegatesToBase pins the delegation: ecs-ec2 uses the same check (same
+// image, same task-definition family). If the delegation is dropped, only the EC2 slot
+// profile silently loses detection.
 func TestECSEC2StaleDelegatesToBase(t *testing.T) {
 	orig := Freshness
 	defer func() { Freshness = orig }()
@@ -214,26 +216,26 @@ func TestECSEC2StaleDelegatesToBase(t *testing.T) {
 }
 
 func TestManifestFingerprint(t *testing.T) {
-	// 単一 manifest はその digest 自体が config+layers の内容ハッシュ。
+	// For a single manifest the digest itself hashes config + layers, i.e. the content.
 	single := `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json",` +
 		`"config":{"digest":"sha256:cfg"},"layers":[{"digest":"sha256:l1"}]}`
 	if got := manifestFingerprint(single, "sha256:single01"); got != "sha256:single01" {
 		t.Errorf("single manifest: %q", got)
 	}
-	// インデックスは実プラットフォームの manifest だけを、順序に依存せず並べる。
+	// An index lists only the real platform manifests, order-independently.
 	a := manifestFingerprint(index("sha256:a1", "sha256:b1", false), "sha256:idx1")
-	b := manifestFingerprint(index("sha256:b1", "sha256:a1", false), "sha256:idx2") // amd64/arm64 入れ替え
+	b := manifestFingerprint(index("sha256:b1", "sha256:a1", false), "sha256:idx2") // amd64/arm64 swapped
 	if a == b {
 		t.Error("platform assignment ignored — swapping which arch has which digest must change the fingerprint")
 	}
 	if withAttest := manifestFingerprint(index("sha256:a1", "sha256:b1", true), "sha256:idx3"); withAttest != a {
 		t.Errorf("attestation entry leaked into the fingerprint: %q != %q", withAttest, a)
 	}
-	// 壊れた／空の manifest は「判らない」。
+	// A broken or empty manifest is unknown.
 	if got := manifestFingerprint("", "sha256:x"); got != "" {
 		t.Errorf("unparseable manifest: %q, want empty", got)
 	}
-	// 実プラットフォームが一つも無いインデックス（attestation だけ）も「判らない」。
+	// So is an index with no real platform in it (attestations only).
 	only := `{"manifests":[{"digest":"sha256:z","platform":{"architecture":"unknown","os":"unknown"}}]}`
 	if got := manifestFingerprint(only, "sha256:idx4"); got != "" {
 		t.Errorf("attestation-only index: %q, want empty", got)
@@ -274,17 +276,20 @@ func TestParseECRRef(t *testing.T) {
 	}
 }
 
-// ★ マージで静かに壊れる組み合わせ: 7ae97ea1 のタスク定義再利用キャッシュ
-// （同じスロットへの再 wake で再登録＋強制デプロイを避ける）と、この指紋スタンプ。
+// TestECSEC2TaskDefReuseSeesTheImageStamp pins a combination a merge can quietly break: the
+// task-definition reuse cache (commit 7ae97ea1, which keeps a re-wake onto the same slot
+// from re-registering and forcing a deployment) and this fingerprint stamp.
 //
-// スタンプは taskDefFingerprint が畳む入力の一部で、それは偶然ではなく**必須**である。
-// 可変タグ（:dev）ではイメージ文字列が動かないので、「タグの中身が変わった」ことを
-// 入力に伝えているのはスタンプだけ。指紋から外すと、イメージ push 後の再 wake が古い
-// リビジョンを再利用し（タスク自体は新しいイメージを pull する）、そのリビジョンは
-// 古いスタンプを持ったままになる＝**何度再起動しても消えないバッジ**になる。
+// The stamp is one of the inputs taskDefFingerprint folds, and that is required, not
+// incidental: with a mutable tag (:dev) the image string never moves, so the stamp is the
+// only thing that tells the fingerprint the tag's content changed. Drop it from the
+// fingerprint and a re-wake after an image push reuses the old revision — the task does pull
+// the new image, but the revision keeps the old stamp, giving a badge no number of restarts
+// can clear.
 //
-// 逆に、ECR が一時的に引けなかっただけで指紋が動いてもいけない（不要な強制デプロイ＝
-// 7ae97ea1 が消した Service Connect の 1〜2 分の窓が戻る）。両方をここで固定する。
+// The converse must hold too: a transient ECR failure must not move the fingerprint, or the
+// unnecessary forced deployment brings back the 1-2 minute Service Connect window 7ae97ea1
+// removed.
 func TestECSEC2TaskDefReuseSeesTheImageStamp(t *testing.T) {
 	origFresh := Freshness
 	defer func() { Freshness = origFresh }()
@@ -304,7 +309,7 @@ func TestECSEC2TaskDefReuseSeesTheImageStamp(t *testing.T) {
 		if err := h.rt.Stop(ctx); err != nil {
 			t.Fatalf("%s: Stop: %v", what, err)
 		}
-		// 実サービスが desiredCount 0 に落ち着いた状態を模す（既存テストと同じ模倣）。
+		// Mimic the real service settling at desiredCount 0, as the existing tests do.
 		h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
 		if err := h.rt.Start(ctx); err != nil {
 			t.Fatalf("%s: Start: %v", what, err)
@@ -322,13 +327,13 @@ func TestECSEC2TaskDefReuseSeesTheImageStamp(t *testing.T) {
 		t.Fatal("the EC2 revision carries no image stamp — the drift badge can never light on ecs-ec2")
 	}
 
-	// 何も変わっていない再 wake: 再登録も強制デプロイもしない。
+	// An unchanged re-wake: neither a re-registration nor a forced deployment.
 	rewake("unchanged re-wake")
 	if len(h.ecs.regCalls) != 1 {
 		t.Fatalf("regCalls after an unchanged re-wake = %d, want 1 — the stamp is churning the fingerprint", len(h.ecs.regCalls))
 	}
 
-	// ECR が一時的に引けない再 wake: スタンプを落とさず、やはり再登録しない。
+	// A re-wake while ECR is briefly unreadable: keep the stamp, still no re-registration.
 	reg.err = fmt.Errorf("RequestError: send request failed")
 	rewake("ECR blip re-wake")
 	reg.err = nil
@@ -336,7 +341,7 @@ func TestECSEC2TaskDefReuseSeesTheImageStamp(t *testing.T) {
 		t.Fatalf("regCalls after a transient ECR failure = %d, want 1 — a blip must not force a deployment", len(h.ecs.regCalls))
 	}
 
-	// タグが動いた（可変タグへの再 push）: ここは必ず新しいリビジョンになる。
+	// The tag moved (a re-push onto the mutable tag): this must produce a new revision.
 	reg.manifest, reg.digest = index("sha256:aaaa0002", "sha256:bbbb0001", false), "sha256:index0002"
 	rewake("image moved")
 	if len(h.ecs.regCalls) != 2 {

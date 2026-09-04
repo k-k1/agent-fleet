@@ -11,29 +11,29 @@ import (
 	"testing"
 )
 
-// ===== 共有区間ここから（control-plane と workspace/agent で byte 一致）=====
-// 🔴 この行より下は 2 つのモジュールで **1 バイトも違ってはいけない**
-// （wiretest_dup_test.go が検査する）。番兵より上は package 宣言と import だけで、
-// モジュールパスが違うため一致しない。
+// ===== shared region starts here (byte-identical in control-plane and workspace/agent) =====
+// Below this line the two modules must not differ by a single byte; wiretest_dup_test.go
+// checks it. Above the sentinel are only the package clause and imports, which cannot match
+// because the module paths differ.
 
-// equivFixture は自己診断用の入力。罠が現れる性質を持つ値だけを置く。
+// equivFixture is the input to the self-diagnosis: only values shaped so a trap shows up.
 type equivFixture struct {
 	Name string
-	Note string // Name と**同じ型**。⑥ 入れ替え変異のために要る
-	N    int64  // float64 で受けると桁が落ちる大きさを流す
+	Note string // same type as Name; trap ⑥ (swapped fields) needs it
+	N    int64  // large enough that receiving it as float64 loses digits
 	Tags []string
 	Flag bool
 }
 
-// equivInputs — ゼロ値はハーネスが足すので、ここには「ゼロでない形」だけ置く。
+// equivInputs holds only non-zero shapes; the harness adds the zero value itself.
 func equivInputs() []equivFixture {
 	return []equivFixture{
 		{Name: "a", Note: "b", N: 1 << 62, Tags: []string{"x"}, Flag: true},
-		{Name: "", Note: "b", N: 0, Tags: []string{}, Flag: false}, // 空スライス（nil ではない）
+		{Name: "", Note: "b", N: 0, Tags: []string{}, Flag: false}, // empty slice, not nil
 	}
 }
 
-// oldFaithful は「移送前の map リテラル」の役。参照実装。
+// oldFaithful plays the pre-move map literal: the reference implementation.
 func oldFaithful(f equivFixture) any {
 	m := map[string]any{
 		"name": f.Name,
@@ -41,13 +41,14 @@ func oldFaithful(f equivFixture) any {
 		"n":    f.N,
 		"tags": f.Tags,
 	}
-	if f.Flag { // 条件付きキー＝omitempty 相当
+	if f.Flag { // conditional key, i.e. the omitempty equivalent
 		m["flag"] = true
 	}
 	return m
 }
 
-// 忠実な変換。宣言順は map の昇順と違うので、突き合わせは parsed 経路になる。
+// equivNewFaithful is a faithful conversion. Its declaration order differs from the map's
+// ascending key order, so the comparison goes down the parsed path.
 type equivNewFaithful struct {
 	Name string   `json:"name"`
 	Note string   `json:"note"`
@@ -56,7 +57,8 @@ type equivNewFaithful struct {
 	Flag bool     `json:"flag,omitempty"`
 }
 
-// 忠実な変換その 2。**キー昇順で宣言**したので bytes 経路で一致するはず。
+// equivNewSorted is a second faithful conversion, declared in ascending key order, so it
+// must match on the bytes path.
 type equivNewSorted struct {
 	Flag bool     `json:"flag,omitempty"`
 	N    int64    `json:"n"`
@@ -73,9 +75,9 @@ func newSorted(f equivFixture) any {
 	return equivNewSorted{Name: f.Name, Note: f.Note, N: f.N, Tags: f.Tags, Flag: f.Flag}
 }
 
-// TestWireEquivAcceptsFaithfulConversion — **陽性側**。
-// 忠実な変換は通らなければならない（通らない道具は「常に赤」なだけで何も守らない）。
-// あわせて bytes / parsed の**両方の経路が実際に走る**ことを見る。
+// TestWireEquivAcceptsFaithfulConversion is the positive side: a faithful conversion has to
+// pass, because a tool that never passes is only ever red and protects nothing. It also
+// checks that both the bytes and the parsed path actually run.
 func TestWireEquivAcceptsFaithfulConversion(t *testing.T) {
 	rec := &Recorder{}
 	got := AssertEquiv(rec, "faithful", equivInputs(), oldFaithful, newFaithful)
@@ -97,18 +99,17 @@ func TestWireEquivAcceptsFaithfulConversion(t *testing.T) {
 	t.Logf("突き合わせ方式の実測: %s / %s", got, got2)
 }
 
-// TestWireEquivCatchesEachTrap — **陰性側（負の対照）**。
-// 罠ごとに 1 つずつ壊した変換を当て、**その罠でだけ赤くなること**を見る。
-// 🔴 1 つでも捕まえられないなら、その罠に対してこのハーネスは無力であり、
-// 「ワイヤを変えていない」という主張はその分だけ嘘になる。
+// TestWireEquivCatchesEachTrap is the negative control: one broken conversion per trap,
+// each of which must turn red for that trap and no other. A trap the harness misses is one
+// it is powerless against, and the claim "the wire did not change" is a lie by that much.
 func TestWireEquivCatchesEachTrap(t *testing.T) {
 	traps := []struct {
 		trap string
 		newF func(equivFixture) any
-		want string // 差の説明に必ず含まれるべき語（罠を取り違えて赤くなっていないか）
+		want string // must appear in the diff, so a red for the wrong trap is not mistaken for a pass
 	}{
 		{
-			// ① omitempty の付け忘れ。ゼロ値ケースで "flag": false が増える。
+			// ① forgotten omitempty: the zero-value case grows a "flag": false.
 			trap: "① omitempty 付け忘れ",
 			newF: func(f equivFixture) any {
 				return struct {
@@ -122,10 +123,11 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 			want: "flag: キーが増えた",
 		},
 		{
-			// ①⑤ 裏返し。要らない omitempty を足すと、ゼロ値でキーが消える。
-			// これは⑤（キーの有無とゼロ値の区別）の対照でもある——Console が
-			// `if (x.foo)` で見ていると「キーが無い」と `""` は潰れて同じに見えるが、
-			// ワイヤは違う。ハーネスは両者を別の差として出す。
+			// ①⑤ inverted: an omitempty that should not be there makes the key vanish
+			// on the zero value. This is also the control for ⑤ (key absence versus
+			// zero value) — a Console reading `if (x.foo)` collapses "no key" and `""`
+			// into the same thing, but the wire does not, and the harness reports them
+			// as two different diffs.
 			trap: "①⑤ 余計な omitempty（キーの有無とゼロ値）",
 			newF: func(f equivFixture) any {
 				return struct {
@@ -139,7 +141,7 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 			want: "name: キーが消えた",
 		},
 		{
-			// ② nil と空。nil スライスを [] に正規化すると null が [] になる。
+			// ② nil versus empty: normalising a nil slice to [] turns null into [].
 			trap: "② nil を空スライスへ正規化",
 			newF: func(f equivFixture) any {
 				tags := f.Tags
@@ -151,7 +153,7 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 			want: "tags",
 		},
 		{
-			// ③ 数値の型。int64 を float64 で受けると 1<<62 の桁が落ちる。
+			// ③ numeric type: received as float64, an int64 loses digits at 1<<62.
 			trap: "③ int64 を float64 で受ける",
 			newF: func(f equivFixture) any {
 				return struct {
@@ -165,7 +167,7 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 			want: "n:",
 		},
 		{
-			// ④ json タグの書き忘れ。Go の公開名がそのまま出る。
+			// ④ missing json tag: the Go exported name goes out on the wire as-is.
 			trap: "④ json タグ書き忘れ",
 			newF: func(f equivFixture) any {
 				return struct {
@@ -179,8 +181,8 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 			want: "Name: キーが増えた",
 		},
 		{
-			// ⑥ 同じ型のフィールドを 2 つ入れ替える（README §4 の必須変異）。
-			// 型が合うのでコンパイラは絶対に鳴らない。
+			// ⑥ swap two fields of the same type (the mutation README §4 requires).
+			// The types line up, so the compiler never says a word.
 			trap: "⑥ 同型フィールドの入れ替え",
 			newF: func(f equivFixture) any {
 				return equivNewFaithful{Name: f.Note, Note: f.Name, N: f.N, Tags: f.Tags, Flag: f.Flag}
@@ -205,9 +207,9 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 	}
 }
 
-// TestWireEquivAlwaysMeasuresZeroValue — ハーネスの中核的な保証を明示的に見る。
-// 🔴 ①③⑤ の罠は**ゼロ値の入力でしか現れない**。呼ぶ側がゼロ値ケースを書き忘れても
-// 検査が無言にならないことを、「入力を 1 つも渡さなくても罠を捕まえる」ことで示す。
+// TestWireEquivAlwaysMeasuresZeroValue pins the harness's central guarantee. Traps ①③⑤
+// only appear on zero-value input, so the check must not go silent when the caller forgets
+// to write a zero-value case: with no inputs at all, the trap is still caught.
 func TestWireEquivAlwaysMeasuresZeroValue(t *testing.T) {
 	noOmitEmpty := func(f equivFixture) any {
 		return struct {

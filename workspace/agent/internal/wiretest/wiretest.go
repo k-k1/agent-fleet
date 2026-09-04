@@ -44,24 +44,25 @@ import (
 	"strings"
 )
 
-// ===== 共有区間ここから（control-plane と workspace/agent で byte 一致）=====
-// 🔴 この行より下は 2 つのモジュールで **1 バイトも違ってはいけない**
-// （wiretest_dup_test.go が検査する）。番兵より上は package 宣言と import だけで、
-// モジュールパスが違うため一致しない。
+// ===== shared region starts here (byte-identical in control-plane and workspace/agent) =====
+// Nothing below this line may differ between the two modules by a single byte;
+// wiretest_dup_test.go checks it. Above the sentinel are only the package clause and the
+// imports, which cannot match because the module paths differ.
 
-// Mode は突き合わせに使った方式。**どちらを使ったかは報告に書く必要がある**ので記録する。
+// Mode records which comparison succeeded. Reports have to say which one it was.
 type Mode string
 
 const (
-	// バイト列がそのまま一致した。
+	// ModeBytes: the byte strings matched as they were.
 	ModeBytes Mode = "bytes"
-	// バイト列は違うがパース後の深い比較で一致した。
-	// struct は宣言順・map はキー昇順で書かれるので、**キー順の差だけなら正常**。
+	// ModeParsed: the bytes differed but a deep comparison of the parsed values matched.
+	// A struct is written in declaration order and a map in ascending key order, so a
+	// difference in key order alone is not a defect.
 	ModeParsed Mode = "parsed"
 )
 
-// T は *testing.T のうちハーネスが使う分だけ。
-// 自己診断（罠を本当に捕まえるか）で record 実装を差し込むために切ってある。
+// TB is the part of *testing.T this harness uses. It is an interface so the self-check
+// (does the harness really catch the traps?) can pass in a recording implementation.
 type TB interface {
 	Helper()
 	Errorf(format string, args ...any)
@@ -78,17 +79,19 @@ func (r Result) String() string {
 		r.Name, r.Cases, r.Modes[ModeBytes], r.Modes[ModeParsed])
 }
 
-// AssertEquiv は同じ入力に対する旧 map と新 struct の JSON が一致することを主張する。
+// AssertEquiv asserts that the old map and the new struct marshal to the same JSON for
+// the same input.
 //
-// 🔴 **ゼロ値の入力はハーネスが必ず先頭に足す。** ①③⑤ の罠はゼロ値でしか現れないので、
-// 「呼ぶ側がゼロ値ケースを書き忘れる」だけで検査が無言になる。それを作法ではなく機械で塞ぐ。
+// The harness always prepends the zero-value input itself. Traps 1, 3 and 5 only appear
+// at the zero value, so a caller who simply forgets to write that case silences the
+// check — closed by machine rather than by convention.
 func AssertEquiv[In any](t TB, name string, inputs []In, oldFn, newFn func(In) any) Result {
 	t.Helper()
 	res := Result{Name: name, Modes: map[Mode]int{}}
 
 	var zero In
 	all := make([]In, 0, len(inputs)+1)
-	all = append(all, zero) // ★ ゼロ値は必ず測る
+	all = append(all, zero) // the zero value is always measured
 	all = append(all, inputs...)
 	res.Cases = len(all)
 
@@ -122,14 +125,15 @@ func AssertEquiv[In any](t TB, name string, inputs []In, oldFn, newFn func(In) a
 				name, i, oldB, newB, strings.Join(diffs, "\n    "))
 			continue
 		}
-		// キー順だけの差。struct は宣言順・map は昇順なので、ここは正常な経路。
+		// Key order only. A struct is written in declaration order and a map in
+		// ascending order, so this path is not a defect.
 		res.Modes[ModeParsed]++
 	}
 	return res
 }
 
-// decodeValue は UseNumber で読む。
-// 🔴 既定の float64 で読むと **1 と 1.0 が同じになり、int64 の桁落ちも潰れる**（罠③が無言になる）。
+// decodeValue reads with UseNumber. The default float64 would make 1 and 1.0 equal and
+// swallow an int64 losing digits, silencing trap 3.
 func decodeValue(b []byte) (any, error) {
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.UseNumber()
@@ -140,8 +144,9 @@ func decodeValue(b []byte) (any, error) {
 	return v, nil
 }
 
-// valueDiff は読み戻した 2 つの JSON 値の差を「どのキーがどう違うか」で返す。
-// キーの有無・null と空・数値の綴りを**別々の差として**出す（潰さない）。
+// valueDiff returns the difference between two decoded JSON values as "which key differs
+// how". Presence of a key, null vs empty, and the spelling of a number are reported as
+// separate differences rather than collapsed together.
 func valueDiff(path string, oldV, newV any) []string {
 	at := func() string {
 		if path == "" {
@@ -213,13 +218,13 @@ func lit(v any) string {
 	return fmt.Sprintf("%v (%T)", v, v)
 }
 
-// --- ここから下はハーネス自身の自己診断 ---
+// --- below: the harness's own self-check ---
 //
-// 🔴 README §4:「0 件」「緑」は道具を検証してから採用する。
-// このハーネスは**罠を捕まえられなければ意味が無い**ので、
-// **わざと壊した変換を当てて赤くなること**を 1 件ずつ確かめる。
+// "Zero hits" and "green" are only accepted once the tool itself has been shown to work
+// (README §4). A harness that cannot catch the traps is worth nothing, so each trap is
+// confirmed by feeding it a deliberately broken conversion and watching it go red.
 
-// Recorder は T の記録実装。Errorf を数えるだけ。
+// Recorder is the recording implementation of TB. It only counts Errorf.
 type Recorder struct{ errs []string }
 
 func (r *Recorder) Helper() {}
@@ -227,6 +232,6 @@ func (r *Recorder) Errorf(format string, args ...any) {
 	r.errs = append(r.errs, fmt.Sprintf(format, args...))
 }
 
-// Errs は記録された Errorf の本文。パッケージ外の対照が「実際に報告されたか」を
-// 見るために要る（フィールドは非公開のまま）。
+// Errs returns the recorded Errorf bodies. A control outside this package needs it to see
+// whether something was actually reported; the field itself stays unexported.
 func (r *Recorder) Errs() []string { return r.errs }

@@ -23,7 +23,7 @@ import (
 var migrationFS embed.FS
 
 // SQL is the shared database/sql MetadataStore adapter. Both the SQLite
-// (default self-host) and Postgres (P3-7 段3a / RDS) backends use it: the SQL is
+// (default self-host) and Postgres (P3-7 stage 3a / RDS) backends use it: the SQL is
 // dialect-neutral except placeholders, so the only per-dialect state is the db
 // wrapper's rebind (?→$n for Postgres), the embedded migrations, and a SQLite-only
 // legacy data hook. See OpenSQLite / OpenPostgres.
@@ -122,8 +122,8 @@ func (s *SQL) Migrate(ctx context.Context) error {
 			return err
 		}
 		// NOTE: naive `;` split — migration files must not contain `;` inside
-		// string literals or TRIGGER bodies (use one statement per `;`). 改善が
-		// 必要になったら分割器を導入すること。
+		// string literals or TRIGGER bodies (use one statement per `;`). Introduce a
+		// real statement splitter if that ever has to change.
 		for _, stmt := range strings.Split(string(body), ";") {
 			if strings.TrimSpace(stmt) == "" {
 				continue
@@ -153,19 +153,20 @@ func (s *SQL) Migrate(ctx context.Context) error {
 // repairWorkspaceColumns re-adds the workspace columns that the identity/membership
 // swap throws away, and is why it exists at all.
 //
-// ★ 実測（2026-08-31、SQLite の**新規** DB）: マイグレーション 0002 が作る
-// `workspace_new` を、legacyHook が最後に `DROP TABLE workspace` →
-// `ALTER TABLE workspace_new RENAME TO workspace` で入れ替える。**この入れ替えは
-// 同じ migrate() の中で、0009 以降の ALTER のあとに走る**ので、0002 より後に足した列
-// （`settings`、そして今回の `preview_slug`）は作られた直後に捨てられる。しかも
-// schema_migrations には「適用済み」と記録済みなので、次の起動でも二度と足されない。
+// Measured on a FRESH SQLite DB: migration 0002 creates `workspace_new`, and the legacy
+// hook swaps it in at the end with `DROP TABLE workspace` +
+// `ALTER TABLE workspace_new RENAME TO workspace`. That swap runs inside the same
+// migrate(), after the 0009-and-later ALTERs, so every column added to workspace after
+// 0002 (`settings`, and now `preview_slug`) is thrown away moments after it is created —
+// and schema_migrations already records those versions as applied, so no later boot ever
+// adds them back.
 //
-// 症状が静かなのが厄介なところで、`settings` は 2026 年のこの発見まで **新規 SQLite
-// デプロイでだけ存在しなかった**（読み出しは `raw, _ :=` で握りつぶされ、保存だけが
-// 500 になる）。Postgres 系列には legacyHook が無いので影響しない。
+// The symptom is silent, which is what makes it expensive: `settings` was missing on
+// fresh SQLite deployments only, where reads swallow it (`raw, _ :=`) and only the save
+// path 500s. Postgres has no legacy hook and is unaffected.
 //
-// 直し方は「入れ替えの後で、足りない列を足し直す」。PRAGMA で現物を見てから足すので
-// 冪等で、既に壊れている DB も次の起動で自己修復する。
+// The fix is to re-add the missing columns AFTER the swap. PRAGMA is consulted first, so
+// this is idempotent and an already-broken DB heals itself on the next boot.
 func (s *SQL) repairWorkspaceColumns(ctx context.Context) error {
 	if s.dialect != "sqlite" {
 		return nil
@@ -194,7 +195,7 @@ func (s *SQL) repairWorkspaceColumns(ctx context.Context) error {
 	if len(have) == 0 {
 		return nil // no workspace table yet (nothing migrated); nothing to repair
 	}
-	// 0002 より後に workspace へ足した列は、必ずここにも書くこと。
+	// Every column added to workspace after 0002 has to be listed here as well.
 	for _, c := range []struct{ name, ddl string }{
 		{"settings", `ALTER TABLE workspace ADD COLUMN settings TEXT NOT NULL DEFAULT ''`},
 		{"preview_slug", `ALTER TABLE workspace ADD COLUMN preview_slug TEXT NOT NULL DEFAULT ''`},
@@ -206,7 +207,8 @@ func (s *SQL) repairWorkspaceColumns(ctx context.Context) error {
 			return fmt.Errorf("repair workspace.%s: %w", c.name, err)
 		}
 	}
-	// 索引もテーブルと一緒に消えるので張り直す（IF NOT EXISTS で冪等）。
+	// Indexes go away with the table, so recreate them too (IF NOT EXISTS keeps it
+	// idempotent).
 	if _, err := s.db.ExecContext(ctx,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_preview_slug ON workspace(preview_slug) WHERE preview_slug <> ''`); err != nil {
 		return fmt.Errorf("repair idx_workspace_preview_slug: %w", err)
@@ -401,7 +403,7 @@ func (s *SQL) SetTenantLogin(ctx context.Context, tenantID, allowedProviders, au
 // SetTenantAllowedCIDRs writes the tenant's source-network restriction (docs/log/66).
 // Separate from SetTenantLogin on purpose: that one is super_admin-only because its
 // three fields reach outside the tenant, while this one is the tenant_admin's
-// (ADR 0047 決定 6). Empty = no restriction.
+// (ADR 0047 decision 6). Empty = no restriction.
 func (s *SQL) SetTenantAllowedCIDRs(ctx context.Context, tenantID, cidrs string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE tenant SET allowed_cidrs=? WHERE id=?`, cidrs, tenantID)
 	return err
@@ -473,7 +475,7 @@ func (s *SQL) UpsertIdentity(ctx context.Context, email, key, roleHint string) (
 }
 
 // DemoteSuperAdmins enforces "SUPER_ADMIN_EMAILS is the only source of truth" at
-// startup (ADR0043 決定 24). UpsertIdentity's roleHint stays upgrade-only on
+// startup (ADR0043 decision 24). UpsertIdentity's roleHint stays upgrade-only on
 // purpose: addMembership / cleanHome / stopWorkspace all call it with roleHint="",
 // so putting the demotion there would strip an operator's role the moment somebody
 // added a member. The revocation therefore lives here, in a pass CP runs once at
@@ -528,7 +530,7 @@ func (s *SQL) DemoteSuperAdmins(ctx context.Context, keep []string) ([]string, e
 //  1. (provider, subject) already recorded => that identity, whatever its email is
 //     now. user_key does not move, so home and secrets stay put across a rename.
 //     1.5. not recorded, but the SAME REALM has this subject on another provider =>
-//     that identity (docs/log/61 §61.15 + 決定 35). Two buttons can be two doors onto
+//     that identity (docs/log/61 §61.15 + decision 35). Two buttons can be two doors onto
 //     one IdP — the deployment's GitHub and a tenant's own GitHub, or an env Entra
 //     and a tenant row pointing at the same issuer — and the same account behind
 //     both is the same person. The realm is the adapter's own answer to "where did
@@ -550,7 +552,7 @@ func (s *SQL) DemoteSuperAdmins(ctx context.Context, keep []string) ([]string, e
 // you can sign in to both accounts shows control of both, not that they are one
 // person, and the merge would be irreversible.
 //
-// ★ emailJoin=false is a TENANT-DEFINED provider (docs/log/61 §61.11): the operator did
+// emailJoin=false is a TENANT-DEFINED provider (docs/log/61 §61.11): the operator did
 // not configure that issuer, a subsidiary's administrator did, so an asserted
 // address is not proof of being that person. Rule 2 becomes rule 2' — CLAIM an
 // identity nobody has ever signed in as (the placeholder an invite leaves behind,
@@ -575,8 +577,8 @@ func (s *SQL) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bo
 		if identityID, err = s.identityIDForRealm(ctx, link.Realm, subject); err != nil {
 			return Identity{}, false, err
 		}
-		// ★ …and its second key, for an issuer whose `sub` is pairwise (docs/log/61
-		// §61.15.10 + 決定 38). Tried AFTER the subject match, so an IdP where both
+		// …and its second key, for an issuer whose `sub` is pairwise (docs/log/61
+		// §61.15.10 + decision 38). Tried AFTER the subject match, so an IdP where both
 		// work behaves exactly as it did before this column existed.
 		if identityID == "" {
 			if identityID, err = s.identityIDForRealmClaim(ctx, link.Realm, link.RealmClaim, link.RealmSubject); err != nil {
@@ -700,13 +702,13 @@ func (s *SQL) identityIDForRealm(ctx context.Context, realm, subject string) (st
 }
 
 // identityIDForRealmClaim is rule 1.5's second key: the same IdP account recognised
-// by a STABLE CLAIM rather than by `sub` (docs/log/61 §61.15.10 + 決定 38). Entra's `sub`
-// is pairwise — a function of (app registration, user) — so one person coming through
-// the head office's app and through a subsidiary's carries two subjects on one
+// by a STABLE CLAIM rather than by `sub` (docs/log/61 §61.15.10 + decision 38). Entra's
+// `sub` is pairwise — a function of (app registration, user) — so one person coming
+// through the head office's app and through a subsidiary's carries two subjects on one
 // issuer, and identityIDForRealm cannot see that they are the same account. `oid` is
 // the same value in both tokens, and this is where that is read.
 //
-// ★ The CLAIM NAME is part of the key, not just the value. Two providers reading
+// The CLAIM NAME is part of the key, not just the value. Two providers reading
 // DIFFERENT claims must never join because their values happened to collide — the
 // name records which question was asked. And an empty claim or value matches
 // nothing, so every row written before the column, and every provider that names no
@@ -729,7 +731,7 @@ func (s *SQL) identityIDForRealmClaim(ctx context.Context, realm, claim, subject
 // FillProviderRealm records the realm of the rows an env-defined provider already
 // wrote, and is called once per provider at STARTUP (docs/log/61 §61.15).
 //
-// ★ It has to happen in Go rather than in the migration: which realm a provider id
+// It has to happen in Go rather than in the migration: which realm a provider id
 // belongs to is only known from the provider set CP just built, and a migration that
 // guessed "provider='github' means the GitHub adapter" would be wrong on a
 // deployment that named an OIDC provider `github` (oauth_oidc.go warns about that
@@ -775,11 +777,11 @@ func (s *SQL) ListLinkedProviders(ctx context.Context, identityID string) ([]Lin
 	return out, rows.Err()
 }
 
-// AttachProvider — see the Store interface (docs/log/61 §61.16 + 決定 37).
+// AttachProvider — see the Store interface (docs/log/61 §61.16 + decision 37).
 //
-// ★ The three refusals below are STRUCTURAL: they hold whoever calls this and
+// The three refusals below are STRUCTURAL: they hold whoever calls this and
 // whatever the login layer checked first. The caller adds the policy half (the
-// address must be the person's own — 決定 37), which this layer cannot state
+// address must be the person's own — decision 37), which this layer cannot state
 // because it does not know which of several rules the deployment settled on; what
 // it does know is that a row must never move to another identity and that two
 // accounts must never become one.
@@ -847,9 +849,9 @@ func (s *SQL) AttachProvider(ctx context.Context, identityID string, link Identi
 
 // ErrLastLoginMethod / ErrNoSuchLoginMethod are DetachProvider's two refusals.
 //
-// ★ The first one is a lockout guard, not a formality: with the last method gone
+// The first one is a lockout guard, not a formality: with the last method gone
 // there is no way back into the account — no password, no SMTP to mail a link from
-// (決定 28) — and the person doing it is the account's own owner, mid-cleanup, who
+// (decision 28) — and the person doing it is the account's own owner, mid-cleanup, who
 // is exactly the one who cannot ask anybody to undo it.
 var (
 	ErrLastLoginMethod   = errors.New("this is the only sign-in method left on the account, and removing it would lock you out")
@@ -1214,8 +1216,9 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM user_limit WHERE membership_id=?`, id},
 		{`DELETE FROM pat WHERE membership_id=?`, id},
 		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
-		// sso_session は 0011 で DROP 済み（ssm_profile が置き換えた）。無い表を
-		// 消そうとすると SQLite は実行時に落ちるだけなので、ここは実在する表だけ。
+		// sso_session was dropped by 0011 (ssm_profile replaced it). Deleting from a
+		// table that does not exist only fails at run time in SQLite, so list tables
+		// that really exist and nothing else.
 		{`DELETE FROM ssm_profile WHERE membership_id=?`, id},
 		{`DELETE FROM schedule_run WHERE membership_id=?`, id},
 		{`DELETE FROM schedule WHERE membership_id=?`, id},
@@ -1226,16 +1229,19 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM work_item_session WHERE membership_id=?`, id},
 		{`DELETE FROM notification WHERE membership_id=?`, id},
 		{`DELETE FROM notification_usage_state WHERE membership_id=?`, id},
-		// 共有は両端を持つ。相手側が生きていても、片方が消えた共有は残せない。
+		// A share has two ends: one of them going away ends the share, however alive
+		// the other one is.
 		{`DELETE FROM session_share_proposal WHERE owner_membership_id=? OR proposer_membership_id=?`, both},
-		// 引き継ぎ（docs/log/77）も両端を持つ。catalog の CASCADE は所有者側しか掃除しないので、
-		// 受け手だけが消えた場合を取りこぼさないよう明示的に両端で消す。
+		// A handoff (docs/log/77) has two ends as well, and the catalog's CASCADE only
+		// cleans the owner side — delete on both ends explicitly or a vanished
+		// recipient leaves its row behind.
 		{`DELETE FROM session_handoff_offer WHERE owner_membership_id=? OR recipient_membership_id=?`, both},
 		{`DELETE FROM session_share WHERE owner_membership_id=? OR recipient_membership_id=?`, both},
 		{`DELETE FROM shared_session_catalog WHERE owner_membership_id=?`, id},
 		{`DELETE FROM session_share_owner_lease WHERE owner_membership_id=?`, id},
 		{`DELETE FROM workspace_stop_intent WHERE owner_membership_id=?`, id},
-		// 親は最後に。子を先に消してからでないと外部キーが立っている表で落ちる。
+		// The parent goes last: with foreign keys on, deleting it before its children
+		// fails.
 		{`DELETE FROM membership WHERE id=?`, id},
 	}
 }
@@ -1309,7 +1315,8 @@ func (s *SQL) DeleteTenant(ctx context.Context, tenantID string) error {
 		`DELETE FROM tenant_idp WHERE tenant_id=?`,
 		`DELETE FROM tenant_git_oauth WHERE tenant_id=?`,
 		`DELETE FROM egress_allowlist WHERE tenant_id=?`,
-		// ログイン規則と allowed_cidrs は tenant の列なので、この 1 行で一緒に消える。
+		// The login rules and allowed_cidrs are columns on tenant, so this one
+		// statement takes them with it.
 		`DELETE FROM tenant WHERE id=?`,
 	} {
 		if _, err = tx.ExecContext(ctx, stmt, tenantID); err != nil {
@@ -1319,7 +1326,7 @@ func (s *SQL) DeleteTenant(ctx context.Context, tenantID string) error {
 	return tx.Commit()
 }
 
-// EmailHasActiveMembership answers the entry gate's membership term (決定 16).
+// EmailHasActiveMembership answers the entry gate's membership term (decision 16).
 // LOWER() is applied to the COLUMN, not to the placeholder: Postgres cannot infer a
 // type for LOWER($1) and errors, which is the same reason identityByEmail lowercases
 // in Go.
@@ -1404,11 +1411,12 @@ func (s *SQL) SetWorkspaceState(ctx context.Context, workspaceID, state string) 
 	if _, err = tx.ExecContext(ctx, `UPDATE workspace SET state=?, last_active_at=? WHERE id=?`, state, NowTS(), workspaceID); err != nil {
 		return err
 	}
-	// ★ 「走っていない Workspace はプレビュー用 slug を持たない」を、状態遷移そのものに
-	// 括り付ける（docs/log/81 §4）。停止の経路は 1 つではない（利用者の停止・アイドル停止・
-	// 作り直し・home の掃除）ので、各所で消して回る形にすると必ずどれかが漏れ、そのとき
-	// 症状は「前回の URL が再起動後も生きている」＝ 起動ごとに引き直すという約束が
-	// 静かに破れた状態になる。ここに置けば、新しい停止経路が増えても勝手に守られる。
+	// "a workspace that is not running has no preview slug" is tied to the state
+	// transition itself (docs/log/81 §4). There is more than one way to stop — the
+	// user's stop, the idle stop, a recreate, a home clean — so clearing the slug at
+	// each of them would eventually miss one, and the symptom is the previous URL
+	// still answering after a restart: the promise that it is reissued per launch,
+	// silently broken. Here, a new stop path is covered without touching it.
 	if state != "running" {
 		if _, err = tx.ExecContext(ctx, `UPDATE workspace SET preview_slug='' WHERE id=?`, workspaceID); err != nil {
 			return err
@@ -1531,7 +1539,7 @@ func (s *SQL) ClearWorkspaceIdleStop(ctx context.Context, workspaceID string) er
 }
 
 // DeleteWorkspace removes the workspace row and everything keyed to it. It is the DB
-// half of the irreversible destroy (ADR 0045 決定 13); the runtime half (home, cloud
+// half of the irreversible destroy (ADR 0045 decision 13); the runtime half (home, cloud
 // resources) has already run by the time this is called.
 //
 // The dependents are deleted EXPLICITLY rather than left to ON DELETE CASCADE: only two
@@ -3026,7 +3034,7 @@ func (s *SQL) DeleteMCPServer(ctx context.Context, tenantID, id string) error {
 	return err
 }
 
-// --- tenant-defined login providers (docs/log/61 §61.11 + ADR0043 決定 29-33) -------
+// --- tenant-defined login providers (docs/log/61 §61.11 + ADR0043 decisions 29-33) ---
 
 const tenantIdPCols = `SELECT id, tenant_id, name, label_ja, label_en, kind, issuer, client_id,
        secret_enc, key_ref, trust, allowed_tids, allowed_domains, allowed_orgs, link_claim, status,
@@ -3130,7 +3138,7 @@ func (s *SQL) CreateTenantIdP(ctx context.Context, t TenantIdP) error {
 
 // UpdateTenantIdP replaces the editable content of a row. status / approved_* are
 // written here too, because an edit that changes the issuer, the client_id or the
-// trust rule sends the row back to pending (決定 30) — the caller computes that and
+// trust rule sends the row back to pending (decision 30) — the caller computes that and
 // this is where it lands.
 func (s *SQL) UpdateTenantIdP(ctx context.Context, t TenantIdP) error {
 	_, err := s.db.ExecContext(ctx,
@@ -3301,9 +3309,9 @@ func (s *SQL) PutCloudCost(ctx context.Context, days []string, rows []CloudCostR
 // ListCloudCost returns the raw per-(day, member, service) rows in the window.
 // membershipID != "" is the member's own view; tenantID != "" scopes to one tenant.
 //
-// ⚠️ The shared bucket (membership_id=”) has no tenant, so a tenant-scoped query must
+// The shared bucket (membership_id=”) has no tenant, so a tenant-scoped query must
 // NOT return it — a tenant_admin seeing the deployment's ALB/RDS bill would be reading
-// outside their tenant (ADR 0048 決定 4). It falls out of the WHERE naturally, and that
+// outside their tenant (ADR 0048 decision 4). It falls out of the WHERE naturally, and that
 // is deliberate rather than accidental.
 func (s *SQL) ListCloudCost(ctx context.Context, tenantID, membershipID, fromDay, toDay string) ([]CloudCostRow, error) {
 	q := `SELECT day, membership_id, tenant_id, service, unblended, amortized, currency, estimated
