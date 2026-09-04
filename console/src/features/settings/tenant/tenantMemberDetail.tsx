@@ -54,7 +54,7 @@ export function MemberView({
   // tenant default, which is a real value here and not "unset means smallest": there
   // is no numeric fallback for a class.
   const [slotClass, setSlotClass] = useState<string>(member.slot_class ?? "");
-  // ⚠️ `member` is a SNAPSHOT taken when its row was clicked. The parent
+  // `member` is a SNAPSHOT taken when its row was clicked. The parent
   // (TenantDialog / AdminTab) holds it in useState and `onChanged` reloads the tenant
   // LIST, not the selection — so the prop never reflects anything saved from here.
   // Re-seeding the editor from it after a save therefore shows the values from BEFORE
@@ -163,7 +163,7 @@ export function MemberView({
       : tr("admin.zero_deploy_default")
     : +memMb > 0
       ? tr("admin.ws_slot_lands", { type: landed.instance_type, spec: slotSpec(landed) })
-      : // ⚠️ 0 is NOT "deployment default" here: slotTypeFor(0) lands on the smallest rung.
+      : // 0 is NOT "deployment default" here: slotTypeFor(0) lands on the smallest rung.
         tr("admin.ws_slot_zero", { type: landed.instance_type });
   const diskDefault = sizing.disk_default_gb ?? 0;
   const diskHint =
@@ -566,7 +566,7 @@ export function MemberView({
             </div>
             {!sizing.cpu_effective && <p className="admin-hint">{tr("admin.ws_cpu_na")}</p>}
             {onSlots && <p className="admin-hint">{tr("admin.ws_slot_note")}</p>}
-            {/* ⚠️ The one destructive-ish consequence in this editor. `~` is a volume
+            {/* The one destructive-ish consequence in this editor. `~` is a volume
                 that follows the member, and its ~/.local CLIs, nvm node, Chromium and
                 node_modules are architecture-dependent — a class change across
                 architectures makes the next start reinstall them (docs/log/70 §70.5).

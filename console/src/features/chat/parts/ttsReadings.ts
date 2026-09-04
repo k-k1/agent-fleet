@@ -266,7 +266,7 @@ export function applyBuiltinReadings(text: string): string {
   for (const [re, to] of UPPER_ACRONYMS) t = t.replace(re, to);
   t = t.replace(GO_PREFIX, "ご"); // prefix 誤 = go (誤表示, 誤判定); must precede the 判定 substitution
   t = t.replace(KANAME, "$1かなめ"); // が/は/も + 要 before end of sentence, punctuation or です/だ
-  t = t.replace(KONO_YOU_NA, "$1よう"); // この/その/あの/どの + 様な・様に = you
+  t = t.replace(KONO_YOU_NA, "$1よう"); // この/その/あの/どの + 様な / 様に = you
   t = t.replace(KARADA_BODY, "からだ"); // pin only the kun reading; Sino-Japanese compounds are protected
   t = applyUserDict(t, BUILTIN_READINGS); // compounds such as 行目 / 判定, pinned before fixGyoLine
   t = fixGyoLine(t); // remaining 行 = line/row defaults to gyou

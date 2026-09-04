@@ -201,7 +201,7 @@ function PopulatedPane({
   // one Pane instance is reused, only the props swap). Local toggles persist
   // within the same session.
   //
-  // ★ Adjusted DURING RENDER, never from an effect. An effect commits the STALE
+  // Adjusted DURING RENDER, never from an effect. An effect commits the STALE
   // `mirror` first and the browser paints that frame before the effect corrects
   // it — switching from a file tab to a chat-mirror session tab flashed one frame
   // of raw TUI before the mirror appeared. A render-phase update to this same

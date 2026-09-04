@@ -444,7 +444,7 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/chat/conversations/{id}/plan/refresh", rest)                       // explicit work-plan refresh (same)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/paste-image", rest)
 	mux.HandleFunc("GET /api/chat/conversations/{id}/pasted/{file}", rest)
-	// One-shot advisory turn (docs/log/21 memo triage) — stateless, tools off. Proxied verbatim.
+	// One-shot advisory turn (docs/log/21 memo tidy-up) — stateless, tools off. Proxied verbatim.
 	mux.HandleFunc("POST /api/chat/ask", rest)
 }
 

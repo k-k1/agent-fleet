@@ -94,7 +94,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/driver", sessionx.HandleSessionDriver)
 	mux.HandleFunc("POST /sessions/{name}/paste-image", sessionx.HandlePasteImage)
 	mux.HandleFunc("GET /sessions/{name}/pasted/{file}", sessionx.HandlePastedImage)
-	// Memo image attachments (docs/log/21 画像添付) — membership-scoped, so keyed to the
+	// Memo image attachments (docs/log/21 image attachments) — membership-scoped, so keyed to the
 	// container rather than a session (memo_paste.go). CP proxies /api/memos/* here.
 	mux.HandleFunc("POST /memos/paste-image", handleMemoPasteImage)
 	mux.HandleFunc("GET /memos/images/{file}", handleMemoPastedImage)

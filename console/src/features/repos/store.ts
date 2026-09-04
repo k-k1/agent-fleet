@@ -122,7 +122,7 @@ export const useLaunchTarget = create<LaunchTargetStore>((set) => ({
   clear: () => set({ target: null, existingBranch: "", inPlace: false }),
 }));
 
-/** A first-prompt seed for the next launch (docs/log/21 UI刷新): the memo send modal's
+/** A first-prompt seed for the next launch (docs/log/21 UI overhaul): the memo send modal's
  * "start a new session" stashes the composed memo text here, then opens the launch hub.
  * LaunchModal reads it once to prefill its prompt field, then it's cleared. */
 interface LaunchSeedStore {

@@ -140,7 +140,7 @@
      Dark steps run surface→bright as the value rises (the anchor flips in dark mode).
      Verified with the dataviz validator in --ordinal mode against --panel #181818:
      monotone L / adjacent ΔL ≥ 0.06 / low end 2.07:1 vs surface / single hue, all PASS.
-     ⚠️ Do not hand-tune one step — re-run the validator on the whole ramp. */
+     Do not hand-tune one step — re-run the validator on the whole ramp. */
   --uh-1: #7a3a18;
   --uh-2: #a44f1e;
   --uh-3: #c96827;

@@ -107,7 +107,7 @@ interface LaunchModalProps {
   onClose: () => void;
   /** Present when opened from the Start hub: the back action returns to it. */
   onBack?: () => void;
-  /** Seed for the first-prompt field (docs/log/21 UI刷新): the memo send modal launches a
+  /** Seed for the first-prompt field (docs/log/21 UI overhaul): the memo send modal launches a
    * new session with the composed memo text prefilled here. */
   initialPrompt?: string;
 	/** Optional initial session title, e.g. proposed by a predecessor session. */

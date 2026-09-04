@@ -1,4 +1,4 @@
-// MemoTidyModal (docs/log/21 tidy) — hands the selected memos to a stateless assistant
+// MemoTidyModal (docs/log/21 memo tidy-up) — hands the selected memos to a stateless assistant
 // turn that returns cleaned text + a suggested category per memo, previews old→new, and on
 // approval PATCHes the changes. We never auto-apply — a bad tidy shouldn't need undo.
 import { useEffect, useState } from "react";

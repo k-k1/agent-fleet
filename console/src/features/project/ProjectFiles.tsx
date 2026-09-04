@@ -72,7 +72,7 @@ const fsList = (path: string) =>
 // below, and the re-expand revalidation): it must be able to say "I don't know"
 // so a stale row survives a failure.
 //
-// ★ fsList above answers a dropped fetch with `{entries: []}`, which is
+// fsList above answers a dropped fetch with `{entries: []}`, which is
 // indistinguishable from an empty directory. Writing that back is fine on a
 // mount (nothing to lose) and fatal on a refresh: one transient 502 — the CP's
 // plain-text answer while the agent restarts — would EMPTY the tree at the end

@@ -1,4 +1,4 @@
-// SendMemoModal (docs/log/21 UI刷新) — the selection-send step of the memo queue. Opens with
+// SendMemoModal (docs/log/21 UI overhaul) — the selection-send step of the memo queue. Opens with
 // the selected memos concatenated into one editable message, then sends to a chosen
 // destination:
 //   - a running session (memoFlush with the edited text — sends once + stamps them sent),

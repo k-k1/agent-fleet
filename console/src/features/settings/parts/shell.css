@@ -809,7 +809,7 @@
 
 /* Named sizes fill the three numeric fields above in one click. They are a shortcut,
    not a separate mode, so they sit next to the fields rather than replacing them. */
-/* ⚠️ The tenant's machine picker is the SAME chip row outside .limit-edit, so every
+/* The tenant's machine picker is the SAME chip row outside .limit-edit, so every
    rule below names both. Dropping the `.limit-edit` scope instead would make
    `.le-presets` a global class, and this stylesheet already learned what two
    definitions of one global name do to each other (docs/log/70 §70.10 / .view-head). */

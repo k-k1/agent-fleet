@@ -188,7 +188,7 @@ func TestSQLiteMemo(t *testing.T) {
 	}
 }
 
-// Memo categories (docs/log/21 UI刷新): first-class rows, membership-scoped, with a rename
+// Memo categories (docs/log/21 UI overhaul): first-class rows, membership-scoped, with a rename
 // that cascades onto the memos and ReassignMemoCategory that empties/moves them.
 func TestSQLiteMemoCategory(t *testing.T) {
 	ctx := context.Background()

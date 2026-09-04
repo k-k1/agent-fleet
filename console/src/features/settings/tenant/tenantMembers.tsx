@@ -195,17 +195,17 @@ export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: s
 
 // MemberSizeChips — what this member is sized to, on the roster row.
 //
-// ★ It shows the BOX on a slot runtime and the NUMBERS everywhere else, because those
+// It shows the BOX on a slot runtime and the NUMBERS everywhere else, because those
 // are different statements. On ecs-ec2 the memory figure is a requirement that picks a
 // machine and the person then gets the whole thing, so "m6i.large · 2 vCPU / 8 GiB" is
 // the true answer and "8192 MB" is a half-truth. On docker/Fargate the number IS the
 // cap, and there is no box to name.
 //
-// ⚠️ The CPU chip follows the same rule the member detail uses: when cpu_effective is
+// The CPU chip follows the same rule the member detail uses: when cpu_effective is
 // false the axis never reaches the backend, so showing it would put a number on screen
 // that does nothing. It is omitted rather than greyed out.
 //
-// ⚠️ Everything here is "unset → say nothing". A roster of rows all reading "0" teaches
+// Everything here is "unset → say nothing". A roster of rows all reading "0" teaches
 // people to stop reading the column.
 function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) {
   const tr = useT();

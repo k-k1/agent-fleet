@@ -31,7 +31,7 @@ func memoRetainBefore() string {
 	return time.Now().UTC().Add(-memoRetentionDays * 24 * time.Hour).Format(time.RFC3339)
 }
 
-// memoAttachment is one image attached to a memo (docs/log/21 画像添付). Path is the
+// memoAttachment is one image attached to a memo (docs/log/21 image attachments). Path is the
 // absolute in-container path returned by POST /api/memos/paste-image (under
 // ~/.cache/agent-fleet/memo-images); Name is its basename for display.
 type memoAttachment struct {
@@ -351,7 +351,7 @@ func (a memoAPI) flush(w http.ResponseWriter, r *http.Request, res *resolved) {
 		IDs         []string `json:"ids"`
 		// Text, when non-empty, is sent verbatim instead of the server-composed
 		// message — the send modal lets the user edit the concatenated text before
-		// sending (docs/log/21 UI刷新). The ids still drive which memos get stamped sent.
+		// sending (docs/log/21 UI overhaul). The ids still drive which memos get stamped sent.
 		Text string `json:"text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -374,7 +374,7 @@ func (a memoAPI) delete(w http.ResponseWriter, r *http.Request, _ store.Identity
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- Memo categories (docs/log/21 UI刷新) -------------------------------------------
+// --- Memo categories (docs/log/21 UI overhaul) -------------------------------------------
 // First-class categories: created ahead of any memo, reordered by drag-and-drop, kept
 // while empty. A category's NAME stays the grouping key (Memo.Category), so a rename
 // cascades onto the memos and a rename onto an existing name merges the two.

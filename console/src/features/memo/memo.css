@@ -563,7 +563,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* --- Send-memo modal (docs/log/21 UI刷新) -------------------------------------------- */
+/* --- Send-memo modal (docs/log/21 UI overhaul) -------------------------------------------- */
 .memo-send-hint {
   font-weight: 400;
   letter-spacing: 0;
@@ -672,7 +672,7 @@
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
-/* --- Image attachments (docs/log/21 画像添付) ---------------------------------------- */
+/* --- Image attachments (docs/log/21 image attachments) ---------------------------------------- */
 /* Composer preview strip + in-row thumbnails. Small square previews with a hover
    remove chip; clicking opens a full-size lightbox (MemoImageThumb). */
 .memo-add-thumbs,

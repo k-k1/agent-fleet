@@ -1,4 +1,4 @@
-// Web Share Target glue (docs/log/21 画像添付). registerShareSW() installs the minimal
+// Web Share Target glue (docs/log/21 image attachments). registerShareSW() installs the minimal
 // service worker (public/sw.js) that receives Android share-sheet POSTs; consumeShare()
 // runs on the memo panel's mount, reads the stash the SW left in CacheStorage for a
 // ?share=<id> launch, evicts it, and returns the shared text + image File objects for

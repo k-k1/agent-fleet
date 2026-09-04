@@ -551,7 +551,7 @@
    row because they are the only part of it this tenant decides — the rest (who the
    issuer is, whether it is approved) is stated, not chosen.
 
-   ★ flex:none + nowrap. The labels are the same two strings on every row, so content
+   flex:none + nowrap. The labels are the same two strings on every row, so content
    width already lines the names up; what this stops is the row's flexible middle
    (.as-repo holds an issuer URL) squeezing the toggles into two illegible slivers
    when the modal is narrow. Wrapping the row is the better failure. */

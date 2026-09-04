@@ -202,7 +202,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("ssm profile: %v", err)
 	}
 
-	// memo categories (docs/log/21 UI刷新 / migrations-pg/0030). This whole table had
+	// memo categories (docs/log/21 UI overhaul / migrations-pg/0030). This whole table had
 	// only ever existed on SQLite: the mirror migration was never written, so on a
 	// Postgres deployment every category endpoint answered 500 and the Console — which
 	// folds a non-array answer into an empty list — simply showed no categories. The

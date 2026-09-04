@@ -65,11 +65,11 @@ describe("TTS master gain", () => {
 
   it("quiet volume follows the ttsBackgroundVolume slider and does not affect mute or normal", () => {
     expect(ttsMasterGain("quiet", true, 0.6)).toBe(0.6);
-    expect(ttsMasterGain("quiet", true, 0)).toBe(0); // 実質ミュート
-    expect(ttsMasterGain("quiet", true, 5)).toBe(1); // 0..1 にクランプ
-    expect(ttsMasterGain("mute", true, 0.6)).toBe(0); // mute は常に無音
-    expect(ttsMasterGain("normal", true, 0.6)).toBe(1); // normal は常に通常
-    expect(ttsMasterGain("quiet", false, 0.6)).toBe(1); // 非背景は常に通常
+    expect(ttsMasterGain("quiet", true, 0)).toBe(0); // effectively muted
+    expect(ttsMasterGain("quiet", true, 5)).toBe(1); // clamped to 0..1
+    expect(ttsMasterGain("mute", true, 0.6)).toBe(0); // mute is always silent
+    expect(ttsMasterGain("normal", true, 0.6)).toBe(1); // normal is always full volume
+    expect(ttsMasterGain("quiet", false, 0.6)).toBe(1); // not in background: always full volume
   });
 });
 
@@ -124,11 +124,11 @@ describe("plainify (flattening text for reading)", () => {
   });
 
   it("a held beat at line start is a marker and is dropped from the reading", () => {
-    expect(plainify("————また、イく。")).toBe("また、イく。"); // 実機報告
+    expect(plainify("————また、イく。")).toBe("また、イく。"); // reported from a real device
     expect(plainify("——イって、る。")).toBe("イって、る。");
-    expect(plainify("……一日中、って。")).toBe("一日中、って。"); // 実機報告（三点リーダ）
-    expect(plainify("...本当に？")).toBe("本当に？"); // 半角三点リーダ連続
-    expect(plainify("普通の文の中の—区切り")).toBe("普通の文の中の—区切り"); // 行頭以外は触らない
+    expect(plainify("……一日中、って。")).toBe("一日中、って。"); // reported from a real device (ellipsis)
+    expect(plainify("...本当に？")).toBe("本当に？"); // a run of half-width ellipsis dots
+    expect(plainify("普通の文の中の—区切り")).toBe("普通の文の中の—区切り"); // not touched anywhere but at line start
   });
 
   it("drops images", () => {
@@ -184,7 +184,7 @@ describe("firstChunkCut (getting the first utterance out early)", () => {
   });
 
   it("forces a cut at FIRST_MAX even with no break", () => {
-    const long = "あ".repeat(40); // 区切り無しの長い連続
+    const long = "あ".repeat(40); // a long run with no break
     expect(firstChunkCut(long)).toBe(28);
   });
 
@@ -217,21 +217,21 @@ describe("startsBlock (detecting a block head = the cue for a leading beat)", ()
 describe("startsTame (detecting a held beat = the cue for a longer leading beat)", () => {
   it("matches a run of dashes at line start", () => {
     expect(startsTame("――また、行く。")).toBe(true);
-    expect(startsTame("————また、イく。")).toBe(true); // em dash 連続
+    expect(startsTame("————また、イく。")).toBe(true); // a run of em dashes
     expect(startsTame("——イって、る。")).toBe(true);
-    expect(startsTame("―行く。")).toBe(true); // 1 個でも対象
+    expect(startsTame("―行く。")).toBe(true); // one is enough to match
   });
 
   it("also matches a run of ellipses at line start", () => {
-    expect(startsTame("……一日中、って。")).toBe(true); // 実機報告
-    expect(startsTame("...本当に？")).toBe(true); // 半角三点リーダ連続
-    expect(startsTame("…")).toBe(false); // 直後が無い（行末）
+    expect(startsTame("……一日中、って。")).toBe(true); // reported from a real device
+    expect(startsTame("...本当に？")).toBe(true); // a run of half-width ellipsis dots
+    expect(startsTame("…")).toBe(false); // nothing follows (end of line)
   });
 
   it("does not match a trailing lengthener (followed by a space or end of line) or a bare hyphen word", () => {
     expect(startsTame("普通の文です。")).toBe(false);
-    expect(startsTame("-1 が返ります")).toBe(false); // 半角ハイフンは対象外（BLOCK_HEAD と衝突回避）
-    expect(startsTame("―― ")).toBe(false); // 直後が空白/行末
+    expect(startsTame("-1 が返ります")).toBe(false); // a half-width hyphen is out of scope (it would clash with BLOCK_HEAD)
+    expect(startsTame("―― ")).toBe(false); // followed by a space or the end of the line
     expect(startsTame("")).toBe(false);
   });
 });
@@ -268,7 +268,7 @@ describe("emotionOf (guessing a sentence's emotion)", () => {
   it("error and failure wording gives angry", () => {
     expect(emotionOf("テストが失敗しました。")).toBe("angry");
     expect(emotionOf("ビルドでエラーが出ています。")).toBe("angry");
-    expect(emotionOf("3 tests FAILED")).toBe("angry"); // 英語は小文字化して判定
+    expect(emotionOf("3 tests FAILED")).toBe("angry"); // English is lower-cased before matching
   });
 
   it("success and completion wording gives happy", () => {
@@ -417,7 +417,7 @@ describe("applyBuiltinReadings / applyReadings (the built-in reading corrections
   it("a bare slash outside code becomes a middle dot, tightening the pause", () => {
     expect(applyBuiltinReadings("origin/main のブランチ")).toBe("origin・main のブランチ");
     expect(applyBuiltinReadings("on/off と read/write")).toBe("on・off と read・write");
-    expect(applyBuiltinReadings("a/b/c の階層")).toBe("a・b・c の階層"); // チェーンも一括
+    expect(applyBuiltinReadings("a/b/c の階層")).toBe("a・b・c の階層"); // a whole chain is converted at once
   });
 
   it("converts a date carrying a year and protects an unambiguous fraction context", () => {
@@ -451,13 +451,13 @@ describe("applyBuiltinReadings / applyReadings (the built-in reading corrections
     expect(applyBuiltinReadings("v12n と o11y と p13n")).toBe(
       "バーチャライゼーション と オブザーバビリティ と パーソナライゼーション",
     );
-    expect(applyBuiltinReadings("mai18nx")).toBe("mai18nx"); // 語中は触らない
+    expect(applyBuiltinReadings("mai18nx")).toBe("mai18nx"); // not touched mid-word
   });
 
   it("upper-case IT reads アイティー; lower-case it, the English pronoun, is left alone", () => {
     expect(applyBuiltinReadings("IT業界のIT投資")).toBe("アイティー業界のアイティー投資");
     expect(applyBuiltinReadings("do it now")).toBe("do it now");
-    expect(applyBuiltinReadings("GITHUB")).toBe("GITHUB"); // 語中は触らない
+    expect(applyBuiltinReadings("GITHUB")).toBe("GITHUB"); // not touched mid-word
   });
 
   it("the product name agent-fleet, in all its spellings, is pinned to エージェントフリート", () => {
@@ -469,13 +469,13 @@ describe("applyBuiltinReadings / applyReadings (the built-in reading corrections
   it("a single wave dash marking a range reads から", () => {
     expect(applyBuiltinReadings("通常の3〜5倍速です")).toBe("通常の3から5倍速です");
     expect(applyBuiltinReadings("月〜金曜日")).toBe("月から金曜日");
-    expect(applyBuiltinReadings("1～3個")).toBe("1から3個"); // 全角チルダ（U+FF5E）も同一視
-    expect(applyBuiltinReadings("3〜5〜7")).toBe("3から5から7"); // 連鎖レンジ
+    expect(applyBuiltinReadings("1～3個")).toBe("1から3個"); // the full-width tilde (U+FF5E) counts as the same mark
+    expect(applyBuiltinReadings("3〜5〜7")).toBe("3から5から7"); // chained ranges
   });
 
   it("a run of wave dashes, the elision or hesitation use, reads ほにゃらら", () => {
     expect(applyBuiltinReadings("詳細は～～～省略します")).toBe("詳細はほにゃらら省略します");
-    expect(applyBuiltinReadings("あとは〜〜適当に")).toBe("あとはほにゃらら適当に"); // 2個でも対象
+    expect(applyBuiltinReadings("あとは〜〜適当に")).toBe("あとはほにゃらら適当に"); // two is enough to match
     expect(applyBuiltinReadings("混在～〜～も1個として畳む")).toBe("混在ほにゃららも1個として畳む");
   });
 
@@ -490,10 +490,10 @@ describe("applyBuiltinReadings / applyReadings (the built-in reading corrections
     expect(applyBuiltinReadings("42行を削除")).toBe("42ぎょうを削除");
     expect(applyBuiltinReadings("行数と行末と行頭")).toBe("ぎょうすうとぎょうまつとぎょうとう");
     expect(applyBuiltinReadings("行全体を選択")).toBe("ぎょうぜんたいを選択");
-    expect(applyBuiltinReadings("１０行目")).toBe("１０ぎょうめ"); // 全角数字
-    expect(applyBuiltinReadings("集計行と統計行")).toBe("集計ぎょうと統計ぎょう"); // 漢字＋行サフィックス
-    expect(applyBuiltinReadings("WT 行を確認")).toBe("WT ぎょうを確認"); // 実機報告の "WT 行"
-    expect(applyBuiltinReadings("この行が長い")).toBe("このぎょうが長い"); // 行＋助詞
+    expect(applyBuiltinReadings("１０行目")).toBe("１０ぎょうめ"); // full-width digits
+    expect(applyBuiltinReadings("集計行と統計行")).toBe("集計ぎょうと統計ぎょう"); // kanji + the 行 suffix
+    expect(applyBuiltinReadings("WT 行を確認")).toBe("WT ぎょうを確認"); // "WT 行", reported from a real device
+    expect(applyBuiltinReadings("この行が長い")).toBe("このぎょうが長い"); // 行 + a particle
     expect(applyBuiltinReadings("先頭行と最終行")).toBe("先頭ぎょうと最終ぎょう");
   });
 
@@ -507,26 +507,26 @@ describe("applyBuiltinReadings / applyReadings (the built-in reading corrections
   });
 
   it("判定 is pinned to はんてい, so 誤判定 does not become ごはんてい", () => {
-    expect(applyBuiltinReadings("誤判定を修正")).toBe("ごはんていを修正"); // 誤→ご も同時に効く
+    expect(applyBuiltinReadings("誤判定を修正")).toBe("ごはんていを修正"); // the 誤 -> ご rule fires at the same time
     expect(applyBuiltinReadings("空判定と判定結果")).toBe("からはんていとはんてい結果");
   });
 
   it("the prefix 誤 before a kanji reads ご (誤表示 -> ごひょうじ); with okurigana, 誤る / 誤り stay あやま", () => {
-    expect(applyBuiltinReadings("「5時間制限」と誤表示")).toBe("「5時間制限」とご表示"); // 実機報告
+    expect(applyBuiltinReadings("「5時間制限」と誤表示")).toBe("「5時間制限」とご表示"); // reported from a real device
     expect(applyBuiltinReadings("誤検知と誤動作と誤操作")).toBe("ご検知とご動作とご操作");
     // okurigana forms (the kun reading あやま) are left alone
     expect(applyBuiltinReadings("設定を誤ると誤りが出る")).toBe("設定を誤ると誤りが出る");
   });
 
   it("fixes mis-voiced readings: 貼り付け -> はりつけ, 型チェック -> かたチェック", () => {
-    expect(applyBuiltinReadings("画像貼り付け")).toBe("画像はりつけ"); // 実機報告
-    expect(applyBuiltinReadings("ここに貼り付けると貼り付けた")).toBe("ここにはりつけるとはりつけた"); // 前方一致
-    expect(applyBuiltinReadings("TypeScript型チェック")).toBe("TypeScriptかたチェック"); // 実機報告（英字は CP 側 enkana）
+    expect(applyBuiltinReadings("画像貼り付け")).toBe("画像はりつけ"); // reported from a real device
+    expect(applyBuiltinReadings("ここに貼り付けると貼り付けた")).toBe("ここにはりつけるとはりつけた"); // prefix match
+    expect(applyBuiltinReadings("TypeScript型チェック")).toBe("TypeScriptかたチェック"); // reported from a real device (the Latin part is handled by enkana on the CP side)
   });
 
   it("言って -> いって, guarding the sentence-final misreading, and a standalone 身体 -> からだ", () => {
-    expect(applyBuiltinReadings("何する？　言って。")).toBe("何する？　いって。"); // 実機報告
-    expect(applyBuiltinReadings("身体を動かす")).toBe("からだを動かす"); // 実機報告
+    expect(applyBuiltinReadings("何する？　言って。")).toBe("何する？　いって。"); // reported from a real device
+    expect(applyBuiltinReadings("身体を動かす")).toBe("からだを動かす"); // reported from a real device
     expect(applyBuiltinReadings("身体が資本で、身体そのものを鍛える")).toBe(
       "からだが資本で、からだそのものを鍛える",
     );
@@ -539,7 +539,7 @@ describe("applyBuiltinReadings / applyReadings (the built-in reading corrections
   });
 
   it("放ってお, the idiom for leaving something be, reads ほうってお; a standalone 放って is left alone, to keep 放つ = はなつ apart", () => {
-    expect(applyBuiltinReadings("放っておく")).toBe("ほうっておく"); // 実機報告
+    expect(applyBuiltinReadings("放っておく")).toBe("ほうっておく"); // reported from a real device
     expect(applyBuiltinReadings("放っておかれる子供")).toBe("ほうっておかれる子供");
     expect(applyBuiltinReadings("放っておいた")).toBe("ほうっておいた");
     // the standalone form could still be 放つ (解き放つ), so it stays はなって
@@ -548,7 +548,7 @@ describe("applyBuiltinReadings / applyReadings (the built-in reading corrections
   });
 
   it("要 after が/は/も and before end of sentence, punctuation or です/だ reads かなめ; compounds and 要る are left alone", () => {
-    expect(applyBuiltinReadings("ここが要")).toBe("ここがかなめ"); // 実機報告
+    expect(applyBuiltinReadings("ここが要")).toBe("ここがかなめ"); // reported from a real device
     expect(applyBuiltinReadings("ここが要です")).toBe("ここがかなめです");
     expect(applyBuiltinReadings("そこが要だ。")).toBe("そこがかなめだ。");
     expect(applyBuiltinReadings("そこは要、次も要")).toBe("そこはかなめ、次もかなめ");
@@ -561,20 +561,20 @@ describe("applyBuiltinReadings / applyReadings (the built-in reading corrections
   });
 
   it("様な / 様に after この/その/あの/どの read よう, and あり様 reads ありよう", () => {
-    expect(applyBuiltinReadings("その様な問題")).toBe("そのような問題"); // 実機報告
+    expect(applyBuiltinReadings("その様な問題")).toBe("そのような問題"); // reported from a real device
     expect(applyBuiltinReadings("この様に考える")).toBe("このように考える");
     expect(applyBuiltinReadings("あの様なミス")).toBe("あのようなミス");
     expect(applyBuiltinReadings("どの様に進める？")).toBe("どのように進める？");
-    expect(applyBuiltinReadings("あり様を見直す")).toBe("ありようを見直す"); // 実機報告
+    expect(applyBuiltinReadings("あり様を見直す")).toBe("ありようを見直す"); // reported from a real device
     // compounds (様子, 様々) are not followed by な/に, so they are out of scope
     expect(applyBuiltinReadings("その様子と様々な意見")).toBe("その様子と様々な意見");
   });
 
   it("a held beat inside a sentence becomes a comma to make a pause; at line start startsTame and plainify handle it", () => {
-    expect(applyBuiltinReadings("……一日中、って。")).toBe("、一日中、って。"); // 実機報告
+    expect(applyBuiltinReadings("……一日中、って。")).toBe("、一日中、って。"); // reported from a real device
     expect(applyBuiltinReadings("そして――彼は言った。")).toBe("そして、彼は言った。");
     expect(applyBuiltinReadings("分かった…でも心配だ")).toBe("分かった、でも心配だ");
-    expect(applyBuiltinReadings("待って...本当に？")).toBe("待って、本当に？"); // 半角三点リーダ連続も対象
+    expect(applyBuiltinReadings("待って...本当に？")).toBe("待って、本当に？"); // a run of half-width ellipsis dots matches too
   });
 
   it("no extra comma when the held-beat mark is already followed by punctuation or the end of the sentence", () => {
@@ -611,14 +611,14 @@ describe("isBareHash / abbreviated reading of a bare hash", () => {
   const F = `(${CODE_FILLERS.join("|")})`;
 
   it("only a token that can be nothing but a hex hash is true", () => {
-    expect(isBareHash("f437e17")).toBe(true); // git 短縮ハッシュ
-    expect(isBareHash("b2d7fac36b996a9ae6245c188b51c4dbac2c9aef")).toBe(true); // フル SHA
+    expect(isBareHash("f437e17")).toBe(true); // git short hash
+    expect(isBareHash("b2d7fac36b996a9ae6245c188b51c4dbac2c9aef")).toBe(true); // full SHA
     expect(isBareHash("28733db5-247d-5fd9-a6b9-6d64d685412a")).toBe(true); // UUID
-    expect(isBareHash("deadbeef")).toBe(false); // 英字のみ（英単語かもしれない）
-    expect(isBareHash("facade")).toBe(false); // 英字のみ＋7 文字未満
-    expect(isBareHash("1783780316")).toBe(false); // 数字のみ（トークン数・時刻等）
-    expect(isBareHash("F437E17")).toBe(false); // 大文字は対象外（git は小文字）
-    expect(isBareHash("abc123")).toBe(false); // 6 文字（短縮ハッシュの下限未満）
+    expect(isBareHash("deadbeef")).toBe(false); // letters only (it could be an English word)
+    expect(isBareHash("facade")).toBe(false); // letters only, and under 7 characters
+    expect(isBareHash("1783780316")).toBe(false); // digits only (a token count, a time and so on)
+    expect(isBareHash("F437E17")).toBe(false); // upper case is out of scope (git uses lower case)
+    expect(isBareHash("abc123")).toBe(false); // 6 characters, below the short-hash minimum
   });
 
   it("plainify abbreviates a bare hash in prose, gated on ttsAbbrevCode", () => {
@@ -626,9 +626,9 @@ describe("isBareHash / abbreviated reading of a bare hash", () => {
     expect(plainify("前回マージ f437e17 以降の 8 コミット", code)).toMatch(
       new RegExp(`^前回マージ f4 ${F} 以降の 8 コミット$`),
     );
-    expect(plainify("前回マージ f437e17 以降の")).toBe("前回マージ f437e17 以降の"); // 省略読み OFF
-    expect(plainify("値は 1783780316 です", code)).toBe("値は 1783780316 です"); // 長い数値はそのまま
-    expect(plainify("facade を deadbeef に", code)).toBe("facade を deadbeef に"); // 英単語はそのまま
+    expect(plainify("前回マージ f437e17 以降の")).toBe("前回マージ f437e17 以降の"); // abbreviated reading off
+    expect(plainify("値は 1783780316 です", code)).toBe("値は 1783780316 です"); // a long number is left as-is
+    expect(plainify("facade を deadbeef に", code)).toBe("facade を deadbeef に"); // an English word is left as-is
   });
 
   it("a spelling the dictionary covers is left alone; applyUserDict substitutes later", () => {
@@ -657,7 +657,7 @@ describe("splitLongSentence (splitting a long sentence for synthesis)", () => {
     const pieces = splitLongSentence(s, 40);
     expect(pieces.length).toBeGreaterThan(1);
     expect(pieces.join("")).toBe(s);
-    for (const p of pieces) expect(p.length).toBeLessThanOrEqual(41); // 区切りを含めて max+1 まで
+    for (const p of pieces) expect(p.length).toBeLessThanOrEqual(41); // up to max+1, counting the break character
   });
 
   it("a long sentence with no break is split by length", () => {
@@ -706,7 +706,7 @@ describe("makeAudioLru (the synthesis cache LRU)", () => {
     const c = makeAudioLru<{ duration: number }>(() => 10);
     c.put("a", buf(4));
     c.put("b", buf(4));
-    c.put("c", buf(4)); // 12 > 10 → a を捨てて 8
+    c.put("c", buf(4)); // 12 > 10, so a is evicted and 8 is left
     expect(c.get("a")).toBeUndefined();
     expect(c.get("b")).toBeDefined();
     expect(c.get("c")).toBeDefined();
@@ -716,8 +716,8 @@ describe("makeAudioLru (the synthesis cache LRU)", () => {
     const c = makeAudioLru<{ duration: number }>(() => 10);
     c.put("a", buf(4));
     c.put("b", buf(4));
-    c.get("a"); // a を末尾へ
-    c.put("c", buf(4)); // 最古は b → b が消える
+    c.get("a"); // moves a to the most-recent end
+    c.put("c", buf(4)); // b is now the oldest, so b is the one dropped
     expect(c.get("a")).toBeDefined();
     expect(c.get("b")).toBeUndefined();
     expect(c.get("c")).toBeDefined();
@@ -729,7 +729,7 @@ describe("makeAudioLru (the synthesis cache LRU)", () => {
     expect(c.get("big")).toBeUndefined();
     const first = buf(2);
     c.put("dup", first);
-    c.put("dup", buf(3)); // 二重 put は無視（合計秒数を壊さない）
+    c.put("dup", buf(3)); // a duplicate put is ignored (the total seconds stay correct)
     expect(c.get("dup")).toBe(first);
     expect(c.size()).toBe(1);
   });
@@ -739,12 +739,12 @@ describe("makeAudioLru (the synthesis cache LRU)", () => {
     const c = makeAudioLru<{ duration: number }>(() => max);
     c.put("a", buf(4));
     c.put("b", buf(4));
-    max = 4; // 設定を下げる → 次の put で合計 4 まで縮む
-    c.put("c", buf(4)); // c 自体は入り、a/b が捨てられる
+    max = 4; // lower the cap: the next put shrinks the total to 4
+    c.put("c", buf(4)); // c itself is stored and a/b are evicted
     expect(c.get("a")).toBeUndefined();
     expect(c.get("b")).toBeUndefined();
     expect(c.get("c")).toBeDefined();
-    max = 0; // 無効化 → get は必ずミスし保持分も手放す
+    max = 0; // disabled: get always misses and what was held is released
     expect(c.get("c")).toBeUndefined();
     expect(c.size()).toBe(0);
   });
@@ -759,15 +759,15 @@ describe("plainifyStreaming (fences spanning chunks)", () => {
   it("drops a code block that opens and closes within one chunk", () => {
     const f = mkFence();
     expect(plainifyStreaming("前\n```\nconst x=1;\n```\n後", f).replace(/\s+/g, "")).toBe("前後");
-    expect(f.get()).toBe(false); // 閉じたので状態はリセット
+    expect(f.get()).toBe(false); // closed, so the state is reset
   });
 
   it("suppresses a code block spanning chunks by carrying the state", () => {
     const f = mkFence();
     // chunk 1 opens the fence and leaves it open
     const a = plainifyStreaming("説明。\n```js", f);
-    expect(a).toBe("説明。"); // 開きフェンス以降は落ちる
-    expect(f.get()).toBe(true); // fence 継続中
+    expect(a).toBe("説明。"); // everything from the opening fence on is dropped
+    expect(f.get()).toBe(true); // the fence is still open
     // chunk 2 is the code body -> dropped entirely
     const b = plainifyStreaming("const y = 2;", f);
     expect(b).toBe("");

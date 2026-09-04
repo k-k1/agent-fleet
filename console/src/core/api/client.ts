@@ -849,7 +849,7 @@ export const memoFlush = (
 ): Promise<{ sent?: number; sentAt?: string; ids?: string[]; error?: ApiError }> =>
   apiJSON("api/memos/flush", "POST", { sessionName, ids, ...(text ? { text } : {}) });
 
-// First-class categories (docs/log/21 UI刷新): add empty, rename (cascades onto memos),
+// First-class categories (docs/log/21 UI overhaul): add empty, rename (cascades onto memos),
 // reorder by drag. Membership-scoped like the memos.
 export const memoCategoryList = (): Promise<MemoCategory[]> => api("api/memo-categories");
 export const memoCategoryCreate = (input: MemoCategoryInput): Promise<MemoCategory> =>

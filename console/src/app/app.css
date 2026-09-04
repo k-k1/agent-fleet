@@ -357,7 +357,7 @@
   color: var(--fg);
   line-height: 1.7;
 }
-/* ★ The address has to be selectable and shown in full — the reader copies it to
+/* The address has to be selectable and shown in full — the reader copies it to
    their administrator, who adds people BY ADDRESS. Truncating it (or rendering it
    as anything but text) buys one guaranteed extra round trip. */
 .notprov-who {

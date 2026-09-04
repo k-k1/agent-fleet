@@ -76,7 +76,7 @@ export function TrackerTab() {
 //   - An API token — three fields, because Jira's REST v3 is HTTP Basic over
 //     "<account email>:<API token>", so the email is a credential too.
 //
-// ⚠️ The token path is kept, not replaced: a tenant with no registered app has no other
+// The token path is kept, not replaced: a tenant with no registered app has no other
 // way in, and that is the state every deployment starts in.
 //
 // Either way the credentials stay container-side; the CP only ever passes them through.

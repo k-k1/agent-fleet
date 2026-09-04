@@ -2621,7 +2621,7 @@ func (s *SQL) SweepSentMemos(ctx context.Context, retainBefore string) error {
 	return err
 }
 
-// --- Memo categories (docs/log/21 UI刷新) -------------------------------------------
+// --- Memo categories (docs/log/21 UI overhaul) -------------------------------------------
 
 const memoCategoryCols = `SELECT id, membership_id, repo, name, position, created_at FROM memo_category`
 
