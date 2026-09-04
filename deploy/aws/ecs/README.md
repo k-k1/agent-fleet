@@ -1228,7 +1228,16 @@ hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
   and `teardown.sh` says which of the three you are in **before** the confirmation —
   the last moment a `crane copy` out of ECR still works. `unknown` means `crane` was not
   installed: not measured, and deliberately not rounded down to "gone".
-  The branches are pinned by `./capture-restore-test.sh` (fake `aws` / `crane`, no AWS).
+  What `./capture-restore-test.sh` pins (fake `aws` / `crane`, no AWS — it never creates,
+  deletes or updates anything; the 198 calls it makes are reads against the fake): the
+  `yes` / `no` / `unknown` decision and what `capture-env.sh` writes and refuses, and the
+  three sentences `teardown.sh` prints before the confirmation. **`dev-deploy.sh` is never
+  executed by it** — that script needs `gh`, `git ls-remote` and `update.sh` — so the
+  follow-the-live-tag step is pinned in two weaker pieces instead: `af_env_set` as a unit,
+  and a source check that the call to it is still on `dev-deploy.sh`'s success path.
+  Deleting that call turns the source check red; **it does not prove the deployed script
+  ran**, and nothing here proves a real round trip. That one is still only ever exercised
+  against a live deployment.
 - **Nothing happens without `--yes`.** They print the plan (and, for teardown, an
   inventory of what would go) and exit. With `--yes` on a terminal they also make you
   type the FQDN.

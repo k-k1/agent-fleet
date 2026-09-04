@@ -19,6 +19,10 @@
 #
 # ⚠️ **偽物が黙って何も答えないと、検査は「緑」になる。** だから各ケースは
 # **「その分岐でしか出ない文字列」を要求**し、最後に**偽物が実際に呼ばれた回数**も見る。
+#
+# 📌 言葉を正確に: **CFN の作成・削除・更新は 0 回**（＝課金は発生しない）。呼び出し自体は
+# 198 回あって、**全部が偽 `aws` 宛の読み取り**（`cloudformation describe-stacks` 180 ほか）。
+# 「CFN 呼び出し 0」と書くと後から引用されたときに嘘になるので、こう書き分ける。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -165,6 +169,37 @@ want "既存の行を差し替える" "$ENVDIR/env" "AF_IMAGE_TAG=9.9.9-dev-cafe
 want "他の行は残る" "$ENVDIR/env" "AF_DEV_DEPLOY=1"
 want "無い行は足す" "$ENVDIR/env" "AF_BRAND_NEW_KEY=1"
 if [ "$(grep -c '^AF_IMAGE_TAG=' "$ENVDIR/env")" = 1 ]; then ok "AF_IMAGE_TAG は 1 行のまま"; else bad "AF_IMAGE_TAG が増えた"; fi
+
+echo "== 6.5 dev-deploy が実際にその関数を呼んでいる（部品ではなく**呼び出し口**を守る）=="
+# 🔴 **6 が緑でも、呼び出し側が消えていれば控えは腐る。**実際レビュワーの変異
+# （`dev-deploy.sh` の `af_env_set AF_IMAGE_TAG "$TAG"` を消す／「控えを腐らせない」節を
+# 丸ごと削除）で **44/44 緑のまま**だった＝この検査は部品までしか見ていなかった。
+# `dev-deploy.sh` は `gh` / `git ls-remote` / `update.sh` を要するのでここでは起動できない。
+# **だから起動の代わりにソースを読む。**「実配備で走った」ことの証明にはならない
+# ——**それは実配備でしか取れない**——が、**呼び出しが消えたことは捕まえられる。**
+DD="$HERE/dev-deploy.sh"
+dd_lines="$(wc -l < "$DD")"
+# ⚠️ **読めた行数を出す**（ファイルを読めていない 0 件と、在るのに一致しない 0 件を区別する）。
+if [ "$dd_lines" -gt 100 ]; then ok "dev-deploy.sh を読めた（$dd_lines 行）"; else bad "dev-deploy.sh が読めていない（$dd_lines 行）"; fi
+# 成功したときの経路（DRY でない側）に在ること。`--dry-run` の枝に落ちていたら意味が無い。
+dd_success="$(awk '/^if \[ "\$DRY" = 1 \]; then$/{d=1} /^else$/{if(d){s=1;d=0}} s' "$DD")"
+# shellcheck disable=SC2016  # 展開させたくない: 探しているのは dev-deploy.sh の中の綴り `"$TAG"` そのもの
+if printf '%s' "$dd_success" | grep -q 'af_env_set AF_IMAGE_TAG "\$TAG"'; then
+  ok "成功経路で af_env_set AF_IMAGE_TAG を呼んでいる"
+else
+  bad "成功経路に af_env_set AF_IMAGE_TAG の呼び出しが無い" "控えが古いまま残る（このファイルの冒頭の 3 点セット）"
+fi
+if printf '%s' "$dd_success" | grep -q 'af_env_set AF_IMAGE_RECOVERABLE'; then
+  ok "成功経路で af_env_set AF_IMAGE_RECOVERABLE を呼んでいる"
+else
+  bad "成功経路に af_env_set AF_IMAGE_RECOVERABLE の呼び出しが無い"
+fi
+# 陰性対照: 走査が「何でも見つける」ようになっていないこと（同じ走査で在り得ない綴りを引く）。
+if printf '%s' "$dd_success" | grep -q 'af_env_set AF_THIS_KEY_DOES_NOT_EXIST'; then
+  bad "走査が壊れている（在り得ない綴りに一致した）"
+else
+  ok "走査は在り得ない綴りには一致しない（陰性対照）"
+fi
 
 echo "== 7. teardown は消す前に「復旧点が失われる」と言う（--yes 無し＝計画だけ）=="
 rm -rf "$T/state"
