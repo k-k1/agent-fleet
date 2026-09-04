@@ -95,6 +95,23 @@ ends at printing **the list of orphaned distributions and the single command to 
 first start on the new image — so it cannot ride the existing arch-change path at all. It
 needs its own announcement in the release notes.
 
+⚠️ **"Do not reinstall" applies to this Python case only. The architecture case IS repaired
+automatically** (`af-arch-repair`). Treating the two the same way was sloppy — they are not
+equally hard.
+
+| | Architecture change | Python major change |
+|---|---|---|
+| The fix | the **same version**, a different wheel / binary | that version **may not exist** for the new Python |
+| Resolution | identical to what was there | **can silently become a different version** |
+| Blast radius | only dists with compiled extensions (measured: **8** of 35) | **everything** (the whole directory goes invisible) |
+| Detection | **exact** — the arch is in the `.so` filename (`cpython-311-x86_64-linux-gnu.so`) | trivial: a version change breaks all of it |
+
+So the architecture case is an operation that reproduces the previous state exactly, which
+removes the last of Decision 4's three reasons (network, time, different resolution). The
+other two already have precedent: the JDK and node are reinstalled over the network at
+startup today. ⚠️ **On a boot where both changed, the pip reinstall is skipped**
+(`AF_REPAIR_PY=0`) — the same version may not exist for the new Python.
+
 **Decision 5. Rejecting Amazon Linux (option E) still stands.** Re-measured, AL2023 still has
 no `chromium` package and its glibc is 2.34 — **older** than Debian 12's. **If the base moves,
 Debian 13 is the only candidate.**

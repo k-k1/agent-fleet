@@ -92,10 +92,17 @@ The question to ask is what that person spends their time on.
   picks the rung on it.**
 
 > ⚠️ **Switching to a machine with a different CPU family (Intel / Arm) makes the next start take a
-> few minutes longer.** The home (`~`) is kept, but the agent CLIs, node, Chromium and so on inside
-> it were built for the old family, so they are reinstalled at startup. Nothing under `~/repos` is
-> deleted, but `node_modules` / `target` / `.venv` will not run until you reinstall them yourself.
+> few minutes longer.** The home (`~`) is kept, but what is inside it was built for the old family,
+> so it is reinstalled at startup. **The reinstall is automatic** — as well as the agent CLIs and
+> Chromium, that covers the selected JDK and node, and also **whatever the member installed
+> themselves** (`pip install --user`, `uv tool`, `npm i -g`), each put back **at the same version**.
 > The screen shows the same warning, and only when the family actually changes.
+>
+> **Only two things do not come back by themselves**, and both are named in the startup log:
+> ① `node_modules` / `target` / `.venv` under `~/repos` (nothing there is deleted — reinstall them
+> yourself with `npm ci` and friends), and ② binaries placed directly in `~/.local/bin` (there is no
+> way to know where they came from). JDK and node versions that are installed but not *selected* do
+> not come back either — reinstall them from "Toolchains" if you need them.
 
 > **The working disk does not persist.** Its contents are wiped when the workspace stops — only the
 > home directory (`~`) survives. It is a place for build output and caches, not for storing things.

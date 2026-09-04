@@ -74,6 +74,34 @@ af_arch_was="$(cat "$AF_ARCH_STAMP" 2>/dev/null || true)"
 if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
   echo "[entrypoint] arch: この home は $af_arch_was で作られ、いま $af_arch_now の上に居ます"
   echo "[entrypoint] arch: アーキ依存の導入物を入れ直します（初回は数分かかることがあります）"
+  # 🔴 消す前に、利用者自身の npm グローバルを版つきで控える。`~/.local/lib/node_modules`
+  # には製品の CLI と利用者の `npm i -g` が同居していて、下のループはディレクトリごと
+  # 消す（native addon が壊れている以上それが正しい）。しかし boot-install が戻すのは
+  # **製品の 4 本だけ**なので、控えないと利用者の分だけが黙って消える。復旧は最後の
+  # af-arch-repair が行う。
+  mkdir -p "$HOME/.local/share/agent-fleet" 2>/dev/null || true
+  node -e '
+    const fs = require("fs"), path = require("path");
+    const root = process.argv[1];
+    // boot-install が自分で戻すものは控えない（二重導入になる）。
+    const skip = new Set(["@anthropic-ai/claude-code", "opencode-ai", "@openai/codex", "@github/copilot"]);
+    const out = [];
+    const add = (rel) => {
+      try {
+        const p = JSON.parse(fs.readFileSync(path.join(root, rel, "package.json"), "utf8"));
+        if (p.name && p.version && !skip.has(p.name)) out.push(p.name + "@" + p.version);
+      } catch {}
+    };
+    let ents = [];
+    try { ents = fs.readdirSync(root); } catch { process.exit(0); }
+    for (const e of ents) {
+      if (e.startsWith("@")) {              // スコープ付きは 1 段下りる
+        try { for (const s of fs.readdirSync(path.join(root, e))) add(e + "/" + s); } catch {}
+      } else if (e !== ".bin") add(e);
+    }
+    if (out.length) process.stdout.write(out.join("\n") + "\n");
+  ' "$HOME/.local/lib/node_modules" > "$HOME/.local/share/agent-fleet/arch-repair-npm" 2>/dev/null || true
+  [ -s "$HOME/.local/share/agent-fleet/arch-repair-npm" ] || rm -f "$HOME/.local/share/agent-fleet/arch-repair-npm"
   for rel in \
     .local/bin/claude .local/bin/codex .local/bin/opencode .local/bin/copilot \
     .local/bin/rtk .local/bin/agy .local/bin/.agy.version \
@@ -101,8 +129,9 @@ if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_ar
     case "$d" in *-jdk-"$af_arch_now") continue ;; esac
     rm -rf "$d" && echo "[entrypoint] arch: 削除 ${d#"$HOME"/}"
   done
-  echo "[entrypoint] arch: ⚠️ ~/repos 配下の node_modules / target / .venv と、自分で ~/.local へ入れた"
-  echo "[entrypoint] arch:    ツールは $af_arch_was 用のままです。使う前に入れ直してください（~/repos は触っていません）"
+  # 復旧そのものは起動の最後（node / java / go の選択が済んでから）に回す。ここで走らせると
+  # 選択前の python / node で入れ直すことになる。印だけ置いて af-arch-repair に渡す。
+  AF_ARCH_REPAIR_FROM="$af_arch_was"
 fi
 if [ -n "$af_arch_now" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
   mkdir -p "$(dirname "$AF_ARCH_STAMP")" 2>/dev/null || true
@@ -127,7 +156,9 @@ fi
 af_py_now="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
 AF_PY_STAMP="$HOME/.local/share/agent-fleet/python-major"
 af_py_was="$(cat "$AF_PY_STAMP" 2>/dev/null || true)"
+af_py_changed=0
 if [ -n "$af_py_now" ] && [ -n "$af_py_was" ] && [ "$af_py_was" != "$af_py_now" ]; then
+  af_py_changed=1
   echo "[entrypoint] python: ベースの python が $af_py_was から $af_py_now に上がりました"
   af_py_old_sp="$HOME/.local/lib/python$af_py_was/site-packages"
   af_py_pkgs=""
@@ -944,8 +975,27 @@ if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
     . "$NVM_DIR/nvm.sh"
     nvm install "$NODE_VER" >/dev/null 2>&1 && nvm alias default "$NODE_VER" >/dev/null 2>&1
     nvm use "$NODE_VER" >/dev/null 2>&1
-    echo "[entrypoint] node $(node -v 2>/dev/null)"
+    # ⚠️ 選択した版になったかを必ず突き合わせる。`nvm install` が失敗すると（ネットワーク
+    # 無し・アーキ変更で .nvm を消した直後など）`nvm use` も静かに失敗し、`node -v` は
+    # **イメージの素の node** を答える。突き合わせずに版を出していたので、ログは成功に
+    # 見えるのに選択と違う node が走っている、という状態が無言で通っていた。
+    af_node_now="$(node -v 2>/dev/null)"
+    case "${af_node_now#v}" in
+      "${NODE_VER#v}"|"${NODE_VER#v}".*) echo "[entrypoint] node $af_node_now" ;;
+      *) echo "[entrypoint] WARN: node $NODE_VER を選択しましたが、いま走っているのは ${af_node_now:-不明} です（nvm install 失敗？）" ;;
+    esac
   fi
+fi
+
+# --- アーキ変更の自動復旧（利用者自身の導入物）------------------------------------
+# ここまで来ていれば node / java / go の選択は済んでいるので、入れ直しは**選択された
+# ツールチェーンで**行われる。JDK と node（選択中の版）は既にそれぞれのブロックが自力で
+# 戻しているので、残っているのは利用者自身が入れたもの＝af-arch-repair の担当。
+# ⚠️ python の major も同時に動いた起動では pip の入れ直しをさせない（同じ版が新しい
+#    python 用に存在するとは限らず、黙って別バージョンに解決される）。通知だけに落とす。
+if [ -n "${AF_ARCH_REPAIR_FROM:-}" ] || [ -s "$HOME/.local/share/agent-fleet/arch-repair-npm" ]; then
+  AF_REPAIR_PY=$([ "${af_py_changed:-0}" = 1 ] && echo 0 || echo 1) \
+    af-arch-repair "${AF_ARCH_REPAIR_FROM:-?}" "$af_arch_now" || true
 fi
 
 exec "$@"
