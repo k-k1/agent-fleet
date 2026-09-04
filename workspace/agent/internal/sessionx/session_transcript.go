@@ -672,11 +672,60 @@ func sweepSettledPending(sid string, lines [][]byte) {
 	// prompt blocks the turn, so nothing else can run while it is up — if an interaction
 	// was decided AFTER the payload was captured, the turn plainly moved past that prompt.
 	// A live one is always the newer of the two and survives.
-	if decided := latest(question, plan); !decided.IsZero() {
-		if at, ok := status.PendingPermissionAt(sid); ok && at.Before(decided) {
-			status.RemovePendingPermission(sid)
-		}
+	decided := latest(question, plan)
+	if decided.IsZero() {
+		return
 	}
+	if at, ok := status.PendingPermissionAt(sid); ok && at.Before(decided) {
+		status.RemovePendingPermission(sid)
+	}
+	sweepSettledState(sid, decided)
+}
+
+// sweepSettledState drops the STATE that named a modal the transcript proved is gone —
+// the other half of the leftover, and the one every non-display reader believes.
+//
+// WHY: the payloads above are what the Console DRAWS; `session-status` is what the Agent
+// DECIDES on. promptBlocker refuses free text in any modal state, so sweeping only the
+// payload leaves the composer refused with 「許可の判断待ちです。許可カードから許可・拒否
+// してから送信してください」 while there is no card anywhere to decide — the one surface
+// that could unblock it is the one we just (correctly) took away. 利用者報告 2026-09-04
+// 「AUQ をキャンセルしたあと、メッセージが送信できなくなる」: cancel rejects the tool, so
+// no PostToolUse rewrites the state (the same reason the payload leaks), and the only other
+// writer is the pane self-heal — which needs the pane to sit UNCHANGED for idleSettleWindow
+// (45s) and never fires at all while anything keeps repainting it. A dead end, not a delay.
+//
+// ★保留を消す掃除は、状態も一緒に消さなければ「決めるカードが無いのに断る」を作る。
+// 表示（ペイロード）と判定（state）は同じ根拠で同時に畳む。
+//
+// Guards, in the same spirit as above:
+//   - モーダル状態のときだけ触る。working/idle は掃除の管轄外（ターンの話であって
+//     モーダルの話ではない）。
+//   - 決着より前に書かれた state だけ。決着の**後**に開いた新しいモーダルは本物。
+//   - ペイロードが 1 つでも残っていれば触らない。上の「決着より後の許可は本物」で残した
+//     生きた許可プロンプトは、state に断ってもらわないと自由文がメニューに飲まれる。
+//
+// 消す（idle として読ませる）のが安全な向き: 実はまだ走っていたターンは、次のポーリングの
+// reverse-heal（pane.Busy → working、agent.go）が 1 回で working へ戻す。逆に working を
+// 書くと、キャンセルで終わったターンが 進行中 に貼り付き Workspace が止まらなくなる。
+func sweepSettledState(sid string, decided time.Time) {
+	st, ok := status.Read(sid)
+	if !ok || !status.ModalState(st.State) {
+		return
+	}
+	if at, ok := status.StateAt(sid); !ok || !at.Before(decided) {
+		return
+	}
+	if _, ok := status.ReadPendingQuestion(sid); ok {
+		return
+	}
+	if _, ok := status.ReadPendingPlan(sid); ok {
+		return
+	}
+	if _, ok := status.ReadPendingPermission(sid); ok {
+		return
+	}
+	status.Remove(sid)
 }
 
 func latest(a, b time.Time) time.Time {
