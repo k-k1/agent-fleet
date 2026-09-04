@@ -55,12 +55,12 @@ describe("repo import (docs/log/78)", () => {
     vi.useRealTimers();
   });
 
-  // ★ 事故そのもの: 応答が途中で切れても、走行中の checkout を成功にしてはいけない。
-  // 判定材料はジョブの state ひとつで、フォルダが増えたかどうかではない。
-  it("待つのはジョブの終端であって、POST の応答ではない", async () => {
+  // The failure itself: a truncated response must never turn a still-running checkout into
+  // a success. The only evidence is the job's state, not whether a folder appeared.
+  it("waits for the job to finish, not for the POST response", async () => {
     route({
       post: () => json({ job: job() }, 202),
-      // 1 回目のポーリングでは まだ running。2 回目で done。
+      // still running on the first poll, done on the second.
       jobs: [() => json({ jobs: [job()] }), () => json({ jobs: [job({ state: "done" })] })],
       repos: () => json({ repos: [{ name: "docs", vcs: "svn" }] }),
     });
@@ -69,7 +69,7 @@ describe("repo import (docs/log/78)", () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
-  it("失敗したジョブは失敗として返し、svn の言い分をそのまま出す", async () => {
+  it("returns a failed job as a failure and surfaces svn's own message", async () => {
     route({
       post: () => json({ job: job() }, 202),
       jobs: [() => json({ jobs: [job({ state: "failed", error: "svn: E170000: URL not found" })] })],
@@ -79,8 +79,9 @@ describe("repo import (docs/log/78)", () => {
     expect(String(toast.mock.calls[0][0])).toContain("E170000");
   });
 
-  // 中止は利用者の意思なので、失敗トーストで叱らない（行に結末は残る）。
-  it("中止はトーストを出さない", async () => {
+  // A cancel is the user's own decision, so it is not scolded with a failure toast (the
+  // row still carries the outcome).
+  it("shows no toast for a cancel", async () => {
     route({
       post: () => json({ job: job() }, 202),
       jobs: [() => json({ jobs: [job({ state: "canceled", error: "context canceled" })] })],
@@ -90,7 +91,7 @@ describe("repo import (docs/log/78)", () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
-  it("git の clone も同じジョブ経路を通る", async () => {
+  it("routes a git clone through the same job path", async () => {
     route({
       post: () => json({ job: job({ id: "rj2", kind: "git", name: "app" }) }, 202),
       jobs: [() => json({ jobs: [job({ id: "rj2", kind: "git", name: "app", state: "done" })] })],
@@ -102,10 +103,10 @@ describe("repo import (docs/log/78)", () => {
     });
   });
 
-  // 新規フォルダ（取り込み元なし）は mkdir + git init だけで、ネットワークを触らない。
-  // ここをジョブ経路に載せると、終わっている処理の結末を一覧のポーリング越しに待つことに
-  // なる —— 速いだけでなく、待つ相手を間違えない形にしておく。
-  it("新規フォルダはジョブを経由せず、応答をそのまま結末にする", async () => {
+  // A new folder (no import source) is mkdir + git init only and touches no network.
+  // Putting it on the job path would mean waiting through a list poll for the outcome of
+  // work that has already finished; staying off it is faster and waits on the right thing.
+  it("creates a new folder without a job, taking the response as the outcome", async () => {
     let jobPolls = 0;
     fetchMock.mockImplementation(async (url: string, opts?: RequestInit) => {
       if ((opts?.method || "GET") === "POST") {
@@ -123,11 +124,11 @@ describe("repo import (docs/log/78)", () => {
     await expect(initRepo("new-project", toast)).resolves.toEqual({ ok: true, name: "new-project" });
     expect(jobPolls).toBe(0);
     expect(toast).not.toHaveBeenCalled();
-    // 一覧が取り直されていること（作った直後に左ペインへ出るのはこれのおかげ）。
+    // The list must have been re-fetched: that is what puts the new folder in the left pane.
     expect(useReposStore.getState().repos.map((r) => r.name)).toEqual(["new-project"]);
   });
 
-  it("既にある名前は 409 で断られ、成功にはしない", async () => {
+  it("is refused with 409 for an existing name, and is not reported as success", async () => {
     fetchMock.mockImplementation(async () => json({ error: { code: "exists", message: "repo already exists: docs" } }, 409));
     const { initRepo } = await import("./clone.ts");
     const toast = vi.fn();
@@ -135,7 +136,7 @@ describe("repo import (docs/log/78)", () => {
     expect(toast).toHaveBeenCalled();
   });
 
-  it("ジョブが返ってこなければ開始できていない（成功にしない）", async () => {
+  it("treats a missing job as never started (not a success)", async () => {
     route({ post: () => json({ error: { code: "exists", message: "repo already exists: docs" } }, 409), jobs: [] });
     const toast = vi.fn();
     await expect(svnCheckout({ url: "https://svn.example/repo" }, toast)).resolves.toEqual({ ok: false, name: "" });

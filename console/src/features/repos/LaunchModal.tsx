@@ -1,16 +1,17 @@
-// LaunchModal（作業を始める）— the repo row's primary 起動 action: agent + model
+// LaunchModal (start work) — the repo row's primary launch action: agent + model
 // (kinds with caps.model) + optional first prompt (typed or from a template), and WHERE —
 // a new isolated worktree (default; unnamed = a server-minted provisional branch
 // temp/<slug> in a wip-<slug> folder) or in-place on the current checkout.
 // Port of the old components/LaunchModal.
 //
-// レイアウト（2026-08 整理）: 11 個のフィールドが同格に並んでいたのをやめ、
-//   ①今回決めること（エージェント → モデル → 最初のプロンプト）を常時表示
-//   ②場所（worktree / ブランチ / 基点）と ③詳細（実行方式・effort・開始モード・
-//     作業ディレクトリ・セッション名）は「要約 1 行 ＋ 展開」
-// の 3 層にしてある。既定値は repoLast がリポジトリ毎に覚えていて大半は正しいので、
-// 畳んだ側は "確認できれば十分" が成り立つ。要約は必ず**実際に起動される値**を出す
-// こと（畳んだせいで見えない設定で起動された、が起きないように）。
+// Layout: rather than 11 fields of equal rank, three tiers —
+//   1. what is being decided this time (agent -> model -> first prompt), always visible;
+//   2. location (worktree / branch / base point) and 3. advanced (execution method, effort,
+//      start mode, working directory, session name) as "one summary line + expand".
+// repoLast remembers the defaults per repository and they are right most of the time, so for
+// the folded tiers being able to CHECK them is enough. The summary must always show the
+// values the launch will actually use, so nothing is ever launched from a setting the fold
+// hid.
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, ClipboardEvent, ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -44,14 +45,15 @@ import { coarsePointer } from "../../lib/device.ts";
 // mints a provisional temp/<slug> the user renames later).
 export interface LaunchOpts {
   kind: string;
-  // driver（docs/log/27 P2/P3）: "managed"（共有 runtime・paneless、対応 kind の既定）|
-  // ""（tui、従来）。managedDriver を持たない kind では常に ""。
+  // driver (docs/log/27 P2/P3): "managed" (shared runtime, paneless; the default for kinds
+  // that support it) | "" (tui, the older path). Always "" for a kind with no managedDriver.
   driver: string;
   model: string;
   effort: string;
   startMode: "normal" | "plan";
-  /** 権限確認をスキップして起動するか（docs/log/76）。undefined = 既定に従う（サーバへ送らない）。
-   *  caps.permissionChoice を持つ kind でのみ選べる。 */
+  /** Whether to launch with permission prompts skipped (docs/log/76). undefined = follow the
+   *  default (nothing is sent to the server). Selectable only for kinds with
+   *  caps.permissionChoice. */
   skipPermissions?: boolean;
   prompt: string;
 	/** Optional user-visible session name, supplied by a handoff proposal or edited here. */
@@ -77,8 +79,8 @@ export interface LaunchResult {
   ok: boolean;
   conflict?: "local" | "remote" | "in_use";
   worktree?: string;
-  /** 作られたセッション名（ok のときだけ）。引き継ぎの受諾（docs/log/77）が「どのセッションで
-   *  受けたか」を差し出した側へ返すのに要る。 */
+  /** Name of the session that was created (only when ok). Accepting a handoff (docs/log/77)
+   *  needs it to tell the offering side which session took the work. */
   name?: string;
 }
 
@@ -88,7 +90,7 @@ interface LaunchModalProps {
   path?: string;
   kinds: string[]; // available agent kinds (shell/ssm already excluded)
   /** The connection check hasn't settled — kinds is empty because we don't know yet,
-   * not because nothing is available. Shows a 確認中 note and blocks launching. */
+   * not because nothing is available. Shows a checking note and blocks launching. */
   settling?: boolean;
   /** Offer the "new worktree" location (default). False for a worktree row — it's
    * already an isolated checkout, so only in-place launch is offered; new worktrees
@@ -103,22 +105,22 @@ interface LaunchModalProps {
    * for one repo and the user reads it as a bug. */
   isUnborn?: boolean;
   onClose: () => void;
-  /** Present when opened from the はじめる hub: はじめる に戻る returns to it. */
+  /** Present when opened from the Start hub: the back action returns to it. */
   onBack?: () => void;
   /** Seed for the first-prompt field (docs/log/21 UI刷新): the memo send modal launches a
    * new session with the composed memo text prefilled here. */
   initialPrompt?: string;
 	/** Optional initial session title, e.g. proposed by a predecessor session. */
   initialTitle?: string;
-  /** Open straight into 既存ブランチ mode with this branch picked — the SCM view's
+  /** Open straight into existing-branch mode with this branch picked — the SCM view's
    * "start work on this branch" actions land here. */
   initialExistingBranch?: string;
   /** Suggested NEW branch name, prefilled into the branch field (docs/log/80: a launch
    * from a work item proposes feature/<key>-<slug>). Only a suggestion — clearing the
    * field falls back to the server-minted temp/<slug>. */
   initialNewBranch?: string;
-  /** Pre-answer the 場所 choice. Omitted = the usual default (a new worktree wherever
-   * one is offered). false = このコピーで直接, for a caller that already asked — the work
+  /** Pre-answer the location choice. Omitted = the usual default (a new worktree wherever
+   * one is offered). false = directly in this copy, for a caller that already asked — the work
    * item flow picks the working copy first (docs/log/80 §80.8), and re-defaulting to
    * "new worktree" here would silently undo that answer. */
   initialWorktree?: boolean;
@@ -136,7 +138,7 @@ interface LaunchSectionProps {
   children: ReactNode;
 }
 
-// A collapsed settings block: header row (label + resolved summary + 変更) and, when
+// A collapsed settings block: header row (label + resolved summary + change) and, when
 // open, the real controls. Body is unmounted while collapsed — every piece of state
 // it edits lives in LaunchModal, so nothing is lost by folding it away.
 function LaunchSection({ label, summary, warn = false, open, onToggle, children }: LaunchSectionProps) {
@@ -181,20 +183,22 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const [model, setModel] = useState(() => resolveModel(initialKind, repo, initialDefault.model));
   const [effort, setEffort] = useState(() => resolveEffort(initialKind, repo, initialDefault.effort));
   const [startMode, setStartMode] = useState(() => resolveStartMode(initialKind, repo, initialDefault.startMode));
-  // 権限確認（docs/log/76）。**undefined = このダイアログでは触っていない**で、その場合は
-  // 値を送らず Agent 側の kind 毎の既定に任せる（設定を後から変えても効くように）。
-  // 触ったときだけ、このセッション限りの上書きとして送る。
+  // Permission prompts (docs/log/76). undefined = this dialog never touched the choice, in
+  // which case no value is sent and the Agent's per-kind default applies (so changing the
+  // setting later still takes effect). Only once touched is it sent, as an override for this
+  // session alone.
   const [skipPerm, setSkipPerm] = useState<boolean | undefined>(undefined);
-  // ドライバ（docs/log/27 P2/P3）: managed 対応 kind は managed が既定（§9.2）。
-  // CLI(TUI) はユーザーの明示的な選択 — セッション毎に TUI プロセス分のメモリを払う。
+  // Driver (docs/log/27 P2/P3): a kind that supports managed defaults to managed (§9.2).
+  // CLI (TUI) is an explicit user choice — it costs one TUI process' memory per session.
   const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
-  // 最初のプロンプトはリポジトリ毎に localStorage へ書き戻す（launchDraft）。閉じても
-  // 残り、起動できたときだけ消える。initialPrompt（引き継ぎ・メモ送信・作業項目の種）は
-  // 下書きより優先される。
+  // The first prompt is written back to localStorage per repository (launchDraft). It survives
+  // closing the dialog and is dropped only once a launch succeeded. initialPrompt (the seed
+  // from a handoff, a memo send or a work item) outranks the draft.
   const [prompt, setPrompt, clearPromptDraft] = useLaunchPrompt(repo, initialPrompt);
-  // 初期値は人が打った文字とは限らない（引き継ぎ提案・作業項目・メンバー引き継ぎ）。
-  // maxLength は打鍵にしか効かないので、流し込まれた値はここで作成 API の規則へ詰める —
-  // さもないと「編集もできたのに起動だけ bad_title で落ちる」になる。
+  // The initial value is not necessarily typed by a person (handoff proposal, work item,
+  // member handoff), and maxLength only constrains typing, so an injected value is clamped to
+  // the create API's rule here — otherwise it stays editable yet the launch alone fails with
+  // bad_title.
   const [title, setTitle] = useState(() => clampSessionTitle(initialTitle ?? ""));
   // Pasted images awaiting the launch: the raw File + an object URL for the chip preview.
   // Uploaded only after the session is minted (in onStartWork), then referenced in the
@@ -205,23 +209,23 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const images = attach.items;
   const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null); // hidden ＋ picker (the phone path)
+  const fileRef = useRef<HTMLInputElement>(null); // hidden + picker (the phone path)
   // WHERE: default to an isolated worktree — a branch switch can't corrupt other
   // sessions when each task has its own dir. From a worktree row (allowWorktree
   // false) there's no worktree choice: launch in place.
   const [worktree, setWorktree] = useState(initialWorktree ?? allowWorktree);
-  // 作業ディレクトリ: "" = the working copy root (the usual case). Seeded from what
+  // Working directory: "" = the working copy root (the usual case). Seeded from what
   // this repo was last launched in, since a monorepo user keeps returning to the same
   // package — the field shows the value, so a remembered folder is never silent.
   const [subdir, setSubdir] = useState(() => resolveSubdir(repo));
   const [base, setBase] = useState(branch || "");
-  // "" => the server mints temp/<slug>. 作業項目から来た起動（docs/log/80）は
-  // feature/<key>-<slug> を提案値として入れる —— 提案なので、ここで消せば従来どおり。
+  // "" => the server mints temp/<slug>. A launch that came from a work item (docs/log/80)
+  // prefills feature/<key>-<slug> as a suggestion — clearing it restores the usual behaviour.
   const [branchName, setBranchName] = useState(initialNewBranch || "");
   const [conflict, setConflict] = useState<"local" | "remote" | "in_use" | null>(null);
   const [conflictWt, setConflictWt] = useState(""); // for "in_use": the copy holding it
-  // ブランチ: 新規作成（既定）か、既に存在するブランチをそのまま使うか。後者は
-  // worktree に そのブランチを CO するだけで、新しいブランチは作らない（-b なし）。
+  // Branch: create a new one (the default), or use a branch that already exists. The latter
+  // only checks that branch out into the worktree and creates nothing new (no -b).
   const [branchMode, setBranchMode] = useState<"new" | "existing">(initialExistingBranch ? "existing" : "new");
   const [existingBranch, setExistingBranch] = useState(initialExistingBranch || "");
   const [branches, setBranches] = useState<Branch[] | null>(null);
@@ -232,9 +236,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const explicit = branchName.trim();
   const newBranch = explicit; // "" → server picks temp/<slug>
   const existingMode = worktree && branchMode === "existing";
-  // 折りたたみ（launchPrefs）: 前回この端末で開いていたら開いた状態で出す。SCM の
-  // 「このブランチで作業」から来たときは、選ばれたブランチが見えていないと不安なので
-  // 場所は必ず開く。
+  // Folding (launchPrefs): reopen in whatever state this device left it in. Arriving from the
+  // SCM view's "work on this branch" always opens the location section — not seeing which
+  // branch was picked is unsettling.
   const [placeOpen, setPlaceOpen] = useState(() => !!initialExistingBranch || readLaunchOpen("place"));
   const [advOpen, setAdvOpen] = useState(() => readLaunchOpen("adv"));
   const toggleSection = (key: LaunchSectionKey, open: boolean, set: (v: boolean) => void) => {
@@ -245,7 +249,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const folderSeg = existingMode ? existingBranch : explicit;
   const folder = worktree && folderSeg ? `${repo}@${sanitizeSeg(folderSeg)}` : "";
 
-  // Branch list for 既存ブランチ mode, fetched from the PARENT copy (the worktree is
+  // Branch list for existing-branch mode, fetched from the PARENT copy (the worktree is
   // spun off it). Loaded on first entry into the mode and kept — re-picking is common
   // while composing a prompt, and the list is small. Rows already checked out in
   // another worktree arrive flagged (worktree_path) and BranchList disables them:
@@ -261,7 +265,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     };
   }, [existingMode, branches, repo]);
 
-  // Template sources fetched once for this repo; 履歴 comes from localStorage.
+  // Template sources fetched once for this repo; history comes from localStorage.
   const [srvGroups, setSrvGroups] = useState<PromptTemplateGroup[]>([]);
   useEffect(() => {
     let alive = true;
@@ -276,20 +280,22 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const hasModel = agentOf(kind).caps.model;
   const driverManaged = driver === "managed";
   const hasEffort = agentOf(kind).caps.effort && (driverManaged || agentOf(kind).caps.tuiEffort);
-  // planMode はチャットの plan トグル用 cap — cursor/copilot/kiro は planMode:false でも
-  // tuiStartMode:true（plan 起動対応）なので、起動時モード選択はどちらかの cap で出す。
+  // planMode is the cap for the chat plan toggle — cursor/copilot/kiro have planMode:false but
+  // tuiStartMode:true (they can start in plan mode), so the start-mode choice is offered when
+  // either cap is present.
   const hasStartMode =
     (agentOf(kind).caps.planMode || agentOf(kind).caps.tuiStartMode) &&
     (driverManaged || agentOf(kind).caps.tuiStartMode);
   const canPasteImage = agentOf(kind).caps.imagePaste;
-  // 承認待ちを Console から答えられる kind だけに出す（Go 側 Caps.PermissionChoice と対）。
+  // Only for kinds whose pending approvals can be answered from the Console (the counterpart
+  // of Caps.PermissionChoice on the Go side).
   const hasPermChoice = agentOf(kind).caps.permissionChoice;
   const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
   const effortOptions = useEffortOptions(kind, model);
 
-  // 畳んだセクションの要約 — 開かなくても「何が起きるか」が読み取れる一行。場所は
-  // git が実際にやること（新しい作業コピーを作るのか、今のコピーで動かすのか）なので
-  // 既定のままでも必ず文章で出す。
+  // Summaries for the folded sections — one line that says what will happen without opening
+  // them. Location is what git will actually do (create a new working copy, or run in this
+  // one), so it is always spelled out, default or not.
   const baseName = base.trim() || branch || "";
   const placeSummary = !worktree
     ? tr("launch.sum.direct", { branch: branch || tr("launch.wc") })
@@ -300,8 +306,8 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       : explicit
         ? tr("launch.sum.wt_named", { branch: explicit, base: baseName || tr("launch.base_default") })
         : tr("launch.sum.wt_auto", { base: baseName || tr("launch.base_default") });
-  // 詳細は逆に「既定から動いている項目だけ」を並べる。全部既定なら一言で済ませる —
-  // 常に 5 項目書くと、それ自体がまた読まれない灰色の帯になる。
+  // Advanced does the opposite and lists only what moved off its default; all-defaults gets a
+  // single word. Always printing 5 items turns the line into another grey band nobody reads.
   const advParts = [
     agentOf(kind).managedDriver ? tr(driverManaged ? "launch.sum.driver_managed" : "launch.sum.driver_terminal") : "",
     hasEffort && effort ? tr("launch.sum.effort", { v: effortOptions.find(([v]) => v === effort)?.[1] || effort }) : "",
@@ -311,11 +317,11 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   ].filter(Boolean);
   const advSummary = advParts.length ? advParts.join(" · ") : tr("launch.sum.defaults");
 
-  // 初期フォーカスは最初のプロンプト欄 — ただしタッチ端末では当てない（フォーカス＝
-  // ソフトキーボードが開き、モーダルの大半が隠れる。この抑制は Console 共通の作法で、
-  // lib/device.ts coarsePointer を見る）。autoFocus 属性を使わないのも同じ理由で、
-  // あちらはブラウザが対象を可視域へスクロールさせ、上に積んだエージェント選択が
-  // 開いた瞬間に画面外へ流れる。preventScroll で「先頭が見えたまま、すぐ打てる」。
+  // Initial focus goes to the first-prompt box, but never on a touch device: focus opens the
+  // soft keyboard and hides most of the modal (a Console-wide convention keyed off
+  // lib/device.ts coarsePointer). The autoFocus attribute is avoided for the same reason — it
+  // makes the browser scroll the target into view, pushing the agent picker stacked above it
+  // off screen. preventScroll keeps the top visible and still lets typing start at once.
   useEffect(() => {
     if (!coarsePointer()) textRef.current?.focus({ preventScroll: true });
   }, []);
@@ -327,7 +333,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   }, [canPasteImage]);
 
   // Stage image File(s) as pending attachments (raw File + a preview URL). Actual upload
-  // waits for the session (onStartWork). Shared by clipboard paste and the ＋ picker.
+  // waits for the session (onStartWork). Shared by clipboard paste and the + picker.
   const addImages = (files: File[]) => {
     if (!canPasteImage || !files.length) return;
     attach.add(files.map((f) => makeAttachment(f)));
@@ -335,7 +341,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
 
   // Paste image(s) into the prompt. Non-image pastes fall through to the default (text).
   // NOTE: mobile soft keyboards (e.g. Gboard) can't commit an image into a plain
-  // <textarea> — they refuse it ("paste not supported here"). The ＋ picker beside the
+  // <textarea> — they refuse it ("paste not supported here"). The + picker beside the
   // label is the phone path; it funnels into the same addImages as this handler.
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     if (!canPasteImage) return;
@@ -360,7 +366,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const expand = (body: string) =>
     body.replaceAll("{{repo}}", repo).replaceAll("{{branch}}", branch || "").replaceAll("{{path}}", path || "");
 
-  // 履歴 first, then in-repo sources. command/skill are claude-flavored.
+  // History first, then in-repo sources. command/skill are claude-flavored.
   const history = readPromptHistory(repo);
   const groups: PromptTemplateGroup[] = [
     ...(history.length
@@ -378,7 +384,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
 
   // start fires the launch. `resolveCollision` is the conflict panel's re-run: the
   // typed name turned out to exist, so check THAT branch out instead of creating it.
-  // 既存ブランチ mode arrives here already resolved, with a branch picked from the list.
+  // Existing-branch mode arrives here already resolved, with a branch picked from the list.
   const start = async (resolveCollision: boolean) => {
     if (busy) return;
     setBusy(true);
@@ -402,8 +408,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       useExisting,
     });
     if (r?.ok) {
-      // 起動できた＝この文章と添付は新しいセッションへ渡り切った。ここが下書きを捨てる
-      // 唯一の地点で、失敗（名前衝突など）で戻ってきたときは打った文章も添付も残す。
+      // A successful launch means this text and its attachments reached the new session in
+      // full, and this is the only place the draft may be discarded: coming back from a failure
+      // (a name collision, say) keeps both the typed text and the attachments.
       clearPromptDraft();
       attach.clear();
       onClose();
@@ -412,7 +419,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     setBusy(false);
     setConflict(r?.conflict ?? null);
     setConflictWt(r?.worktree || "");
-    // The conflict panel and its fix button live inside 場所 — a collapsed section
+    // The conflict panel and its fix button live inside the location section — a collapsed one
     // would swallow the only explanation for why the launch didn't happen.
     if (r?.conflict) setPlaceOpen(true);
     // The picked branch was taken between listing it and launching — drop the cached
@@ -420,7 +427,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     if (r?.conflict === "in_use") setBranches(null);
   };
   const submit = () => void start(false);
-  // 既存ブランチ mode is only launchable once a branch is picked.
+  // Existing-branch mode is only launchable once a branch is picked.
   const canLaunch = !!kinds.length && (!existingMode || !!existingBranch);
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
@@ -456,9 +463,10 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
               {tr(settling ? "launch.agents_checking" : "launch.agents_none")}
             </div>
           )}
-          {/* 折り返しグリッド（ui.css .ui-seg.big）。以前は横スクロールで 4 枚目以降が
-              切れており、7 種類あることも気づけなかった。サブラベル（「◯◯ を起動」）は
-              カード名の言い換えで情報が無いので title に落とし、1 行ぶん詰めてある。 */}
+          {/* Wrapping grid (ui.css .ui-seg.big): with horizontal scrolling the fourth card
+              onward was cut off, hiding the fact that there are 7 kinds. The sub-label was a
+              restatement of the card name ("launch <kind>") and carried nothing, so it moved
+              into title and saved a line. */}
           <div className="ui-seg big">
             {kinds.map((k) => {
               const a = agentOf(k);
@@ -500,14 +508,14 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
           </div>
         )}
 
-        {/* 最初のプロンプト（任意）— エージェント／モデルの下。初期フォーカスは上の
-            useEffect が当てる（autoFocus 属性ではなく preventScroll 付き、かつ
-            タッチ端末では当てない）。 */}
+        {/* First prompt (optional) — below agent/model. Initial focus is applied by the
+            useEffect above (preventScroll instead of the autoFocus attribute, and never on a
+            touch device). */}
         <div className="ui-field">
           <span className="ui-field-label launch-prompt-label">
             <span>{tr("launch.first_prompt")}</span>
             <span className="launch-prompt-tools">
-              {/* ＋ attach: the paste-less path. Mobile keyboards can't paste images into
+              {/* + attach: the paste-less path. Mobile keyboards can't paste images into
                   a <textarea>, so a phone can only attach through this picker. */}
               {canPasteImage && (
                 <>
@@ -592,8 +600,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
           </span>
         </div>
 
-        {/* 場所: worktree（隔離・既定）か このコピーで直接か。worktree 行では選択肢
-            なし（この worktree 内で直接起動）ので、折りたたまず 1 行の注記で出す。 */}
+        {/* Location: an isolated worktree (the default) or directly in this copy. A worktree
+            row has no choice (it launches inside that worktree), so it is a one-line note
+            rather than a collapsible section. */}
         {!allowWorktree ? (
           <>
             <div className="ui-field">
@@ -608,7 +617,8 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                 )}
               </span>
             </div>
-            {/* 作業ディレクトリ: 起動先をリポジトリ配下のフォルダへ絞る（既定は直下）。 */}
+            {/* Working directory: narrow the launch to a folder under the repository (the
+                default is its root). */}
             <div className="ui-field">
               <span className="ui-field-label">{tr("launch.field.subdir")}</span>
               <SubdirPicker repo={repo} value={subdir} onChange={setSubdir} />
@@ -634,8 +644,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                 <span className="seg-sub">{tr("launch.direct_here_sub", { branch: branch || tr("launch.wc") })}</span>
               </button>
             </div>
-            {/* 作業ディレクトリ: 起動先をリポジトリ配下のフォルダへ絞る（既定は直下）。
-                worktree 起動では、新しく作られた worktree 内の同じ相対パスになる。 */}
+            {/* Working directory: narrow the launch to a folder under the repository (the
+                default is its root). For a worktree launch it is the same relative path inside
+                the newly created worktree. */}
             <div className="ui-field">
               <span className="ui-field-label">{tr("launch.field.subdir")}</span>
               <SubdirPicker repo={repo} value={subdir} onChange={setSubdir} />
@@ -645,7 +656,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
             </div>
             {worktree && (
               <>
-                {/* ブランチ: 新規作成 か、既にあるブランチをそのまま使うか。 */}
+                {/* Branch: create a new one, or use an existing branch as it is. */}
                 <div className="ui-field">
                   <span className="ui-field-label">{tr("launch.field.branch")}</span>
                   <div className="ui-seg">
@@ -678,8 +689,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                     <label className="ui-field">
                       <span className="ui-field-label">{tr("launch.base_branch")}</span>
                       <input value={base} onChange={(e) => setBase(e.target.value)} placeholder={branch || tr("launch.base_default")} />
-                      {/* 起点は origin の先端に合わせる（Agent 側 fastForwardNewWorktreeToOrigin）。
-                          黙って起点が変わることにならないよう、ここで何をするか書いておく。 */}
+                      {/* The base point is aligned to origin's tip (the Agent's
+                          fastForwardNewWorktreeToOrigin). Spelled out here so the base is never
+                          seen to move silently. */}
                       <span className="ui-field-hint">{tr("launch.base_origin_note")}</span>
                     </label>
                     <label className="ui-field">
@@ -753,17 +765,17 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
         </LaunchSection>
         )}
 
-        {/* 詳細: 一度決めたらしばらく変えない設定（実行方式・effort・開始モード・
-            セッション名）。既定から動いている項目だけが要約行に出る。 */}
+        {/* Advanced: settings that stay put once decided (execution method, effort, start mode,
+            session name). Only the items that moved off their default reach the summary line. */}
         <LaunchSection
           label={tr("launch.field.advanced")}
           summary={advSummary}
           open={advOpen}
           onToggle={() => toggleSection("adv", advOpen, setAdvOpen)}
         >
-          {/* ドライバ（docs/log/27 P2/P3）: managed 対応 kind だけに出す。既定は
-              managed（共有 runtime・paneless・省メモリ）。CLI(TUI) はターミナル操作が
-              必要な人向けの明示的なメモリトレードオフ（セッション毎に TUI プロセス分）。 */}
+          {/* Driver (docs/log/27 P2/P3): shown only for kinds that support managed. The default
+              is managed (shared runtime, paneless, low memory). CLI (TUI) is an explicit memory
+              trade-off (one TUI process per session) for people who need terminal access. */}
           {agentOf(kind).managedDriver && (
             <div className="ui-field">
               <span className="ui-field-label">{tr("launch.field.driver")}</span>

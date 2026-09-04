@@ -8,11 +8,13 @@ import { useSettingsUI } from "../store.ts";
 import { OnOff, Row } from "../parts/controls.tsx";
 import { getLocale, useT } from "../../../lib/i18n/index.ts";
 
-// NotificationsTab — 通知プリファレンス。上段は端末側の音声通知（読み上げから分離した
-// ttsSessionNotify / usageResetNotify）。下段は チャット連携（Discord / Slack）への通知
-// マスタ ON/OFF：接続済みのサービスだけ操作可（未接続はチャット連携への導線を出す）。
-// マスタは接続の notifyOff（バックエンド）を切り替える — 切断せず送信だけ止める。他の
-// 詳細設定を消さないよう、現在の status から全 payload を再構成して notifyOff だけ差し替える。
+// NotificationsTab — notification preferences. The upper section is the device-side audio
+// notification (ttsSessionNotify / usageResetNotify, split off from text-to-speech). The lower
+// one is the master on/off for notifications to the chat integrations (Discord / Slack): only
+// a connected service is operable, and an unconnected one offers a link to the chat settings.
+// The master toggles the connection's notifyOff on the backend, which stops sending without
+// disconnecting. To avoid wiping the other detailed settings, the whole payload is rebuilt
+// from the current status and only notifyOff is replaced.
 export function NotificationsTab() {
   const tr = useT();
   const toast = useToast();
@@ -35,8 +37,9 @@ export function NotificationsTab() {
       fullText: !!st?.fullText,
       mirrorInput: st?.mirrorInput !== false,
       mentionUserId: st?.mentionUserId || "",
-      // lang は非ポインタ扱いで、省略すると保存値が既定（日本語）へ戻る — 接続カードと
-      // 同じく現ロケールを毎回載せる（通知言語は Console の表示言語に追随する仕様）。
+      // lang is a non-pointer field: omitting it resets the stored value to the default
+      // (Japanese). Send the current locale every time, as the connection card does — the
+      // notification language follows the Console's display language by design.
       lang: getLocale(),
       notifyOff: !on,
     });

@@ -11,14 +11,14 @@ export interface MemoryRoot {
   modified?: string;
   busy?: boolean;
   projects: ProjectRef[];
-  /** エージェント側がメモリを書くことの ON/OFF（今は codex のみ・docs/log/39 P4）。 */
+  /** Whether the agent writes memory at all (codex only for now; docs/log/39 P4). */
   toggleable?: boolean;
   enabled?: boolean;
 }
 /**
- * 宣言はされているが今この環境では有効でないルート（docs/log/39 P4）。codex の memories は
- * 上流の既定が OFF なので、黙って一覧から消すと「なぜ出てこないか」も「どう有効化するか」も
- * 伝わらない。toggleable なものはここから直接切り替える。
+ * A root that is declared but not active in this environment (docs/log/39 P4). codex's
+ * memories are off by default upstream, so silently dropping it from the list would tell the
+ * user neither why it is missing nor how to enable it. Toggleable ones switch on from here.
  */
 export interface InactiveRoot {
   kind: string;
@@ -55,7 +55,7 @@ export interface TreeProject extends ProjectRef {
   files: number;
   bytes: number;
 }
-/** 秘密情報らしき記述の検出結果。値そのものは Agent 側でマスク済み（hint のみ）。 */
+/** A suspected secret. The value itself is already masked by the Agent (hint only). */
 export interface SecretFinding {
   path: string;
   line: number;
@@ -63,7 +63,7 @@ export interface SecretFinding {
   hint: string;
   history?: boolean;
 }
-/** 取り込んだ系譜の概況（POST import の応答）。適用範囲はここから選ぶ。 */
+/** Overview of an imported history (the POST import response). The scope to apply is chosen from it. */
 export interface ImportPreview {
   importId: string;
   format: string;
@@ -75,11 +75,11 @@ export interface ImportPreview {
   unavailable: string[];
   rejected: string[];
   secrets: SecretFinding[];
-  /** 秘密のスキャン自体が失敗したことを示す旗（Go 側 memoryImportPreview.SecretScanFailed）。
-   *  🔴 `secrets: []` と意味が違う——「検出なし」ではなく「検出できなかった」。
-   *  Go 側は `json:"secretScanFailed,omitempty"` なので **false のときキーが出ない**。
-   *  ここで optional にして「未定義＝false」で扱うのは意図的で、この面では
-   *  「キーが無い」と「false」が同じ意味になるのが正しい（走査は成功したが旗が立たなかった
-   *  ＝失敗していない）。**真のときだけ意味を持つ旗**なので、ゼロ値と欠落を潰してよい。 */
+  /** The secret scan itself failed (Go side: memoryImportPreview.SecretScanFailed). This does
+   *  not mean the same as `secrets: []` — not "nothing found" but "could not look". The Go
+   *  field is `json:"secretScanFailed,omitempty"`, so the key is absent when false. Keeping it
+   *  optional and reading undefined as false is deliberate: on this surface "no key" and
+   *  "false" do mean the same thing (the scan ran and raised no flag). The flag only carries
+   *  meaning when true, so collapsing the zero value with the missing key is safe. */
   secretScanFailed?: boolean;
 }

@@ -7,7 +7,7 @@
 //
 // Row interaction (docs/log/38): clicking a row opens its run history inline; the ⋯ menu (also
 // on right-click) holds the manage actions — pause/resume, run-now, delete. Each history
-// row shows the outcome (成功/失敗/スキップ), whether it was a manual run-now or a scheduled
+// row shows the outcome (succeeded/failed/skipped), whether it was a manual run-now or a scheduled
 // fire, and opens the session that fire drove.
 import { createPortal } from "react-dom";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -60,8 +60,8 @@ import {
 } from "./read.ts";
 
 const POLL_MS = 15000;
-// Section の内蔵永続と同じキー（ui/Section.tsx storeKey）。controlled にしても利用者の
-// 開閉の選択が引き継がれるように、あえて同じものを読む。
+// Deliberately the same key Section persists to on its own (ui/Section.tsx storeKey), so that
+// making it controlled still carries the user's open/closed choice over.
 const SECTION_KEY = "af-section-schedules";
 
 // Compact local timestamp for last_run / fired_at (RFC3339 UTC → the viewer's locale).
@@ -96,7 +96,7 @@ interface ScheduleRowProps {
   rowBusy: boolean;
   runsOpen: boolean;
   runs: ScheduleRun[] | undefined;
-  /** 作業グループ (docs/log/52): the defined sets + the derivation context, for the
+  /** Working sets (docs/log/52): the defined sets + the derivation context, for the
    * ⋯ menu's membership toggles. */
   wsets: WorkingSet[];
   wctx: ScheduleSetContext;
@@ -207,7 +207,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, wsets, wctx, onToggleRuns, on
                 >
                   <Icon name="play" /> {tr("sched.run_now")}
                 </button>
-                {/* 作業グループ (docs/log/52): direct-assignment toggles. A membership
+                {/* Working sets (docs/log/52): direct-assignment toggles. A membership
                     DERIVED from the schedule's repo / owner conversation / reuse
                     target shows checked-but-disabled — it moves with that entity,
                     not with this toggle. */}
@@ -306,16 +306,18 @@ export const SchedulesSection = memo(function SchedulesSection() {
 
   const [items, setItems] = useState<ScheduleDTO[]>([]);
   const [loaded, setLoaded] = useState(false);
-  // 取得失敗の理由（"" = 成功）。空一覧と失敗を同じ見た目にしないための state。
+  // Why the fetch failed ("" = it succeeded). Kept so an empty list and a failure do not
+  // look the same.
   const [loadErr, setLoadErr] = useState("");
-  // 「再試行」で load を走らせ直すための世代カウンタ（effect の dep）。
+  // Generation counter (an effect dep) so the retry button re-runs load.
   const [reloadTick, setReloadTick] = useState(0);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [openRuns, setOpenRuns] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, ScheduleRun[]>>({});
   const [detail, setDetail] = useState<ScheduleDTO | null>(null);
-  // 節の開閉を自分で持つ（controlled Section）。通知からの reveal で開ける必要があるため。
-  // キーは Section 内蔵の永続と同じなので、既存の開閉状態はそのまま効く。
+  // The section owns its open state (a controlled Section) because a reveal from a
+  // notification has to open it. The key is the one Section persists to itself, so an
+  // existing open/closed choice still applies.
   const [sectionOpen, setSectionOpenState] = useState(() => localStorage.getItem(SECTION_KEY) !== "0");
   const setSectionOpen = (v: boolean) => {
     setSectionOpenState(v);
@@ -325,15 +327,16 @@ export const SchedulesSection = memo(function SchedulesSection() {
   };
   const reveal = useSchedulesStore((s) => s.reveal);
   const serRef = useRef("");
-  // 作業グループ (docs/log/52): CP 永続のスケジュールは所属を導出する — repo /
-  // owner_conv(作成元会話) / reuse_target(会話 slug・セッション名)。導出できない
-  // ものは行メニューの直接割当（set.schedules）で。
+  // Working sets (docs/log/52): a CP-persisted schedule DERIVES its membership — from repo /
+  // owner_conv (the conversation it was created in) / reuse_target (conversation slug or
+  // session name). What cannot be derived is assigned directly from the row menu
+  // (set.schedules).
   const wset = useActiveWorkingSet();
   const wsets = workingSetList(useSettings());
   const sessions = useSessionsStore((s) => s.sessions);
   const convs = useChatStore((s) => s.convs);
-  // slug→id 解決（assistant 発火の reuse_target）に会話一覧が要る。AssistantSection が
-  // 未マウントでも一度だけ読み込む。グループ未定義なら不要。
+  // Resolving slug→id (the reuse_target of an assistant fire) needs the conversation list, so
+  // load it once even when AssistantSection is not mounted. Not needed without working sets.
   useEffect(() => {
     if (wsets.length) void ensureConvs();
   }, [wsets.length]);
@@ -437,7 +440,8 @@ export const SchedulesSection = memo(function SchedulesSection() {
 
   const doDelete = async (s: ScheduleDTO) => {
     if (busy[s.id]) return;
-    // 他の破壊操作と同じ ConfirmDialog（ブロッキングな native confirm() は使わない）。
+    // The same ConfirmDialog as every other destructive action; never the blocking native
+    // confirm().
     const ok = await askConfirm({
       title: t("sched.delete_title"),
       body: t("sched.delete_confirm", { name: scheduleTitle(s) }),
@@ -481,16 +485,17 @@ export const SchedulesSection = memo(function SchedulesSection() {
     await loadRuns(s.id);
   };
 
-  // 通知センターから「なぜ動かなかったのか」を辿ってきた（docs/log/38）。行き先は行そのもの
-  // ではなく**実行履歴**——失敗の理由はそこにしか書いていない。畳まれていることの方が多い
-  // ので節も開ける。FilesSection と同じ controlled Section ＋ 自前の永続で、利用者の
-  // 開閉の選択（af-section-schedules）はそのまま引き継ぐ。
+  // Arriving from the notification centre to find out why a run did not happen
+  // (docs/log/38). The destination is the run history, not the row itself — the reason for
+  // the failure is written nowhere else — and the section is usually collapsed, so open it
+  // too. Like FilesSection, a controlled Section plus our own persistence, so the user's
+  // open/closed choice (af-section-schedules) carries over.
   useEffect(() => {
     const id = reveal.id;
     if (!id) return;
     setSectionOpen(true);
     void loadRuns(id);
-    // 行は節を開いた後にしか存在しないので、描画を1フレーム待ってから寄せる。
+    // The row only exists once the section is open, so wait a frame for the render.
     requestAnimationFrame(() => {
       document.querySelector(`[data-sched-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
     });
@@ -505,7 +510,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
       open={sectionOpen}
       onToggle={() => setSectionOpen(!sectionOpen)}
     >
-      {/* 取得失敗は「空」と別物として出す（直前まで表示していた行は残す）。 */}
+      {/* A failed fetch is shown as its own state, not as "empty" (the rows on screen stay). */}
       {loadErr && (
         <div className="sched-load-err" role="status" title={loadErr}>
           <Icon name="warning" />
@@ -518,7 +523,8 @@ export const SchedulesSection = memo(function SchedulesSection() {
       {!loadErr && loaded && items.length === 0 ? (
         <div className="pane-empty">{tr("sched.empty")}</div>
       ) : !loadErr && loaded && scoped.length === 0 ? (
-        // グループで絞った結果の空（スケジュール自体はある）— 真の空とは区別する。
+        // Empty only because the working set filtered it (schedules do exist) — kept
+        // distinct from genuinely empty.
         <div className="pane-empty">{tr("wset.no_schedules")}</div>
       ) : (
         <div className="sched-list">

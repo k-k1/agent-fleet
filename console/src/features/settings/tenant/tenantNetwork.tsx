@@ -1,14 +1,15 @@
-// テナントの接続元制限（docs/log/66・ADR 0047）。
+// The tenant's source-address restriction (docs/log/66, ADR 0047).
 //
-// ★ この画面が守っているのは 1 点だけ:「CP から見えている自分のアドレス」を
-// 表示するのではなく、それを含まない一覧の保存を**サーバが拒否する**こと。
-// 表示だけだと、プロキシ未申告のデプロイで見えている ALB の私有アドレスを
-// 「これが私の IP か」と登録でき、絞ったつもりで全員を通す（決定 4）。
-// だから editable / reason はサーバの答えをそのまま写し、押せない理由を書く。
+// The one thing this screen protects: it is the server that refuses to save a list not
+// containing the caller's own address, rather than the UI merely displaying that address. If it
+// only displayed it, on a deployment that has not declared its proxy the visible address is the
+// ALB's private one, which someone would register as "my IP" and so let everyone through while
+// believing they had restricted access (decision 4). editable / reason therefore mirror the
+// server's answer and state why the control cannot be used.
 //
-// ★ ネットワーク防御ではないことも画面に書く。要求は ALB を通り CP に届き、
-// セッションが検証された後で拒否される。効くのは「資格情報を持った人が、
-// 許されていない場所からデータに触る」だけである（決定 1）。
+// The screen also states that this is not a network defence: the request reaches the CP through
+// the ALB and is rejected after the session has been validated. It only covers "someone holding
+// valid credentials touches data from a place that is not allowed" (decision 1).
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -53,12 +54,12 @@ export function TenantNetworkView({ slug }: { slug: string }) {
         allowed_cidrs: cidrs,
       });
       if (res?.error) {
-        // ★ サーバの文言をそのまま出す。締め出しの拒否は「あなたのアドレスは
-        // 203.0.113.9 で、この一覧に含まれていない」まで言って初めて直せる。
+        // Show the server's wording verbatim: a lockout refusal is only actionable once it
+        // says "your address is 203.0.113.9 and it is not in this list".
         toast(errText(res.error));
         return;
       }
-      // 正規化された結果を書き戻す（192.0.2.7/24 は 192.0.2.0/24 として保存される）。
+      // Write back the normalised result (192.0.2.7/24 is stored as 192.0.2.0/24).
       setCidrs(res?.allowed_cidrs || "");
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);

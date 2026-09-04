@@ -152,8 +152,8 @@
 }
 /* On hover/active the ⋯ button overlays the row's right edge (see .sess-menu-wrap),
    so fade the state chip out to hand that spot over instead of stacking two icons.
-   :has(.sess-menu-wrap) — readOnly 行（履歴レール）は ⋯ を描かないので、チップを
-   消すと何も残らない。⋯ を持つ行に限定する。 */
+   :has(.sess-menu-wrap) — a readOnly row (the history rail) draws no ⋯ button, so hiding
+   the chip there would leave nothing at all. Limit this to rows that have one. */
 .sess-row:has(.sess-menu-wrap):hover .session-state,
 .sess-row:has(.sess-menu-wrap).hover .session-state,
 .sess-row:has(.sess-menu-wrap).active .session-state {
@@ -180,26 +180,26 @@
   animation: af-pulse 1.4s ease-in-out infinite;
 }
 
-/* 削除ロック（docs/log/45）の鍵バッジ — 行が削除保護に固定されていることを示す。
-   主張しすぎないよう muted、警告色は使わない（異常ではなく利用者の意図）。
-   アシスタント会話の行（.chat-row）も同じクラスを使う。 */
+/* Deletion lock (docs/log/45) lock badge — marks a row as pinned against deletion. Muted
+   rather than a warning colour: this is the user's intent, not a fault. Assistant
+   conversation rows (.chat-row) use the same class. */
 .sess-lock {
   flex: none;
   color: var(--muted);
   font-size: 11px;
 }
 
-/* 停止しないピン（docs/log/75）: アイドル自動停止の対象外であることを示す。muted ではなく
-   accent 寄りにするのは、これが「コンテナを上げ続けている＝費用が発生している」状態を
-   意味するから — 鍵バッジ（無害な保護）と同じ静かさで並べると気づかれない。 */
+/* Keep-awake pin (docs/log/75): marks a row as exempt from the idle auto-stop. Accent
+   rather than muted because it means the container is being kept up and is costing money;
+   as quiet as the lock badge (a harmless protection) it would go unnoticed. */
 .sess-awake {
   flex: none;
   color: var(--accent);
   font-size: 11px;
 }
 
-/* セッション共有: 自分がこのセッションを誰かに共有中であることを示すバッジ。
-   .sess-lock と同じ扱い(muted、警告色なし)。 */
+/* Session sharing: badge marking that this session is currently shared with someone.
+   Treated like .sess-lock (muted, no warning colour). */
 .sess-shared {
   flex: none;
   color: var(--muted);
@@ -424,7 +424,7 @@
   gap: 4px;
 }
 
-/* Session state chip (入力待ち / 進行中… / 停止中 / 質問あり…) — old styles.css
+/* Session state chip (waiting for input / running / stopped / has a question …) — old styles.css
    verbatim. Shared markup between the rail rows and the pane/chat heads
    (span.session-state + stateInfo cls), so this lives once here. */
 .session-state {
@@ -487,17 +487,18 @@
   border-color: color-mix(in srgb, var(--warn) 40%, transparent);
   font-weight: 600;
 }
-/* 停止中だが答えを待っている対話を抱えている（docs/log/75）。question の色は借りる —
-   停止中 の muted に混ぜると、未回答の質問がただ畳まれた行と見分けられなくなる。
-   ただし太字は戻す: 今まさにモーダルが出ている行（.question）と同じ強さで並ぶと、
-   「今すぐ答えれば進む」ものと「答えれば再開する」ものの区別が消える。 */
+/* Stopped, but holding an exchange that is still waiting for an answer (docs/log/75). It
+   borrows the question colour: blended into the muted stopped tone, an unanswered question
+   is indistinguishable from a merely folded row. The bold is dropped again, though — at the
+   same weight as a row whose modal is open right now (.question), "answer and it proceeds"
+   and "answer and it resumes" stop being distinguishable. */
 .session-state.off.question {
   font-weight: 400;
 }
 
-/* 制限解除待ち（利用上限のリセット待ち）: 行では読めていてほしいので question の色は
-   借りるが、こちらは「答えろ」ではなく「待て」なので太字は戻す — 未回答の質問と同じ
-   強さで並ぶと、対応が要る行がその中に埋もれる。 */
+/* Waiting for a usage limit to reset: the row still has to be readable, so it borrows the
+   question colour, but this says "wait", not "answer", so the bold is dropped — at the same
+   weight as an unanswered question, the rows that need action get buried among these. */
 .session-state.question.limited {
   font-weight: 400;
 }
@@ -511,7 +512,7 @@
   }
 }
 
-/* === 掃除パネル（CleanupModal・docs/log/32）=== */
+/* === Cleanup panel (CleanupModal, docs/log/32) === */
 .clean-modal { width: min(760px, 94vw); }
 .clean-subtitle { margin: 0; color: var(--muted); font-size: 12px; }
 .clean-tabs { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--border); }
@@ -524,16 +525,17 @@
 .clean-toolbar-spacer { flex: 1; }
 .clean-selected { color: var(--muted); font-size: 12px; margin-right: 4px; }
 .clean-list { list-style: none; margin: 0; padding: 0; }
-/* 段階セクション（① セッション整理 / ② 作業コピー・ブランチ削除） */
+/* Stage sections (1. tidy sessions / 2. delete working copies and branches) */
 .clean-stage { margin: 0 0 14px; }
 .clean-stage-head { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
 .clean-stage-title { font-size: 12px; font-weight: 600; }
 .clean-stage-empty { margin: 4px 0 0; padding: 6px 4px; color: var(--muted); font-size: 12px; }
-/* 棚（アーカイブ一覧）への導線 — 段階③はここでは扱わない */
+/* Route to the shelf (the archive list) — stage 3 is not handled here */
 .clean-shelf { display: flex; align-items: center; gap: 8px; padding: 8px 4px; border-top: 1px dashed var(--border); color: var(--muted); font-size: 12px; }
 .clean-shelf-text { flex: 1; }
-/* 2行グリッド: 1行目=check/安全/種別/名前/アクション、2行目=状態バッジ＋補足（名前と頭を揃える）。
-   理由文を1行目に押し込むと名前と取り合って見切れるため、全幅の2行目へ逃がす。 */
+/* Two-row grid: row 1 = check/safety/type/name/action, row 2 = state badge + note, aligned
+   with the name. Pushed onto row 1 the reason text competes with the name and gets cut off,
+   so it moves to a full-width second row. */
 .clean-row { display: grid; grid-template-columns: 24px auto auto 1fr auto; align-items: center; column-gap: 8px; row-gap: 2px; padding: 6px 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
 .clean-row.is-keep { opacity: 0.6; }
 .clean-check { display: inline-flex; justify-content: center; grid-row: 1; grid-column: 1; }
@@ -564,7 +566,7 @@
 .clean-arch-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .clean-arch-actions { display: inline-flex; gap: 4px; }
 @media (max-width: 560px) {
-  /* 狭幅は3行: バッジ類＋アクション / 名前 / 理由。 */
+  /* Narrow: three rows — badges + action / name / reason. */
   .clean-row { grid-template-columns: 20px auto auto 1fr; }
   .clean-act { grid-row: 1; grid-column: 4; }
   .clean-target { grid-row: 2; grid-column: 2 / -1; }

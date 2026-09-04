@@ -1,18 +1,18 @@
-// sessionFiles — the model behind「変更ファイル」(docs/log/68): the files THIS session's
+// sessionFiles — the model behind "Changed files" (docs/log/68): the files THIS session's
 // agent edited, joined with the working tree's current git state.
 //
 // Two sources, deliberately:
-//   - the母集合 comes from the transcript (`files` on GET /sessions/{name}/messages),
+//   - the population comes from the transcript (`files` on GET /sessions/{name}/messages),
 //     which is the only thing that knows the session axis. It is aggregated over the
 //     WHOLE transcript server-side — the turns the mirror holds are a tail window, so
 //     anything counted here would undercount and then grow as the reader scrolls up.
 //   - each row's STATE comes from GET /fs/changes, because the transcript only records
 //     that an edit happened, never that it was later reverted or committed.
 //
-// ⚠️ The join key is (repo, rel), never `path`: browse-relative paths are rooted at the
+// The join key is (repo, rel), never `path`: browse-relative paths are rooted at the
 // Agent's browse root (AF_BROWSE_ROOT) while /fs/changes always reports
 // "repos/<repo>/<rel>". They agree by default, which is exactly why a mismatch would go
-// unnoticed. See decisions/0049 決定 2.
+// unnoticed. See decisions/0049 decision 2.
 import { create } from "zustand";
 import { compareText } from "../../lib/intl.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
@@ -48,11 +48,12 @@ export interface FsChange {
  *   unstaged/staged/untracked — git has a diff to show
  *   committed — no working-tree diff left, but the path appeared in a commit made since
  *             this session started (docs/log/68 P2).
- *   clean   — no working-tree diff and no such commit. ⚠️ This is NOT "reverted": the
+ *   clean   — no working-tree diff and no such commit. This is NOT "reverted": the
  *             edit may have landed in an older commit, in another working copy, or under
  *             a name git no longer reports. Only the positive claim is made; the rest
- *             stays 差分なし. And these rows are KEPT either way — dropping them reads as
- *             「さっき直したのに一覧に居ない」, i.e. as a broken feature.
+ *             stays "No diff". And these rows are KEPT either way — dropping them reads
+ *             to the user as "I just edited that and it is not in the list", i.e. as a
+ *             broken feature.
  *   outside — edited outside ~/repos (an agent config, a file in the home dir). Listed,
  *             but there is no git side and no diff to open.
  */
@@ -70,7 +71,7 @@ export type FileSort = "recent" | "path";
 const changeKey = (repo: string, rel: string) => repo + "\u0000" + rel;
 
 /** The porcelain column that decides a change's state (worktree wins, then index) — the
- *  same rule the rail's 変更 list uses, so the two never disagree about a badge. */
+ *  same rule the rail's Changes list uses, so the two never disagree about a badge. */
 const codeOf = (c: FsChange): string => (c.worktree && c.worktree !== " " ? c.worktree : c.index || "");
 
 /** Join the session's edited files with the working tree. Order is preserved (the Agent
@@ -139,9 +140,9 @@ export function stateBadge(state: FileState): { cls: string; label: MsgKey } {
  * Open a row. The default gesture is the DIFF, because that is what "what did this
  * session do to this file" means — but only where git actually has one:
  *
- * ⚠️ an untracked file has no diff (`git diff` prints nothing), so opening one would
- * hand the reader an empty pane. Those rows, and rows with no working-tree change at
- * all, open the file instead. The rail's 変更 list already learned this.
+ * an untracked file has no diff (`git diff` prints nothing), so opening one would hand
+ * the reader an empty pane. Those rows, and rows with no working-tree change at all,
+ * open the file instead — the same rule as the rail's Changes list.
  */
 export function openRow(row: FileRow, split = false): void {
   if (row.repo && row.rel && (row.state === "unstaged" || row.state === "staged")) {

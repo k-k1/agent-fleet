@@ -1,35 +1,38 @@
-// 稼働中セッションのローテート — スマホの ← スワイプ（app/App.tsx）が使う選択規則。
+// Rotation across running sessions — the selection rule behind the phone's swipe gesture
+// (app/App.tsx).
 //
-// ここは PURE（ストアも DOM も触らない）。node vitest プロジェクトで単体テストできる
-// ようにするため、実際にペインへ開く副作用側は sessions/open.ts に置く（workingSets.ts
-// と workingSetsStore.ts の分け方と同じ理由）。
+// This module is PURE (no store, no DOM) so it can be unit-tested in the node vitest
+// project; the side-effecting part that actually opens a pane lives in sessions/open.ts
+// (the same split as workingSets.ts vs workingSetsStore.ts).
 //
-// 対象と順序（docs/log/52 の作業グループを尊重する）:
-// - 対象＝alive なセッションだけ。停止中は「切り替え先」ではなく再開の判断が要るので入れない。
-// - 作業グループが選ばれていれば、その絞り込みに従う（左ペインで見えている集合と一致させる）。
-// - 順序は GET /api/sessions のまま（CreatedAt の降順＝新しい順、session_handlers.go）。
-//   一覧が入れ替わらない限りローテート順も安定する。
+// Candidates and order (respecting the working sets of docs/log/52):
+// - Only alive sessions. A stopped one is not a switch target; it needs a decision to resume.
+// - When a working set is selected, follow that filter, so the set matches what the left rail
+//   shows.
+// - The order is whatever GET /api/sessions returned (CreatedAt descending = newest first,
+//   session_handlers.go). As long as the list does not change, the rotation order is stable.
 import { sessionInSet } from "../../lib/workingSets.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 import type { Session } from "../../types/session.ts";
 
-/** ローテートの対象集合。set=null は「すべて」（絞り込みなし）。 */
+/** The rotation candidates. set=null means all of them (no filter). */
 export function rotatableSessions(sessions: Session[], set: WorkingSet | null): Session[] {
   return sessions.filter((s) => !!s.alive && (!set || sessionInSet(set, s)));
 }
 
 export interface RotateTarget {
   session: Session;
-  /** 0 始まりの行き先位置（トーストの「2/3」表示用）。 */
+  /** Zero-based position of the destination (the toast renders it as "2/3"). */
   index: number;
   total: number;
 }
 
-/** current から delta 個ぶん進めた行き先（端は巻き戻る）。
+/** The destination delta steps on from current, wrapping at either end.
  *
- * - current が対象外（停止済み・別グループ・そもそもセッション以外のペイン）のときは
- *   前進なら先頭から、後退なら末尾から始める。
- * - 行き先が現在地と同じになるとき（対象が 1 件だけ）は null＝何もしない。 */
+ * - When current is not a candidate (stopped, in another working set, or not a session pane
+ *   at all), start from the head when moving forward and from the tail when moving back.
+ * - When the destination would be where we already are (only one candidate), return null and
+ *   do nothing. */
 export function rotateTarget(
   list: Session[],
   current: string | null | undefined,
@@ -38,9 +41,10 @@ export function rotateTarget(
   if (list.length === 0 || delta === 0) return null;
   const at = list.findIndex((s) => s.name === current);
   if (list.length === 1) return at === 0 ? null : { session: list[0], index: 0, total: 1 };
-  // 未ヒット時の基準: 前進は -1（→ 先頭）、後退は 0（→ 末尾）。
+  // Base when current is not in the list: -1 going forward (→ head), 0 going back (→ tail).
   const base = at < 0 ? (delta > 0 ? -1 : 0) : at;
-  // 二重 mod: |delta| > list.length の負方向でも負インデックスにならない（layout/nav と同じ）。
+  // Double mod so a negative |delta| > list.length still cannot produce a negative index
+  // (same as layout/nav).
   const i = (((base + delta) % list.length) + list.length) % list.length;
   return { session: list[i], index: i, total: list.length };
 }

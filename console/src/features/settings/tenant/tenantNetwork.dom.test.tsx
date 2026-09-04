@@ -1,9 +1,10 @@
-// テナントの接続元制限の面（docs/log/66・ADR 0047）。押さえるのは 2 点:
-//   ① 誤設定（プロキシ未申告）のときに保存ボタンを出さない。ここで「あなたの IP」
-//      を出しただけの画面は、見えている ALB の私有アドレスをそのまま登録できて
-//      しまう —— 絞ったつもりで全員を通す設定になる（決定 4）。
-//   ② 締め出しの拒否はサーバの文言をそのまま出す。観測されたアドレスが書いて
-//      なければ、管理者は打ち間違いとプロキシ問題を区別できない。
+// The tenant source-address restriction view (docs/log/66, ADR 0047). Two things are pinned:
+//   1. When the deployment is misconfigured (proxy not declared) the save control is not
+//      usable. A screen that merely displays "your IP" would let the visible ALB private
+//      address be registered, producing a rule that lets everyone through while looking like a
+//      restriction (decision 4).
+//   2. A lockout refusal shows the server's wording verbatim: without the observed address an
+//      administrator cannot tell a typo from a proxy problem.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -41,8 +42,8 @@ const saveButton = () =>
   );
 const input = () => document.querySelector<HTMLInputElement>(".admin-fld input");
 
-// React の制御された input は value プロパティを直接書いても onChange が走らない
-// （React が setter を握っている）。ネイティブ setter 経由で書いてから input を投げる。
+// Writing the value property of a React-controlled input does not fire onChange (React owns
+// the setter). Write through the native setter, then dispatch an input event.
 async function typeInto(el: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
   await act(async () => {
@@ -66,8 +67,8 @@ afterEach(() => {
   host = null;
 });
 
-describe("接続元の制限", () => {
-  it("プロキシ未申告のときは編集させず、理由を出す", async () => {
+describe("source-address restriction", () => {
+  it("does not allow editing when the proxy is not declared, and states the reason", async () => {
     api.mockResolvedValue({
       allowed_cidrs: "",
       your_ip: "10.20.10.5",
@@ -78,11 +79,11 @@ describe("接続元の制限", () => {
     await mount();
     expect(input()!.disabled).toBe(true);
     expect(saveButton()!.disabled).toBe(true);
-    // 「気づかないまま登録できる」のを止めるのが目的なので、理由が読めること。
+    // The point is to stop an unnoticed registration, so the reason has to be readable.
     expect(document.body.textContent).toContain("AF_TRUSTED_PROXY_HOPS");
   });
 
-  it("保存でサーバに拒否されたら、その文言（観測アドレス入り）をそのまま出す", async () => {
+  it("shows the server's refusal verbatim, including the observed address", async () => {
     api.mockResolvedValue({ allowed_cidrs: "", your_ip: "198.51.100.7", editable: true, reason: "" });
     apiJSON.mockResolvedValue({
       error: { code: "would_lock_out", message: "your own address (198.51.100.7) is not in this list" },
@@ -96,16 +97,17 @@ describe("接続元の制限", () => {
     expect(toast).toHaveBeenCalledWith("your own address (198.51.100.7) is not in this list");
   });
 
-  it("保存が通ったら、正規化された結果を欄に書き戻す", async () => {
-    // 保存後に読み直すので、2 回目の GET は保存済みの値を返す（実サーバと同じ）。
+  it("writes the normalised result back into the field after a successful save", async () => {
+    // The view reloads after saving, so the second GET returns the stored value, as a real
+    // server would.
     api.mockResolvedValueOnce({ allowed_cidrs: "", your_ip: "203.0.113.9", editable: true, reason: "" });
     api.mockResolvedValue({ allowed_cidrs: "203.0.113.0/24", your_ip: "203.0.113.9", editable: true, reason: "" });
     apiJSON.mockResolvedValue({ tenant: "acme", allowed_cidrs: "203.0.113.0/24" });
     await mount();
-    await typeInto(input()!, "203.0.113.9/24"); // ホスト部が残った書き方
+    await typeInto(input()!, "203.0.113.9/24"); // written with the host part still present
     await act(async () => saveButton()!.click());
-    // 打った文字ではなく保存された値が残る —— でないと、規則が言っていないことを
-    // 言っていると信じたままになる。
+    // What remains is the stored value, not what was typed; otherwise the administrator keeps
+    // believing the rule says something it does not.
     expect(input()!.value).toBe("203.0.113.0/24");
   });
 });

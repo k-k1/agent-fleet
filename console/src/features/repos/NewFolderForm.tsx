@@ -1,5 +1,5 @@
-// NewFolderForm — the folder-name field for 新規フォルダ（取り込み元なし）, shared by
-// the rail's リポジトリを追加 dialog (NewRepoModal) and the はじめる hub's new-folder
+// NewFolderForm — the folder-name field for a new folder (no import source), shared by
+// the rail's add-repository dialog (NewRepoModal) and the Start hub's new-folder
 // stage (StartModal). One field, but two callers and one validation rule, and the
 // rule is the server's: repoNameRe mirrors workspace/agent/git.go, and a name that
 // already exists is refused there with 409 exists rather than overwritten.

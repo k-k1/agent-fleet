@@ -1,10 +1,12 @@
-// テナントの既定のマシン種別（docs/log/70 §70.4.3 / §70.10）。
+// The tenant's default machine class (docs/log/70 §70.4.3 / §70.10).
 //
-// 押さえるのは 3 点。
-//   ① クラスが無いデプロイでは面ごと出ない。「選択肢の無い選択肢」を置かない。
-//   ② 並べるのはサーバが返した集合そのもの。ここで全クラスから絞り直すと、
-//      super_admin の許可一覧を画面が二重実装することになる。
-//   ③ 「テナントの既定を消す」＝ デプロイ既定へ戻す、が空文字の PUT で表現される。
+// Three things are pinned here:
+//   1. A deployment with no classes does not render the surface at all — never a choice with
+//      nothing to choose from.
+//   2. What is listed is exactly the set the server returned. Re-filtering the full class list
+//      here would reimplement super_admin's allow-list in the UI.
+//   3. "clear the tenant default" (fall back to the deployment default) is expressed as a PUT
+//      of the empty string.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -70,14 +72,14 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("テナントの既定のマシン種別", () => {
-  it("クラスの無いデプロイでは面ごと描かない", async () => {
+describe("tenant default machine class", () => {
+  it("renders nothing at all on a deployment with no classes", async () => {
     api.mockResolvedValue({ tenant: "acme", editable: false, classes: [] });
     await mount();
     expect(document.querySelector(".machine-picker")).toBeNull();
   });
 
-  it("サーバが返した集合をそのまま並べ、いまの既定に印を付ける", async () => {
+  it("lists the set the server returned as-is and marks the current default", async () => {
     api.mockResolvedValue({
       tenant: "acme",
       slot_class: "arm",
@@ -93,13 +95,13 @@ describe("テナントの既定のマシン種別", () => {
     ]);
     expect(chipWith("省コスト（Arm）")!.className).toContain("on");
     expect(chipWith("デプロイの既定")!.className).not.toContain("on");
-    // それぞれが何を買うのかを 1 行で出す（「載る箱」の話は運用者の語彙で書けない）。
+    // One line per class saying what it actually buys you.
     const specs = Array.from(document.querySelectorAll(".machine-specs li")).map((e) => e.textContent || "");
     expect(specs[0]).toContain("m7i.large–m7i.2xlarge");
     expect(specs[1]).toContain("arm64");
   });
 
-  it("「デプロイの既定」は空文字で保存する（テナント既定を消す）", async () => {
+  it("saves the deployment default as the empty string, clearing the tenant default", async () => {
     api.mockResolvedValue({
       tenant: "acme",
       slot_class: "arm",

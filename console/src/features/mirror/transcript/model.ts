@@ -45,7 +45,7 @@ export function isNoise(t: Turn): boolean {
 // prepends to a peer message (session_peer.go peerEnvelope). Parsing display text is
 // normally a smell, but the name genuinely lives nowhere else on this side: peer turns
 // are ordinary injected user turns whose only extra is the "peer" source tag. Returns
-// null for anything that doesn't match, and the badge then degrades to "別のセッション".
+// null for anything that doesn't match, and the badge then degrades to the unnamed one.
 // The envelope carries `intent=` / `reply=` after the name (docs/log/58 §58.14), so the name
 // match must tolerate further words before the "]" — pinning it to "]" is exactly how this
 // silently degraded to the unnamed badge when the envelope grew.
@@ -88,8 +88,8 @@ export function parseBashOutput(t: Turn): { stdout: string; stderr: string } | n
 // A `/`-run slash command or skill is logged as a user turn
 // `<command-name>/foo</command-name><command-message>…</command-message><command-args>…</command-args>`.
 // It's hidden by isNoise; parseCommand recovers the name + args so it can surface as a chip.
-// Tag order varies: built-ins log <command-name> first, but skill invocations (2.1.215
-// 実測・定時 /scout) log <command-message> FIRST. Requiring name-first made those turns
+// Tag order varies: built-ins log <command-name> first, but skill invocations (measured on
+// 2.1.215, a scheduled /scout) log <command-message> FIRST. Requiring name-first made those turns
 // unparseable → isNoise dropped them entirely → no user-turn boundary, so every fire's
 // reply merged into one assistant block anchored at the last visible turn (footer stuck
 // at the old date). Accept either tag at the start and take the name wherever it sits.
@@ -116,8 +116,9 @@ export function parseCommand(t: Turn): { name: string; args: string } | null {
 //     window begins, overlaps by a turn or two.
 // Replacing by idx makes a poll idempotent; sorting by idx then keeps history in
 // transcript order no matter which direction the batches arrived from (live increments
-// append, 以前の会話を読み込む prepends). Turns from an Agent old enough not to send idx
-// are left in arrival order — nothing to key on, and that is the pre-existing behaviour.
+// append, "load earlier messages" (「以前の会話を読み込む」) prepends). Turns from an Agent old
+// enough not to send idx are left in arrival order — nothing to key on, and that is the
+// pre-existing behaviour.
 export function mergeTurns<T extends Turn>(held: T[], incoming: T[]): T[] {
   if (!incoming.length) return held;
   const byIdx = new Map<number, number>();
@@ -230,8 +231,9 @@ export function groupTurns(turns: Turn[]): Group[] {
       last.parts.push(...parts);
       last.origins.push(...originsOf(t, parts));
       last.folded++;
-      // 2 行以上畳んだ時点で、ブロックの text は「窓に何行入っていたか」で変わる文字列に
-      // なる。そこに出現番号のアンカーは置けない（docs/log/69 §69.3.2）。
+      // Once two or more rows are folded, the block's text is a string that depends on how
+      // many rows the window held, so an occurrence-number anchor cannot live there
+      // (docs/log/69 §69.3.2).
       last.bodyRoot = "";
       carryEnd(last, t); // the block's end follows the last row folded in
       if (t.pending) last.pending = true;

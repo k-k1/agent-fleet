@@ -1,6 +1,6 @@
 // The wire contract for docs/log/56 P0's read-only project-scope MCP snapshot
 // (workspace/agent/internal/mcpproj, GET /api/repos/{name}/mcp). Kept separate from
-// ../settings/mcpWire.ts (the AF REGISTRY's wire contract) on purpose: ADR0040 決定15
+// ../settings/mcpWire.ts (the AF REGISTRY's wire contract) on purpose: ADR0040 decision 15
 // keeps the Go types apart too — a project file's "af" entry must be FOUND and
 // flagged here, not treated like an editable registry row — so this file defines
 // its own interfaces rather than reusing/extending McpServer/Registry.
@@ -69,7 +69,7 @@ export const fetchProjectMcpSnapshot = (repo: string): Promise<ProjectSnapshot> 
 // --- P1: plan → apply (docs/log/56 §5 / §10) --------------------------------------
 //
 // A pure ops list, computed client-side from the panel's form state — never
-// stored server-side (docs/log/56 §5's "純粋なワンショット"). planHash is an opaque
+// stored server-side (docs/log/56 §5's "pure one-shot"). planHash is an opaque
 // echo: compute it via planProjectMcp, pass the SAME value to applyProjectMcp: a
 // 409 means a file the ops would write changed in between (docs/log/56 §5's
 // optimistic lock) and the panel must re-plan rather than retry blindly.
@@ -152,7 +152,7 @@ export function serverIn(file: ProjectFile, name: string): ProjectServer | undef
   return (file.servers || []).find((s) => s.name === name);
 }
 
-/** Every server name any CodeServerDiverged warning names, for the ⚠差分 cell mark. */
+/** Every server name any CodeServerDiverged warning names, for the "diverged" cell mark. */
 export function divergedNames(warnings: ProjectWarning[] | undefined): Set<string> {
   const out = new Set<string>();
   for (const w of warnings || []) if (w.code === "mcp_project_server_diverged" && w.server) out.add(w.server);

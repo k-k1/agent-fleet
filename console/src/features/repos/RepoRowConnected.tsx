@@ -27,14 +27,14 @@ interface RepoRowConnectedProps {
   onToggle?: () => void;
   /** Session tally badge (see RepoRow.sess) — computed by the owning node. */
   sess?: { alive: number; total: number };
-  /** 停止中セッション一括アーカイブ（右クリックメニュー）— このフォルダ直下の
-   * セッションだけを対象にした件数/ハンドラを、所有ノード（RepoNode）が渡す。 */
+  /** Bulk-archive stopped sessions (right-click menu). The owning node (RepoNode) passes a
+   * count and a handler scoped to the sessions directly under this folder. */
   onArchiveStopped?: () => void;
   stoppedCount?: number;
 }
 
 export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, stoppedCount }: RepoRowConnectedProps) {
-  const settings = useSettings(); // default model for claude 起動
+  const settings = useSettings(); // default model for a claude launch
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
@@ -64,7 +64,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         if (e && (e.ctrlKey || e.metaKey || e.button === 1)) openTargetInNew(target);
         else openTarget(target);
       }}
-      // Right-click → フォルダを開く: expand + select the repo in the Files tree.
+      // Right-click -> open folder: expand + select the repo in the Files tree.
       onOpenFolder={() => useFilesStore.getState().revealInFiles("repos/" + r.name, { focus: true })}
       onOpenChanges={() => openTarget({ content: { kind: "changes", scmRepo: r.name } })}
       onFF={async () => {
@@ -105,7 +105,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         void refreshRepos();
         toast(tr("rp.svn_cleanup_success", { name: r.name }), { kind: "success" });
       } : undefined}
-      // 削除ロック（docs/log/45）: 作業コピー（worktree 含む）を削除保護に固定/解除する。
+      // Deletion lock (docs/log/45): pin/unpin a working copy (worktrees included) against deletion.
       onToggleLock={async (locked) => {
         const res = await repoSetLock(r.name, locked);
         if (res?.error) {
@@ -160,21 +160,22 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         // Shared per-kind chain: repo last-used → kind default (repoLast.ts resolveModel).
         const model = hasModel ? resolveModel(kind, r.name, defaults.model) : "";
         const effort = agentOf(kind).caps.effort ? resolveEffort(kind, r.name, defaults.effort) : "";
-        // plan 起動対応（planMode または tuiStartMode）の kind は保存済み既定を尊重する
-        // — 起動モーダルで選んだ per-repo の開始モードがクイック起動でも効くように。
+        // Kinds that can start in plan mode (planMode or tuiStartMode) honour the saved
+        // default, so the per-repo start mode picked in the launch modal also applies to a
+        // quick launch.
         const startMode =
           agentOf(kind).caps.planMode || agentOf(kind).caps.tuiStartMode
             ? resolveStartMode(kind, r.name, defaults.startMode)
             : "normal";
         const body: Record<string, unknown> = { dir: r.path, kind };
-        // クイック起動も新規の既定は managed（docs/log/27 §9.2 — opencode）。CLI が
-        // 欲しいときは 作業を始める モーダルのドライバ選択から。
+        // A quick launch defaults to managed like any new session (docs/log/27 §9.2 —
+        // opencode). The CLI is reachable through the driver choice in the start-work modal.
         if (agentOf(kind).managedDriver) body.driver = "managed";
         if (model) body.model = model;
         if (effort) body.effort = effort;
         body.mode = startMode;
         let res = await apiJSON("api/sessions", "POST", body);
-        // 旧 Agent（P1.5 世代）は managed を明示拒否する — tui で立て直す。
+        // An old Agent (the P1.5 generation) rejects managed outright; retry with tui.
         if (res?.error && body.driver === "managed" && (res.error as { code?: string }).code === "driver_unsupported") {
           delete body.driver;
           if (!agentOf(kind).caps.tuiEffort) delete body.effort;
@@ -182,7 +183,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
           res = await apiJSON("api/sessions", "POST", body);
         }
         if (res && res.error) {
-          // errDetail: 汎用コード（runtime_failed 等）は「なぜ」を message にしか持たない。
+          // errDetail: a generic code (runtime_failed and friends) carries the why in message only.
           toast(tr("rp.launch_failed", { err: errDetail(res.error) }));
           return;
         }
@@ -193,8 +194,8 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
           ? split ? openSessionChatSplit : openSessionChat
           : split ? openSessionTerminalSplit : openSessionTerminal)(res.name);
       }}
-      // 作業を始める: worktree (default) or in-place, with an optional first prompt the
-      // Agent delivers once the CLI is ready. Shared with the はじめる hub (useStartWork).
+      // Start work: worktree (default) or in-place, with an optional first prompt the
+      // Agent delivers once the CLI is ready. Shared with the Start hub (useStartWork).
       onStartWork={(opts) => startWork({ dir: r.path || "", repo: r.name }, opts)}
       onBranchChanged={() => {
         // A checkout / new branch changed HEAD and the working tree.

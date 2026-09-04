@@ -26,7 +26,7 @@ import { SecretsForm, ServerForm } from "./mcpServerForm.tsx";
 //   tenant  … read-only, but locally disableable (the member's escape hatch when a
 //             distributed server breaks their session launches)
 //   builtin … the ops integrations (PagerDuty / Grafana / CloudWatch / AWS), configured on
-//             the 運用・監視 tab — shown so the list isn't lying by omission.
+//             the ops monitoring tab — shown so the list isn't lying by omission.
 //
 // Secrets (env / header VALUES) never come back from the agent: they arrive as "***"
 // and are sent back unchanged to keep the stored value (mcpreg.MergeSecrets). So the

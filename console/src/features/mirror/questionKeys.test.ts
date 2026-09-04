@@ -71,7 +71,7 @@ describe("buildMenuSeq — agy write-in row", () => {
     expect(show(buildMenuSeq([q3], [["緑"]], [""]))).toBe(buildSinglePickKeys(2).join(" "));
   });
 
-  // agy 1.1.4 実測: the "Write-in..." row sits just after the options and must be
+  // Measured on agy 1.1.4: the "Write-in..." row sits just after the options and must be
   // ENTERED first (Enter opens "Your answer:"), then the text, then Enter submits.
   it("enters the write-in row before typing, and submits with a trailing Enter", () => {
     const seq = buildMenuSeq([q3], [[]], ["紫がいい"], true);
@@ -80,7 +80,7 @@ describe("buildMenuSeq — agy write-in row", () => {
 
   it("lands on the row AFTER the last option (row index === options.length)", () => {
     // The count of Downs is what puts the cursor on "Write-in..." rather than on the
-    // last real option — off by one here silently answers 緑 instead.
+    // last real option — off by one here silently answers the last option instead.
     const seq = buildMenuSeq([q3], [[]], ["x"], true);
     expect(seq.filter((s) => s.k === "Down")).toHaveLength(3);
   });
@@ -187,13 +187,13 @@ describe("buildClaudeSeq — preview options drop the free-text row (docs/build/
   // after the last option; with preview it instead lands on the unnumbered "Chat about
   // this" row, which silently swallows the typed text and then Enter activates "Chat
   // about this" — claude reports this back as "User declined to answer questions" /
-  // "(No answer provided)". Reported bug (szawtwy, and reproduced live in this session):
-  // every preview-bearing free-text answer failed this way regardless of question count.
+  // "(No answer provided)": every preview-bearing free-text answer failed this way, regardless
+  // of question count.
   const preview: QKQuestion = withPreview("案A", "案B", "案C");
 
   it("opens notes with 'n' instead of navigating to a Type-something row that doesn't exist", () => {
     // No Down at all: a question's tab always starts with the cursor on option 0, and
-    // notes attach without needing to select that option first (実測: submits as
+    // notes attach without needing to select that option first (measured: submits as
     // "(no option selected) notes: …").
     // 'n' goes out as literal text, NOT as a named key — the Agent rejects any {k} it
     // doesn't know with 400 and then drops the entire sequence (see the whitelist test
@@ -305,13 +305,13 @@ describe("buildRespondAnswers — managed sessions (no modal)", () => {
 });
 
 describe("every named key these builders emit is one the Agent accepts", () => {
-  // 層またぎの固定。ここのビルダーが吐く {k} は Agent の /sessions/{name}/input が
-  // **名前付きキーのホワイトリスト**（session_io.go の allowedKey）で検査し、知らない
-  // 名前が1つでも混じると要求ごと 400 bad_key で弾かれる — つまり打鍵は1つも届かない。
-  // Console 側は失敗を握り潰していたので、症状は「自由入力してボタンを押しても無反応」
-  // になった（2026-08-14 の preview 修正が {k:"n"} を吐き、実 TUI（tmux 直叩き）では
-  // 通るのに Console からは一度も届かなかった実例）。モーダルの契約はテストされていても
-  // **配送層の契約**は誰も見ていなかったので、ここで結ぶ。
+  // A cross-layer pin. Every {k} these builders emit is checked by the Agent's
+  // /sessions/{name}/input against a whitelist of NAMED keys (allowedKey in session_io.go), and a
+  // single unknown name rejects the whole request with 400 bad_key - so not one keystroke arrives.
+  // The Console swallowed that failure, so the symptom was "typing free text and pressing the
+  // button does nothing" (a {k:"n"} step went through against the real TUI driven by tmux, yet
+  // never once reached it from the Console). The modal contract was tested but the delivery
+  // layer's contract was not, so it is tied down here.
   const allowed = (() => {
     const go = readFileSync(fileURLToPath(new URL("../../../../workspace/agent/internal/sessionx/session_io.go", import.meta.url)), "utf8");
     const fn = go.slice(go.indexOf("func allowedKey("));
@@ -344,7 +344,7 @@ describe("every named key these builders emit is one the Agent accepts", () => {
       for (const k of out.keys || []) expect([show([{ k }]), allowed.has(k)]).toEqual([k, true]);
       for (const s of out.seq || [])
         if (s.k !== undefined) expect([show([s]), allowed.has(s.k)]).toEqual([s.k, true]);
-      // 同じ検査を menu（codex/opencode/agy）経路にも。
+      // The same check for the menu route (codex/opencode/agy).
       for (const s of buildMenuSeq(qs, sel, ft, true))
         if (s.k !== undefined) expect([show([s]), allowed.has(s.k)]).toEqual([s.k, true]);
     }

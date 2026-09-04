@@ -1,11 +1,11 @@
-/* テナント設定モーダル（tenant/）。
+/* The tenant settings modal (tenant/).
  *
- * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
- * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
- * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
- * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ * One slice of `settings.css` (ADR 0067 / FE-SETTINGS). A class name must appear in exactly
+ * one file: every stylesheet in this Console is global, so the same class split across two
+ * files is not a conflict — it is silently merged in @import order (scripts/css-dup.mjs).
+ * Before adding a rule, check that its name exists nowhere else.
  *
- * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ * Load order is decided by the @import list in settings.css; rename this file there too.
  */
 /* nav row: back button + breadcrumb */
 .admin-nav {
@@ -104,7 +104,7 @@
   align-items: center;
   gap: 7px;
   font-size: 12.5px;
-  cursor: pointer; /* mirror.css の重複定義を畳んだ際にこちらへ引き継いだ */
+  cursor: pointer; /* carried over here when the duplicate definition in mirror.css was folded in */
 }
 
 .admin-check input {
@@ -527,12 +527,10 @@
   letter-spacing: 0.04em;
   padding: 1px 6px;
   border-radius: 999px;
-  /* ★ var(--border2) では引けない。ライトでは #e6e8ec が .admin-panel の地
-     (var(--panel2) = #f4f5f7) とほぼ同色で、枠が消えてチップが宙に浮いた文字列に
-     なる（実測・.adm-mcp-row code の注記と同じ罠）。前景を薄く混ぜると、どちらの
-     テーマでも同じ濃さで浮く。
-     P7-0 まではこの素の見た目が出るのは suspended の行だけで目立たなかったが、
-     「デプロイ共通」バッジが同じ素の状態を全行に出すので、ここで直す。 */
+  /* var(--border2) cannot draw this border: in light mode #e6e8ec is almost the same colour
+     as the .admin-panel ground (var(--panel2) = #f4f5f7), so the border disappears and the
+     chip becomes text floating in mid-air (measured; the same trap as the note on
+     .adm-mcp-row code). Mixing in a little foreground keeps the same weight in both themes. */
   border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
   color: var(--muted);
   flex: none;
@@ -604,14 +602,14 @@
   font-size: 11px;
 }
 
-/* 予約 workspace（種 / probe）の印。人の workspace と同じ見た目で並ぶと、上限に
-   近いプールで「知らない誰かが 2 枠使っている」に読める。 */
+/* Marker for the reserved workspaces (seed / probe). Styled like a person's workspace, they
+   read in a near-full pool as "some stranger is using two slots". */
 .pool-badge.bake {
   margin-left: 6px;
   font-family: var(--sans);
 }
 
-/* golden の焼き込み（docs/log/64 §64.30）。1 アーキ 1 ブロック。 */
+/* The golden bake (docs/log/64 §64.30). One block per architecture. */
 .golden-arch + .golden-arch {
   margin-top: 14px;
   padding-top: 12px;
@@ -629,8 +627,9 @@
   margin: 4px 0;
 }
 
-/* 進行線。段の名前は「いまどこか」が読めれば十分なので小さく、現在段だけ強調する。
-   ★ 折り返す（アーキ 2 本 × 6 段は狭いペインに収まらない）。 */
+/* The progress line. Stage names only have to say where the bake is, so they are small and
+   only the current one is emphasised. It wraps: two architectures by six stages does not fit
+   in a narrow pane. */
 .bake-steps {
   display: flex;
   flex-wrap: wrap;
@@ -662,9 +661,9 @@
   font-size: 13px;
 }
 
-/* 自動停止の見通し（docs/log/75 P4）。名簿の行では控えめだが、**止まらない理由**（.hold）は
-   注意色にする — 「あと 20 分で停止」と「止まらない」は運用者にとって意味が正反対で、
-   同じ静かさで並ぶと、コストが出続けている行を見落とす。 */
+/* Auto-stop outlook (docs/log/75 P4). Quiet on a roster row, but the reason it will not stop
+   (.hold) gets the warning colour: "stops in 20 minutes" and "will not stop" mean opposite
+   things to an operator, and at the same quietness the row still costing money is missed. */
 .mr-idle {
   font-size: 11px;
   white-space: nowrap;
@@ -675,8 +674,9 @@
   color: var(--warn);
 }
 
-/* 止めている理由の一覧（メンバー詳細）。運用者はここから次の一手（待つ / ピンを外して
-   もらう / セッションを止める）を決めるので、装飾より読みやすさを優先した素の箇条書き。 */
+/* The list of things holding it open (member detail). The operator decides the next move from
+   here — wait, ask for a pin to be released, stop a session — so it is a plain list, legibility
+   over decoration. */
 .idle-holders {
   margin: 4px 0 0;
   padding-left: 18px;

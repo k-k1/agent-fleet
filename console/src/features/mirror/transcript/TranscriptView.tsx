@@ -106,8 +106,9 @@ export function TranscriptView({
   // Nothing in the transcript is newer than these cards (the normal case right after a
   // session proposes a handoff): they go last — until the next turn arrives.
   for (const c of cards) if (c.insertAt >= groups.length) els.push(c.node);
-  // 会話ぜんぶで 1 つの浮遊レイヤー（選択ピルとマーカーのカード）。印そのものは各ターンが
-  // 自分の本文へ被せる — ここに置くのは document 単位の操作だけ。
+  // One floating layer for the whole conversation (the selection pill and the mark cards). The
+  // marks themselves are painted by each turn over its own body; only document-level controls
+  // belong here.
   if (caps.marks) els.push(<MarkLayer key="marklayer" marks={caps.marks} />);
   return <>{els}</>;
 }

@@ -75,7 +75,7 @@ export interface ScheduleRun {
 // --- List payload classification -------------------------------------------------
 // api() RESOLVES a CP error as { error } instead of throwing, so "not an array" is the
 // normal shape of a 401 / 5xx here. Reading that as an empty list is how a failed fetch
-// turned into 「定時実行はまだありません」 — the one message that makes a user believe the
+// turned into "no scheduled runs yet" — the one message that makes a user believe the
 // schedule they just created is gone. Callers keep the rows they already have and show
 // the failure instead.
 export interface ScheduleListResult {
@@ -124,8 +124,8 @@ export function statusIcon(status?: string): string {
 }
 
 // The i18n key for a run's outcome, keyed off the same four tones as the status dot so
-// history reads "成功 / 失敗 / スキップ / 未実行" instead of the raw token (which stays in the
-// row tooltip). Pure so it is unit-tested alongside statusTone.
+// history reads "succeeded / failed / skipped / not run" instead of the raw token (which
+// stays in the row tooltip). Pure so it is unit-tested alongside statusTone.
 export function runStatusLabelKey(status?: string): MsgKey {
   switch (statusTone(status)) {
     case "ok":
@@ -153,7 +153,7 @@ export function isPaused(s: ScheduleDTO): boolean {
 }
 
 // Human label for a schedule. Prefer the operator's original natural-language label
-// (spec_label, e.g. "毎朝9時レビュー"); fall back to a terse spec summary so a row is
+// (spec_label, e.g. "review every morning at 9"); fall back to a terse spec summary so a row is
 // never blank.
 export function scheduleTitle(s: ScheduleDTO): string {
   const label = (s.spec_label || "").trim();
@@ -168,7 +168,8 @@ export function specSummary(s: ScheduleDTO): string {
     case "cron":
       return s.spec;
     case "interval":
-      // 「〜ごと」の言い回しはロケール依存なのでカタログへ（t() は非 React からも呼べる）。
+      // The "every N" phrasing is locale-dependent, so it comes from the catalogue (t() is
+      // callable outside React too).
       return t("sched.every", { interval: formatInterval(s.spec) });
     case "once":
       return s.spec;

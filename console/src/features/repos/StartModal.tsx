@@ -1,9 +1,9 @@
-// StartModal —「はじめる」hub (起動導線 Ph2/Ph3): the WS bar's single entry point
+// StartModal — the Start hub (launch flow Ph2/Ph3): the WS bar's single entry point
 // for starting anything. Place-first: chat (assistants, repo-less), an existing
-// working copy (→ the per-repo 作業を始める dialog), clone-and-continue, a home
-// (repo-less) agent session, and the folded その他 track (shell direct / SSM —
+// working copy (→ the per-repo start-work dialog), clone-and-continue, a home
+// (repo-less) agent session, and the folded "other" track (shell direct / SSM —
 // its host picker lives here since NewSessionModal was retired in Ph3). Entry
-// points that already know the place (repo row 起動) skip this hub.
+// points that already know the place (the repo row's launch) skip this hub.
 import { useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Modal } from "../../ui/Modal.tsx";
@@ -43,7 +43,7 @@ interface StartModalProps {
   kinds: string[];
   onClose: () => void;
   /** A working copy was picked (existing or freshly cloned) — the host closes
-   * this hub and opens the per-repo 作業を始める dialog on it. */
+   * this hub and opens the per-repo start-work dialog on it. */
   onPickRepo: (r: Repo) => void;
 }
 
@@ -52,8 +52,9 @@ type Stage = "place" | "clone" | "newdir" | "home" | "ssm";
 interface SsmProfile {
   id: string;
   label: string;
-  /** SSO アカウント id。**ホストではなくプロファイルの属性**（control-plane の
-   * ssmProfileDTO が持つ）。ホスト側のカード副題もここから引く —— 下記 ssmAcctLabel。 */
+  /** SSO account id. An attribute of the PROFILE, not of the host (it lives on the
+   * control-plane's ssmProfileDTO). The host cards' subtitle reads it from here too — see
+   * ssmAcctLabel below. */
   accountId: string;
 }
 
@@ -77,7 +78,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const [stage, setStage] = useState<Stage>("place");
   const [busy, setBusy] = useState(false);
 
-  // --- place: chat (assistants inline), repos, +clone, home, その他 ---
+  // --- place: chat (assistants inline), repos, +clone, home, other ---
   const [chatOpen, setChatOpen] = useState(false);
   const [repoQuery, setRepoQuery] = useState("");
   const [ssmProfiles, setSsmProfiles] = useState<SsmProfile[] | null>(null);
@@ -132,8 +133,9 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     } else onClose(); // clone landed but the fresh list hasn't caught up — the tree has it
   };
 
-  // --- newdir: 取り込み元が無いところから始める（~/repos/<name> を作って git init） ---
-  // クローンと同じ合流点へ流す: 作った作業コピーをそのまま 作業を始める ダイアログへ渡す。
+  // --- newdir: start with no import source (create ~/repos/<name> and `git init`) ---
+  // Feeds the same junction as a clone: the working copy just created is handed straight to
+  // the start-work dialog.
   const [newName, setNewName] = useState("");
   const takenNames = new Set(repos.map((r) => r.name));
   const doInit = async () => {
@@ -141,17 +143,17 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     setBusy(true);
     const res = await initRepo(newName.trim(), toast);
     setBusy(false);
-    if (!res.ok) return; // ここに留まる（理由はトーストが言った）
-    // グループ選択中なら、作った作業コピーをそのグループへ入れる（docs/log/52 §1）。
+    if (!res.ok) return; // stay here; the toast said why
+    // With a working set selected, put the new working copy into it (docs/log/52 §1).
     autoAddToActiveWorkingSet("repos", res.name);
     const repo = useReposStore.getState().repos.find((r) => r.name === res.name);
     if (repo) {
-      setStage("place"); // ハブは下に残るので、畳んだ状態に戻しておく
+      setStage("place"); // the hub stays mounted below — leave it reset
       onPickRepo(repo);
-    } else onClose(); // 作れたが一覧が追いついていない — 木には出ている
+    } else onClose(); // created, but the list hasn't caught up — the tree has it
   };
 
-  // --- ssm: host picker + SSO handshake (NewSessionModal の SSM 面を移設, Ph3) ---
+  // --- ssm: host picker + SSO handshake (the SSM side of NewSessionModal, moved here in Ph3) ---
   const [ssmHosts, setSsmHosts] = useState<SsmHost[] | null>(null); // null = not fetched yet
   const [ssmHostId, setSsmHostId] = useState("");
   const [ssmQuery, setSsmQuery] = useState("");
@@ -183,14 +185,16 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   // keep the dropdown for the long tail.
   const SSM_CARD_ALL_MAX = 8;
   const SSM_CARD_TOP = 6;
-  // ホストが参照するプロファイルの実体。ラベルもアカウント id も**ホストではなく
-  // プロファイルの属性**なので、同じ 1 箇所から引く。
-  // 🔴 以前ここは `h.accountId` を読んでいたが、**ssmHostDTO は accountId を出さない**ので
-  // 常に undefined ＝カード副題のアカウント表示は一度も描かれていなかった（optional なので
-  // 型検査も鳴らない）。ワイヤは変えず、既にプロファイルを引いているこの経路に相乗りする。
+  // The profile a host refers to. Both the label and the account id are attributes of the
+  // PROFILE, not of the host, so both are read from this one place. Reading `h.accountId`
+  // instead always yields undefined — ssmHostDTO does not expose accountId — and the account
+  // part of the card subtitle then never renders, silently, because the field is optional and
+  // the type check stays quiet. Leave the wire alone and ride on this path, which already
+  // resolves the profile.
   const ssmProfileOf = (pid: string) => ssmProfiles?.find((p) => p.id === pid);
   const ssmProfileLabel = (pid: string) => ssmProfileOf(pid)?.label || "";
-  // 未取得（ssmProfiles === null）のあいだは空に落ちる —— ラベルの従来の劣化挙動と同じ。
+  // While the profiles are unfetched (ssmProfiles === null) this falls back to empty, the same
+  // degradation the label already has.
   const ssmAcctLabel = (pid: string) => {
     const acct = ssmProfileOf(pid)?.accountId;
     return acct ? tr("start.ssm_acct", { id: acct }) : "";
@@ -267,7 +271,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     // Tally usage so the quick-connect cards rank by frequency (recency breaks ties).
     const prev = settings.ssmHostUsage?.[id];
     setSetting("ssmHostUsage", { ...(settings.ssmHostUsage || {}), [id]: { count: (prev?.count || 0) + 1, at: Date.now() } });
-    if (res?.name) autoAddToActiveWorkingSet("sessions", res.name); // docs/log/52 §1: repo なしセッション
+    if (res?.name) autoAddToActiveWorkingSet("sessions", res.name); // docs/log/52 §1: repo-less session
     setSsmLogin((res && res.name) || "");
   };
 
@@ -277,13 +281,14 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const [model, setModel] = useState(() => resolveModel(kinds[0] || "claude", "", initialDefault.model));
   const [effort, setEffort] = useState(() => resolveEffort(kinds[0] || "claude", "", initialDefault.effort));
   const [startMode, setStartMode] = useState(() => resolveStartMode(kinds[0] || "claude", "", initialDefault.startMode));
-  // 権限確認（docs/log/76）。undefined = 触っていない＝送らない（Agent 側の kind 毎の既定に任せる）。
+  // Permission prompts (docs/log/76). undefined = untouched, so nothing is sent and the Agent's
+  // per-kind default applies.
   const [skipPerm, setSkipPerm] = useState<boolean | undefined>(undefined);
   const [prompt, setPrompt] = useState("");
   // kind is seeded once at mount, but kinds arrives asynchronously (the connection
   // check takes ~1.5-2s). Mounting during that window seeds the "claude" fallback,
   // which then sticks even if claude turns out to be unavailable — the picker shows
-  // nothing selected and 開始 would launch an unusable agent. Re-seed as soon as the
+  // nothing selected and starting would launch an unusable agent. Re-seed as soon as the
   // real list lands and the held kind isn't in it.
   useEffect(() => {
     if (!kinds.length || kinds.includes(kind)) return;
@@ -302,7 +307,8 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
       { dir: "", repo: "" },
       {
         kind,
-        // 起動ハブの repo-less 起動も新規の既定は managed（docs/log/27 §9.2 — opencode）。
+        // A repo-less launch from the hub also defaults to managed like any new session
+        // (docs/log/27 §9.2 — opencode).
         driver: agentOf(kind).managedDriver ? "managed" : "",
         model: agentOf(kind).caps.model ? model : "",
         effort: agentOf(kind).managedDriver || agentOf(kind).caps.tuiEffort ? effort : "",
@@ -440,8 +446,8 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                   <span className="start-row-title">{tr("start.clone_title")}</span>
                 </span>
               </button>
-              {/* 取り込み元が無いところから: ホーム起動と違い「場所」を持つので、この先
-                  ずっと左ペインの行・worktree・差分・共有の単位になる。 */}
+              {/* Starting with no import source: unlike a home launch this HAS a place, so from
+                  here on it is the unit for a left-pane row, worktrees, diffs and sharing. */}
               <button type="button" className="start-row action" onClick={() => setStage("newdir")}>
                 <Icon name="new-folder" className="start-row-ic" />
                 <span className="start-row-body">
@@ -558,11 +564,12 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             {(() => {
               const a = agentOf(kind);
               const showEffort = a.caps.effort && (a.managedDriver || a.caps.tuiEffort);
-              // planMode はチャットの plan トグル（planCycleKey）用の cap。cursor/copilot/kiro は
-              // planMode:false でも tuiStartMode:true（起動コマンド/driver が plan 起動対応 —
-              // 各 program.go / driver.go 実装済み）なので、起動時モード選択はどちらかで出す。
+              // planMode is the cap for the chat plan toggle (planCycleKey). cursor/copilot/kiro
+              // have planMode:false but tuiStartMode:true (their launch command / driver can start
+              // in plan mode), so the start-mode choice is offered when either cap is present.
               const showStartMode = (a.caps.planMode || a.caps.tuiStartMode) && (a.managedDriver || a.caps.tuiStartMode);
-              // 権限確認は承認待ちを Console から答えられる kind だけ（docs/log/76）。
+              // The permission choice is only for kinds whose pending approvals can be answered
+              // from the Console (docs/log/76).
               const showPerm = a.caps.permissionChoice;
               const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
               if (!showEffort && !showStartMode && !showPerm) return null;
@@ -607,8 +614,8 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             </div>
             <div className="ui-field">
               <span className="ui-field-label">{tr("launch.first_prompt")}</span>
-              {/* 画像貼り付けは意図的に無し（リポジトリなしセッションでは不要と整理）。
-                  LaunchModal 側の staged-images 一式をここに持ち込まないこと。 */}
+              {/* Image pasting is deliberately absent: a repo-less session has no use for it. Do
+                  not bring LaunchModal's staged-images machinery over here. */}
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
@@ -695,7 +702,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                     <select value={ssmHostId} onChange={(e) => setSsmHostId(e.target.value)}>
                       <option value="">{tr("start.select_host")}</option>
                       {visibleSsmHosts.map((h) => {
-                        const acct = ssmAcctLabel(h.profileId); // カード副題と同じ経路（プロファイル側）
+                        const acct = ssmAcctLabel(h.profileId); // same path as the card subtitle (the profile)
                         return (
                           <option key={h.id} value={h.id}>
                             {h.alias} — {h.instanceId}
@@ -724,8 +731,9 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             <div className="ui-field">
               <span className="ui-field-label">{tr("start.aws_instances_label")}</span>
               {ssmProfiles && ssmProfiles.length > 1 && (
-                // 初期値 "" はどの option にも一致しない（placeholder 無し）ので表示が不定になる。
-                // 検索/登録は profiles[0] へフォールバックするため、表示も同じ先頭に揃える。
+                // The initial "" matches no option (there is no placeholder), leaving the display
+                // undefined. Search/register fall back to profiles[0], so the display is pinned to
+                // that same first entry.
                 <select value={ssmProfileId || ssmProfiles[0].id} onChange={(e) => setSsmProfileId(e.target.value)}>
                   {ssmProfiles.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                 </select>

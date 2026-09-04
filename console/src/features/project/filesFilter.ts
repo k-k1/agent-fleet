@@ -1,10 +1,10 @@
-// File-tree filter — the ファイル section's quick-filter box state (zustand, so
+// File-tree filter — the files section's quick-filter box state (zustand, so
 // both trees, repos/ and home, follow the same query). The scope chooses which
 // subtree receives recursive search while leaving normal browsing unchanged.
 // Matching is a
 // case-insensitive substring test over a row's displayed name (its filename, or
 // the folded "a/b/c" path for single-child dir chains). It filters the rows the
-// tree currently shows (loaded / expanded), the same as the リポジトリ filter —
+// tree currently shows (loaded / expanded), the same as the repositories filter —
 // see [[filter]], from which normQuery is reused.
 //
 // It also carries the focus bridge between the box and the tree, since they live

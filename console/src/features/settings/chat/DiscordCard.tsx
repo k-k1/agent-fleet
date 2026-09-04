@@ -6,7 +6,7 @@ import { ProviderCard, StatusPill, Hint, DisconnectButton, IssueLink } from "../
 import { getLocale, useT } from "../../../lib/i18n/index.ts";
 import { SettingsPanel, PsRow, CHAT_EVENTS, ALL_EVENTS } from "./chatCardParts.tsx";
 
-// DiscordCard — connect = token → verify → invite → pick channel → 接続 (adjacent). The
+// DiscordCard — connect = token → verify → invite → pick channel → connect (adjacent). The
 // detail settings appear only AFTER connect, in the collapsible SettingsPanel that
 // auto-saves each toggle. docs/log/37 P1.
 export function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
@@ -28,7 +28,7 @@ export function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   const [events, setEvents] = useState<string[]>(ALL_EVENTS);
   const [busy, setBusy] = useState(false);
   // The PUT response is the fresh status — trust it immediately (a transient parent
-  // refetch failure otherwise flips the card back to 未接続 right after a change).
+  // refetch failure otherwise flips the card back to "not connected" right after a change).
   const [localSt, setLocalSt] = useState<any>(null);
   const view = localSt?.connected ? localSt : st?.connected ? st : null;
 

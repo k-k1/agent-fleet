@@ -1,16 +1,18 @@
-// テナントの既定のマシン種別（docs/log/70 §70.4.3）。
+// The tenant's default machine class (docs/log/70 §70.4.3).
 //
-// ★ 置き場が「上限」セクションなのに super_admin 専用でないのは、これがテナント管理者
-// のものだからである。運用者が種類を宣言し、super_admin がテナントに許す集合を決め、
-// **その中からどれを既定にするかはテナントが決める**——接続元制限（docs/log/66）と同じ切り方で、
-// この値はテナントの外へ一切届かない。
+// It lives in the "limits" section yet is not super_admin only, because it belongs to the
+// tenant admin: the operator declares the classes, super_admin decides the set a tenant may
+// use, and the tenant picks which of those is its default — the same cut as the
+// connection-source restriction (docs/log/66). This value never travels outside the tenant.
 //
-// ★ 選べる集合はサーバが intersect 済みのものをそのまま写す。許可一覧に運用者が既に
-// 消したクラスが残っていることがあり、それを画面が並べると「選べたのに効かない」項目に
-// なる（保存は通り、解決で既定へ落ちる）。
+// The selectable set is copied verbatim from the server, which has already intersected it. An
+// allow-list can still name a class the operator has since deleted, and listing that would
+// offer an entry that can be picked but has no effect (the save succeeds and resolution falls
+// back to the default).
 //
-// ★ 単一クラスのデプロイでは editable=false が返り、この面は「選択肢が無い」ことを
-// 書いて終わる。1 択の選択肢を出すのは、答えが 1 つしかない質問を足すのと同じ。
+// A single-class deployment answers editable=false, and this surface then only states that
+// there is nothing to choose. Offering a one-option choice is asking a question with one
+// possible answer.
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";

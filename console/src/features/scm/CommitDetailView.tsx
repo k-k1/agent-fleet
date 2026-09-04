@@ -20,8 +20,9 @@ export function CommitDetailView({ repo, path, sha, wrap, headerActions }: { rep
   const [fold, setFold] = useState<FoldSignal | undefined>(undefined);
   const foldAll = (open: boolean) => setFold((f) => ({ n: (f?.n ?? 0) + 1, open }));
 
-  // WS 起動直後は agent 不通で api() が http_5xx を返すので過渡的失敗は再試行（isTransientErr）。
-  // agent 由来の本物のエラー（{error}）だけを恒久表示する。
+  // Right after a workspace start the agent is unreachable and api() returns http_5xx, so
+  // retry transient failures (isTransientErr) and show only a real agent-side error
+  // ({error}) permanently.
   useRetryLoad(async (signal) => {
     if (!repo || !sha) {
       setCommit(null);

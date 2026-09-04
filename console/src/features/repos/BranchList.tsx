@@ -7,7 +7,8 @@ import { useT } from "../../lib/i18n/index.ts";
 import { relTime as intlRelTime } from "../../lib/intl.ts";
 
 // relTime renders a unix-seconds timestamp as a short locale-aware "… ago" label.
-// unix は秒なのでミリ秒へ直し、共通実装（lib/intl）へ委譲する（RepoPicker が import）。
+// Converts the seconds to milliseconds and delegates to the shared lib/intl
+// implementation; exported because RepoPicker imports it too.
 export const relTime = (unix: number | undefined): string => (unix ? intlRelTime(unix * 1000) : "");
 
 // A branch row: null = loading list, [] = none. Field names mirror the Agent's

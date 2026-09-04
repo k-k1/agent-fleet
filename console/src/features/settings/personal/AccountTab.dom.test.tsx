@@ -1,11 +1,11 @@
-// アカウントタブ（サインイン方法の紐づけ・docs/log/61 §61.16 + 決定 37）。
-// 押さえるのは 2 点だけ:
-//   ① 紐づけ済みの方式が読め、いまのセッションの方式にその印がつく
-//      （どれで入っているか分からないと、足すべき方式も分からない）
-//   ② 「足す」は Console の中で完結せず、CP の /oauth2/link へ provider と next を
-//      載せて出ていく（紐づけの門は CP 側にあり、ここは入口でしかない）
-//   ③ 解除は「外せるかどうか」をサーバの答え（removable）に従うだけ。UI は写しで、
-//      残数や現セッションの判定をこちらで作り直さない（決定 14）
+// The account tab (linking sign-in methods, docs/log/61 §61.16 + decision 37).
+// Only three things are pinned down here:
+//   1. The linked methods are readable and the current session's method is marked (without
+//      knowing which one you signed in with, you cannot tell which one to add).
+//   2. "Add" does not complete inside the Console: it leaves for the CP's /oauth2/link with
+//      provider and next (the linking gate is on the CP side; this is only the entrance).
+//   3. Detaching just follows the server's answer (removable). The UI is a copy and does not
+//      re-derive the remaining count or the current-session check (decision 14).
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -18,8 +18,8 @@ vi.mock("../../../core/api/client.ts", () => ({
   errText: (e: { message?: string }) => e?.message || "",
   rel: (p: string) => "/" + p,
 }));
-// 確認ダイアログはプロバイダ配下でしか使えないので、ここでは「はい」を返す関数に
-// 差し替える。見たいのはボタンの出し分けと叩く先で、ダイアログの実装ではない。
+// The confirm dialog only works under its provider, so replace it with a function that always
+// answers yes. What matters here is which buttons appear and what they call, not the dialog.
 vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(true) }));
 
 import { AccountTab } from "./AccountTab.tsx";
@@ -33,12 +33,12 @@ const METHODS = {
       email: "yamada@acme.co.jp",
       last_login_at: "2026-08-15T09:00:00Z",
       current: true,
-      // いま使っている方式は外せない（サーバがそう答える）。
+      // The method in use cannot be detached (that is what the server answers).
       removable: false,
       label_ja: "Google でサインイン",
       label_en: "Sign in with Google",
     },
-    // ラベルの無い行（env から消えた方式・停止中のテナント行）は id で出す。
+    // A row without a label (a method dropped from env, a suspended tenant's row) shows the id.
     { provider: "t:sub:github", subject: "gh-1", email: "yamada@acme.co.jp", removable: true },
   ],
   linkable: [{ provider: "entra", label_ja: "Microsoft でサインイン", label_en: "Sign in with Microsoft" }],
@@ -74,19 +74,19 @@ afterEach(() => {
 });
 
 describe("AccountTab", () => {
-  it("紐づけ済みの方式を並べ、いま使っている方式に印をつける", async () => {
+  it("lists the linked methods and marks the one currently in use", async () => {
     await mount();
     expect(api).toHaveBeenCalledWith("api/me/login-methods");
     const rows = Array.from(document.querySelectorAll(".account-methods tbody tr"));
     expect(rows).toHaveLength(2);
     expect(rows[0].textContent).toContain("Google でサインイン");
     expect(rows[0].textContent).toContain("いま使用中");
-    // ラベルが無ければ id。行そのものを隠すと「知らないうちに増えた方式」が見えなくなる。
+    // No label means the id. Hiding the row itself would hide a method that appeared unnoticed.
     expect(rows[1].textContent).toContain("t:sub:github");
     expect(rows[1].textContent).not.toContain("いま使用中");
   });
 
-  it("方式を押すと CP の /oauth2/link へ provider と next を載せて出ていく", async () => {
+  it("pressing a method leaves for the CP's /oauth2/link carrying provider and next", async () => {
     const assign = vi.fn();
     const original = window.location;
     Object.defineProperty(window, "location", {
@@ -112,9 +112,10 @@ describe("AccountTab", () => {
     }
   });
 
-  // ★ 締め出しのガードはサーバが持つ。UI はその答え（removable）に従うだけで、
-  // 残数や現セッションの判定をここで作り直さない — 作り直すと 2 つの規則になる。
-  it("いま使っている方式の解除ボタンは押せない", async () => {
+  // The lock-out guard belongs to the server. The UI only follows its answer (removable) and
+  // does not re-derive the remaining count or the current-session check: that would be a
+  // second copy of the rule.
+  it("the detach button of the method in use is not pressable", async () => {
     await mount();
     const rows = Array.from(document.querySelectorAll(".account-methods tbody tr"));
     const btn = (i: number) => rows[i].querySelector<HTMLButtonElement>("button");
@@ -123,7 +124,7 @@ describe("AccountTab", () => {
     expect(btn(1)!.disabled).toBe(false);
   });
 
-  it("解除は provider と subject をクエリに載せて DELETE する", async () => {
+  it("detaching sends DELETE with provider and subject in the query", async () => {
     await mount();
     const btn = document.querySelectorAll(".account-methods tbody tr")[1].querySelector("button")!;
     await act(async () => {
@@ -131,7 +132,7 @@ describe("AccountTab", () => {
     });
     expect(apiJSON).toHaveBeenCalledTimes(1);
     const [path, method] = apiJSON.mock.calls[0];
-    // ★ provider id は ":" を含むのでパスに載せない（クエリで渡す）。
+    // A provider id contains ":", so it never goes on the path; it is passed in the query.
     const url = new URL(String(path), "http://localhost");
     expect(url.pathname).toBe("/api/me/login-methods");
     expect(url.searchParams.get("provider")).toBe("t:sub:github");

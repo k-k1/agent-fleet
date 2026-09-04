@@ -115,7 +115,7 @@ describe("working-copy rows in the repos tree", () => {
     ]);
   });
 
-  it("wears the リポジトリ row's icon: root-folder for a base, git-branch for a worktree", async () => {
+  it("wears the repository row's icon: root-folder for a base, git-branch for a worktree", async () => {
     await render();
     const icons = [...host.querySelectorAll<HTMLLIElement>(".fsrow")].map(
       (li) => li.querySelector(".fs-ic > span")?.className ?? "",
@@ -125,7 +125,7 @@ describe("working-copy rows in the repos tree", () => {
   });
 });
 
-// Clicking a folder — in a reply, in a document, in the リポジトリ row menu — asks the
+// Clicking a folder — in a reply, in a document, in the repository row menu — asks the
 // rail to GO there. Expanding and selecting is only half of that: without focus the
 // reader is looking at a row that ↑↓ do not move.
 describe("reveal", () => {

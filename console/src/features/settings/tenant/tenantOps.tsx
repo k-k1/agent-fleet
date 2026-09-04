@@ -1,12 +1,11 @@
-// テナント単位で読める運用の面（セッション / 監査 / 使用量）。
+// Tenant-scoped operational views (sessions / audit / usage).
 //
-// AdminTab.tsx から純粋移動した。3 つとも CP 側は「super_admin ならデプロイ全体、
-// tenant_admin なら自分のテナント分」を返す（GET /api/admin/sessions・/audit・/usage）。
-// つまり面そのものはテナント管理者のものでもあるので、管理モーダルにしか置き場が
-// 無い状態を解く。
+// For all three the CP returns "the whole deployment for a super_admin, their own tenant
+// for a tenant_admin" (GET /api/admin/sessions, /audit, /usage), so these views belong to
+// tenant administrators as well and must not live only in the admin modal.
 //
-// ★ isSuper はテナントの選択欄（＝跨いで見るか）を出すかどうかにしか使っていない。
-// 誰の分が返るかは常にサーバが決める。
+// isSuper only decides whether the tenant selector (i.e. whether to look across tenants)
+// is shown; the server always decides whose rows come back.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errText, rel } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -116,8 +115,8 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
                 .sort((a, b) => compareText(tName(a[0]), tName(b[0])))
                 .map(([tslug, list]) => (
                   <div key={tslug || "_"} className="asx-group">
-                    {/* テナントが 1 つに絞られている（テナント設定モーダル、または
-                        絞り込み中）ときの見出しは、全行に同じ名前を掲げるだけなので出さない。 */}
+                    {/* With a single tenant in view (the tenant settings modal, or an active
+                        filter) the header would just repeat the same name above every row. */}
                     {by.size > 1 && (
                       <div className="asx-group-head">
                         {tName(tslug)} <span className="muted">({list.length})</span>
@@ -250,7 +249,7 @@ export function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
   );
 }
 
-// --- Usage (showback, P3-9 段2) ---------------------------------------------
+// --- Usage (showback, P3-9 stage 2) -----------------------------------------
 // Deployment-wide occupancy the operator can attribute per tenant/member. Reads
 // GET /api/admin/usage (JSON: per-member totals over the window). super_admin sees
 // every tenant (optionally filtered); a tenant_admin is scoped to a tenant they
@@ -260,8 +259,9 @@ export function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
 const fmtHrs = (secs: number) => (secs / 3600).toFixed(secs < 3600 ? 2 : 1) + " h";
 
 export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }) {
-  // native <input type="date"> の表示形式を、ブラウザ言語ではなくアプリのロケールに追従させる
-  // （lang を尊重する Chrome/Safari で有効。Firefox は OS ロケール依存で不変＝ブラウザ側の制約）。
+  // Make the native <input type="date"> display format follow the app locale rather than the
+  // browser language (works on Chrome/Safari, which honour lang; Firefox always follows the OS
+  // locale — a browser limitation, not something to work around here).
   const locale = useLocale();
   const tr = useT();
   const [from, setFrom] = useState("");
@@ -302,7 +302,7 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
   }, [usageQuery, tr]);
 
   // Load once on mount and whenever the tenant filter changes; the date range is
-  // applied explicitly via the 適用 button so typing a partial date doesn't refetch.
+  // applied explicitly via the "apply" button (「適用」) so a partial date doesn't refetch.
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -391,9 +391,9 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
         )}
       </section>
 
-      {/* 時間まで割った同じ占有（docs/log/83）。上の合計は「8 月に何時間」までしか答えず、
-          止め忘れと働いていた時間を区別できない。テナントの選択はここにも効かせる
-          （フィルタはその下の全部を絞る）。 */}
+      {/* The same occupancy broken down by hour (docs/log/83). The totals above only answer
+          "how many hours in August", which cannot separate a workspace left running from time
+          actually worked. The tenant selector applies here too (it narrows everything below). */}
       <UptimeAdminView tenant={tenant} />
     </div>
   );

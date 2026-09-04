@@ -23,8 +23,8 @@ describe("groupedSharedSessions", () => {
     expect(groups[0].copies.map((c) => c.repo)).toEqual(["proj", "proj@feat"]);
   });
 
-  // repo 共有はプロジェクト全体に効くが、ベース直下にセッションが1つも無い運用
-  // (セッションごとに worktree を切る)は普通にある。その場合でも見出しは1つ。
+  // Sharing a repo covers the whole project, but a workflow where the base copy holds no session
+  // at all (one worktree per session) is common. Even then there must be a single heading.
   it("keeps worktrees of one project together when the base has no shared session", () => {
     const groups = groupedSharedSessions([
       session({ id: "a", repo: "proj@one", workingCopyId: "wc-1", worktree: true, parent: "proj", createdAt: "2026-01-01" }),

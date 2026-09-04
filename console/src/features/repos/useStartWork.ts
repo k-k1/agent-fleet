@@ -1,7 +1,7 @@
-// useStartWork — the "作業を始める" submit path (POST /api/sessions with worktree /
+// useStartWork — the "start work" submit path (POST /api/sessions with worktree /
 // branch-conflict handling, pasted-image upload, first-prompt seeding, refreshes,
-// pane open), extracted from RepoRowConnected so the per-repo LaunchModal and the
-// はじめる hub (StartModal / LaunchHost, 起動導線 Ph2) share one implementation.
+// pane open), kept out of RepoRowConnected so the per-repo LaunchModal and the
+// start hub (StartModal / LaunchHost, launch flow Ph2) share one implementation.
 // `dir: ""` launches in the home directory (repo-less session) — worktree options
 // and repo-scoped bookkeeping (repoLast / prompt history) are skipped there.
 import { apiJSON, errDetail, errText, pasteImage } from "../../core/api/client.ts";
@@ -33,31 +33,33 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
 
   return async ({ dir, repo }, { kind, driver, model, effort, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting }) => {
     const hasModel = agentOf(kind).caps.model;
-    // 添付があるときは、保存パスを本文へ織り込むために「セッションができてから」でないと
-    // 最初の指示の本文が確定しない（アップロード先がそのセッション）。それ以外は作成要求に
-    // 載せて Agent に配達させる。
+    // With attachments the first prompt's text cannot be fixed until the session exists,
+    // because the saved paths have to be woven into it and the upload target IS that
+    // session. Otherwise it rides on the create request and the Agent delivers it.
     const withImages = !!(images?.length && agentOf(kind).caps.imagePaste);
     const body: Record<string, unknown> = { dir, kind };
     if (driver) body.driver = driver;
     if (hasModel && model) body.model = model;
     if (effort) body.effort = effort;
     if (startMode) body.mode = startMode;
-    // 権限確認（docs/log/76）。**既定と同じときは送らない**: 未指定なら Agent が kind 毎の
-    // 既定（ui-prefs）で解決するので、設定を変えたあとに立てたセッションにも新しい既定が
-    // 効く。ここで毎回値を焼き込むと、その kind の既定を後から変えても効かなくなる。
+    // Permission confirmation (docs/log/76). Do not send the value when it matches the
+    // default: left unspecified, the Agent resolves the per-kind default (ui-prefs), so a
+    // session started after a settings change picks the new default up. Baking a value in
+    // here every time would freeze that kind's default at launch time.
     if (typeof skipPermissions === "boolean" && agentOf(kind).caps.permissionChoice) {
       body.skip_permissions = skipPermissions;
     }
 		if (title) body.title = title;
-    // 作業ディレクトリ（Meta.Subdir）: the Agent resolves it INSIDE whatever working
+    // Working directory (Meta.Subdir): the Agent resolves it INSIDE whatever working
     // copy the launch lands in — including a worktree it creates in this same call —
     // and rejects a path that isn't there, so no client-side existence check.
     if (subdir) body.subdir = subdir;
-    // 最初の指示は Agent に配達させる（deliverInitialPrompt / managed は driver.Send）。
-    // CLI が composer を描くまで待ってから打ち、貼り付け窓が閉じたあとに Enter を押し直し、
-    // 配達を検証する — そして何より、**Console を見ていなくても走る**。以前はチャットの
-    // ミラーがマウントされている間しか送られず、起動直後に別タブへ移ると「そのタブを
-    // 開き直した瞬間に送信される」ように見えていた（裏のタブのペインは描画されない）。
+    // Let the Agent deliver the first prompt (deliverInitialPrompt; driver.Send when
+    // managed). It waits for the CLI to draw its composer, re-presses Enter once the paste
+    // window has closed, and verifies delivery — and above all it runs even when nobody is
+    // looking at the Console. Sending from the chat mirror only worked while that mirror was
+    // mounted, so switching tabs right after launch made the prompt appear to be sent the
+    // moment the tab was reopened (panes in background tabs do not render).
     if (prompt && !withImages) body.initial_prompt = prompt;
     if (worktree) {
       body.worktree = true;
@@ -66,9 +68,9 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       if (useExisting) body.use_existing = true;
     }
     let res = await apiJSON("api/sessions", "POST", body);
-    // フリート再ビルドのラグ: P1.5 世代の Agent は driver:"managed" を明示拒否する
-    // （driver_unsupported）。managed で立てられないなら tui で立てて動く方が親切 —
-    // 1 回だけ落として再送し、その旨をトーストする。
+    // Fleet rebuild lag: a P1.5-generation Agent rejects an explicit driver:"managed"
+    // (driver_unsupported). If managed cannot be started, starting on tui is kinder than
+    // failing — drop it once, resend, and say so in a toast.
     if (res?.error && driver === "managed" && (res.error as { code?: string }).code === "driver_unsupported") {
       toast(t("rp.managed_unsupported"));
       delete body.driver;
@@ -84,9 +86,10 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       // payload names it so the dialog can say WHERE instead of just failing.
       if (code === "branch_in_use")
         return { ok: false, conflict: "in_use" as const, worktree: String(res.error.worktree || "") };
-      // errDetail（errText ではなく）: 起動失敗のコードは runtime_failed のような汎用で、
-      // **なぜ**失敗したかはサーバの message にしか無い。errText はカタログに文言がある
-      // 限り message を捨てるので、「しばらく待って再試行」だけが出て原因が消えていた。
+      // errDetail, not errText: launch failure codes are generic ones like runtime_failed,
+      // and WHY it failed lives only in the server's message. errText drops that message
+      // whenever the catalogue has wording for the code, leaving a bare "wait and retry"
+      // with the cause gone.
       toast(
         worktree
           ? t("rp.worktree_launch_failed", { err: errDetail(res.error) })
@@ -98,8 +101,8 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       writeRepoLast(repo, kind, hasModel ? model : undefined, effort, startMode);
       writeRepoSubdir(repo, subdir || "");
     }
-    // repo なし（home）セッションはグループ継承が効かないので、選択中グループへ
-    // 直接自動所属させる（docs/log/52 §1）。repo 内launchは repo 側の所属を継承する。
+    // A repo-less (home) session has no group membership to inherit, so add it directly to
+    // the selected working set (docs/log/52 §1). A launch inside a repo inherits the repo's.
     if (!dir) autoAddToActiveWorkingSet("sessions", res.name);
     const chat = agentOf(kind).caps.chat;
     // Now that the session exists, upload any pasted images to it and fold their
@@ -117,8 +120,9 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
         }
       }
       seed = buildImagePrompt(prompt, paths, kind);
-      // 作成要求には載せられなかったぶんを、同じ配達（起動待ち＋二度目 Enter＋配達確認）へ
-      // 渡す。拒否は握りつぶさない — 黙って消えると「送ったのに始まらない」になる。
+      // Hand what could not ride on the create request to the same delivery path (wait for
+      // readiness + second Enter + delivery check). Do not swallow a rejection — losing it
+      // silently reads as "I sent it and nothing started".
       const del = await apiJSON(`api/sessions/${encodeURIComponent(res.name)}/input`, "POST", {
         prompt: seed,
         when_ready: true,
@@ -126,9 +130,9 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       if (del?.error) toast(t("rp.first_prompt_failed", { err: errText(del.error) }));
     }
     if (seed) {
-      // 送信そのものは Agent 側で走っている。ミラーには「送った文面」を楽観エコーとして
-      // 見せるだけ（launchSeed は表示用の受け渡し）— 起動から最初のターンが転写に載るまでの
-      // 数秒、チャットが空のままにならないように。
+      // The send itself runs on the Agent side; the mirror only shows the submitted text as
+      // an optimistic echo (launchSeed is a display-only handoff), so chat is not empty for
+      // the few seconds between launch and the first turn reaching the transcript.
       if (chat) setLaunchSeed(res.name, seed);
       if (prompt && repo) pushPromptHistory(repo, prompt);
     }
@@ -138,8 +142,8 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     }
     void refreshSessions();
     (chat ? openSessionChat : openSessionTerminal)(res.name);
-    // 作られたセッション名を返すのは、引き継ぎの受諾（docs/log/77）が「どのセッションで
-    // 受けたか」を所有者へ返すため。呼び出し側は ok だけ見ていてもよい。
+    // The created session's name is returned so that accepting a handoff (docs/log/77) can
+    // tell the owner WHICH session took it. Callers may look at ok alone.
     return { ok: true, name: res.name };
   };
 }

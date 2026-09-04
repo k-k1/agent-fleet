@@ -1,11 +1,13 @@
-// transcript/MarkLayer — 選択したところに線を引く／引いた線を確認して消す（docs/log/69）。
+// transcript/MarkLayer - highlight a selection, and inspect or remove an existing highlight
+// (docs/log/69).
 //
-// 転写ぜんぶで 1 つだけ載る浮遊レイヤー。ターンごとに置かないのは、選択もクリックも
-// document 単位の出来事で、ターンの数だけ購読を張ると 400 ターンぶんの listener になるから。
+// A single floating layer mounted once for the whole transcript. It is not placed per turn because
+// selection and click are document-level events, and one subscription per turn would mean 400
+// listeners on a long transcript.
 //
-// 位置決めは placeFixed（＋メニューと同じ道具）。選択の採取は selectionchange のデバウンス
-// ——タッチの長押し選択は mouseup を出さないので、そちらだけでは拾えない（プランコメントと
-// 同じ作法）。
+// Positioning uses placeFixed (the same tool as the menu). Selections are captured from a debounced
+// selectionchange: a touch long-press selection emits no mouseup, so mouseup alone would miss it
+// (same approach as plan comments).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -18,7 +20,8 @@ import { MARKABLE_KINDS, MARK_COLORS, parseRootKey, type MarkColor, type Transcr
 import type { TranscriptMarksWiring } from "./useMarks.ts";
 import { formatTS } from "./blocks.tsx";
 
-// 色名は t() のキーが literal であることを型で守るため、動的な連結ではなく表で引く。
+// Look colour names up in a table rather than concatenating them, so the type system can keep
+// every t() key a literal.
 const COLOR_LABEL: Record<MarkColor, () => string> = {
   yellow: () => tr("mirror.mark.color.yellow"),
   green: () => tr("mirror.mark.color.green"),
@@ -26,9 +29,9 @@ const COLOR_LABEL: Record<MarkColor, () => string> = {
   pink: () => tr("mirror.mark.color.pink"),
 };
 
-/** 選択の確定を待つ間。プランコメントと同じ。 */
+/** How long to wait for the selection to settle. Same as plan comments. */
 const SELECT_DEBOUNCE = 250;
-/** 選択の少し上にピルを出す。 */
+/** Show the pill slightly above the selection. */
 const PILL_OFFSET = 40;
 
 interface Draft {
@@ -46,7 +49,8 @@ interface Card {
   y: number;
 }
 
-/** 選択の両端を含む、印を置ける要素。片側でも外なら null（引用が root をまたぐ選択）。 */
+/** The markable element containing both ends of the selection. null if either end is outside it
+ * (a selection whose quote spans more than one root). */
 function rootOfSelection(): HTMLElement | null {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
@@ -72,8 +76,8 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
       return;
     }
     const kind = root.dataset.markKind ?? "";
-    // 置ける kind は Agent 側と同じ表で閉じている（docs/log/69 §69.4）。描ける場所が増えても、
-    // 座標を持つ part の上には出さない。
+    // The markable kinds are closed by the same table as on the Agent side (docs/log/69 §69.4).
+    // Even as more places become drawable, never offer this over a part that carries coordinates.
     if (!MARKABLE_KINDS.has(kind)) {
       setDraft(null);
       return;
@@ -108,7 +112,8 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
     };
   }, []);
 
-  // 引いてある線をクリックしたら、誰がいつ引いたかを出す（消せる人には消す導線も）。
+  // Clicking an existing highlight shows who drew it and when (plus a remove action for whoever
+  // may remove it).
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       const el = (e.target as Element | null)?.closest?.<HTMLElement>("mark." + MARK_CLASS);
@@ -135,7 +140,8 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  // 浮遊要素は描画されてから実測して寄せる（右端の選択でボタンが画面外へ出ないように）。
+  // Floating elements are measured after they render and then nudged into place, so a selection at
+  // the right edge cannot push the buttons off screen.
   useEffect(() => {
     if (draft && pillRef.current) placeFixed(pillRef.current, draft.x, draft.y);
   }, [draft]);
@@ -164,7 +170,7 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
               className={"tmark-swatch tmark-" + c}
               title={tr("mirror.mark.paint", { color: COLOR_LABEL[c]() })}
               aria-label={tr("mirror.mark.paint", { color: COLOR_LABEL[c]() })}
-              onMouseDown={(e) => e.preventDefault()} // 選択を保ったままクリックさせる
+              onMouseDown={(e) => e.preventDefault()} // let the click happen without losing the selection
               onClick={() => paint(c)}
             />
           ))}

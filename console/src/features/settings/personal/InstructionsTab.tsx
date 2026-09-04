@@ -1,17 +1,20 @@
-// InstructionsTab — ユーザー指示（docs/log/60 / ADR 0042）。
+// InstructionsTab — user instructions (docs/log/60 / ADR 0042).
 //
-// フリート方針（イメージ焼き込み・オペレーター所有）とプロジェクト指示（リポジトリに
-// コミットされる）の**間**の層。ここに書いた文章 1 本が、対応する全 kind の新しい
-// セッションへ配られる。実体は Agent 側にあり（~/.config/agent-fleet/user-notes.md）、
-// この画面は REST を叩くだけ。
+// The layer between the fleet policy (baked into the image, owned by the operator) and the
+// project instructions (committed to the repository). The single text written here is
+// delivered to every new session of every supported kind. The real state lives on the Agent
+// side (~/.config/agent-fleet/user-notes.md); this screen only calls REST.
 //
-// 画面の作りで意識していること:
-//   ① **「書いた」と「効いている」を別に出す。** 保存できても、その kind の設定が
-//      読めなければ効かない（opencode の .jsonc にコメントがある場合など）。行ごとに
-//      配り方・実際のパス・適用状態を出し、失敗は理由コードで見せる。
-//   ② **未対応 kind も行として出す。** 消すと「対応漏れ」に見え、同じ質問が繰り返される。
-//      cursor はローカルに user 層が無い（Cursor アカウント側）ので理由付きで確定表示。
-//   ③ **「新しいセッションから有効」**。走っているセッションには遡及しない。
+// What the screen deliberately does:
+//   1. Show "written" and "in effect" as separate things. A save can succeed and still have no
+//      effect when that kind's config cannot be read (for example an opencode .jsonc with
+//      comments in it), so each row shows the delivery method, the real path and the applied
+//      state, and a failure is shown with its reason code.
+//   2. List unsupported kinds as rows too. Removing them reads as a gap in coverage and
+//      invites the same question again; cursor has no local user layer (it lives in the Cursor
+//      account), so it is listed permanently with that reason.
+//   3. Say that it only takes effect from the next session: running sessions are not
+//      retroactively changed.
 import { useCallback, useState } from "react";
 import {
   api,
@@ -61,7 +64,7 @@ export function InstructionsTab() {
   const [err, setErr] = useState("");
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // 覗いている「実際に読まれるファイル」。null = 閉じている。
+  // The actually-read file currently being peeked at. null = closed.
   const [peek, setPeek] = useState<{
     kind: string;
     path: string;
@@ -70,7 +73,7 @@ export function InstructionsTab() {
 
   const load = useCallback(
     async (signal: AbortSignal) => {
-      if (!running) return true; // 停止中は叩かない（起動後に deps で再実行）
+      if (!running) return true; // don't call while stopped; deps re-run this once it starts
       const r = await api("api/user-notes");
       if (signal.aborted) return true;
       if (isTransientErr(r)) return false;
@@ -174,7 +177,8 @@ export function InstructionsTab() {
         <span className={over ? "instr-over" : ""}>
           {tr("instr.bytes", { bytes: String(bytes), max: String(max) })}
         </span>
-        {/* 上限の根拠は truncation ではなく費用。毎セッションに乗る固定費であることを言う。 */}
+        {/* The limit exists for cost, not truncation: say that it is a fixed cost added to
+            every session. */}
         <span className="ds-hint">{tr("instr.cost_hint")}</span>
         <span className="instr-actions">
           <Button disabled={!dirty || over || busy} onClick={() => void save()}>

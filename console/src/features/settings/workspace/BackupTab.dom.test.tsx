@@ -1,9 +1,9 @@
-// 設定の書き出し / 取り込みタブ（docs/log/79）。画面側で守るべきは 3 点だけを jsdom で押さえる:
-//   ① ワークスペース停止中は「エージェントへの指示」を選ばせない（Agent が持つ層なので
-//      読み書きできない。選べてしまうと「入ったつもり」になる）
-//   ② 読み込んだファイルに入っているカテゴリだけがチェックリストに並ぶ
-//   ③ 取り込みは **プロファイル → ホスト** の順で作り、既にある物は作り直さない
-//      （逆順だと参照先が無く 400、作り直すと既存環境を書き換えてしまう）
+// Settings export / import tab (docs/log/79). Three things the UI has to hold, pinned in jsdom:
+//   1. While the workspace is stopped, the agent-instructions category cannot be picked (it
+//      lives in the Agent and is unreadable; letting it be picked would fake a successful run)
+//   2. Only the categories actually present in the loaded file appear in the checklist
+//   3. Import creates profiles before hosts and never recreates what already exists (the other
+//      order 400s on the missing referent, and recreating would overwrite a live environment)
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -80,7 +80,7 @@ beforeEach(() => {
   running = true;
   api.mockReset();
   rawJSON.mockReset();
-  // 既存: プロファイル "kept" だけ登録済み、ホストは無し。
+  // Existing state: only the profile "kept" is registered, and there are no hosts.
   api.mockImplementation((path: string) => {
     if (path === "api/ssm/profiles") return Promise.resolve([{ id: "p-kept", label: "kept" }]);
     if (path === "api/ssm/hosts") return Promise.resolve([]);
@@ -100,27 +100,27 @@ afterEach(() => {
 });
 
 describe("BackupTab", () => {
-  it("ワークスペース停止中は指示のカテゴリを選ばせない", async () => {
+  it("does not let the instructions category be picked while the workspace is stopped", async () => {
     running = false;
     await mount();
     const boxes = Array.from(document.querySelectorAll<HTMLInputElement>(".ds-group .backup-picks input[type=checkbox]"));
     expect(boxes).toHaveLength(3);
-    expect(boxes[2].disabled).toBe(true); // エージェントへの指示
+    expect(boxes[2].disabled).toBe(true); // the agent instructions
     expect(boxes[2].checked).toBe(false);
   });
 
-  it("ファイルに入っているカテゴリだけを取り込みの選択肢に出す", async () => {
+  it("offers only the categories present in the file as import options", async () => {
     await mount();
     await pickFile(JSON.stringify(bundle));
-    // prefs と ssm はあるが instructions は入っていないので 2 行だけ。
+    // prefs and ssm are present but instructions is not, so only 2 rows.
     expect(picks()).toHaveLength(2);
-    // 書き出し日時は表示用に整形して出す（生の ISO 文字列をそのまま見せない）。
+    // The export timestamp is formatted for display, never shown as the raw ISO string.
     const head = document.querySelector(".backup-preview")?.textContent ?? "";
     expect(head).toContain("2026");
     expect(head).not.toContain("2026-08-26T00:00:00.000Z");
   });
 
-  it("プロファイルを作ってからホストを作り、既にある物は作り直さない", async () => {
+  it("creates profiles before hosts and does not recreate what already exists", async () => {
     await mount();
     await pickFile(JSON.stringify(bundle));
     const apply = Array.from(document.querySelectorAll<HTMLButtonElement>(".backup-preview button")).find(
@@ -133,15 +133,15 @@ describe("BackupTab", () => {
       await Promise.resolve();
     });
     const calls = rawJSON.mock.calls.map((c) => [c[0], c[1], c[2]] as [string, string, any]);
-    // "kept" は既存なので作らない。作るのは prod 1 件 → その後にホスト。
+    // "kept" already exists, so it is not created: one profile (prod), then the host.
     expect(calls.map((c) => c[0])).toEqual(["api/ssm/profiles", "api/ssm/hosts"]);
     expect(calls[0][2].label).toBe("prod");
-    // ホストは新しく採番された id を参照する（バンドルは表示名しか運ばない）。
+    // The host references the newly issued id (the bundle only carries the display label).
     expect(calls[1][2].profileId).toBe("new-api/ssm/profiles");
     expect(document.querySelector(".backup-result")?.textContent).toBeTruthy();
   });
 
-  it("設定の書き出しファイルでなければ取り込みへ進まない", async () => {
+  it("does not proceed to import unless the file is a settings export", async () => {
     await mount();
     await pickFile(JSON.stringify({ kind: "something-else" }));
     expect(document.querySelector(".backup-preview")).toBeNull();

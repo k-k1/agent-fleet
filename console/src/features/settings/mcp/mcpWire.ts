@@ -169,7 +169,7 @@ export const formValid = (f: Form): boolean =>
 // --- tenant distribution (docs/log/48 P4, AdminTab) -----------------------------------
 //
 // A tenant-distributed definition is a STRICT SUBSET of the member's own: remote only,
-// with no command / args / env. That is ADR0031 決定 2 — a distributed stdio server is an
+// with no command / args / env. That is ADR0031 decision 2 — a distributed stdio server is an
 // admin running an arbitrary command in every member's container — and it is enforced by
 // the CP table having no such columns, not just by this form omitting them. So the admin
 // form is deliberately a separate shape rather than the member Form with fields hidden:

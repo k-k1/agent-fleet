@@ -1,14 +1,14 @@
-// 起動失敗のトーストが「なぜ失敗したか」を落とさないこと。
+// The launch-failure toast must not drop WHY the launch failed.
 //
-// 実害: Agent は managed runtime の起動失敗を汎用コードで返し、原因は message にしか
-// 入れない。ここが errText だった間、翻訳のあるコード（runtime_failed）は message ごと
-// 捨てられ、画面には「エージェントを起動できませんでした。しばらく待ってから再試行して
-// ください。」だけが出た。共有 daemon が未認証で起こされなかった場合（docs/log/27 の
-// 認証ゲート）は待っても直らないので、この文言だけを見た利用者は直らない再試行を
-// 繰り返すことになる。
+// Damage: the Agent reports a managed-runtime launch failure with a generic code and puts
+// the cause in message only. While this went through errText, a code that has a translation
+// (runtime_failed) was rendered from that translation alone and the message was thrown away,
+// so the screen said no more than "could not start the agent, wait a while and retry".
+// When the shared daemon was never woken because it is unauthenticated (docs/log/27's auth
+// gate) waiting never helps, so a user who saw only that line retried forever.
 //
-// ここでは client.ts を**本物**で使う（errText/errDetail の差が芯なので、モックで
-// 潰すと検査にならない）。api だけを差し替える。
+// client.ts is used FOR REAL here: the errText/errDetail difference is the point, and
+// mocking it away would leave nothing to measure. Only api is swapped out.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -76,7 +76,7 @@ describe("起動失敗のトースト", () => {
     await launch();
     const shown = toasts().join("\n");
     expect(shown).toContain(t("err.runtime_failed"));
-    // 芯: message が落ちていない。errText へ戻すとここだけが赤くなる。
+    // The point: message survived. Reverting to errText turns exactly this line red.
     expect(shown).toContain("codex app-server writer 接続に失敗しました");
   });
 
@@ -91,7 +91,7 @@ describe("起動失敗のトースト", () => {
     const shown = toasts().join("\n");
     expect(shown).toContain(t("err.agent_not_connected"));
     expect(shown).toContain("codex にログインしていないため app-server を起動しません");
-    // 「しばらく待ってから再試行」は恒久要因には出さない。
+    // The wait-and-retry wording must never be shown for a permanent cause.
     expect(shown).not.toContain(t("err.runtime_failed"));
   });
 });

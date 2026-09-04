@@ -3,8 +3,8 @@ import { parseQuestionAnswers, resolveAnswer } from "./questionAnswers.ts";
 
 describe("parseQuestionAnswers", () => {
   it("keeps quotes typed inside a free-text answer (the truncation bug)", () => {
-    // Verbatim from a real transcript: the answer contains "二重再開の回避" in quotes,
-    // and the card used to stop at the first one.
+    // Verbatim from a real transcript: the answer contains a quoted phrase of its own, and the
+    // card used to stop at that first quote.
     const raw =
       'The user answered: "どこまで進めますか？"="A+Bでいこう。ただし"二重再開の回避"は' +
       "セッションエラー→エージェント→セッションにメッセージ送信でトークンコストがかかるので、" +
@@ -48,11 +48,11 @@ describe("parseQuestionAnswers", () => {
   });
 
   it("reads a notes-only answer (previewed question's free text) and keeps the LATER answers on their own questions", () => {
-    // Verbatim from a real claude 2.1.234 transcript (probe run 2026-08-18): q1 answered
-    // by free text on a previewed question, so it comes back UNQUOTED as
-    // `=(no option selected) notes: …`. The old anchor demanded a quote there, failed for
-    // the whole card, and the legacy pair regex — which can't see the unquoted pair —
-    // shifted the remaining answers up: q1 showed "UI", q2 showed "先に基盤", q3 nothing.
+    // Verbatim from a real claude 2.1.234 transcript: q1 is answered by free text on a
+    // previewed question, so it comes back UNQUOTED as `=(no option selected) notes: …`. The
+    // old anchor demanded a quote there, failed for the whole card, and the legacy pair regex —
+    // which can't see the unquoted pair — shifted the remaining answers up: q1 showed q2's
+    // answer, q2 showed q3's, and q3 was empty.
     const raw =
       'The user answered: "定義の表現形式は？"=(no option selected) notes: コスト優先で決めたい, ' +
       '"検証の入口は？"="UI" selected preview:\n[検証] ボタン, "移行の順序は？"="先に基盤". ' +
@@ -74,7 +74,7 @@ describe("parseQuestionAnswers", () => {
   });
 
   it("a notes answer resolves as free text, never as a pick", () => {
-    // The card must show the user's words in the 自由入力 slot with no radio checked —
+    // The card must show the user's words in the free-text slot with no radio checked —
     // "(no option selected)" itself is claude's bookkeeping, not something to display.
     const answer = parseQuestionAnswers(
       'The user answered: "方式は？"=(no option selected) notes: 安いほうで. You can now continue.',

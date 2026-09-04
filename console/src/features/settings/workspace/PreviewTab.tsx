@@ -1,19 +1,19 @@
-// PreviewTab — プレビュー用サブドメイン（docs/log/81）の Workspace 単位の設定。
+// PreviewTab holds the per-workspace preview-subdomain settings (docs/log/81). It is its
+// own tab rather than a section of the toolchains tab because "which ports go out" and
+// "publish without a login" are a different weight of decision from picking a timezone or
+// a JDK, and are hard to find hanging under language-version pickers.
 //
-// もとは「ツールチェーン」タブ（EnvTab）の一節だった。タイムゾーンや JDK の選択と、
-// 「どのポートを外に出すか」「ログインなしで公開するか」は読む人も判断の重さも別物で、
-// 公開設定が言語のバージョン選択の下にぶら下がっているのは見つけにくい。独立したタブに
-// 分ける。
+// It appears in the rail only where this deployment actually issues preview subdomains (an
+// empty AF_PREVIEW_DOMAIN on the CP leaves previewDomain empty, so no URL can ever come
+// out); usePreviewAvailable decides, so that no setting is offered that does nothing when
+// pressed.
 //
-// ★ レールに出すのは、このデプロイでプレビュー用サブドメインが**発行される**ときだけ
-//   （CP の AF_PREVIEW_DOMAIN が空なら previewDomain も空 = 何をしても URL は出ない）。
-//   「押しても何も起きない設定」を置かないのが目的で、判定は usePreviewAvailable。
+// Saving goes through CP-owned ws-settings (PUT /api/env/ws-settings), so it is editable
+// while the workspace is stopped. Only the list of issued URLs needs a running workspace
+// (they are dropped on stop).
 //
-// 保存は CP 所有の ws-settings（PUT /api/env/ws-settings）なので、ワークスペースが停止中
-// でも編集できる。発行済み URL の一覧だけは起動中にしか無い（停止すると捨てられる）。
-//
-// i18n キーは `env.preview_*` のまま（タブを分けただけで文言は同じもの。キー名は識別子で
-// あって置き場所ではないので、移設のためだけに全部を書き換えない）。
+// The i18n keys stay `env.preview_*`: a key is an identifier, not a location, so moving the
+// UI is not a reason to rewrite every one of them.
 import { useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
@@ -21,9 +21,10 @@ import { api, apiJSON } from "../../../core/api/client.ts";
 import { OnOff, Row } from "../parts/controls.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
-// このデプロイにプレビュー用サブドメインが在るか。null = まだ分からない（確定するまで
-// レールに出さない＝一瞬出てから消えるのを避ける）。previewDomain はデプロイ固定の値
-// なので、一度確定したらページ内で使い回す（設定を開くたびに GET し直さない）。
+// Whether this deployment has preview subdomains at all. null = not known yet; the rail
+// stays empty until it resolves, so the entry never flashes in and disappears again.
+// previewDomain is fixed per deployment, so the answer is reused for the life of the page
+// instead of being refetched every time settings open.
 let availCache: boolean | null = null;
 
 export function usePreviewAvailable(): boolean | null {
@@ -37,8 +38,9 @@ export function usePreviewAvailable(): boolean | null {
         availCache = v;
         if (!cancelled) setOk(v);
       },
-      // 取得できなかっただけ（CP に届かない等）は「無い」とは違うのでキャッシュしない。
-      // ただし今回の描画では出さない——存在しない設定を見せるよりは伏せるほうがまし。
+      // A failed fetch (CP unreachable, …) is not the same as "not available", so it is
+      // not cached — but it is still hidden for this render: better to hide the entry than
+      // to offer a setting that may not exist.
       () => {
         if (!cancelled) setOk(false);
       },
@@ -79,8 +81,9 @@ export function PreviewTab() {
     else toast(tr("common.save_failed"));
   };
 
-  // 再発行（docs/log/81 §4.1）: 配ってしまった URL をその場で捨てる。取り消せないので
-  // 確認を挟み、何が起きるか（今開いているタブが 404 になる）を先に言う。
+  // Reissue (docs/log/81 §4.1) throws away URLs that have already been handed out. It
+  // cannot be undone, so confirm first and say what will happen (tabs open on the old URL
+  // start returning 404).
   const reissue = async () => {
     const ok = await askConfirm({
       title: tr("env.preview_reissue_confirm_title"),
@@ -92,8 +95,9 @@ export function PreviewTab() {
     const res = await apiJSON("api/env/ws-settings/preview/reissue", "POST", {});
     if (res && !res.error) {
       setAu(res);
-      // ★ 成功しても停止中は画面が変わらない（発行済みの URL が無いので捨てる先が
-      // 無い）。黙って終えると「押しても無反応」になるので、どちらだったかを必ず言う。
+      // While stopped there are no issued URLs to throw away, so a successful reissue
+      // changes nothing on screen. Always say which of the two happened, or the button
+      // looks dead.
       toast(tr(res.previewReissued ? "env.preview_reissue_done" : "env.preview_reissue_nothing"));
     } else toast(tr("common.save_failed"));
   };
@@ -103,8 +107,9 @@ export function PreviewTab() {
       {!au ? (
         <p className="muted pad">{err ? tr("env.fetch_failed") : tr("common.loading")}</p>
       ) : !au.previewDomain ? (
-        // レールからは隠れているので普通は来ない。前回開いたタブの記憶や古いリンクで
-        // 直接来たときに、白紙ではなく「このデプロイには無い」と言う。
+        // Normally unreachable (the rail hides it), but a remembered tab or an old link
+        // can land here directly: say the deployment has no preview rather than showing a
+        // blank pane.
         <p className="muted pad">{tr("env.preview_unavailable")}</p>
       ) : (
         <PreviewSection au={au} save={save} reissue={reissue} />
@@ -124,11 +129,11 @@ function PreviewSection({
 }) {
   const tr = useT();
   const [ports, setPorts] = useState((au.previewPorts || []).join(", "));
-  // 発行済みの URL（停止中は空 = CP が発行されていないものを返さない）。ポート順に
-  // 並べる —— オブジェクトのキー順に頼ると 8080 が 3000 より前に来ることがある。
+  // The issued URLs (empty while stopped: the CP returns nothing it has not issued).
+  // Sorted by port number — object key order can put 8080 before 3000.
   const issuedPorts = Object.keys(au.previewUrls || {}).sort((a, b) => Number(a) - Number(b));
-  // 保存は入力欄を離れたときだけ。打鍵ごとに PUT すると、"3000, 80" のような
-  // 打ちかけの状態がそのまま保存されて 80 番が許可される。
+  // Save only on blur. A PUT per keystroke would persist half-typed input such as
+  // "3000, 80" and end up allowing port 80.
   const commitPorts = () => {
     const parsed = ports
       .split(/[\s,]+/)
@@ -139,9 +144,9 @@ function PreviewSection({
   return (
     <section className="ds-group">
       <h4 className="ds-title">{tr("env.preview_title")}</h4>
-      {/* ★ いま何が割り当てられているかを、設定を触る前に見せる。ここが無いと
-          「公開するポート」も「再発行」も**見えない何かに効く操作**になり、押しても
-          変化が分からない（実際に「再発行が無反応」として報告された）。 */}
+      {/* Show what is currently assigned before any setting is touched. Without it both
+          the port list and reissue act on something invisible, and pressing them shows no
+          change (reissue was reported as doing nothing). */}
       <Row label={tr("env.preview_current_label")}>
         <span className="ds-sub pv-current">
           {issuedPorts.length > 0 ? (
@@ -156,8 +161,8 @@ function PreviewSection({
         </span>
       </Row>
       <p className="muted ds-sub">
-        {/* 停止中でもドメインだけは出す —— 「どのドメインに割り当てられているか」は
-            URL が発行されていなくても分かってよい情報で、設定の前提そのものである。 */}
+        {/* The domain is shown even while stopped: which domain the workspace maps to is
+            the premise of every setting here and does not depend on a URL being issued. */}
         {tr("env.preview_current_note", { domain: au.previewDomain || "" })}
       </p>
       <Row label={tr("env.preview_ports_label")}>
@@ -177,8 +182,9 @@ function PreviewSection({
         <OnOff value={!!au.previewFixedSlug} onChange={(on) => save({ previewFixedSlug: on })} />
       </Row>
       <p className="muted ds-sub">{tr("env.preview_fixed_note")}</p>
-      {/* 同じテナントへの共有（docs/log/81 §14）。公開モードの「手前」に置く —— 社内に
-          見せたいだけの人が、そのために公開モードへ手を伸ばすのを止めるのが目的。 */}
+      {/* Sharing within the same tenant (docs/log/81 §14). Placed before the public
+          toggle so that someone who only wants to show colleagues does not reach for
+          public mode to do it. */}
       <Row label={tr("env.preview_share_label")}>
         <OnOff value={!!au.previewTenantShare} onChange={(on) => save({ previewTenantShare: on })} />
       </Row>

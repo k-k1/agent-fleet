@@ -1,11 +1,11 @@
-/* 管理モーダル（admin/）。
+/* The admin modal (admin/).
  *
- * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
- * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
- * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
- * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ * One slice of `settings.css` (ADR 0067 / FE-SETTINGS). A class name must appear in exactly
+ * one file: every stylesheet in this Console is global, so the same class split across two
+ * files is not a conflict — it is silently merged in @import order (scripts/css-dup.mjs).
+ * Before adding a rule, check that its name exists nowhere else.
  *
- * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ * Load order is decided by the @import list in settings.css; rename this file there too.
  */
 .settings-rail-group + .settings-rail-group {
   margin-top: 12px;
@@ -23,8 +23,8 @@
   font-size: 14px;
 }
 
-/* レールがテナントの中に入っている間の頭 —— 出口（‹ すべてのテナント）と、今どの
-   テナントを見ているかの見出し。レール項目と同じ幅・余白に合わせる。 */
+/* Head of the rail while it is inside a tenant: the exit (‹ all tenants) plus a heading for
+   which tenant is being viewed. Matches the width and padding of a rail item. */
 .admin-scope-head {
   display: flex;
   flex-direction: column;

@@ -1,16 +1,16 @@
-/* エージェントメモリタブ（memory/）。
+/* Agent memory tab (memory/).
  *
- * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
- * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
- * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
- * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ * One slice of `settings.css` (ADR 0067 / FE-SETTINGS). A class name must appear in exactly
+ * one file: every stylesheet in this Console is global, so the same class split across two
+ * files is not a conflict — it is silently merged in @import order (scripts/css-dup.mjs).
+ * Before adding a rule, check that its name exists nowhere else.
  *
- * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ * Load order is decided by the @import list in settings.css; rename this file there too.
  */
-/* === エージェントメモリ（docs/log/39 P2・MemoryTab.tsx） ==========================
-   履歴は「一覧（左）＋差分（右）」の 2 ペイン。差分の中身は SCM と同じ .diff-files を
-   使うので、ここではその器（高さ・枠・スクロール）だけを決める。狭い幅では 1 カラムに
-   落として、一覧の下に差分が続く形にする。 */
+/* === Agent memory (docs/log/39 P2, MemoryTab.tsx) ================================
+   The history is two panes: the list on the left, the diff on the right. The diff body is
+   the same .diff-files as SCM uses, so only its container (height, border, scrolling) is
+   set here. At a narrow width it collapses to one column with the diff below the list. */
 .mem-tab {
   display: flex;
   flex-direction: column;
@@ -37,7 +37,7 @@
   font-weight: 600;
 }
 
-/* 右端に寄せる操作（スナップショット取得 / 日時指定）。 */
+/* Actions pushed to the right edge (take snapshot / jump to timestamp). */
 .mem-head > :last-child {
   margin-left: auto;
 }
@@ -59,12 +59,12 @@
   font-size: 12px;
 }
 
-/* 未有効のルート（docs/log/39 P4）。一覧には出すが、有効なものと同じ強さでは見せない。 */
+/* An inactive root (docs/log/39 P4): listed, but not as strongly as an active one. */
 .mem-root-off .mem-kind {
   opacity: 0.65;
 }
 
-/* kind 色は tokens.css の --kind-* に一本化（新 kind 追加時はそちらだけ足す）。 */
+/* Kind colors live only in tokens.css as --kind-*; a new kind is added there and nowhere else. */
 .mem-kind {
   font-weight: 600;
 }
@@ -105,7 +105,7 @@
   border-color: var(--accent);
 }
 
-/* 巻き戻し系の契機は履歴上で目立たせる（普通の自動取得と読み分けられるように）。 */
+/* Rollback-related triggers stand out in the history so they read apart from a plain auto capture. */
 .mem-badge.trig-restore,
 .mem-badge.trig-pre-restore {
   color: var(--accent);
@@ -194,7 +194,7 @@
   margin: 4px 0;
 }
 
-/* 持ち出し / 取り込み（P3）。形式選択とファイル選択は .mem-scope の行組みを流用する。 */
+/* Export / import (P3). The format picker and file picker reuse .mem-scope's row layout. */
 .mem-transfer + .mem-transfer {
   margin-top: 10px;
   padding-top: 10px;
@@ -218,7 +218,7 @@
   font-size: 12px;
 }
 
-/* 検出結果の一覧。値そのものは出さない（規則名・場所・マスク済みヒントのみ）。 */
+/* The findings list. The value itself is never shown — only the rule, the location and a masked hint. */
 .mem-secrets {
   list-style: none;
   margin: 6px 0;
@@ -236,7 +236,7 @@
 }
 
 @media (max-width: 760px) {
-  /* 狭い幅（スマホ・タブレット縦）では 2 ペインが成立しないので縦に積む。 */
+  /* Two panes do not work at a narrow width (phone, tablet portrait), so stack them. */
   .mem-body {
       grid-template-columns: 1fr;
     }

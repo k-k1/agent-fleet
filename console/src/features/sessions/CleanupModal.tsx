@@ -140,7 +140,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   const allCollapsed = repoNodes.length > 0 && repoNodes.every((k) => collapsed.has(k));
   const toggleAll = () => setCollapsed(allCollapsed ? new Set() : new Set(repoNodes));
 
-  // The shared executor behind 選択を実行 and the per-stage one-shot buttons.
+  // The shared executor behind "run selection" and the per-stage one-shot buttons.
   const runTargets = async (
     targets: CleanupCandidate[],
     confirm: { title: string; body: string; confirmLabel: string },
@@ -333,8 +333,9 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                                 ) : (
                                   <span className="clean-check" aria-hidden="true" />
                                 )}
-                                {/* Agent 由来の動的キーは未知値がありうる — 未検査キャストで生キーを
-                                    出さず、訳が無ければ原文をそのまま見せる。 */}
+                                {/* A dynamic key from the Agent can be a value we do not know
+                                    — rather than an unchecked cast that would print the raw
+                                    key, fall back to the Agent's own text. */}
                                 <span className={"clean-badge clean-badge-" + c.safety}>
                                   {tMaybe("clean.safety_" + c.safety) ?? c.safety}
                                 </span>
@@ -349,7 +350,8 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                                 <span className="clean-act">
                                   {c.action ? (tMaybe("clean.action_" + c.action) ?? c.action) : ""}
                                 </span>
-                                {/* 2行目: 状態バッジ＋補足。1行に押し込んで見切れていた理由列の置き換え。 */}
+                                {/* Line 2: state badge + note. On one line the reason column
+                                    was squeezed until it was cut off. */}
                                 <span className="clean-reason">
                                   {reason.badge && <span className="clean-reason-badge">{reason.badge}</span>}
                                   {reason.text && <span className="clean-reason-text">{reason.text}</span>}
@@ -372,8 +374,8 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
 
   return (
     <Modal title={tr("clean.title")} onClose={onClose} className="clean-modal">
-      {/* ★ 共有の ui-modal-body に載せる。ui-modal 自身に padding は無く（見出しが
-          自分で持つ形）、直に子を置くと本文だけが枠に貼りつく。 */}
+      {/* Wrap in the shared ui-modal-body: ui-modal itself has no padding (the heading
+          carries its own), so a child placed directly inside sticks to the frame. */}
       <div className="ui-modal-body">
         <p className="clean-subtitle">{tr("clean.subtitle")}</p>
 
@@ -504,8 +506,9 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
               <ul className="clean-list">
                 {archives.map((a) => (
                   <li key={a.id} className="clean-row clean-archive-row">
-                    {/* at は Agent の RFC3339(UTC) — 生加工では 9 時間ずれるのでロケール日時へ。
-                        at 欠落時の id は日時として不正なので fmtDateTime がそのまま返す。 */}
+                    {/* at is the Agent's RFC3339 (UTC), so render it as a locale date-time
+                        rather than reusing the raw value in the viewer's timezone. When at
+                        is missing, id is not a valid date and fmtDateTime returns it as-is. */}
                     <span className="clean-arch-when">{fmtDateTime(a.at || a.id, DATETIME_FULL)}</span>
                     <span className="clean-arch-what">
                       {a.reason === "delete_branch"

@@ -28,7 +28,7 @@ export interface TranscriptCaps {
   /** Display name of the agent answering (registry name, e.g. "Claude"). */
   agentName: string;
   /**
-   * Display name for user-role turns. Absent → 「あなた」/"You", which is right only
+   * Display name for user-role turns. Absent → "You" (「あなた」), which is right only
    * when the reader IS the person who typed them (the mirror). A recipient is reading
    * somebody else's conversation, so the shared view passes the owner's login id.
    */
@@ -69,22 +69,23 @@ export interface TranscriptCaps {
   /** Branch from a past user turn (docs/log/55). Absent → no turn offers it. */
   forkAt?: (turn: Group) => void;
   /**
-   * Jump to 設定 > エージェント after an auth failure. Absent → ErrorBlock shows the
-   * agent's own text without a fix-it link: a recipient cannot re-authenticate
-   * somebody else's agent, so offering the route would be a dead end.
+   * Jump to Settings > Agents (「設定 > エージェント」) after an auth failure. Absent →
+   * ErrorBlock shows the agent's own text without a fix-it link: a recipient cannot
+   * re-authenticate somebody else's agent, so offering the route would be a dead end.
    */
   onReauth?: () => void;
   /** Karaoke read-aloud wiring (docs/log/24). Absent → no per-turn TTS buttons. */
   tts?: TurnTtsWiring;
   /**
-   * 会話へ引いたマーカー（docs/log/69 / ADR 0050）。無ければ印は描かれず、選択ピルも出ない。
-   * 「読めるが引けない」（RO の共有先）は wiring 側の `canEdit` が持つ — 印の表示自体は
-   * 読み手にも要るので、ここを能力の有無だけで割ることはできない。
+   * Marks drawn over the conversation (docs/log/69 / ADR 0050). Absent → no marks are
+   * painted and no selection pill appears. "May read but may not draw" (a read-only share
+   * recipient) is carried by the wiring's own `canEdit`: a recipient still needs the marks
+   * rendered, so that case cannot be split on the presence of this capability alone.
    */
   marks?: TranscriptMarksWiring;
 
   // ── Display preferences ───────────────────────────────────────────────────────
-  /** Show the agent's chain-of-thought expanded (per-kind 動作設定, default off). */
+  /** Show the agent's chain-of-thought expanded (per-kind behaviour setting, default off). */
   expandThinking?: boolean;
   /** Was this plan optimistically rejected locally? Defaults to never. */
   isRejectedPlan?: (plan: string) => boolean;

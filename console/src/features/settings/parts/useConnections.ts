@@ -8,11 +8,12 @@ import type { ConnectionsStatus } from "../../../types/session.ts";
 // card, repo launch filter) via bumpConn so they refetch after a connect/disconnect.
 // Used by AgentsTab / GitTab / OpsTab instead of each re-implementing the same fetch.
 //
-// Failure handling (the "connected but the card still says 未接続" bug): a transient
-// CP 502 — api() resolves it as {error:{code:http_5xx}} — must NOT become the
+// Failure handling (the "connected but the card still says not connected" bug): a
+// transient CP 502 — api() resolves it as {error:{code:http_5xx}} — must NOT become the
 // displayed truth of a one-shot fetch (the ws-boot-view lesson). Retry a couple of
 // times, and never downgrade an already-loaded snapshot to {}: stale-but-real beats
-// wrongly-empty, which flipped every card to 未接続 right after a successful connect.
+// wrongly-empty, which flipped every card to "not connected" (「未接続」) right after a
+// successful connect.
 export function useConnections() {
   const bumpConn = useSettingsUI((s) => s.bumpConn);
   const [conns, setConns] = useState<ConnectionsStatus | null>(null);

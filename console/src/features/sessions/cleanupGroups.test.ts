@@ -48,13 +48,13 @@ describe("groupCandidates", () => {
     expect(repos[0].copies[2]).toMatchObject({ isWorktree: false, suffix: "", repo: "agent-fleet" });
   });
 
-  // 「この作業コピーを消すと何が巻き添えになるか」が 1 グループで見える（delete_worktree は
-  // 中のセッションを prune する）ので、セッションは所属 worktree の下に入る。
+  // A session goes under the worktree it belongs to, so that one group shows everything
+  // deleting that working copy takes with it (delete_worktree prunes the sessions inside).
   it("puts a session in the working copy it runs in", () => {
     const repos = groupCandidates([sess("s1", "agent-fleet@wip-a"), wt("agent-fleet@wip-a", "temp/a")]);
     const copy = repos[0].copies[0];
     expect(copy.key).toBe("agent-fleet@wip-a");
-    expect(copy.rows.map((r) => r.type)).toEqual(["worktree", "session"]); // 粗→細
+    expect(copy.rows.map((r) => r.type)).toEqual(["worktree", "session"]); // coarse → fine
   });
 
   it("counts only actionable safe rows (keep rows are shown but never selected)", () => {
@@ -67,7 +67,8 @@ describe("groupCandidates", () => {
     expect(repos[0].copies.find((c) => c.key === "agent-fleet@wip-a")?.safeCount).toBe(0);
   });
 
-  // メタ無しの orphan ペインは所属が分からない（repo が空）。捨てずに「その他」として最後に出す。
+  // An orphan pane with no metadata has no known home (repo is empty). Rather than dropping
+  // it, list it last in a catch-all group.
   it("keeps rows with no known working copy in a trailing catch-all group", () => {
     const orphan: CleanupCandidate = { type: "session", id: "ghost", safety: "review", reason: "r" };
     const repos = groupCandidates([orphan, wt("agent-fleet@wip-a", "temp/a")]);

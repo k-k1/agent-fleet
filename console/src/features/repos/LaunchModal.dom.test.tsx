@@ -1,5 +1,5 @@
-// Render tests for 作業を始める's branch section — the part that decides what git
-// actually does. 新規ブランチ forks a branch off a base; 既存ブランチ checks an
+// Render tests for the start-work dialog's branch section — the part that decides what git
+// actually does. New-branch mode forks a branch off a base; existing-branch mode checks an
 // EXISTING branch out into the worktree instead (base=<branch>, no new branch,
 // use_existing). Those three fields going out wrong is the difference between
 // "start work on develop" and "silently fork a divergent develop".
@@ -18,7 +18,7 @@ interface Branch {
 }
 
 let served: Branch[] = [];
-// Folder listing for the 作業ディレクトリ picker (api/fs/tree). Keyed by the browsed
+// Folder listing for the working-directory picker (api/fs/tree). Keyed by the browsed
 // home-relative path so a click into a folder can serve that folder's children.
 let tree: Record<string, string[]> = {};
 const apiMock = vi.fn(async (url: string) => {
@@ -56,7 +56,7 @@ function must<T>(el: T | undefined | null, what: string): T {
 
 const buttons = () => [...document.querySelectorAll<HTMLButtonElement>("button")];
 const byText = (t: string) => must(buttons().find((b) => b.textContent?.includes(t)), `button "${t}"`);
-// 場所 / 詳細 are collapsed sections (LaunchSection): their controls only exist in the
+// Location / Advanced are collapsed sections (LaunchSection): their controls only exist in the
 // DOM once the header is expanded. The header also carries the summary line, so match
 // on the label span rather than the whole row.
 const secHead = (label: string) =>
@@ -70,7 +70,7 @@ const summaryOf = (label: string) => secHead(label).querySelector(".launch-sec-s
 const expand = (label: string) => click(secHead(label));
 const branchRows = () => [...document.querySelectorAll<HTMLButtonElement>(".branch-item")];
 const rowFor = (name: string) => must(branchRows().find((b) => b.textContent?.includes(name)), `branch row "${name}"`);
-// A folder row inside the 作業ディレクトリ browser.
+// A folder row inside the working-directory browser.
 const dirRow = (name: string) =>
   must([...document.querySelectorAll(".dirpick-row")].find((b) => b.textContent?.includes(name)), `folder row "${name}"`);
 
@@ -98,15 +98,15 @@ async function reopen(extra: { repo?: string; initialPrompt?: string } = {}): Pr
   act(() => root?.unmount());
   root = createRoot(host);
   await render(["claude"], extra);
-  await settle(); // 添付の下書きは IndexedDB から非同期に戻ってくる
+  await settle(); // the attachment draft comes back from IndexedDB asynchronously
 }
 
-const promptBox = () => must(document.querySelector<HTMLTextAreaElement>("textarea"), "最初のプロンプト textarea");
-// 添付チップ（貼り付け待ちの画像）。
+const promptBox = () => must(document.querySelector<HTMLTextAreaElement>("textarea"), "first-prompt textarea");
+// Attachment chips (images waiting to be uploaded).
 const chips = () => [...document.querySelectorAll(".mirror-attach .ma-chip")];
 
-// クリップボードから画像を貼る。jsdom には DataTransfer が無いので、ハンドラが読む
-// clipboardData だけを生のイベントに載せる（React は native event から読む）。
+// Paste an image from the clipboard. jsdom has no DataTransfer, so only the clipboardData the
+// handler reads is put on the raw event (React reads it from the native event).
 async function pasteImage(name: string): Promise<void> {
   const file = new File(["PNGBYTES"], name, { type: "image/png" });
   const ev = new Event("paste", { bubbles: true, cancelable: true });
@@ -119,7 +119,7 @@ async function pasteImage(name: string): Promise<void> {
   await settle();
 }
 
-// IndexedDB も React も、書き込み・読み出しが数マイクロタスク先で終わる。
+// Both IndexedDB and React finish their reads and writes a few microtasks later.
 async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
 }
@@ -146,8 +146,8 @@ const launchedWith = (): LaunchOpts => onLaunch.mock.calls[0][0] as LaunchOpts;
 
 beforeEach(() => {
   localStorage.clear();
-  // 添付の下書きは IndexedDB（lib/attachDraft）。テスト毎に真っさらな DB と、そこへ
-  // 張り直した接続で始める。
+  // The attachment draft lives in IndexedDB (lib/attachDraft). Start every test with a fresh
+  // DB and a connection re-opened against it.
   globalThis.indexedDB = new IDBFactory();
   resetAttachDraftDB();
   tree = { "repos/app": ["console", "workspace"], "repos/app/console": ["src"] };
@@ -178,7 +178,7 @@ describe("LaunchModal branch mode", () => {
     expect(document.querySelectorAll(".ui-seg.big .seg-btn")).toHaveLength(kinds.length);
   });
 
-  // 場所 is collapsed by default, so the summary line is the ONLY thing telling the user
+  // Location is collapsed by default, so the summary line is the ONLY thing telling the user
   // what git is about to do. It has to describe the pending launch, not a stale default.
   it("summarises the pending location while the section is collapsed", async () => {
     await render();
@@ -232,10 +232,10 @@ describe("LaunchModal branch mode", () => {
     expect(byText("Start in a worktree").disabled).toBe(true); // nothing got picked
   });
 
-  // 作業ディレクトリ（Meta.Subdir）: which folder INSIDE the working copy the agent
+  // The working directory (Meta.Subdir): which folder INSIDE the working copy the agent
   // starts in. Getting it wrong means the agent runs in the wrong package of a monorepo,
-  // which looks like a working launch until it edits the wrong files. It lives in 場所
-  // (Location) — where the launch happens — not in 詳細.
+  // which looks like a working launch until it edits the wrong files. It lives in Location —
+  // where the launch happens — not in Advanced.
   it("launches in the folder picked from the tree", async () => {
     await render();
     await expand("Location");
@@ -256,27 +256,27 @@ describe("LaunchModal branch mode", () => {
     root = createRoot(host);
     await render();
     await expand("Location");
-    const input = must(document.querySelector<HTMLInputElement>(".subdirpick-input"), "作業ディレクトリ input");
+    const input = must(document.querySelector<HTMLInputElement>(".subdirpick-input"), "working-directory input");
     expect(input.value).toBe("console");
   });
 
-  // 最初のプロンプトの下書き（launchDraft）: 閉じても残り、リポジトリ毎に分かれ、起動
-  // できたときだけ消える。ここが逆になると「場所を見に行って戻ったら打った文章が消えて
-  // いた」か、逆に「起動済みの文章が次の起動に居座る」のどちらかになる。
+  // The first-prompt draft (launchDraft) survives closing, is kept per repository, and is
+  // dropped only on a successful launch. Get it backwards and either the text is gone after a
+  // trip to check the location, or an already-launched text squats on the next launch.
   it("keeps the typed first prompt per repo when the dialog is closed", async () => {
     await render();
     await type("直して");
     await reopen();
     expect(promptBox().value).toBe("直して");
 
-    await reopen({ repo: "other" }); // 別のリポジトリには漏れない
+    await reopen({ repo: "other" }); // never leaks into another repository
     expect(promptBox().value).toBe("");
   });
 
   it("drops the draft once the session has started", async () => {
     await render();
     await type("直して");
-    expect(localStorage.getItem("af.launch-prompt.app")).toBe("直して"); // 消える前に在ったこと
+    expect(localStorage.getItem("af.launch-prompt.app")).toBe("直して"); // present before it is dropped
     await click(byText("Start in a worktree"));
     expect(launchedWith().prompt).toBe("直して");
     expect(localStorage.getItem("af.launch-prompt.app")).toBe(null);
@@ -284,7 +284,8 @@ describe("LaunchModal branch mode", () => {
     expect(promptBox().value).toBe("");
   });
 
-  // 起動に失敗して戻ってきたときは、打った文章がそのまま要る（衝突を直して押し直す）。
+  // Coming back from a failed launch, the typed text is still needed (fix the collision and
+  // press again).
   it("keeps the draft when the launch did not happen", async () => {
     onLaunch = vi.fn<Launch>(async () => ({ ok: false, conflict: "local" }));
     await render();
@@ -295,8 +296,8 @@ describe("LaunchModal branch mode", () => {
     expect(promptBox().value).toBe("直して");
   });
 
-  // 引き継ぎ提案・メモ送信・作業項目が入れる種は、呼び出し側が「この文章で始める」と決めて
-  // 開いた箱なので、前の書きかけより強い。
+  // A seed from a handoff proposal, a memo send or a work item outranks an earlier draft: the
+  // caller opened the box having decided to start from that text.
   it("prefers a seeded first prompt over the stored draft", async () => {
     await render();
     await type("書きかけ");
@@ -304,9 +305,10 @@ describe("LaunchModal branch mode", () => {
     expect(promptBox().value).toBe("引き継ぎの本文");
   });
 
-  // 添付（貼り付けた画像）も文章と同じ寿命（lib/attachDraft）: 閉じても残り、起動できた
-  // ときだけ消える。ここが抜けていたのが元の不具合で、「場所を見に行って戻ったら貼った
-  // スクリーンショットだけ消えていた」— 文章は残るぶん、消えたことに気づきにくい。
+  // An attachment (a pasted image) has the same lifetime as the text (lib/attachDraft): it
+  // survives closing and is dropped only on a successful launch. Without it, a trip to check
+  // the location lost the pasted screenshot alone — and because the text survived, the loss was
+  // easy to miss.
   it("keeps a pasted image per repo when the dialog is closed", async () => {
     await render();
     await pasteImage("shot.png");
@@ -315,21 +317,21 @@ describe("LaunchModal branch mode", () => {
     expect(chips()).toHaveLength(1);
     expect(chips()[0].querySelector("img.ma-thumb")?.getAttribute("src")).toMatch(/^blob:/);
 
-    await reopen({ repo: "other" }); // 別のリポジトリには漏れない
+    await reopen({ repo: "other" }); // never leaks into another repository
     expect(chips()).toHaveLength(0);
   });
 
   it("hands the restored image to the launch, then forgets it", async () => {
     await render();
     await pasteImage("shot.png");
-    await reopen(); // 一度閉じて開き直しても、起動に渡るのは同じファイル
+    await reopen(); // after a close and reopen, the launch still gets the same file
     await click(byText("Start in a worktree"));
     expect(launchedWith().images.map((f) => f.name)).toEqual(["shot.png"]);
     await reopen();
     expect(chips()).toHaveLength(0);
   });
 
-  // 起動に失敗して戻ってきたときは、文章と同じく添付もそのまま要る。
+  // Coming back from a failed launch, the attachment is needed as much as the text.
   it("keeps the pasted image when the launch did not happen", async () => {
     onLaunch = vi.fn<Launch>(async () => ({ ok: false, conflict: "local" }));
     await render();

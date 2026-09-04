@@ -1,27 +1,28 @@
-// スキルピッカーの純ロジック（docs/log/50 / ADR0034）。DOM もストアも触らない —
-// MirrorView がトリガ判定・絞り込み・差し込みをここへ委譲する。
-// トリガ文字は kind 依存（claude/opencode/cursor は "/"、codex は "$" メンション —
-// registry の skillTrigger）。起動は「入力の先頭」でだけ成立するとみなし、トリガも
-// 先頭の 1 トークン内にキャレットがある間だけ「補完」として生きる。空白を打って引数へ
-// 進んだ後は args=true の受動トークンになる — リストは引数ヒントの参照用に出したままで、
-// キーボードは横取りしない（MirrorView の skillArgs / skillNavActive を参照）。
+// Pure skill-picker logic (docs/log/50 / ADR0034). Touches neither the DOM nor the store:
+// MirrorView delegates trigger detection, filtering and insertion here.
+// The trigger character depends on the kind (claude/opencode/cursor use "/", codex uses a "$"
+// mention - registry's skillTrigger). Invocation is treated as valid only at the head of the
+// input, so the trigger counts as "completion" only while the caret is inside that first token.
+// Once a space is typed and the arguments begin, it becomes a passive token with args=true: the
+// list stays up as an argument hint but does not capture the keyboard (see MirrorView's skillArgs
+// / skillNavActive).
 
 import type { SessionSkill } from "../../core/api/client.ts";
 
 export interface SlashToken {
-  token: string; // トリガ文字を除いた入力中の断片（"" = トリガ直後）
-  start: number; // 常に 0（先頭トリガ）— 差し込み置換の左端
-  end: number; // 置換の右端（最初の空白 or 文末）
-  bare?: boolean; // トリガ文字なしの先頭トークン（ボタン起点の絞り込み。pickerTokenAt 参照）
-  args?: boolean; // キャレットが先頭トークンの右（＝引数を書いている）— 受動表示用
+  token: string; // the fragment being typed, trigger character removed ("" = right after the trigger)
+  start: number; // always 0 (leading trigger) - the left edge of the insertion replacement
+  end: number; // the right edge of the replacement (first whitespace, or end of text)
+  bare?: boolean; // leading token with no trigger character (button-initiated filtering; see pickerTokenAt)
+  args?: boolean; // caret is right of the leading token (= writing arguments) - for the passive display
 }
 
-// 全角エイリアス: 日本語 IME では「/」「$」が全角（／・＄）で入るため、トリガとして
-// 等価に受ける。確定時は invoke（半角の正しい起動形）で丸ごと置換されるので、全角の
-// まま送信される事故も起きない。
+// Full-width aliases: a Japanese IME types "/" and "$" as full-width characters (／ and ＄), so
+// accept them as equivalent triggers. On confirmation the whole token is replaced by invoke (the
+// correct half-width form), so a full-width character can never be sent by accident.
 const TRIGGER_ALIASES: Record<string, string[]> = { "/": ["/", "／"], $: ["$", "＄"] };
 
-// triggerHead: text の先頭がトリガ（または全角エイリアス）なら、その一致文字列を返す。
+// triggerHead: if text starts with the trigger (or a full-width alias), return the matched string.
 function triggerHead(text: string, trigger: string): string | null {
   if (!trigger) return null;
   for (const a of TRIGGER_ALIASES[trigger] ?? [trigger]) {
@@ -30,44 +31,47 @@ function triggerHead(text: string, trigger: string): string | null {
   return null;
 }
 
-// hasTriggerHead: MirrorView の「draft と token のずれ」ガードが使う公開判定。
+// hasTriggerHead: the public predicate used by MirrorView's "draft drifted from token" guard.
 export function hasTriggerHead(text: string, trigger: string): boolean {
   return triggerHead(text, trigger) !== null;
 }
 
-// slashTokenAt: draft とキャレット位置から「補完対象のトークン」を返す。
-// 対象外（先頭がトリガでない・キャレットがトリガより左）は null。キャレットが先頭トークンの
-// 右側（＝引数を書いている）なら args=true を立てて返す — トークン自体（置換範囲）は同じで、
-// 呼び出し側が「補完中」と「引数入力中（ヒント参照だけ）」を区別できるようにするため。
+// slashTokenAt: return the token to complete, given the draft and the caret position. Out of
+// scope (head is not the trigger, caret left of the trigger) returns null. If the caret is right
+// of the leading token (= arguments are being written), args=true is set: the token itself (the
+// replacement range) is unchanged, so the caller can tell "completing" apart from "typing
+// arguments" (hint only).
 export function slashTokenAt(text: string, caret: number, trigger = "/"): SlashToken | null {
   const head = triggerHead(text, trigger);
   if (!head) return null;
-  const ws = text.search(/[\s]/); // 最初の空白（改行含む）でトークン終了
+  const ws = text.search(/[\s]/); // the token ends at the first whitespace (newlines included)
   const end = ws < 0 ? text.length : ws;
   if (caret < head.length) return null;
   const tok: SlashToken = { token: text.slice(head.length, end), start: 0, end };
   return caret > end ? { ...tok, args: true } : tok;
 }
 
-// pickerTokenAt: ピッカーが実際に絞り込みへ使うトークン。allowBare（＝「/」ボタン起点で
-// 開いている間）は、トリガ文字が無くても先頭 1 トークンをクエリとして受ける — ボタンで
-// 開いてからそのままタイプして絞り込めるように。確定時は applySkillToDraft が同じ規則で
-// そのトークンごと invoke に置換するので、クエリが引数として残る事故は起きない。
-// bare（トリガ無し）のときだけ 2 語目以降で null＝全件のまま — トリガが無い下書きの 2 語目
-// 以降は「絞り込みの続き」ではないので、クエリに使わない。トリガ付きは slashTokenAt が
-// args=true の受動トークンを返す（＝引数ヒント表示のためリストは生かす）。
+// pickerTokenAt: the token the picker actually filters with. With allowBare (i.e. while opened
+// from the "/" button) the first token is accepted as the query even without a trigger character,
+// so typing straight after opening with the button narrows the list. On confirmation
+// applySkillToDraft replaces that same token with invoke under the same rule, so the query can
+// never be left behind as an argument.
+// Only in the bare (no trigger) case does the second word or later return null = everything: past
+// the first word of a trigger-less draft the text is no longer "more of the filter", so it is not
+// used as a query. With a trigger, slashTokenAt returns a passive token with args=true instead
+// (the list stays alive to show the argument hint).
 export function pickerTokenAt(text: string, caret: number, trigger = "/", allowBare = false): SlashToken | null {
   const tok = slashTokenAt(text, caret, trigger);
   if (tok || !allowBare) return tok;
-  if (triggerHead(text, trigger)) return null; // トリガ付きの判断は slashTokenAt に従う
+  if (triggerHead(text, trigger)) return null; // with a trigger, slashTokenAt's verdict wins
   const ws = text.search(/[\s]/);
   const end = ws < 0 ? text.length : ws;
   if (caret > end) return null;
   return { token: text.slice(0, end), start: 0, end, bare: true };
 }
 
-// filterSkills: 前方一致 > 名前部分一致 > 説明部分一致の順で並べる。大文字小文字は
-// 無視。空クエリは全件（API の並び＝name 昇順のまま）。
+// filterSkills: order by prefix match > name substring > description substring. Case-insensitive.
+// An empty query returns everything (in the API's order, i.e. name ascending).
 export function filterSkills(skills: SessionSkill[], query: string): SessionSkill[] {
   const q = query.trim().toLowerCase();
   if (!q) return skills;
@@ -85,31 +89,32 @@ export function filterSkills(skills: SessionSkill[], query: string): SessionSkil
     .map((x) => x.s);
 }
 
-// exactSkills: 引数入力中（args トークン）の絞り込み。先頭コマンドは打ち終わって確定して
-// いるので、名前が完全一致するネイティブ項目だけを残す — 目的はその 1 件の引数ヒント/説明を
-// 見えたままにすることで、部分一致の別候補まで並べるとただのノイズになる。1 件も一致しない
-// （ただの「/」始まりの文章など）ときは空 = リストを出さない。
+// exactSkills: the filter used while arguments are being typed (an args token). The leading
+// command is already typed and settled, so keep only native items whose name matches exactly - the
+// point is to keep that one item's argument hint/description visible, and listing partial matches
+// alongside it would be noise. When nothing matches (just a sentence starting with "/", say) the
+// result is empty = no list.
 export function exactSkills(skills: SessionSkill[], query: string): SessionSkill[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   return skills.filter((s) => !!s.invoke && s.name.toLowerCase() === q);
 }
 
-// originKind: foreign スキルの出所規約 dir → 表示上の kind。".agents" はエージェント
-// 横断の共有規約でどの kind にも属さない → null（中立の「共有」バッジになる）。
+// originKind: the origin convention dir of a foreign skill -> the kind shown in the UI. ".agents"
+// is the cross-agent shared convention and belongs to no kind -> null (a neutral "shared" badge).
 export function originKind(origin: string | undefined): "claude" | "codex" | null {
   if (origin === ".claude") return "claude";
   if (origin === ".codex") return "codex";
   return null;
 }
 
-// applySkillToDraft: 選択したスキルの起動文字列（invoke — 末尾空白込み。"/name " や
-// "$name "）を draft へ差し込み、新しい draft とキャレット位置を返す。起動は先頭で
-// だけ意味を持つので、常に「invoke ＋既存の本文（引数として残す）」に組み立てる。
-// 入力中のトークンは置換して消える（allowBare のときはトリガ無しの先頭トークンも
-// 「絞り込みに使った文字」なので同じく置換される — pickerTokenAt と対で読むこと）。
-// 引数入力中（args トークン）に別のコマンドを選び直した場合も、置換されるのは先頭コマンド
-// だけ — 書いた引数はそのまま右側に残る。
+// applySkillToDraft: insert the chosen skill's invocation string (invoke - including the trailing
+// space, e.g. "/name " or "$name ") into the draft and return the new draft and caret position.
+// An invocation only means anything at the head, so the result is always built as "invoke + the
+// existing body (kept as arguments)". The token being typed is replaced away (with allowBare a
+// trigger-less leading token is also the text that was filtered with, so it is replaced too - read
+// this together with pickerTokenAt). Choosing a different command while typing arguments (an args
+// token) replaces only the leading command; the arguments already written stay to its right.
 export function applySkillToDraft(
   draft: string,
   caret: number,
@@ -118,8 +123,8 @@ export function applySkillToDraft(
   allowBare = false,
 ): { next: string; caret: number } {
   const tok = pickerTokenAt(draft, caret, trigger, allowBare);
-  // トークンが生きていればその右側（既に書いた引数）を、そうでなければ（ボタン
-  // 起点）トリガで始まらない下書き全体を引数位置へ残す。
+  // If the token is alive, keep what is to its right (the arguments already written); otherwise
+  // (button-initiated) keep a whole draft that does not start with the trigger as the arguments.
   const tail = tok
     ? draft.slice(tok.end).trimStart()
     : hasTriggerHead(draft, trigger)

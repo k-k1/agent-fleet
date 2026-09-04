@@ -9,8 +9,9 @@ export function TtsAdminView() {
   const [data, setData] = useState<any | null>(null); // { managed, enabled, engine, polly, dict }
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  // テナント共通の読み仮名辞書（全ユーザーの読み上げに適用。ユーザー辞書が同表記を上書き）。
-  // dict=編集中の値（null=未ロード）、savedDict=サーバ側の値（dirty 判定用）。
+  // The tenant-wide reading dictionary, applied to every user's speech; a user's own dictionary
+  // overrides the same spelling. dict = the value being edited (null = not loaded), savedDict =
+  // the server's value, used to detect dirty.
   const [dict, setDict] = useState<string | null>(null);
   const [savedDict, setSavedDict] = useState("");
   const [dictBusy, setDictBusy] = useState(false);
@@ -26,7 +27,7 @@ export function TtsAdminView() {
       setData(d);
       const dv = typeof d.dict === "string" ? d.dict : "";
       setSavedDict(dv);
-      setDict((cur) => (cur === null ? dv : cur)); // 編集中の入力はポーリングで潰さない
+      setDict((cur) => (cur === null ? dv : cur)); // the poll must not clobber an in-progress edit
     } catch {
       setErr(tr("admin.load_error"));
     }
@@ -34,9 +35,9 @@ export function TtsAdminView() {
   useEffect(() => {
     load();
   }, [load]);
-  // 有効なのに未 ready（ECS 起動中）の間は自動更新して readiness を追う。エンジン不在で
-  // トグルを固定している間も追う — エンジンが現れたら固定が外れなければならない。
-  // 追う必要が無いのは「いま使える」か「管理下で意図して停止している」かのどちらか。
+  // Poll for readiness while enabled but not ready (ECS still starting), and also while the
+  // toggle is pinned off because no engine exists — the pin has to lift the moment one appears.
+  // Polling stops only when it is usable now, or deliberately stopped under management.
   useEffect(() => {
     if (!data || data.engine?.ready) return;
     if (!data.enabled && data.managed) return;
@@ -67,17 +68,17 @@ export function TtsAdminView() {
       setErr("");
       setData(d);
       setSavedDict(dict);
-      setTenantDict(dict); // 自分のブラウザの読み上げにも即反映（他ユーザーは次回ロードから）
+      setTenantDict(dict); // applies to this browser's speech at once; other users on next load
     } finally {
       setDictBusy(false);
     }
   };
 
   const engine = data?.engine || {};
-  // エンジンが「無い」: ECS 管理下でもなく（＝この画面から起動する手段が無い）、URL にも
-  // 到達できない。有効にしたところで VOICEVOX へは一切流れず、auto は日本語まで Polly に
-  // 落ちるので、実効状態は無効そのもの。設定値を書き換えず、表示と操作だけを無効で固定する
-  // （エンジンが現れれば上のポーリングで固定が外れ、記録されていた意図がそのまま復活する）。
+  // "No engine": not ECS-managed (so this screen cannot start one) and its URL is unreachable.
+  // Enabling would send nothing to VOICEVOX and auto would fall back to Polly even for Japanese,
+  // so the effective state is off. Pin only the display and the control to off, never the stored
+  // setting: when an engine appears the poll above lifts the pin and the recorded intent returns.
   const noEngine = !!data && !data.managed && !engine.ready;
   const enabled = !!data?.enabled && !noEngine;
   const engineLabel = !data
@@ -163,5 +164,5 @@ export function TtsAdminView() {
   );
 }
 
-// --- テナント一覧（ルートの入口）-------------------------------------------
-// カードを開くとレールごとそのテナントの面に入る（ドリルダウンの 1 段目）。
+// --- Tenant list (the root entry point) ------------------------------------
+// Opening a card swaps the whole rail for that tenant's surface (drill-down level 1).

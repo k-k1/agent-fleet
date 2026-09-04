@@ -1,7 +1,7 @@
 // SessionRow — one single-line session row plus its ⋯/right-click menu: a
 // kind-colored leading icon, the title, and a compact state chip (icon-only for
 // the calm states; question/plan/permission keep their text — they demand the
-// user). Renders in the flat "その他" list AND under each working-copy node of
+// user). Renders in the flat "other" list AND under each working-copy node of
 // the project tree. Self-contained: it owns its menu open state (outside-click /
 // Escape dismiss) and reads pane-hover + layout itself.
 // Lifecycle ops come from useSessionActions; the menu items themselves live in
@@ -60,10 +60,12 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   // the row tooltip alongside the resume hint.
   const ex = !s.alive ? exitLabel(s) : null;
   // question/plan/permission want the user — keep their text. Everything else
-  // (入力待ち/進行中/停止中…) collapses to an icon-only chip; the text moves to title.
+  // (waiting for input / running / stopped …) collapses to an icon-only chip; the text
+  // moves to title.
   const loud = st.cls.includes("question");
-  // このセッションの回答を音声読み上げ中か（ミラー朗読・要約・セッション通知いずれも
-  // 発生元セッション名を tts ストアへ載せている）。合成待ち（preparing）も含めて示す。
+  // Whether this session's answer is being read aloud. Mirror narration, summaries and
+  // session notifications all put the originating session name into the tts store; a
+  // pending synthesis (preparing) counts too.
   const speaking = useTtsStore((t) => t.sessionName === s.name && (t.speaking || t.preparing));
 
   return (
@@ -105,9 +107,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
         }
         aria-disabled={inert || undefined}
-        // 行き先の規則（稼働中＝ミラー/端末、停止＝読み取り専用の履歴、転写を持たない
-        // 停止セッション＝端末の再生）は openSessionFromList が唯一の正。コマンドパレット
-        // のセッション行も同じ関数を呼ぶ。
+        // openSessionFromList is the single source of truth for where a row leads: alive =
+        // mirror/terminal, stopped = read-only history, a stopped session with no transcript
+        // = terminal replay. The command palette's session rows call the same function.
         onClick={(e) => {
           openSessionFromList(s, e.ctrlKey || e.metaKey, running);
         }}
@@ -136,10 +138,12 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         {speaking && (
           <Icon name="unmute" className="sess-speaking" title={tr("srow.speaking")} />
         )}
-        {/* 削除ロック（docs/log/45）: 鍵バッジ。「なぜ削除が押せないのか」を行の上で示す。 */}
+        {/* Deletion lock (docs/log/45): the lock badge, so the row itself says why delete
+            is unavailable. */}
         {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
-        {/* 停止しないピン（docs/log/75）: 期限が生きている間だけ出す。切れたピンをバッジに
-            残すと「守られているつもり」で放置されるので、時計は表示側でも見る。 */}
+        {/* Keep-awake pin (docs/log/75): shown only while the deadline is still live. An
+            expired pin left on the badge would let the user believe they are still
+            protected, so the clock is checked on the render side too. */}
         {remainingShort(s.keepAwakeUntil) && (
           <Icon
             name="debug-pause"

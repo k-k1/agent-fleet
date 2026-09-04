@@ -13,7 +13,7 @@ export interface PendingEcho {
   resyncedAt?: number;
 }
 
-// How long an echo may sit at 「反映待ち」 on an IDLE session before we suspect our own
+// How long an echo may sit at "Pending" on an IDLE session before we suspect our own
 // copy of the transcript is incomplete rather than the send being slow.
 export const ECHO_RESYNC_MS = 20000;
 
@@ -47,7 +47,7 @@ function hasErrorPart(t: TranscriptTurn): boolean {
 // A `/`-run slash command / skill invocation is never logged as the raw "/foo …" the
 // user typed: claude records it as a `<command-name>/foo</command-name>…` user turn
 // (hidden by isNoise, surfaced as a chip). So its optimistic echo can't reconcile by
-// text and would sit at 「反映待ち」 forever. slashName pulls the command name out of the
+// text and would sit at "Pending" forever. slashName pulls the command name out of the
 // echo's first line; commandTurnName pulls it out of a transcript turn — matching the
 // two (past the send anchor) lets the echo land. The leading "/" is part of the name in
 // both forms, so "/" alone (length ≤ 1) is not a command.
@@ -60,7 +60,7 @@ function slashName(text: string): string | null {
 function commandTurnName(text: string): string | null {
   const s = (text || "").replace(/^\s+/, "");
   // Tag order varies by command type/CLI build: built-ins log <command-name> first,
-  // skills (2.1.215 実測) log <command-message> first. Require a command tag at the
+  // skills (measured on 2.1.215) log <command-message> first. Require a command tag at the
   // start (so prose merely quoting the tag can't match), then take the name wherever
   // it sits.
   if (!s.startsWith("<command-name>") && !s.startsWith("<command-message>")) return null;
@@ -82,7 +82,7 @@ export function echoLanded(e: PendingEcho, turns: TranscriptTurn[], isNoise: (t:
       // A turn rejected before codex ever creates one (e.g. a usage-limit-exhausted
       // send) never gets its own echoed user turn — not even the prompt is recorded —
       // so the text/attachment match below can never fire and the echo would sit at
-      // 反映待ち forever. Any error turn landing after the send explains what happened
+      // "Pending" forever. Any error turn landing after the send explains what happened
       // to it, so treat it as the resolution too (driver.go's managedEnrich / opencode's
       // errors.go both emit kind="error" for exactly this).
       return t.idx !== undefined && t.idx > e.sinceIdx && hasErrorPart(t);

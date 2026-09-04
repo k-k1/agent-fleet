@@ -134,7 +134,7 @@ export function targetsText(tg: { assistant: boolean; session: boolean } | undef
   return on.length > 0 ? on.join(" / ") : tr("mcp.target_none");
 }
 
-// Meta は mcpForm.tsx の共通プリミティブを使う（SsmTab と同型だったため集約）。
+// Meta comes from the shared primitives in mcpForm.tsx (it was identical to SsmTab's).
 
 // ProbeView renders one connection-test outcome (docs/log/48 §10). On failure the server's
 // own stderr / body tail is shown verbatim — a broken command almost always explains

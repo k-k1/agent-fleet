@@ -13,10 +13,10 @@ import { AiModelRow } from "../parts/aiModelRow.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useHiddenModel, useModelOptions } from "../../../lib/agentModels.ts";
 
-// AutoTurnModelSelect — 自動応答（セッション報告への自動ターン）専用モデル。対象は
-// claude の会話のみなので catalog も claude 固定。空 = 会話のモデルのまま。
-// AssistantModelRow と同じく、catalog から消えた設定値も選択肢に残して表示が嘘を
-// つかないようにする。
+// AutoTurnModelSelect — the model used only for the auto turn that answers a session report.
+// It applies to claude conversations only, so the catalog is fixed to claude. Empty = keep the
+// conversation's own model. As in AssistantModelRow, a configured value that has disappeared
+// from the catalog stays in the options, so the display does not lie about what is set.
 function AutoTurnModelSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const tr = useT();
   const live = useModelOptions("claude") || [];
@@ -29,18 +29,17 @@ function AutoTurnModelSelect({ value, onChange }: { value: string; onChange: (v:
   return <Select value={value} options={options} onChange={onChange} />;
 }
 
-// AssistantTab — **アシスタント・チャットだけ**の設定：挙動（回答言語 / モデル /
-// 報告への自動応答 / コンテキスト自動圧縮）と 外観（テーマ / 背景色）。外観は以前
-// DisplayTab にあったが、アシスタントの挙動と同じタブに置いた方が見つけやすいので
-// ここへ移設。
+// AssistantTab — settings for the assistant chat only: behaviour (answer language, model, the
+// auto turn on a report, automatic context compaction) and appearance (theme, background
+// colour). Appearance lives here rather than in DisplayTab because it is easier to find next
+// to the assistant's behaviour.
 //
-// ★ かつてここに在った「タイトルのAI提案」「エージェント優先順位」「タイトル・
-// サジェストのモデル」は AiAssistTab へ移した（docs/log/84）。実装をチャットと共有して
-// いるだけで、効く先はセッション・ミラー・File ペイン＝アシスタントではなかった。
-// このタブに残すのは「アシスタントとの会話そのもの」を変える設定に限る。
+// Only settings that change the conversation with the assistant itself belong here. Anything
+// whose effect lands on sessions, the mirror or the File pane belongs in AiAssistTab, even
+// when it shares its implementation with the chat (docs/log/84).
 //
-// すべてクライアント側の設定（settings store）なので、ワークスペースの起動状態に
-// 依らず表示・変更できる。
+// Everything is a client-side setting (the settings store), so it can be shown and changed
+// regardless of whether the workspace is running.
 export function AssistantTab() {
   const tr = useT();
   const s = useSettings();

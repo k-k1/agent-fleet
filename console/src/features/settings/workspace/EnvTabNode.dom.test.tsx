@@ -1,11 +1,12 @@
-// ツールチェーンタブの Node.js 行。Java 行と同じことを押さえる——node には同じ穴が
-// 開いたままだった（docs/decisions/0068）: nodeOptions は固定リストなので常に未導入の版を
-// 提示しうるのに、選んでも導入は起きず、resolvedToolchains() は空を返し、セッションは
-// 古い node のまま。エラーも警告も無く、Stop → Start するまで選択が効かなかった。
-//   ① 未インストールの版を選んだときだけ導入ボタンを出す
-//   ② ボタンは POST /env/node-install を叩き、完了後に一覧を取り直す
-//   ③ 選択肢の見た目で「未インストール」が分かる（選んでから気づくのでは遅い）
-//   ④ "system"（イメージの素の node）は導入対象ではない
+// The Node.js row of the toolchains tab, holding the same line as the Java row — node had
+// the same hole (docs/decisions/0068): nodeOptions is a fixed list and can always offer a
+// version that is not installed, yet selecting one installed nothing, resolvedToolchains()
+// returned empty and sessions kept the old node, with no error or warning, until a
+// Stop -> Start.
+//   1. the install button appears only for a version that is not installed yet
+//   2. the button POSTs /env/node-install and refetches the list once it finishes
+//   3. the option itself reads as "not installed" (finding out after selecting is too late)
+//   4. "system" (the image's own node) is never an install target
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -74,13 +75,13 @@ afterEach(() => {
   host = null;
 });
 
-// ⚠️ 行ごとの識別クラスで引くこと。レイアウトの共有クラス（.env-tool-pick）で引くと
-// Java 行と Node 行の両方に当たり、querySelector が先頭を返して別の行を検査する
-// ——実際に node 行を足したとき、java のクラスを流用して Java のテストがそれで落ちた。
+// Query by the per-row class. The shared layout class (.env-tool-pick) matches both the
+// Java and the Node row, so querySelector returns the first one and the test silently
+// inspects the wrong row.
 const nodeBtn = () => document.querySelector<HTMLButtonElement>(".env-node-pick button");
 
-describe("EnvTab の Node.js 行", () => {
-  it("導入済みの版を選んでいるならボタンを出さない", async () => {
+describe("EnvTab Node.js row", () => {
+  it("shows no button when the selected version is already installed", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(path === "api/env/toolchains" ? toolchains(["22"], "22") : {}),
     );
@@ -88,7 +89,7 @@ describe("EnvTab の Node.js 行", () => {
     expect(nodeBtn()).toBeNull();
   });
 
-  it("system（イメージの素の node）では導入ボタンを出さない", async () => {
+  it("shows no install button for system (the image's own node)", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(path === "api/env/toolchains" ? toolchains([], "system") : {}),
     );
@@ -96,7 +97,7 @@ describe("EnvTab の Node.js 行", () => {
     expect(nodeBtn()).toBeNull();
   });
 
-  it("未インストールの版では導入ボタンを出し、選択肢からも未導入と分かる", async () => {
+  it("shows the install button for a missing version, and the option reads as not installed", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(path === "api/env/toolchains" ? toolchains(["22"], "24") : {}),
     );
@@ -109,7 +110,7 @@ describe("EnvTab の Node.js 行", () => {
     expect(absent.textContent).not.toBe("v24");
   });
 
-  it("押すと導入を開始し、完了後に取り直してボタンが消える", async () => {
+  it("starts the install on click, refetches and drops the button", async () => {
     let installed = ["22"];
     api.mockImplementation((path: string) =>
       Promise.resolve(path === "api/env/toolchains" ? toolchains(installed, "24") : {}),
@@ -130,7 +131,7 @@ describe("EnvTab の Node.js 行", () => {
     expect(nodeBtn()).toBeNull();
   });
 
-  it("進行中はボタンもセレクトも触らせない（二重ダウンロード防止）", async () => {
+  it("locks both button and select while installing, preventing a second download", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(path === "api/env/toolchains" ? toolchains(["22"], "24") : { state: "installing" }),
     );

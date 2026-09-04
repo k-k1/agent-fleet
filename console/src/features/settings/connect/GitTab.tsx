@@ -13,18 +13,19 @@ import { useT } from "../../../lib/i18n/index.ts";
 interface RowProps {
   st: any;
   reload: () => void;
-  /** テナントがこのプロバイダの OAuth アプリを登録しているか（docs/log/71）。 */
+  /** Whether the tenant has registered an OAuth app for this provider (docs/log/71). */
   oauthAvailable: boolean;
 }
 
-// useGitOAuthAvailability — 「OAuth で接続」を出してよいか。
+// useGitOAuthAvailability — whether "connect with OAuth" may be offered.
 //
-// ★ 押してから not_configured が返る形にはしない。設定を持っているのはテナント
-// 管理者で、押した本人には直せないため、押す前に「テナント管理者に登録を頼む」と
-// 言えないと詰む（docs/log/71 §71.4）。
+// Never let the button be pressed only to return not_configured: the setting belongs to the
+// tenant administrator and the person pressing it cannot fix it, so unless the screen can say
+// "ask your tenant administrator to register the app" beforehand, they are stuck
+// (docs/log/71 §71.4).
 //
-// ★ /api/connections（Agent へプロキシ）ではなく CP 直の /api/git-oauth を見る。
-// 答えは CP の DB にあり、ワークスペースが止まっている間もこの面は開かれる。
+// Reads /api/git-oauth on the CP directly, not /api/connections (proxied to the Agent): the
+// answer lives in the CP's DB, and this surface is opened while the workspace is stopped.
 function useGitOAuthAvailability() {
   const [avail, setAvail] = useState<Record<string, { configured?: boolean }> | null>(null);
   useEffect(() => {
@@ -38,10 +39,10 @@ function useGitOAuthAvailability() {
 }
 
 // GitTab: git-hosting CONNECTIONS (GitHub / Bitbucket) used for clone / fetch / push,
-// plus the commit identity. Lives in the 接続 group next to the other external-account
+// plus the commit identity. Lives in the connections group next to the other external-account
 // connections. Auth is agent-proxied (proxyAgentREST → 502 while stopped), so the tab
-// needs a running workspace — same as the エージェント tab. Self-hosted internal repos
-// (CP-native, no Agent) moved to their own ワークスペース › 内部リポジトリ tab
+// needs a running workspace — same as the agents tab. Self-hosted internal repos
+// (CP-native, no Agent) moved to their own workspace › internal repositories tab
 // (InternalReposTab), since they're workspace infra, not an external connection.
 //
 // TODO(gitconfig): per-provider commit identity (user.name / user.email) is planned
@@ -75,8 +76,9 @@ export function GitTab() {
       ) : (
         <>
           <div className="conn-cat">{tr("git.cat_hosting")}</div>
-          {/* 未取得（null）の間は出す側に倒す。取得できないだけで導線を消すと、
-              「登録済みなのにボタンが無い」という直しようのない画面になる。 */}
+          {/* While the availability is still unknown (null), fall on the side of showing it.
+              Hiding the control merely because the fetch failed produces an unfixable screen:
+              the app is registered, yet there is no button. */}
           <GithubRow st={conns.github} reload={reload} oauthAvailable={oauth?.github?.configured !== false} />
           <BitbucketRow st={conns.bitbucket} reload={reload} oauthAvailable={oauth?.bitbucket?.configured !== false} />
           <GlobalIdentity />
@@ -434,9 +436,9 @@ function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
             <code>read:account</code> <code>read:workspace:bitbucket</code> <code>read:repository:bitbucket</code>
             {tr("git.bb_token_hint_read")} <code>write:repository:bitbucket</code>
             {tr("git.bb_token_hint_write")}
-            {/* ★ 必須には足さない。PR を読む権限は作業項目レールにだけ要るもので、
-                clone しかしない人の接続を「不足」と言い出すのは嘘になる
-                （docs/log/80 §80.19.3）。 */}
+            {/* Not added to the required set: the PR read scope is needed only by the work-item
+                rail, so calling a clone-only user's connection "incomplete" would be a lie
+                (docs/log/80 §80.19.3). */}
             <br />
             <code>read:pullrequest:bitbucket</code>
             {tr("git.bb_token_hint_pr")}

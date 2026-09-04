@@ -1,6 +1,6 @@
 // NewRepoModal — bring a repository into ~/repos. Three kinds: Git clone (source
 // picking in the shared CloneForm + fork-a-branch / folder name), SVN checkout
-// (URL + optional subpath + optional basic auth, docs/log/41), and 新規フォルダ — a
+// (URL + optional subpath + optional basic auth, docs/log/41), and a new folder — a
 // folder that exists nowhere yet, created empty and `git init`ed. The op itself
 // runs in the parent (spinner row in the rail) so the user isn't trapped in a busy
 // dialog.
@@ -21,7 +21,7 @@ interface NewRepoModalProps {
   onClose?: () => void;
   onClone: (req: CloneRequest) => void;
   onSvnCheckout?: (req: SvnCheckoutRequest) => void;
-  /** 新規フォルダ（取り込み元なし）。省略されたら種類の選択肢自体を出さない。 */
+  /** New folder (no import source). When omitted, the kind selector is not shown at all. */
   onInit?: (name: string) => void;
   repos?: { name: string }[];
 }
@@ -33,8 +33,8 @@ function deriveSvnName(url: string, subpath: string): string {
   const base = url.replace(/\/+$/, "");
   const sp = subpath.trim().replace(/^\/+|\/+$/g, "");
   const full = (sp ? base + "/" + sp : base).replace(/\/+$/, "");
-  // Decode percent-encoding so a Japanese path segment (…/%E6%97%A5%E6%9C%AC) is
-  // suggested as 日本 rather than the raw escape. Malformed escapes fall back to raw.
+  // Decode percent-encoding so a non-ASCII path segment (…/%E6%97%A5%E6%9C%AC) is
+  // suggested decoded rather than as the raw escape. Malformed escapes fall back to raw.
   const decode = (s: string) => {
     try {
       return decodeURIComponent(s);
@@ -94,7 +94,7 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, onInit, repos = 
   const svnUrlOk = /^https?:\/\/.+/i.test(svnUrl.trim());
   const canSubmitSvn = svnUrlOk && svnNameOk;
 
-  // --- 新規フォルダ state（取り込み元なし） ---
+  // --- New folder state (no import source) ---
   const [newName, setNewName] = useState("");
   const canSubmitNew = !!onInit && newFolderNameOk(newName, repoNames);
 
@@ -133,9 +133,9 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, onInit, repos = 
   return (
     <Modal title={tr("rp.clone_repo_title")} onClose={onClose} as="form" onSubmit={submit}>
       <div className="ui-modal-body">
-        {/* Kind: Git clone / SVN checkout / a brand-new folder. 新規 is offered only
-            when the caller wired onInit — a picker with a dead option is worse than
-            no picker. */}
+        {/* Kind: Git clone / SVN checkout / a brand-new folder. The new-folder option is
+            offered only when the caller wired onInit — a picker with a dead option is worse
+            than no picker. */}
         <div className="ui-field">
           <span className="ui-field-label">{tr("rp.vcs")}</span>
           <div className="ui-seg">

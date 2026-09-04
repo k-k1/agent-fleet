@@ -68,7 +68,7 @@ describe("scheduleTitle", () => {
 describe("specSummary", () => {
   it("renders each kind", () => {
     expect(specSummary({ ...base, spec_kind: "cron", spec: "*/15 * * * *" })).toBe("*/15 * * * *");
-    // interval は i18n（既定ロケール ja）で「〜ごと」に整形される。
+    // interval goes through i18n (default locale ja), which renders it as "every <interval>".
     expect(specSummary({ ...base, spec_kind: "interval", spec: "3600" })).toBe("1h ごと");
     expect(specSummary({ ...base, spec_kind: "once", spec: "2026-07-24T09:00:00Z" })).toBe("2026-07-24T09:00:00Z");
   });
@@ -104,8 +104,8 @@ describe("sortSchedules", () => {
   });
 });
 
-// GET /api/schedules の応答の読み方。api() は CP のエラーを throw せず {error} で
-// 解決するので、「配列でない＝空」と読むと 401/5xx が「まだありません」に化ける。
+// How the GET /api/schedules response is read. api() resolves a CP error as {error} rather
+// than throwing, so reading "not an array" as "empty" turns a 401/5xx into "nothing yet".
 describe("readScheduleList", () => {
   it("adopts an array payload (including a genuinely empty list)", () => {
     expect(readScheduleList([base])).toEqual({ items: [base], error: null });
@@ -115,8 +115,8 @@ describe("readScheduleList", () => {
   it("never reads an {error} payload as an empty list", () => {
     const err = { code: "unauthenticated", message: "no gateway identity" };
     const r = readScheduleList({ error: err });
-    expect(r.items).toBeNull(); // 直前の行を残す＝消えたように見せない
-    expect(r.error).toEqual(err); // 理由は呼び出し側が errText で出す
+    expect(r.items).toBeNull(); // keep the previous rows: nothing must look deleted
+    expect(r.error).toEqual(err); // the caller renders the reason via errText
   });
 
   it("still fails (items=null) for a shape that is neither (old CP / proxy page)", () => {

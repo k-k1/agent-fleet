@@ -3,7 +3,7 @@
 //
 // TODO(P5): the old console opened chat-capable sessions (claude) in the chat
 // mirror by default (showChat/showChatSplit). Until MirrorView is ported, every
-// open lands on the terminal; a stopped session shows the 再開 mask instead of
+// open lands on the terminal; a stopped session shows the resume mask instead of
 // read-only history.
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
@@ -31,7 +31,7 @@ export function openSessionTerminalSplit(name: string): void {
 
 // Chat-mirror opens: a chat-capable session (claude) opens the Markdown mirror
 // by default — alive: the PTY still attaches in the background; stopped: the
-// history shows read-only without resuming (再開して続ける resumes explicitly).
+// history shows read-only without resuming ("resume and continue" resumes explicitly).
 export function openSessionChat(name: string): void {
   useLayoutStore.getState().openTarget({ content: { kind: "terminal", chat: true }, session: name });
 }
@@ -40,25 +40,27 @@ export function openSessionChatSplit(name: string): void {
   useLayoutStore.getState().openTargetInNew({ content: { kind: "terminal", chat: true }, session: name });
 }
 
-// openSessionDefault — 稼働中セッションの「ふつうの開き方」: チャットできる種
-// （claude 等）はミラー、それ以外はターミナル。左ペインの行クリック（SessionRow）と
-// 同じ規則で、行以外の導線（スワイプでのローテート）が別の面を開かないようにする。
+// openSessionDefault — the ordinary way to open a running session: a chat-capable kind
+// (claude and friends) opens the mirror, anything else the terminal. Same rule as clicking
+// a row in the left rail (SessionRow), so that other routes in — rotating by swipe — do not
+// land on a different surface.
 export function openSessionDefault(s: Session): void {
   (agentOf(s.kind).caps.chat ? openSessionChat : openSessionTerminal)(s.name);
 }
 
-// openSessionFromList — 一覧の行から「開く」ときの行き先の規則。稼働中か・転写を持つ種か・
-// 作業フォルダが残っているかで行き先が変わるので、左ペインの行（SessionRow）とコマンド
-// パレットのセッション行が別々に条件を書くと必ずドリフトする。ここが唯一の正。
+// openSessionFromList — where a row from a list opens. The destination depends on whether
+// the session is alive, whether the kind has a transcript, and whether its working folder
+// still exists, so having the left rail's rows (SessionRow) and the command palette's
+// session rows each spell the conditions out would drift. This is the single source of truth.
 //
-//   稼働中            → チャットできる種はミラー、それ以外は端末
-//   停止・転写あり    → 読み取り専用の履歴（再開しない。フォルダが消えていても転写は
-//                       エージェントの home 側に残るので開ける）
-//   停止・転写なし    → 端末の再生。ただしフォルダが消えている（resumable === false）か
-//                       ワークスペースが動いていなければ開けない
+//   alive                    → mirror for a chat-capable kind, terminal otherwise
+//   stopped, has transcript  → read-only history (no resume; the transcript lives in the
+//                              agent's home, so it opens even when the folder is gone)
+//   stopped, no transcript   → terminal replay, but only when the folder still exists
+//                              (resumable !== false) and the workspace is running
 //
-// running = ワークスペースが動いているか。開けなかったときは false を返すので、呼び手は
-// 「押したのに何も起きない」を黙って通さずに済む。
+// running = whether the workspace is running. Returns false when nothing could be opened, so
+// the caller does not silently let a click do nothing.
 export function openSessionFromList(s: Session, split: boolean, running: boolean): boolean {
   const caps = agentOf(s.kind).caps;
   if (s.alive) {
@@ -78,9 +80,10 @@ export function openSessionFromList(s: Session, split: boolean, running: boolean
   return false;
 }
 
-/** 稼働中セッションを delta 個ぶんローテートし、アクティブなペインに開く（docs/log/29 の
- * ペイン移動ではなく「セッションの持ち替え」）。行き先を返す — 対象が無い／1 件しか
- * 無ければ null で、呼び手はそのまま「他にありません」と伝えればよい。 */
+/** Rotates the running sessions by delta and opens the result in the active pane — swapping
+ * which session the pane shows, not moving between panes (docs/log/29). Returns the
+ * destination, or null when there is no candidate or only one, so the caller can say "there
+ * are no others". */
 export function rotateRunningSession(delta: number): RotateTarget | null {
   const list = rotatableSessions(useSessionsStore.getState().sessions, activeWorkingSet(getSettings()));
   const current = activePane(useLayoutStore.getState().layout)?.session;
@@ -89,8 +92,8 @@ export function rotateRunningSession(delta: number): RotateTarget | null {
   return target;
 }
 
-// 起動時の最初の指示をここから配達していた sendPromptWhenAlive は撤去した。ブラウザ側で
-// alive を待って打つやり方は「Console が開いている間しか走らない」うえ、alive（tmux が
-// 在る）から一定時間で打つだけなので起動画面に食われることがある。今は作成要求の
-// initial_prompt（添付ありのみ /input {when_ready}）で Agent が配達する — 待ち・二度目の
-// Enter・配達確認つきで、Console を閉じていても走る（useStartWork.ts）。
+// The first prompt is NOT delivered from here. Waiting for alive in the browser only runs
+// while the Console is open, and typing a fixed delay after alive (tmux exists) can be eaten
+// by the CLI's startup screen. The Agent delivers it from the create request's
+// initial_prompt (or /input {when_ready} when there are attachments), with the wait, the
+// second Enter and a delivery check, and it runs with the Console closed (useStartWork.ts).

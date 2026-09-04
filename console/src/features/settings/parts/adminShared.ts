@@ -1,10 +1,10 @@
-// 管理系の面を「読み手ごとのモーダル」へ分けたときに、両側から要るものだけを置く場所。
+// What both admin modals need, and nothing else.
 //
-// AdminTab（デプロイ管理者）と TenantDialog（テナント管理者）は同じ CP の管理 API を
-// 読む。だから API の形（Tenant / Member）と、その数値の見せ方（GiB・%）は 1 つで
-// なければならない — 2 つに写すと、片方だけ直る類のズレが必ず出る。
+// AdminTab (deployment admin) and TenantDialog (tenant admin) read the same CP admin API, so
+// the API shapes (Tenant / Member) and the way their numbers are rendered (GiB, %) have to
+// exist once: copied into two places, they drift the moment only one of them is fixed.
 //
-// ★ ここには権限の判断を置かない。サーバが持っているものを UI に写す道具だけ。
+// No permission decisions belong here — only the tools that put what the server holds on screen.
 import { fmtGiB } from "../../../lib/bytes.ts";
 import type { MsgKey } from "../../../lib/i18n/index.ts";
 
@@ -21,13 +21,14 @@ export interface Tenant {
   max_workspace_mem?: number; // per-workspace RAM cap in bytes (0 = no tenant cap)
   session_idle_timeout?: string;
   ws_idle_timeout?: string;
-  /** 人の判断待ち専用の tier1 タイムアウト（docs/log/75）。空 = session_idle_timeout に従う。 */
+  /** tier1 timeout used only while waiting on a human decision (docs/log/75).
+   *  Empty = follow session_idle_timeout. */
   interaction_idle_timeout?: string;
   // How long a home may sit unopened before it is put away as a snapshot (ecs-ec2 only;
-  // "" = deploy default, "0" = never). ADR 0045 決定 13-2.
+  // "" = deploy default, "0" = never). ADR 0045 decision 13-2.
   home_hibernate_after?: string;
   // How often to keep a copy of a home outside its AZ — the tenant's RPO (ecs-ec2 only;
-  // "" = deploy default, "0" = no backups). ADR 0045 決定 17.
+  // "" = deploy default, "0" = no backups). ADR 0045 decision 17.
   home_backup_every?: string;
   allow_agent_self_update?: boolean;
   terminal_history_retention_days?: number;
@@ -35,7 +36,8 @@ export interface Tenant {
   allowed_providers?: string;
   auto_join_domains?: string;
   allowed_domains?: string;
-  // 受け入れるが、そのテナントのログイン画面には出さない方式（docs/log/61 §61.15.9）。
+  // Providers that are accepted but not offered on that tenant's login screen
+  // (docs/log/61 §61.15.9).
   hidden_providers?: string;
 }
 
@@ -57,27 +59,30 @@ export interface Member {
    *  sign in, but stays on THIS list so the rest of the offboarding sequence
    *  (stop workspace → clean home) is still reachable (docs/log/61 §61.10.6). */
   status?: string;
-  /** 自動停止の見通し（docs/log/75 P4）。reaper が最後に観測したもので、稼働中の
-   *  Workspace にだけ入る。**画面はこれを再計算しない** — 自前で導出すると reaper が
-   *  実際に見ているもの（在席・ピン・背景作業）とズレて、「なぜ止まらないのか」を
-   *  調べるための画面が別の答えを出す。 */
+  /** The auto-stop outlook (docs/log/75 P4): what the reaper last observed, present only on a
+   *  running Workspace. The screen must not recompute it — a locally derived answer drifts
+   *  from what the reaper actually sees (presence, pins, background work), and the screen
+   *  people open to find out why a workspace will not stop would then give a different one. */
   idle?: MemberIdle;
 }
 
 export interface MemberIdle {
-  /** このテナントで tier2（Workspace 停止）が有効か。false は「予定なし」ではなく
-   *  「機能が切ってある」— 設定ミスと区別できる必要がある。 */
+  /** Whether tier2 (stopping the Workspace) is enabled for this tenant. false means the
+   *  feature is switched off, not "nothing scheduled" — the two must stay distinguishable
+   *  from a misconfiguration. */
   enabled: boolean;
-  /** 今の観測が続いた場合の停止予定時刻（RFC3339）。holders が空のときだけ意味を持つ。 */
+  /** When it would stop if the current observation holds (RFC3339). Meaningful only while
+   *  holders is empty. */
   stopAt?: string;
-  /** 止めない理由。空 = 何も止めていない（stopAt に向かって数えている）。 */
+  /** What is holding it open. Empty = nothing is, and the countdown to stopAt is running. */
   holders?: Array<{ kind: string; session?: string; until?: string }>;
-  /** 観測時刻。スイープ間隔ぶん古いので、秒単位の断言をさせないために出す。 */
+  /** When it was observed. It is one sweep interval stale, and is shown so nobody asserts
+   *  anything to the second. */
   observedAt: string;
 }
 
 /** What the three size axes MEAN on this deployment's runtime
- *  (GET /api/admin/workspace-sizing, ADR 0045 決定 21).
+ *  (GET /api/admin/workspace-sizing, ADR 0045 decision 21).
  *
  *  The stored shape is the same everywhere — three independent numbers — but what a
  *  stored number BECOMES is not. On the EC2 slot pool the CPU axis never reaches the
@@ -103,7 +108,7 @@ export interface WsSizing {
 }
 
 /** One declared machine class: the operator's own label, a CPU architecture and its
- *  own ladder. The LABEL is what the admin sees — they are choosing "省コスト（Arm）",
+ *  own ladder. The LABEL is what the admin sees — they are choosing "low cost (Arm)",
  *  not an EC2 instance family; the instance type appears only in the "you land on"
  *  line underneath. */
 export interface WsSlotClass {
@@ -116,10 +121,10 @@ export interface WsSlotClass {
 export interface WsSlot {
   instance_type: string;
   mem_mib: number;
-  /** 0/absent when the operator did not declare it — then no vCPU count is shown. */
+  /** 0 or absent when the operator did not declare it — then no vCPU count is shown. */
   vcpu?: number;
   /** What the WORKSPACE gets, as opposed to what the box has: the rung less the reserve
-   *  held back for the box's own daemons (ADR 0045 決定 28). Absent on a deployment that
+   *  held back for the box's own daemons (ADR 0045 decision 28). Absent on a deployment that
    *  runs uncapped — there the box IS the answer and one number is honest. */
   usable_mem_mib?: number;
 }
@@ -164,7 +169,7 @@ export function ladderFor(sizing: WsSizing, classID: string): WsSlot[] | undefin
 }
 
 /** The workspace sizes offered as named choices. The three axes are stored as
- *  independent numbers (ADR 0044 決定 1); these presets exist only so an admin picks
+ *  independent numbers (ADR 0044 decision 1); these presets exist only so an admin picks
  *  from combinations Fargate actually accepts instead of discovering the matrix by
  *  trial and error. cpu is in Fargate units (1024 = 1 vCPU), mem in MiB, disk in GiB.
  *  Every pair here is a measured-valid Fargate size (docs/log/63 §63.2). */

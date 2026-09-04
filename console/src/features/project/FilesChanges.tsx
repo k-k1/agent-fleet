@@ -1,13 +1,13 @@
-// FilesChanges — the ファイル section's 変更 view: every working copy's git
+// FilesChanges — the changes view of the files section: every working copy's git
 // changes in one list (GET api/fs/changes — cross-repo, each entry carries its
-// repo), grouped by working copy and headed by プロジェクト + ブランチ
+// repo), grouped by working copy and headed by project + branch
 // (WorkingCopyLabel) rather than the "<base>@<slug>" folder the API groups by:
 // the folder is the identity, the project+branch is what a reader recognises.
 // Groups follow the rail's project order (base, then its worktrees oldest-first)
 // so the two lists read the same way. Clicking a row opens the working diff in the
 // viewer (same as the SCM pane's changes list) — EXCEPT an untracked file, which
 // git has no diff for: the working diff would be an empty pane, so the row opens
-// the file itself in the viewer instead. The row menu still offers 差分 for anyone
+// the file itself in the viewer instead. The row menu still offers Diff for anyone
 // who wants it. Revived from the old FilesSection (deleted 0568750), minus its
 // file-management extras.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -58,7 +58,7 @@ function changeBadge(c: FsChange): { cls: string; label: MsgKey } {
 
 // One row's menu target. `rel` and `staged` are what the diff needs, `path` (the
 // home-relative one the API reports) what the file view needs, and `deleted`
-// gates 表示 / 編集 — a deleted file has no content left to open.
+// gates View / Edit — a deleted file has no content left to open.
 interface ChangeMenu {
   x: number;
   y: number;
@@ -105,7 +105,8 @@ export function FilesChanges() {
     fn();
   };
 
-  // WS 起動直後は agent 不通で api() が http_5xx を返すので過渡的失敗は再試行（isTransientErr）。
+  // Right after a WS start the agent is unreachable and api() returns http_5xx, so a transient
+  // failure is retried (isTransientErr).
   useRetryLoad(async (signal) => {
     if (!running) return true; // nothing to load while the WS is stopped
     setChanges(null);
@@ -121,16 +122,16 @@ export function FilesChanges() {
     return true;
   }, [running, filesTick]);
 
-  // 自動更新（セッションが入力待ちに入った・features/files/sessionRefresh.ts）。
-  // 上の読み込みを使い回さないのは setChanges(null) のため — 読み直すたびに一覧が
-  // 「読み込み中」へ戻ると、勝手に画面が点滅しているようにしか見えない。ここは
-  // 届いた一覧で**差し替えるだけ**で、失敗したら黙って今の表示を残す。
-  // prefix は見ない: この一覧は全作業コピー横断の 1 リクエストなので、範囲で絞っても
-  // 減らせるものが無い（同時に終わった複数セッションは 1 本に畳む）。
+  // Auto-refresh when a session goes back to waiting for input
+  // (features/files/sessionRefresh.ts). The loader above is not reused because of its
+  // setChanges(null): dropping the list back to "loading" on every reload just looks like the
+  // screen flickering on its own. This only replaces the list with what arrived, and on failure
+  // silently keeps what is shown. The prefix is ignored: this list is one request across all
+  // working copies, so scoping saves nothing (several sessions ending at once fold into one).
   const autoTick = useFilesStore((s) => s.scoped.n);
   const autoInFlight = useRef(false);
   const lastAutoAt = useRef(0);
-  const mountedTick = useRef(autoTick); // マウント前の合図は上の初回読み込みが済ませている
+  const mountedTick = useRef(autoTick); // signals from before mount are covered by the initial load
   const reload = useCallback(async () => {
     if (!running || autoInFlight.current || document.hidden) return;
     autoInFlight.current = true;
@@ -140,7 +141,8 @@ export function FilesChanges() {
       if (!d || d.error || isTransientErr(d) || !Array.isArray(d.changes)) return;
       setChanges(d.changes);
     } catch {
-      /* 一過性の失敗は今の表示のまま — 次のターン終了か 更新 で追いつく */
+      /* on a transient failure keep what is shown: the next end of turn, or a manual refresh,
+         catches up */
     } finally {
       autoInFlight.current = false;
     }
@@ -150,9 +152,10 @@ export function FilesChanges() {
     void reload();
   }, [autoTick, reload]);
 
-  // タブ／ウィンドウに戻ったとき（docs/log/44 §7.2 と同じ考え方）。離席中に終わった
-  // ターンと、state を持たないセッションや Agent Fleet の外での変更を拾う唯一の道。
-  // SCM ペインも同じ引き金で更新している（features/scm/SourceControlView.tsx）。
+  // On returning to the tab/window (same idea as docs/log/44 §7.2). This is the only way to
+  // pick up turns that ended while away, sessions that carry no state, and changes made outside
+  // Agent Fleet. The SCM pane refreshes on the same trigger
+  // (features/scm/SourceControlView.tsx).
   useEffect(() => {
     const onBack = () => {
       if (document.hidden || Date.now() - lastAutoAt.current < REVALIDATE_GAP_MS) return;
@@ -168,7 +171,7 @@ export function FilesChanges() {
 
   if (!running) return <EmptyState icon="debug-disconnect" title={tr("pj.ws_stopped")} />;
   if (changes === null) return <EmptyState icon="loading" title={tr("pj.loading")} />;
-  // 作業グループ (docs/log/52): keep only changes in the group's working copies —
+  // Working sets (docs/log/52): keep only changes in the set's working copies —
   // a worktree folder ("<base>@<slug>") resolves via its base prefix.
   const scoped = wset ? changes.filter((c) => wset.repos.includes(folderBase(c.repo))) : changes;
   if (scoped.length === 0) return <EmptyState icon="check" title={tr("pj.no_changes")} />;
@@ -270,7 +273,7 @@ export function FilesChanges() {
                 <Icon name="git-compare" /> {tr("view.diff")}
               </button>
             </li>
-            {/* 表示 / 編集 open the file itself, so a deleted one has nothing to
+            {/* View / Edit open the file itself, so a deleted one has nothing to
                 show — the entries stay listed but disabled, with the reason on
                 the tooltip. */}
             <li>

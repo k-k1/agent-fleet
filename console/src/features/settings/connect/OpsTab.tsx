@@ -17,7 +17,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 // (encrypted secrets) and injected into the MCP server at spawn by `workspace-agent
 // mcp-run` — they never reach the CP. (The two AWS cards store no secret at all: they
 // ride the AWS cred chain.)
-// The chat-bridge connections (Discord / Slack) moved to their own チャット連携 tab
+// The chat-bridge connections (Discord / Slack) moved to their own chat integrations tab
 // (ChatTab) — they're notification destinations, not monitoring providers.
 export function OpsTab() {
   const tr = useT();
@@ -28,7 +28,7 @@ export function OpsTab() {
 
   // (Re)load when the workspace is running — including a stopped→running
   // transition while the dialog is open (same pattern as AgentsTab). Without
-  // this initial kick, useConnections stays null (読み込み中) forever.
+  // this initial kick, useConnections stays null (stuck on "loading") forever.
   useEffect(() => {
     if (running) reload();
   }, [running, reload]);
@@ -377,7 +377,7 @@ const AWS_MCP_ENDPOINTS = ["us-east-1", "eu-central-1"];
 // official SigV4 stdio proxy (`workspace-agent mcp-run aws`). Same profile story as
 // CloudWatch, plus two things this card owns:
 //   - the endpoint region (where the MCP service runs, ≠ the resource region);
-//   - 書き込みツール, off by default. On, the agent can call ~15,000 AWS API actions
+//   - write tools, off by default. On, the agent can call ~15,000 AWS API actions
 //     and run scripts, so it is an explicit choice made here rather than a default
 //     that arrives with the connection.
 // Unlike the other ops integrations this one also attaches to interactive sessions,

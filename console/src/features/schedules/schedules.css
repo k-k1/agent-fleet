@@ -235,7 +235,7 @@
   color: var(--fg);
   flex: 0 0 auto;
 }
-/* Outcome label — 成功/失敗/スキップ/未実行, tinted by the same four tones as the dot. */
+/* Outcome label — succeeded/failed/skipped/not run, tinted by the same four tones as the dot. */
 .sched-run-label {
   flex: 0 0 auto;
   font-weight: 600;

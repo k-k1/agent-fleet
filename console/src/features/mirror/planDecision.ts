@@ -10,9 +10,9 @@
 //     - a 2-option 2.1.212 build (spinner_test.go): 1.Yes-auto / 2.Yes-manual
 //   The old reject typed a fixed "Down Down Down Enter" to land on the 4th row. On any
 //   shorter, WRAPPING menu those three Downs wrap the cursor back onto a "Yes" row, so
-//   却下 silently APPROVED the plan (observed 2026-07-22: card badged 却下, claude replied
-//   「プラン承認されました」and coded on). There is no fixed Down-offset that selects a
-//   reject across every menu shape — so reject must not navigate by position at all.
+//   reject silently APPROVED the plan (measured: the card badged Reject while claude replied
+//   that the plan was approved and carried on coding). There is no fixed Down-offset that
+//   selects a reject across every menu shape — so reject must not navigate by position at all.
 //   Reject now sends an interrupt (Escape), which dismisses the modal back to plan mode
 //   on any layout and records an interrupt tool_result that isRejected() recognises.
 //
@@ -27,9 +27,9 @@ export const PLAN_APPROVE_KEYS: readonly string[] = ["Enter"];
 //     ## Approved Plan:
 //     <the entire plan Markdown>
 //   The verdict is always in that header; the body is the plan's own prose. Matching the
-//   keywords against the whole text lets a plan that merely *mentions* 「却下」「中止」
-//   「やり直し」/ "reject" / "refine" badge its OWN approval 却下 — observed 2026-08-31:
-//   approved plan, card badged 却下, claude coding on right under it. Every plan long
+//   keywords against the whole text lets a plan that merely *mentions* 却下 / 中止 /
+//   やり直し / "reject" / "refine" badge its OWN approval as rejected — measured: an
+//   approved plan, card badged Reject, claude coding on right under it. Every plan long
 //   enough to discuss alternatives is a coin flip. So: cut the embedded plan off first.
 const PLAN_BODY_MARKER = /^[ \t]*#{1,6}[ \t]*(approved plan|承認されたプラン)[ \t]*[:：]/im;
 
@@ -50,19 +50,19 @@ export function isApproved(outcome?: string): boolean {
 }
 export function isRejected(outcome?: string): boolean {
   // "interrupt" catches a rejected plan's tool_result ("[Request interrupted by user
-  // for tool use]"), which is how an Escape/却下 out of ExitPlanMode is recorded.
+  // for tool use]"), which is how an Escape/reject out of ExitPlanMode is recorded.
   return /keep planning|not approv|reject|refine|declin|interrupt|却下|中止|やり直/i.test(outcomeHead(outcome));
 }
 
 export type PlanOutcome = "approved" | "rejected" | "decided";
 
-// planOutcome badges a plan, reconciling the OPTIMISTIC 却下 mark (set the instant the
+// planOutcome badges a plan, reconciling the OPTIMISTIC reject mark (set the instant the
 // user clicks reject, before the tool_result lands) against the REAL outcome text.
 //
 // A definitive approval in the outcome text WINS over the optimistic reject flag: this
-// is what stops the exact symptom we saw — a card left badged 却下 while claude actually
+// is what stops the symptom above — a card left badged Reject while claude actually
 // coded. Empty/unknown outcome keeps the optimistic guess so the badge still flips to
-// 却下 immediately for instant feedback, then stays 却下 once the interrupt result lands.
+// Reject immediately for instant feedback, then stays Reject once the interrupt result lands.
 export function planOutcome(outcome: string | undefined, optimisticRejected: boolean): PlanOutcome {
   if (isApproved(outcome) && !isRejected(outcome)) return "approved";
   if (optimisticRejected || isRejected(outcome)) return "rejected";

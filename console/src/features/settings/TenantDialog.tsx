@@ -1,18 +1,19 @@
-// TenantDialog — テナント設定（テナント管理者の面）。
+// TenantDialog — tenant settings, the tenant administrator's surface.
 //
-// モーダルは 3 つある。個人設定＝自分、管理＝デプロイ全体（デプロイ管理者）、
-// そしてここ＝自分が管理しているテナント。
+// There are three modals: personal settings = yourself, admin = the whole deployment (deployment
+// administrator), and this one = the tenants you administer.
 //
-// ★ 面を分けても権限はサーバが持つ。サインイン方法の「承認して有効化」は CP の
-// setStatus が super_admin を見ており（ADR0043 決定 30）、ログイン規則の PUT は
-// withSuperAdmin 固定（決定 19）。この画面の出し分けは案内でしかない。
+// Separate surfaces do not grant permission — the server does. "Approve and enable" for a
+// sign-in method is checked against super_admin by the CP's setStatus (ADR0043 decision 30), and
+// the login-rule PUT is fixed to withSuperAdmin (decision 19); what this screen shows or hides
+// is only guidance.
 //
-// レイアウトは個人設定と同じ二枚看板（左レール＋本文）で、CSS も settings-* を
-// そのまま使う（クラスの再定義はしない — 同名クラスの二重定義は import 順で合成
-// されるため）。tenant-modal は色味の微調整だけを足す。
+// The layout is the same two-pane shell as personal settings (left rail + body) and reuses the
+// settings-* CSS as is. Do not redefine those classes: two definitions of the same global class
+// are silently merged in @import order. tenant-modal only adds small colour adjustments.
 //
-// レールの並びと本文は tenantScope に置いて管理モーダルと共有する。同じテナントを
-// 別の入口から見るだけなので、IA が入口ごとに分かれないようにするため。
+// The rail order and body live in tenantScope, shared with the admin modal, so the same tenant
+// seen from a different entry point does not get a different information architecture.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -26,8 +27,8 @@ import type { Member, Tenant } from "./parts/adminShared.ts";
 
 export function TenantDialog() {
   const tr = useT();
-  // クラウド費用の面があるかはランタイムが申告する。docker / native には AWS の
-  // 請求が無いので、項目ごと出さない（ADR 0048 決定 9）。
+  // The runtime declares whether a cloud-cost surface exists. docker / native have no AWS bill,
+  // so the item is not shown at all (ADR 0048 decision 9).
   const costProfile = useCostProfile();
   const groups = tenantScopeGroups({ cost: !!costProfile?.available });
   const closeTenantSettings = useSettingsUI((s) => s.closeTenantSettings);
@@ -35,12 +36,12 @@ export function TenantDialog() {
   const [section, setSection] = useState(
     TENANT_SCOPE_SECTIONS.includes(tenantSection) ? tenantSection : "signin",
   );
-  // モバイルは個人設定と同じドリルダウン（レール → 本文、戻るでレールへ）。
+  // Mobile uses the same drill-down as personal settings: rail → body, back returns to the rail.
   const [entered, setEntered] = useState(false);
   useBackClose(() => setEntered(false), mobileMatches() && entered);
 
-  // 開いたまま openTenantSettings(section) が呼ばれたとき（他画面からの deep-link）
-  // レールを飛ばす。マウント時は素通しして、スマホでは一覧から始める。
+  // Skip the rail when openTenantSettings(section) is called while already open (a deep link
+  // from another screen). The mount pass is ignored so a phone still starts at the list.
   const mounted = useRef(false);
   useEffect(() => {
     if (!mounted.current) {
@@ -54,20 +55,21 @@ export function TenantDialog() {
     }
   }, [tenantSection]);
 
-  // ★ isSuper は管理モーダルと同じ GET /api/admin/tenants のレスポンスの super_admin。
-  // 面を分けても取得元を変えない（テナント管理者だけの人には false が返り、承認ボタン
-  // は出ない）。tenants は super_admin なら全テナント、そうでなければ自分が
-  // tenant_admin のテナントだけがサーバ側で絞られて返る。
+  // isSuper is the super_admin field of the same GET /api/admin/tenants response the admin modal
+  // uses — a separate surface must not mean a separate source (a tenant-only admin gets false
+  // and never sees the approve button). tenants is filtered server side: every tenant for a
+  // super_admin, otherwise only those where the caller is tenant_admin.
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [isSuper, setIsSuper] = useState(false);
   const [forbidden, setForbidden] = useState(false);
   const [slug, setSlug] = useState("");
 
-  // メンバーは「一覧 → 詳細」の 2 段。レールを人の数だけ伸ばすと、40 人いる部署で
-  // 破綻するし、外した／追加した瞬間にレールが動く。段はここ（本文）で積む。
+  // Members are two levels, list → detail. Growing the rail by one item per person breaks down
+  // in a 40-person department, and the rail would shift the moment someone is added or removed,
+  // so the second level is stacked here in the body instead.
   const [member, setMember] = useState<Member | null>(null);
-  // 端末の戻るは、まず詳細を閉じる（モーダルごと閉じない）。レールより後に
-  // 積まれるので、こちらが先に剥がれる。
+  // Device back closes the detail first rather than the whole modal: this layer is pushed after
+  // the rail's, so it is popped first.
   useBackClose(() => setMember(null), !!member);
 
   const load = useCallback(async () => {
@@ -118,8 +120,9 @@ export function TenantDialog() {
       <div className="ui-modal-body">
         <div className={"settings-layout" + (entered ? " entered" : "")}>
           <nav className="settings-rail" aria-label={tr("tenant.title")}>
-            {/* 複数のテナントを管理している人のための切り替え。1 つしか無いなら
-                選ぶものが無いので出さない（個人設定に倣い、余計な操作を置かない）。 */}
+            {/* A switcher for people who administer several tenants. With only one there is
+                nothing to choose, so it is not rendered — as in personal settings, no controls
+                that do nothing. */}
             {(tenants?.length || 0) > 1 && (
               <div className="settings-rail-group">
                 <div className="settings-rail-head">{tr("tenant.picker")}</div>
@@ -128,7 +131,7 @@ export function TenantDialog() {
                   value={slug}
                   onChange={(e) => {
                     setSlug(e.target.value);
-                    setMember(null); // 別のテナントの名簿に、前のテナントの人が残らないように
+                    setMember(null); // don't leave the previous tenant's person on another roster
                   }}
                   aria-label={tr("tenant.picker")}
                 >

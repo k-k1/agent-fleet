@@ -12,9 +12,9 @@ export const CHAT_EVENTS: [string, string][] = [
 ];
 export const ALL_EVENTS = CHAT_EVENTS.map(([k]) => k);
 
-// SettingsPanel — the collapsible 通知設定 disclosure shown on a connected card, mirroring
-// the agent 動作設定 (P2 CardSettings): collapsed by default, so the card reads "connect"
-// first with the detail settings a deliberate second level.
+// SettingsPanel — the collapsible notification-settings disclosure shown on a connected card,
+// mirroring the agent behavior settings (CardSettings): collapsed by default, so the card reads
+// "connect" first with the detail settings a deliberate second level.
 export function SettingsPanel({ children }: { children?: ReactNode }) {
   const tr = useT();
   const [open, setOpen] = useState(false);

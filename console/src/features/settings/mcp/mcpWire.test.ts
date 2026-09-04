@@ -156,7 +156,7 @@ describe("formValid", () => {
 // --- tenant distribution (docs/log/48 P4) ---------------------------------------------
 //
 // The invariant worth a test rather than a review: a tenant definition can never carry
-// a command. ADR0031 決定 2 refuses distributed stdio because it is an admin running
+// a command. ADR0031 decision 2 refuses distributed stdio because it is an admin running
 // arbitrary code in every member's container, and the wire body is the last place the
 // Console could reintroduce one.
 

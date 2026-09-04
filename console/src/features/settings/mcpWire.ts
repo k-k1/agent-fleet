@@ -1,9 +1,9 @@
-// エイリアス（ADR 0067 規律①: 呼び出し側を 1 行も触らない）。
+// Alias (ADR 0067 rule 1: do not touch a single line of the call sites).
 //
-// 実体は mcp/mcpWire.ts へ移した。features/chat/AssistantModal.tsx が
-// `../settings/mcpWire.ts` から McpServer 型を引いており、そこは FE-SETTINGS の
-// 所有外なので、旧パスをこの 1 枚で生かしておく。
+// The implementation lives in mcp/mcpWire.ts. features/chat/AssistantModal.tsx pulls the
+// McpServer type from `../settings/mcpWire.ts`, which is outside FE-SETTINGS's ownership,
+// so this one file keeps the old path alive.
 //
-// ★ この 1 枚の回収（呼び出し側を新しいパスへ張り替えて消す）は、ウェーブ境界で
-// 別セッションが行う。ここで消すと features/chat と衝突する。
+// Retiring it (repointing the call sites at the new path) happens in another session at a
+// wave boundary; deleting it here would collide with features/chat.
 export * from "./mcp/mcpWire.ts";

@@ -1,13 +1,15 @@
-// セッション報告の行き先は**会話**（docs/log/30）で、通知は Control Plane に 7 日残るのに
-// 会話は消えうる —— 利用者が消したときも、テストが実 HOME へ幽霊通知を落としたときも
-// （2026-09-04 に実際に起きた: workspace/agent/internal/chatx/chat_report.go の
-// interimDeliveries）。消えていたら報告元セッションへ落として理由を言う、が新しい約束。
+// A session report's destination is the conversation (docs/log/30). A notification lives 7 days
+// in the Control Plane while the conversation can disappear, either because the user deleted it
+// or because a test dropped a ghost notification into the real HOME
+// (workspace/agent/internal/chatx/chat_report.go, interimDeliveries). The contract: when it is
+// gone, fall back to the reporting session and state the reason.
 //
-// ★ 芯は「**取れなかった＝消えた ではない**」。WS 起動直後の 5xx や通信断まで「消えた」と
-// 読むと、起動待ちの一瞬に押した人が毎回セッションへ飛ばされる（会話は生きているのに）。
+// The point: a failed fetch does not mean the conversation is gone. Reading the 5xx right after a
+// WS start, or a dropped connection, as "gone" would divert everyone who clicked during the boot
+// window to the session even though the conversation is alive.
 //
-// dom プロジェクトに置くのは store.ts が core/api/client.ts を引き、そこが読み込み時に
-// localStorage を触るから（node 環境では import すら通らない）。
+// This lives in the dom project because store.ts pulls in core/api/client.ts, which touches
+// localStorage at import time and cannot even be imported in the node environment.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { conversationReachable, openNotificationTarget, type FleetNotification } from "./store.ts";
 import { chatGet } from "../../core/api/client.ts";
@@ -25,23 +27,23 @@ vi.mock("../sessions/open.ts", () => ({
   openSessionTerminal: vi.fn(), openSessionTerminalSplit: vi.fn(),
 }));
 
-describe("報告先の会話が生きているかの判定", () => {
-  it("会話が取れたら開く", () => {
+describe("deciding whether a report's conversation is alive", () => {
+  it("opens the conversation when the fetch succeeds", () => {
     expect(conversationReachable({ id: "c1", messages: [] })).toBe(true);
   });
 
-  it("一時障害（WS 起動中の 5xx・通信断）は「消えた」と読まない", () => {
+  it("does not read a transient failure (5xx during WS start, dropped connection) as gone", () => {
     expect(conversationReachable({ error: { code: "http_502" } })).toBe(true);
     expect(conversationReachable({ error: { code: "internal", status: 500 } })).toBe(true);
-    expect(conversationReachable(null)).toBe(true); // fetch が throw した
+    expect(conversationReachable(null)).toBe(true); // the fetch threw
   });
 
-  it("404（chat_conversation_not_found）だけが「消えた」", () => {
+  it("only a 404 (chat_conversation_not_found) means gone", () => {
     expect(conversationReachable({ error: { code: "chat_conversation_not_found", status: 404 } })).toBe(false);
   });
 });
 
-describe("セッション報告のクリック先", () => {
+describe("where clicking a session report leads", () => {
   const report = (): FleetNotification => ({
     seq: 1, id: "e1", kind: "session-report",
     target: { type: "session", id: "s1" },
@@ -55,22 +57,22 @@ describe("セッション報告のクリック先", () => {
     useSessionsStore.setState({ sessions: [{ name: "s1", kind: "claude", alive: true }] });
   });
 
-  it("会話が生きていれば会話を開く（従来どおり）", async () => {
+  it("opens the conversation while it is alive", async () => {
     vi.mocked(chatGet).mockResolvedValue({ id: "c1" } as never);
     expect(await openNotificationTarget(report(), false)).toEqual({ opened: true });
     expect(openChat).toHaveBeenCalledWith("c1");
     expect(openSessionChat).not.toHaveBeenCalled();
   });
 
-  it("会話が消えていたら報告元セッションへ落とし、会話名を返す", async () => {
+  it("falls back to the reporting session and returns the conversation name when it is gone", async () => {
     vi.mocked(chatGet).mockResolvedValue({ error: { code: "chat_conversation_not_found", status: 404 } } as never);
     expect(await openNotificationTarget(report(), false)).toEqual({ opened: true, missingConversation: "運用オペレーター" });
-    // ★ 行き止まりにしない: 「会話が見つかりません」の赤字ペインを開かない。
+    // Must not dead-end: no red "conversation not found" pane.
     expect(openChat).not.toHaveBeenCalled();
     expect(openSessionChat).toHaveBeenCalledWith("s1");
   });
 
-  it("会話もセッションも無ければ、会話が消えたことだけは伝える", async () => {
+  it("still reports the missing conversation when neither conversation nor session exists", async () => {
     useSessionsStore.setState({ sessions: [] });
     vi.mocked(chatGet).mockResolvedValue({ error: { code: "chat_conversation_not_found", status: 404 } } as never);
     const r = await openNotificationTarget(report(), false);
@@ -78,7 +80,7 @@ describe("セッション報告のクリック先", () => {
     expect(r.missingConversation).toBe("運用オペレーター");
   });
 
-  it("WS 起動中の一時失敗では会話を開く（セッションへ飛ばさない）", async () => {
+  it("opens the conversation on a transient failure during WS start, without diverting to the session", async () => {
     vi.mocked(chatGet).mockResolvedValue({ error: { code: "http_502" } } as never);
     expect(await openNotificationTarget(report(), false)).toEqual({ opened: true });
     expect(openChat).toHaveBeenCalledWith("c1");

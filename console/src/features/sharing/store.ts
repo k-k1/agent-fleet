@@ -3,9 +3,9 @@ import { api } from "../../core/api/client.ts";
 
 export interface SharedSession {
   id: string;
-  /** 所有者の正規化キー(`a@x.com` → `a-x-com`)。グルーピングと永続キーの同一性判定用。 */
+  /** The owner's normalised key (`a@x.com` → `a-x-com`), used for grouping and persisted keys. */
   ownerUserKey: string;
-  /** 所有者のログイン ID(メールアドレス)。表示はこちら — ownerLabel() 参照。 */
+  /** The owner's login id (email address). This is what gets displayed — see ownerLabel(). */
   ownerEmail?: string;
   name: string;
   kind: string;
@@ -19,20 +19,22 @@ export interface SharedSession {
   workspaceState: string;
   worktree?: boolean;
   parent?: string;
-  /** 作業コピーが今チェックアウトしているブランチ(所有者側の repo 行と同じ表示)。 */
+  /** Branch the working copy currently has checked out (displayed as on the owner's repo row). */
   branch?: string;
   /**
-   * 稼働中セッションの live state(working | question | plan | permission | blocked |
-   * compacting、空=入力待ち)。停止中は空。所有者側と同じ状態チップの素で、鮮度は
-   * 一覧の同期間引き(既定60秒)＋リロードボタン次第(docs/log/59 §3)。
+   * Live state of a running session (working | question | plan | permission | blocked |
+   * compacting; empty = waiting for input). Empty while stopped. Feeds the same state chip as on
+   * the owner side; its freshness depends on the list's sync throttle (60s by default) plus the
+   * reload button (docs/log/59 §3).
    */
   activity?: string;
 }
 
 /**
- * 所有者の名乗り。人が名乗るのはログイン ID(メールアドレス)なので email を優先し、
- * email を持たない identity(管理者が user_key だけで足した場合)だけ正規化キーへ落とす。
- * グルーピングや localStorage の鍵には使わない — あちらは ownerUserKey で同一性を取る。
+ * How an owner is named. People identify themselves by their login id, so prefer email and fall
+ * back to the normalised key only for an identity that has none (an admin added it by user_key
+ * alone). Never use this for grouping or localStorage keys — those take identity from
+ * ownerUserKey.
  */
 export function ownerLabel(o: { ownerUserKey: string; ownerEmail?: string }): string {
   return o.ownerEmail || o.ownerUserKey;
@@ -40,16 +42,16 @@ export function ownerLabel(o: { ownerUserKey: string; ownerEmail?: string }): st
 
 interface SharedSessionsStore {
   sessions: SharedSession[];
-  /** force=true(セクションのリロードボタン)は所有者在庫の再取得まで要求する。 */
+  /** force=true (the section's reload button) also asks the owner for a fresh inventory. */
   refresh(force?: boolean): Promise<void>;
 }
 
 export const useSharedSessionsStore = create<SharedSessionsStore>((set) => ({
   sessions: [],
   async refresh(force?: boolean) {
-    // 既定のポーリングは CP の DB スナップショットを読むだけ(所有者 Workspace へは
-    // 最大60秒に1回しか行かない)。?refresh=1 だけがその間引きを飛び越える — 状態
-    // バッジや削除の反映を「今すぐ」取り直したいのは人が押したときだけなので。
+    // The default poll only reads the CP's DB snapshot (it reaches the owner's Workspace at most
+    // once a minute). Only ?refresh=1 bypasses that throttle, because "right now" is wanted for a
+    // state badge or a deletion only when a person asked for it.
     const d = await api("api/shared-sessions" + (force ? "?refresh=1" : "")).catch(() => ({ sessions: [] }));
     if (!d?.error) set({ sessions: Array.isArray(d.sessions) ? d.sessions : [] });
   },
@@ -63,8 +65,8 @@ export function startSharedSessionsPolling(): () => void {
   return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", load); };
 }
 
-// 所有者側: 自分が作成した共有(session/repo/worktree)の一覧。SessionRow/RepoRow の
-// 「共有中」バッジと ShareListModal が共通で参照する。会話本文は含まない軽量な行のみ。
+// Owner side: the shares (session/repo/worktree) this user created. Both the "shared" badge on
+// SessionRow/RepoRow and ShareListModal read it. Lightweight rows only, no conversation bodies.
 export interface MyShare {
   id: string;
   recipientUserKey: string;

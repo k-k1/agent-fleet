@@ -1,12 +1,12 @@
-/* 設定の入力部品（parts/controls.tsx）— セグメント選択・ON/OFF・スライダー・
- * 並べ替えリスト。
+/* Settings input controls (parts/controls.tsx) — segmented choice, on/off, slider,
+ * reorder list.
  *
- * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
- * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
- * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
- * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ * One slice of `settings.css` (ADR 0067 / FE-SETTINGS). A class name must appear in exactly
+ * one file: every stylesheet in this Console is global, so the same class split across two
+ * files is not a conflict — it is silently merged in @import order (scripts/css-dup.mjs).
+ * Before adding a rule, check that its name exists nowhere else.
  *
- * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ * Load order is decided by the @import list in settings.css; rename this file there too.
  */
 .ds-row {
   display: flex;
@@ -23,8 +23,9 @@
 
 .choice-seg {
   display: inline-flex;
-  /* 選択肢が多い（話者=6個 等）と狭幅で .seg の overflow:hidden に見切れるため、
-     flex 子として縮められるよう min-width:0 にし、入り切らない分は折り返す（docs/log/24）。 */
+  /* With many options (six TTS voices, say) a narrow width clips them against .seg's
+     overflow:hidden, so min-width:0 lets this shrink as a flex child and the overflow
+     wraps instead (docs/log/24). */
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -40,8 +41,9 @@
   font-size: 13px;
 }
 
-/* ds-select: 候補が多い設定（opencode の既定モデル等）はセグメントの代わりに素の
-   <select>。settings-modal の select 見た目を継ぎつつ、行内で広がり過ぎない幅に抑える。 */
+/* ds-select: a setting with many candidates (opencode's default model, say) uses a plain
+   <select> instead of a segmented control. It inherits the settings modal's select look but
+   is kept narrow enough not to take over the row. */
 .ds-select {
   font-size: 13px;
   min-width: 200px;
@@ -49,7 +51,8 @@
   cursor: pointer;
 }
 
-/* 音量スライダー（docs/log/24）: レンジ入力＋現在値のパーセント表示。アクセントで塗る。 */
+/* Volume slider (docs/log/24): a range input plus the current value as a percentage,
+   painted in the accent color. */
 .ds-slider {
   display: inline-flex;
   align-items: center;
@@ -60,8 +63,9 @@
 .ds-slider input[type="range"] {
   width: 160px;
   max-width: 46vw;
-  /* Top バー（外観）の色に追従。--topbar-accent は applyTheme が概ね常に定義（未選択でも
-     :root 既定へフォールバック）。--accent へ退避するのは念のため。 */
+  /* Follows the top bar's color. applyTheme defines --topbar-accent in practically every
+     case (falling back to the :root default even with nothing selected); the --accent
+     fallback is belt and braces. */
   accent-color: var(--topbar-accent, var(--accent));
   cursor: pointer;
 }
@@ -73,7 +77,7 @@
   color: var(--muted, var(--fg));
 }
 
-/* 優先順位の並べ替えリスト（OrderList — アシスタントのエージェント優先順位）。 */
+/* The priority reorder list (OrderList — the assistant's agent priority). */
 .ds-orderlist {
   display: flex;
   flex-direction: column;

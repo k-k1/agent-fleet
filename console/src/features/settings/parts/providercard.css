@@ -1,14 +1,14 @@
-/* 接続カード（parts/providerCard.tsx）— エージェント / Git / 運用 / 課題 /
- * チャットの各タブが同じ見た目で並べる、接続状態・認証フロー・切断のカード。
+/* Connection cards (parts/providerCard.tsx) — connection state, auth flow and disconnect,
+ * laid out identically by the agents, Git, ops, issue-tracker and chat tabs.
  *
- * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
- * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
- * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
- * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ * One slice of `settings.css` (ADR 0067 / FE-SETTINGS). A class name must appear in exactly
+ * one file: every stylesheet in this Console is global, so the same class split across two
+ * files is not a conflict — it is silently merged in @import order (scripts/css-dup.mjs).
+ * Before adding a rule, check that its name exists nowhere else.
  *
- * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ * Load order is decided by the @import list in settings.css; rename this file there too.
  */
-/* AgyCard: the always-on 実験枠 label sits right under the card head (the quota
+/* AgyCard: the always-on "experimental" label sits right under the card head (the quota
    meters live in the WS bar's Antigravity usage chip). It is a bare ps-note
    directly inside the card — unlike its usual .p-settings home (13px padding) —
    so it needs the card's horizontal inset itself or it hugs the border. */
@@ -16,7 +16,7 @@
   margin: 2px 13px 6px;
 }
 
-/* ── Connection provider cards (設定 > 接続). Each provider is a card: a colored
+/* ── Connection provider cards (Settings > Connections). Each provider is a card: a colored
    2-char badge + name + status pill, then a description and its connect/flow UI.
    Unifies what was a flat .conn-row per provider. Mock: console-connections-mock.html.
    Badge colors match the session kind badges (codex green / opencode purple) rather
@@ -137,16 +137,17 @@
   flex: none;
 }
 
-/* ログインの期限（docs/log/47 §4-8）。期限切れ／あと数日、のどちらも同じ warn 色で
-   アカウント行に置く — 隣が 再認証 ボタンなので、読んだ流れで直せる。 */
+/* Login expiry (docs/log/47 §4-8). Already expired and a few days left both use the same warn
+   color on the account row — the re-authenticate button sits next to it, so reading it leads
+   straight to the fix. */
 .p-who .p-exp {
   font-size: 11px;
   color: var(--warn);
   flex: none;
 }
 
-/* アカウント行のアクションは右端へ寄せる。auto マージンを持つのは行内で最初の
-   ボタンだけ — 両方に付けると 再認証 と 切断 が行の左右へ離れてしまう。 */
+/* Push the account row's actions to the right edge. Only the first button in the row gets the
+   auto margin: give it to both and re-authenticate and disconnect fly to opposite ends. */
 .p-who .conn-reauth,
 .p-who .conn-disconnect {
   margin-left: auto;
@@ -289,12 +290,12 @@
   opacity: 0.7;
 }
 
-/* "切断" — the live-connection sever action; danger-red on hover (via .danger). */
+/* Disconnect — the live-connection sever action; danger-red on hover (via .danger). */
 .conn-disconnect {
   font-size: 12px;
 }
 
-/* "再認証" — sign in again without losing the card's connected framing (providerCard). */
+/* Re-authenticate — sign in again without losing the card's connected framing (providerCard). */
 .conn-reauth {
   font-size: 12px;
 }

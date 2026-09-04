@@ -9,7 +9,7 @@ import { useOpenSignal } from "../../core/store/uiOpen.ts";
 import { relTime } from "../../lib/intl.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { notificationKindLabel, notificationRowSubtitle } from "./wording.ts";
-// 通知の相対時刻。共通実装（lib/intl）へ委譲する。
+// Relative time for a notification; delegated to the shared implementation (lib/intl).
 const relative = (at: string): string => relTime(at);
 
 export function NotificationCenter() {
@@ -73,8 +73,8 @@ export function NotificationCenter() {
   useOpenSignal("notifications", show);
   const activate = async (n: FleetNotification, split: boolean) => {
     const r = await openNotificationTarget(n, split);
-    // 「一覧にありません」はセッションの話なので、会話が消えていた場合には出さない
-    // （その理由は openNotificationTarget が既にトーストで言っている）。
+    // "not in the list" is about a session, so it must not appear when the conversation was the
+    // thing that vanished — openNotificationTarget already toasted that reason.
     if (!r.opened && r.missingConversation === undefined) toast(tr("noti.session_not_in_list"), { kind: "warn" });
     if (r.opened) setOpen(false);
     void useNotificationStore.getState().markSeen(undefined, [n.id]);
@@ -131,8 +131,8 @@ function FleetRow({ n, onActivate }: { n: FleetNotification; onActivate: (n: Fle
       onMouseDown={(e) => e.button === 1 && e.preventDefault()}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onActivate(n, true); } }}>
       <Icon name={n.kind === "answer-ready" ? "check"
-        : n.kind.startsWith("schedule-") ? "watch" // 左レールのスケジュール節と同じ字面
-          : n.kind.startsWith("handoff-") ? "git-branch" // 共有レールの引き継ぎバッジと同じ字面
+        : n.kind.startsWith("schedule-") ? "watch" // same glyph as the schedule section in the left rail
+          : n.kind.startsWith("handoff-") ? "git-branch" // same glyph as the handoff badge in the sharing rail
             : ["usage-reset", "rate-limit-reached", "rate-limit-resumed"].includes(n.kind) ? "pulse" : "comment-discussion"} />
       <span><b>{notificationKindLabel(n.kind)}</b><small>{notificationRowSubtitle(n)} · {relative(n.createdAt)}</small></span>
     </button>

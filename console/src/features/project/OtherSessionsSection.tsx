@@ -1,7 +1,7 @@
 // OtherSessionsSection — the catch-all for sessions that belong to no working copy
 // (a shell in home, or a session whose repo was removed). Hidden entirely when
 // there are none, so it doesn't float empty at the foot of the rail. The global
-// session-maintenance actions (整理 / アーカイブ) moved to the プロジェクト header.
+// session-maintenance actions (tidy / archive) moved to the project header.
 import { memo } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { IconButton } from "../../ui/Button.tsx";
@@ -24,7 +24,7 @@ export const OtherSessionsSection = memo(function OtherSessionsSection() {
   const actions = useSessionActions();
   const nq = normQuery(useProjectFilter((f) => f.q));
   const rail = useRailRoving();
-  // 作業グループ (docs/log/52) narrows this list — direct assignment (set.sessions) or
+  // Working sets (docs/log/52) narrow this list — direct assignment (set.sessions) or
   // folder-name inheritance (covers a session whose repo was deleted) — then the
   // rail filter (the ProjectTree search box) narrows it further.
   const wset = useActiveWorkingSet();

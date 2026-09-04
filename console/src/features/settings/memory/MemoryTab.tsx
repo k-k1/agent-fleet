@@ -1,17 +1,19 @@
-// MemoryTab — エージェントメモリの版管理（docs/log/39 P2 / ADR 0022・採用既定値 #3）。
+// MemoryTab — version control for agent memory (docs/log/39 P2 / ADR 0022, adopted default #3).
 //
-// エージェントが書き溜める永続メモリ（claude の auto-memory / codex の memories）は
-// 「消えない置き場」にある一方で**履歴が無い**。このタブはその履歴・差分・巻き戻しの
-// 操作面で、実体（git bare repo）は Agent 側にあり、ここは REST を叩くだけ。
+// The persistent memory agents accumulate (claude's auto-memory, codex's memories) sits in
+// storage that never goes away, yet it has no history. This tab is the operating surface for
+// that history, its diffs and its rollbacks; the substance (a bare git repo) lives on the
+// Agent side and this file only calls REST.
 //
-// 画面は上から: ①対象ルートの概況＋自動取得トグル＋手動スナップショット
-// ②スナップショット履歴（左）と選択行の差分（右） ③戻し操作（範囲を選んで確認ダイアログ）
-// ④持ち出し / 取り込み（P3。bundle=全履歴 / tar.gz=最新のみ、取り込みは選択置き換え）。
-// 差分の描画は SCM のコミットペインと同じ <Diff> を流用する（見え方を 2 つに増やさない）。
+// Top to bottom: 1. root overview + auto-capture toggle + manual snapshot;
+// 2. snapshot history (left) and the selected row's diff (right); 3. restore (pick a scope,
+// then a confirm dialog); 4. export / import (P3: bundle = full history, tar.gz = latest only;
+// import replaces the selected scope). The diff uses the same <Diff> as the SCM commit pane,
+// so there is one way a diff looks rather than two.
 //
-// 巻き戻しは履歴を書き換えず、適用前に pre-restore スナップショットを自動で積む
-// （docs/log/39 ★2）。つまりこの画面のどの操作も後から取り消せる — 確認ダイアログの
-// 文面もその前提で書いている。
+// A rollback never rewrites history: a pre-restore snapshot is taken automatically before it
+// applies (docs/log/39 ★2). Every action on this screen is therefore undoable, and the
+// confirm-dialog wording is written on that assumption.
 
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
@@ -32,13 +34,14 @@ import type { RestoreScopeState } from "./memoryRestore.tsx";
 import { RestorePanel } from "./memoryRestore.tsx";
 import { TransferSection } from "./memoryTransfer.tsx";
 
-// 契機ラベル。Agent が返す trailer 値（auto/manual/pre-restore/restore/import）を
-// そのままキーに使い、未知の値は生のまま出す（新しい契機を足しても画面は壊れない）。
+// Trigger label. The trailer value the Agent returns (auto/manual/pre-restore/restore/import)
+// is used as the key directly and an unknown value is printed raw, so adding a new trigger
+// upstream does not break this screen.
 const triggerLabel = (trigger: string): string =>
   tMaybe("mem.trigger_" + trigger.replace(/-/g, "_")) ?? trigger ?? "";
 
-// 無効なルートの理由。契機ラベルと同じ流儀で、未知の理由は生のまま出す
-// （Agent が新しい理由を返しても画面は壊れない）。
+// Why a root is inactive. Same rule as the trigger label: an unknown reason is printed raw,
+// so a new reason from the Agent does not break the screen.
 const reasonLabel = (reason: string): string => tMaybe("mem.reason_" + reason) ?? reason ?? "";
 
 export function MemoryTab() {
@@ -55,17 +58,17 @@ export function MemoryTab() {
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
 
-  // 選択中のスナップショット（履歴行）と、その差分。
+  // The selected snapshot (a history row) and its diff.
   const [sel, setSel] = useState("");
   const [diff, setDiff] = useState<string | null>(null);
-  // 日時指定ジャンプ（datetime-local の値）。
+  // Jump-to-timestamp (the datetime-local value).
   const [at, setAt] = useState("");
-  // 戻し操作のパネル。null = 閉じている。
+  // The restore panel. null = closed.
   const [scope, setScope] = useState<RestoreScopeState | null>(null);
 
   const load = useCallback(
     async (signal: AbortSignal) => {
-      if (!running) return true; // 停止中は叩かない（起動後に deps で再実行）
+      if (!running) return true; // don't call while stopped; deps re-run this once it starts
       const [r, s] = await Promise.all([
         api("api/agents/memory/roots"),
         api("api/agents/memory/snapshots?limit=100"),
@@ -85,7 +88,7 @@ export function MemoryTab() {
   );
   useRetryLoad(load, [running, reload]);
 
-  // 履歴が入れ替わったら選択を追従させる（消えた rev を掴んだままにしない）。
+  // Follow the selection when the history is replaced, so a vanished rev is never held on to.
   useEffect(() => {
     if (!snaps?.length) {
       setSel("");
@@ -94,7 +97,7 @@ export function MemoryTab() {
     setSel((cur) => (cur && snaps.some((s) => s.rev === cur) ? cur : snaps[0].rev));
   }, [snaps]);
 
-  // 選択行の差分（省略時 = 「その時点が入れた変更」）。
+  // The selected row's diff (with no "from", the change that snapshot introduced).
   useEffect(() => {
     if (!sel) {
       setDiff(null);
@@ -122,10 +125,11 @@ export function MemoryTab() {
     setData((d) => (d ? { ...d, auto: !!res.auto, autoLocked: !!res.autoLocked } : d));
   };
 
-  // codex memories のフリート有効化（docs/log/39 P4・決着 #4）。設定の実体は codex 自身の
-  // config.toml なので、書き込みは既存の /codex/settings を使う。有効化しても
-  // ~/.codex/memories は次に codex が走るまで生えないため、直後は「有効だが未生成」で
-  // 出る（roots を読み直して状態を Agent 側から取り直す）。
+  // Fleet-wide enablement of codex memories (docs/log/39 P4, resolution #4). The setting
+  // really lives in codex's own config.toml, so the write goes through the existing
+  // /codex/settings. Enabling it does not create ~/.codex/memories until codex next runs, so
+  // right afterwards the root reads as enabled but not yet created (roots is re-read to take
+  // the state from the Agent rather than assume it).
   const setCodexMemories = async (on: boolean) => {
     const res = await apiJSON("api/codex/settings", "PUT", { memories: on });
     if (res?.error) {
@@ -151,7 +155,7 @@ export function MemoryTab() {
     }
   };
 
-  // 日時指定: 「その時刻以前の直近スナップショット」へ選択を移す（巻き戻しと同じ意味論）。
+  // Jump to a timestamp: select the newest snapshot at or before it (the rollback semantics).
   const jumpTo = async () => {
     if (!at) return;
     const iso = new Date(at).toISOString();
@@ -161,8 +165,9 @@ export function MemoryTab() {
       toast(tr("mem.jump_none"));
       return;
     }
-    // 履歴は新しい順なので、先頭へ差し込まず at 降順を保ったまま挿入する
-    // （limit 外の古いスナップショットが一覧の先頭に来て時系列が崩れないように）。
+    // The history is newest-first, so insert while keeping `at` descending rather than
+    // prepending — otherwise an old snapshot from beyond the limit lands at the top and the
+    // chronology breaks.
     if (!snaps?.some((s) => s.rev === hit.rev))
       setSnaps((cur) => [...(cur ?? []), hit].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)));
     setSel(hit.rev);
@@ -185,8 +190,8 @@ export function MemoryTab() {
     if (!ok) return;
     setBusy(true);
     try {
-      // rev はクエリにも載せる — CP の監査台帳は URL からしか target を採らないため
-      // （本文は読まない）。実処理に使われるのは本文側。
+      // rev also goes in the query: the CP audit ledger takes its target from the URL only
+      // and never reads the body. The body is what actually drives the operation.
       const res = await apiJSON(
         "api/agents/memory/restore?rev=" + encodeURIComponent(rev),
         "POST",

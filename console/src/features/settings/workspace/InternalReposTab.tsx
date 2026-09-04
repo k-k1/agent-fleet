@@ -7,7 +7,7 @@ import { ProviderCard, StatusPill } from "../parts/providerCard.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
 // InternalReposTab manages the tenant's self-hosted git repositories (docs/reference/
-// internal-git-provider). Split out of GitTab into the ワークスペース group: unlike the
+// internal-git-provider). It sits in the workspace group because, unlike the
 // OAuth git-hosting cards (GitHub/Bitbucket, which are external-account CONNECTIONS and
 // need a running Agent), internal repos are CP-native workspace infra — list / create /
 // rename / delete talk to the CP directly (api/internal-git/*), need no external account,
@@ -141,8 +141,8 @@ export function InternalReposTab() {
   );
 }
 
-// InternalRepoRow is one repo in the internal list: name (editable via リネーム),
-// its clone URL (click to copy), and 削除. Rename edit-state is per-row.
+// InternalRepoRow is one repo in the internal list: name (editable via rename), its clone
+// URL (click to copy), and delete. Rename edit-state is per-row.
 function InternalRepoRow({
   repo,
   onCopy,

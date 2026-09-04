@@ -1,4 +1,4 @@
-// HandoffModal — the unified "引き継ぎ" dialog. Replaces the per-target inline menu items
+// HandoffModal — the unified "handoff" dialog. Replaces the per-target inline menu items
 // that only showed for a few kinds. It opens for ANY session that has a conversation
 // (caps.transcript), lets the user pick the target agent, and (via actions.handoff) opens
 // an operator chat that fires the extraction turn automatically — the assistant is called

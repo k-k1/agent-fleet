@@ -1,4 +1,4 @@
-// ProjectActionPanels — docs/log/56 §9.2 ③ / §7.5 操作A: the two write actions P1
+// ProjectActionPanels — docs/log/56 §9.2 ③ / §7.5 operation A: the two write actions P1
 // ships. Copy is deliberately ONE decision (which agent) plus one optional toggle
 // (copy secret values too) — not a form: dialect and overwrite-vs-skip are decided
 // FOR the user from the destination's own known contract (translate when the
@@ -241,7 +241,7 @@ export function ProjectCopyPanel({ repo, snap, source, onClose, onApplied }: Cop
   );
 }
 
-// ServerSummary — plain key/value rows (docs/log/56 §9.2's "プレビュー", not a raw JSON
+// ServerSummary — plain key/value rows (docs/log/56 §9.2's "preview", not a raw JSON
 // dump): the command/URL as one line, env/header VALUE NAMES only (values stay
 // masked or absent — this is a preview, not an editor).
 function ServerSummary({ s }: { s: ProjectServer }) {

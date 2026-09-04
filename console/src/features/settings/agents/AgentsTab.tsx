@@ -19,19 +19,20 @@ import { OpencodeCard } from "./OpencodeCard.tsx";
 // concerns read as a hierarchy rather than one flat block:
 //   1. CONNECTION (top) — the auth flow + status. Needs the workspace running (secrets
 //      are stored container-side via the Agent; the REST proxy 502s while stopped).
-//   2. 動作設定 (a collapsed disclosure, below) — the per-agent BEHAVIOR: client-side
-//      launch defaults (model / effort / start-mode, in the local settings store) plus
-//      the container-backed toggles (Remote Control / 通知 / RTK / nudge). Launch
-//      defaults are client-only, so the cards render even while stopped — you can set a
-//      default model before starting; only the connection + runtime toggles wait for the
-//      workspace. Git-hosting agents live in GitTab; the rtk 効果 analytics that used to
-//      sit here lives in the 使用量 tab (features/usage) — monitoring is not a setting.
+//   2. BEHAVIOR SETTINGS (a collapsed disclosure, below) — the per-agent behavior:
+//      client-side launch defaults (model / effort / start-mode, in the local settings
+//      store) plus the container-backed toggles (Remote Control / notifications / RTK /
+//      nudge). Launch defaults are client-only, so the cards render even while stopped —
+//      you can set a default model before starting; only the connection + runtime toggles
+//      wait for the workspace. Git-hosting agents live in GitTab; the rtk-effect analytics
+//      that used to sit here lives in the usage tab (features/usage) — monitoring is not a
+//      setting.
 export function AgentsTab() {
   const tr = useT();
   const toast = useToast();
-  // Client-side session pref (タイトル自動提案) — persisted in the local settings
+  // Client-side session pref (automatic title suggestions) — persisted in the local settings
   // store, so it shows regardless of workspace state (unlike the container-backed
-  // toggles, which need the Agent/CLI). 既定モデルは各カードの 動作設定 内。
+  // toggles, which need the Agent/CLI). Default models live in each card's behavior settings.
   const s = useSettings();
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
@@ -90,12 +91,12 @@ export function AgentsTab() {
   const sessionSettings = (
     <section className="ds-group">
       <h4 className="ds-title">{tr("agents.session")}</h4>
-      {/* タイトル自動提案（autoTitleSuggest）は 設定 > AI補助 へ移した（docs/log/84）。
-          ここに在ると「セッションの設定」に見えるが、同じ 1 キーがブランチ名の AI 提案
-          まで止めていた。AI 補助生成の ON/OFF は機能ごとに 1 箇所へ集約している。 */}
-      {/* セッション間メッセージ（docs/log/58 / ADR 0041）。カードの中ではなくここに置くのは、
-          af 自身の MCP が配られる 7 kind すべてに効く設定で、特定のエージェントの
-          設定ではないから（claude カードに入れると claude 限定に見える）。 */}
+      {/* Automatic title suggestions (autoTitleSuggest) moved to Settings > AI assist
+          (docs/log/84). Here it looked like a session setting, but the one key also disabled the
+          AI branch-name suggestion; each AI-generation on/off now has a single home. */}
+      {/* Cross-session messaging (docs/log/58 / ADR 0041) sits here rather than inside a card
+          because it applies to all 7 kinds that af's own MCP is distributed to; it is not any
+          one agent's setting (in the claude card it would look claude-only). */}
       <Row label={tr("agents.peer_messaging")}>
         <OnOff value={s.peerMessaging} onChange={(v) => setSetting("peerMessaging", v)} />
       </Row>
@@ -104,7 +105,7 @@ export function AgentsTab() {
   );
 
   // While running but the connection snapshot hasn't loaded yet, hold the cards back a
-  // beat (avoids a flash of "未接続" idle flows). Stopped renders the cards immediately
+  // beat (avoids a flash of "not connected" idle flows). Stopped renders the cards immediately
   // (degraded): their launch defaults are reachable, connection waits for start.
   const loading = running && !conns;
 

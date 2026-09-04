@@ -1,10 +1,11 @@
-// RepoJobRow — リポジトリ取り込み 1 件の行（docs/log/78）。リポジトリ一覧の先頭に、作業コピーの
-// 行と同じ幅で並ぶ。
+// RepoJobRow — one repository-import row (docs/log/78). Sits at the head of the repo list,
+// the same width as a working-copy row.
 //
-// なぜ行として出すのか: 取り込み中のフォルダは Agent が一覧から外している（半端な作業コピーで
-// 起動されたり `svn status` を掛けられたりしないため）。何も出さないと「クローンを押したのに
-// 何も起きない」になるので、進行そのものをここが受け持つ。**結末も**同じ場所に出す —— 失敗と
-// 中断は既読にするまで残る。以前はトーストを見逃せば終わりで、残るのは半端なフォルダだけだった。
+// Why it is shown as a row: the Agent keeps an importing folder out of the list, so nobody
+// can launch into a half-made working copy or run `svn status` on it. Showing nothing then
+// reads as "clone did nothing", so the progress itself belongs here. The OUTCOME goes in the
+// same place, and a failure or an interruption stays until it is acknowledged — a toast that
+// is missed leaves nothing behind but the half-made folder.
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
@@ -28,13 +29,15 @@ export function RepoJobRow({ job }: { job: RepoJob }) {
           ? tr("pj.job_interrupted", { name: job.name })
           : tr("pj.job_failed", { name: job.name });
 
-  // 残った作業コピーの扱いは VCS で違う: svn は 更新 が続きから取るが、git の clone は
-  // 途中から再開できない（残骸は消えている）。言い分を分けないと誤った指示になる。
+  // What a leftover working copy is worth differs per VCS: svn resumes from where it stopped
+  // on a refresh, while a git clone cannot be resumed (its debris is already gone). Telling
+  // both the same thing would give the wrong instruction.
   const kept = !running && job.state !== "done" && job.kept;
 
-  // 中止は確認を挟む。取り込みは数十分〜数時間の実測があり（11.4GB の作業コピー）、
-  // 誤クリック 1 回で全部やり直しになる。何が失われるかは VCS で違うので、そこまで言う:
-  // svn は途中まで残って 更新 で続きから取れるが、git の clone は再開できない。
+  // Cancelling asks for confirmation. An import is measured in tens of minutes to hours
+  // (an 11.4GB working copy), and one mis-click starts all of it over. What is lost differs
+  // per VCS, so the prompt says which: svn keeps what it has and resumes on a refresh, a git
+  // clone cannot be resumed.
   const onClick = async () => {
     if (running && !(await askConfirm({
       title: tr("pj.job_cancel_confirm_title", { name: job.name }),

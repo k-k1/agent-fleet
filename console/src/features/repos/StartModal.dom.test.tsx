@@ -1,7 +1,7 @@
-// はじめる ハブの「新しいフォルダで始める」ステージ。芯は 1 つ:
-// 作ったフォルダを**そのまま起動へ渡す**こと —— ここで onPickRepo に繋がっていないと、
-// 作業コピーだけができて利用者は左ペインから起動ボタンを探し直すことになる（クローンの
-// 「このまま はじめる」を足した理由と同じ穴）。
+// The Start hub's "start in a new folder" stage. The point is one thing: the folder just
+// created is handed straight on to the launch. Without the link to onPickRepo, all the user
+// gets is a working copy and they have to go hunting for the launch button in the left pane —
+// the same gap that the clone flow's "start from here" was added to close.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -14,7 +14,8 @@ vi.mock("./clone.ts", () => ({
   initRepo: (...a: unknown[]) => initRepo(...a),
 }));
 vi.mock("../chat/api.ts", () => ({ assistantList: vi.fn(async () => ({ assistants: [] })) }));
-// api は経路ごとに返し分けたいので、差し替え可能な 1 本に集約する（既定は従来どおり空配列）。
+// api has to answer differently per path, so it funnels through one replaceable mock (an empty
+// array by default).
 const apiGet = vi.fn(async (_path: string): Promise<unknown> => []);
 vi.mock("../../core/api/client.ts", () => ({
   api: (path: string) => apiGet(path),
@@ -83,8 +84,8 @@ afterEach(() => {
   if (root) unmount();
 });
 
-describe("StartModal — 新しいフォルダで始める", () => {
-  it("作ったフォルダをそのまま 作業を始める へ渡す", async () => {
+describe("StartModal — start in a new folder", () => {
+  it("hands the folder it just created straight to the start-work dialog", async () => {
     const created = { name: "new-project", branch: "main", unborn: true, path: "/home/dev/repos/new-project" };
     initRepo.mockImplementation(async () => {
       useReposStore.setState({ repos: [created] });
@@ -99,7 +100,7 @@ describe("StartModal — 新しいフォルダで始める", () => {
     expect(onPickRepo).toHaveBeenCalledWith(created);
   });
 
-  it("作成に失敗したらステージに留まり、起動へは進まない", async () => {
+  it("stays on the stage and does not proceed to the launch when creation fails", async () => {
     initRepo.mockResolvedValue({ ok: false, name: "" });
 
     await click(rowFor(t("start.newdir_title")));
@@ -108,10 +109,10 @@ describe("StartModal — 新しいフォルダで始める", () => {
 
     expect(initRepo).toHaveBeenCalled();
     expect(onPickRepo).not.toHaveBeenCalled();
-    expect(nameInput()).toBeTruthy(); // まだ入力欄が見えている＝名前を直せる
+    expect(nameInput()).toBeTruthy(); // the field is still visible, so the name can be fixed
   });
 
-  it("既にある名前では作成ボタンが押せない", async () => {
+  it("disables the create button for a name that already exists", async () => {
     useReposStore.setState({ repos: [{ name: "docs" }] });
     await click(rowFor(t("start.newdir_title")));
     await type(nameInput(), "docs");
@@ -121,13 +122,12 @@ describe("StartModal — 新しいフォルダで始める", () => {
   });
 });
 
-// SSM ホストのカード副題。芯は **アカウント id の出どころ**:
-// これは**ホストではなくプロファイルの属性**（control-plane の ssmProfileDTO が持ち、
-// ssmHostDTO は出さない）。以前ここは `h.accountId` を読んでおり、ワイヤに存在しないので
-// **常に undefined ＝この副題が一度も描かれていなかった**（optional なので tsc も鳴らない）。
-// 🔴 **このテストは修正前のコードで赤くなる**——それがこの 2 本を足す理由。
-// 下の 2 本は**読みの 2 箇所（カード副題とドロップダウン）に 1 本ずつ**当たっている。
-describe("StartModal — SSM ホストのカード副題", () => {
+// The subtitle of an SSM host card. The point is where the account id comes from: it is an
+// attribute of the PROFILE, not of the host (the control-plane's ssmProfileDTO carries it and
+// ssmHostDTO does not). Reading `h.accountId` instead is always undefined, since the field is
+// not on the wire, and the subtitle then never renders at all — silently, because the field is
+// optional and tsc says nothing. One test per reading site: the card subtitle and the dropdown.
+describe("StartModal — SSM host card subtitle", () => {
   const profile = { id: "p1", label: "prod", accountId: "123456789012" };
   const host1 = {
     id: "h1",
@@ -143,29 +143,29 @@ describe("StartModal — SSM ホストのカード副題", () => {
     return [];
   };
 
-  // profiles はマウント時に取りに行くので、モックを差し替えてから mount し直す。
+  // profiles is fetched at mount, so swap the mock in and then mount again.
   async function remountWith(hosts: unknown[]): Promise<void> {
     unmount();
     apiGet.mockImplementation(ssmApi(hosts));
     await mount();
     await click(rowFor(t("start.ssm_title")));
-    await act(async () => {}); // hosts の取得を流す
+    await act(async () => {}); // let the hosts fetch settle
   }
 
-  it("カード副題にプロファイルのアカウント id が出る", async () => {
+  it("shows the profile's account id in the card subtitle", async () => {
     await remountWith([host1]);
 
     const sub = document.querySelector(".ssm-card-sub")!;
     expect(sub).toBeTruthy();
-    // 期待は「ラベル · アカウント <id> · インスタンス id」。
+    // Expected: "label · account <id> · instance id".
     expect(sub.textContent).toContain(t("start.ssm_acct", { id: "123456789012" }));
-    // 併せて、他の 2 要素を巻き添えで落としていないことも見る（副題は 3 つの連結）。
+    // Also check the other two parts were not lost along the way (the subtitle joins three).
     expect(sub.textContent).toContain("prod");
     expect(sub.textContent).toContain("i-0abc123");
   });
 
-  it("ホストが多くドロップダウンになる場合も、選択肢にアカウント id が出る", async () => {
-    // SSM_CARD_ALL_MAX = 8。9 件にするとカードは上位だけになり、ドロップダウンが出る。
+  it("shows the account id in the options too once there are enough hosts for a dropdown", async () => {
+    // SSM_CARD_ALL_MAX = 8: at 9 hosts only the top ones stay cards and the dropdown appears.
     const many = Array.from({ length: 9 }, (_, i) => ({ ...host1, id: `h${i}`, instanceId: `i-${i}` }));
     await remountWith(many);
 

@@ -1,6 +1,7 @@
-// 「最後に人待ちに入った時刻」の観測台帳。並び順の材料なので、間違って記録すると
-// パレットの最上段が嘘になる。とくに **初観測では記録しない**（いつ入ったか分からない
-// のに now を焼くと、リロード直後に全員が同時刻で並び、通知台帳の本物の順序を潰す）。
+// The ledger of "when a session last started waiting on a human". It feeds the ordering, so a
+// wrong entry makes the top of the palette lie. In particular a first observation is never
+// stamped: we do not know when it entered, and burning `now` would line every session up at the
+// same time after a reload, destroying the real order held by the notification ledger.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const values = new Map<string, string>();
@@ -21,12 +22,12 @@ describe("waiting ledger", () => {
     resetWaitingLedgerForTest();
   });
 
-  it("counts only a live question/plan/permission as 人待ち", () => {
+  it("counts only a live question/plan/permission as waiting on a human", () => {
     expect(isWaiting(s("a", "question"))).toBe(true);
     expect(isWaiting(s("a", "plan"))).toBe(true);
     expect(isWaiting(s("a", "permission"))).toBe(true);
     expect(isWaiting(s("a", "working"))).toBe(false);
-    expect(isWaiting(s("a", "question", false))).toBe(false); // 停止中は「今すぐ答えれば進む」ではない
+    expect(isWaiting(s("a", "question", false))).toBe(false); // stopped: answering it now moves nothing
   });
 
   it("does not stamp a session that was ALREADY waiting when first seen", () => {
@@ -38,10 +39,11 @@ describe("waiting ledger", () => {
     noteSessions([s("a", "working")], 1_000);
     noteSessions([s("a", "question")], 2_000);
     expect(observedWaitingAt("a")).toBe(2_000);
-    // 待ち続けている間は「入った時刻」であって「今」ではない。
+    // While it keeps waiting the stamp is when it entered, not now.
     noteSessions([s("a", "question")], 3_000);
     expect(observedWaitingAt("a")).toBe(2_000);
-    // 答えて進み、また質問 → 2 度目の時刻に更新される（通知台帳だけでは古いままになる穴）。
+    // Answered, moved on, asked again: the stamp updates to the second time — the gap the
+    // notification ledger alone would leave stale.
     noteSessions([s("a", "working")], 4_000);
     noteSessions([s("a", "plan")], 5_000);
     expect(observedWaitingAt("a")).toBe(5_000);
@@ -50,18 +52,19 @@ describe("waiting ledger", () => {
   it("survives a reload through localStorage", () => {
     noteSessions([s("a", "working")], 1_000);
     noteSessions([s("a", "question")], 2_000);
-    resetWaitingLedgerForTest(); // = 新しいタブ / リロード
+    resetWaitingLedgerForTest(); // = a new tab / a reload
     expect(observedWaitingAt("a")).toBe(2_000);
   });
 
   it("forgets sessions that left the list, but never on an empty list", () => {
     noteSessions([s("a", "working"), s("b", "working")], 1_000);
     noteSessions([s("a", "question"), s("b", "question")], 2_000);
-    // 空一覧は「全部消えた」ではない（取得失敗でも初期値でも空になる）。
+    // An empty list is not "everything is gone" — a failed fetch and the startup value are
+    // both empty.
     noteSessions([], 3_000);
     expect(observedWaitingAt("a")).toBe(2_000);
     expect(observedWaitingAt("b")).toBe(2_000);
-    // b が消えた一覧が届いたら b だけ落とす。
+    // When a list arrives without b, only b is dropped.
     noteSessions([s("a", "question")], 4_000);
     expect(observedWaitingAt("a")).toBe(2_000);
     expect(observedWaitingAt("b")).toBe(0);

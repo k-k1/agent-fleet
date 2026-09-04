@@ -1,10 +1,11 @@
-// ワークスペースの大きさ（メモリ / CPU / 作業ディスク）を設定する面を固定する
-// （docs/log/63 §63.5 / ADR 0044 決定 1・2）。押さえるのは 2 点だけ:
-//   ① 保存で 3 軸すべてが飛ぶこと。この API はクォータ行を丸ごと書くので、UI が
-//      送らなかった軸は 0 に落ちる —— disk_gb を省いた実装は、MCP や API で設定した
-//      ディスクを黙って消す。
-//   ② 名前付きサイズ（S/M/L…）は保存形式ではなく 3 つの入力を埋める近道であること。
-//      押した結果が数値として入力欄に入っていなければ、段位が別の状態を持ってしまう。
+// Pins the view that sets the workspace size (memory / CPU / work disk)
+// (docs/log/63 §63.5, ADR 0044 decisions 1 and 2). Two things only:
+//   1. A save sends all three axes. The API writes the whole quota row, so any axis the UI
+//      omits drops to 0 — an implementation leaving out disk_gb silently erases a disk that
+//      was set through MCP or the API.
+//   2. The named sizes (S/M/L, ...) are a shortcut that fills the three inputs, not a storage
+//      format. If pressing one does not land as numbers in the fields, the size carries state
+//      of its own.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -87,11 +88,11 @@ afterEach(() => {
   host = null;
 });
 
-describe("メンバーの上限編集", () => {
-  it("保存すると 3 軸すべてを送る（省いた軸は 0 に落ちるため）", async () => {
+describe("member limit editing", () => {
+  it("sends all three axes on save, since an omitted axis drops to 0", async () => {
     await mount();
     await openEditor();
-    // 最大セッション / メモリ(MB) / CPU(units) / ディスク(GB) の順で現在値が入る。
+    // Current values in order: max sessions / memory (MB) / CPU (units) / disk (GB).
     expect(numbers()).toEqual(["2", "4096", "1024", "40"]);
 
     const save = buttonWith("保存");
@@ -109,13 +110,13 @@ describe("メンバーの上限編集", () => {
     });
   });
 
-  it("名前付きサイズは 3 つの入力を埋めるだけで、別の状態を持たない", async () => {
+  it("named sizes only fill the three inputs and carry no state of their own", async () => {
     await mount();
     await openEditor();
 
     const xl = buttonWith("XL");
     await act(async () => xl!.click());
-    // XL = 4 vCPU / 16 GiB / 80 GB。Fargate が実際に受け付ける組み合わせであること。
+    // XL = 4 vCPU / 16 GiB / 80 GB, a combination Fargate actually accepts.
     expect(numbers()).toEqual(["2", "16384", "4096", "80"]);
 
     const save = buttonWith("保存");
@@ -125,25 +126,26 @@ describe("メンバーの上限編集", () => {
   });
 });
 
-// 後始末の 3 段（docs/log/61 §61.18）。段は「外す → Workspace を破棄 → 行を消す」で、
-// 画面に出る危険操作は常にそのうちの 1 つだけであること —— 3 つ並べると、どれが
-// 今できる操作なのかが押してみるまで分からない。
-describe("外したメンバーの後始末", () => {
-  it("在席中は「メンバーを外す」だけ", async () => {
+// Cleanup runs in three stages (docs/log/61 §61.18): remove the member, discard the workspace,
+// delete the row. Exactly one of them is on screen at a time; showing all three leaves the
+// operator unable to tell which one is possible now without pressing it.
+describe("cleanup of a removed member", () => {
+  it("offers only remove while the member is still present", async () => {
     await mount();
     expect(buttonWith("メンバーを外す")).toBeTruthy();
     expect(buttonWith("Workspace を破棄")).toBeFalsy();
     expect(buttonWith("メンバーを完全に削除")).toBeFalsy();
   });
 
-  it("外した直後・Workspace が残っている間は「破棄」だけ", async () => {
+  it("offers only discard just after removal, while the workspace still exists", async () => {
     await mount({ ...MEMBER, status: "removed", state: "stopped" });
     expect(buttonWith("Workspace を破棄")).toBeTruthy();
-    // まだ home もクラウド資源も生きている。行を消すとそれを指すものが無くなる。
+    // Home and the cloud resources are still alive; deleting the row would leave nothing
+    // pointing at them.
     expect(buttonWith("メンバーを完全に削除")).toBeFalsy();
   });
 
-  it("破棄が済んだ（state=none）ときだけ「完全に削除」が出て、DELETE を投げる", async () => {
+  it("offers permanent deletion only once discarded (state=none), and sends DELETE", async () => {
     const onRemoved = vi.fn();
     await mount({ ...MEMBER, status: "removed", state: "none" }, onRemoved);
     expect(buttonWith("Workspace を破棄")).toBeFalsy();
@@ -160,9 +162,9 @@ describe("外したメンバーの後始末", () => {
   });
 });
 
-// EC2 スロットプール（ADR 0045 決定 21）。ここで押さえるのは「効かない入力欄を出さない」
-// ことと、「隠した副作用で保存済みの値を 0 に落とさない」ことの 2 点である —— 前者だけ
-// 直すと、CPU 欄を隠した瞬間に他ランタイム用に設定された cpu_limit が消える。
+// The EC2 slot pool (ADR 0045 decision 21). Two things: no input that has no effect is shown,
+// and hiding one must not drop a stored value to 0. Fixing only the first would erase a
+// cpu_limit set for another runtime the moment the CPU field is hidden.
 const SIZING_EC2 = {
   runtime: "ecs-ec2",
   cpu_effective: false,
@@ -177,7 +179,7 @@ const SIZING_EC2 = {
   ],
 };
 
-describe("メンバーの上限編集（ecs-ec2）", () => {
+describe("member limit editing (ecs-ec2)", () => {
   beforeEach(() => {
     api.mockImplementation((p: string) =>
       p === "api/admin/workspace-sizing"
@@ -186,10 +188,10 @@ describe("メンバーの上限編集（ecs-ec2）", () => {
     );
   });
 
-  it("CPU 欄を出さない。ただし保存では保存済みの cpu_limit をそのまま送り返す", async () => {
+  it("hides the CPU field but still sends the stored cpu_limit back on save", async () => {
     await mount();
     await openEditor();
-    // 最大セッション / メモリ(MB) / ディスク(GB)。CPU 欄が消えている。
+    // Max sessions / memory (MB) / disk (GB): the CPU field is gone.
     expect(numbers()).toEqual(["2", "4096", "40"]);
 
     const save = buttonWith("保存");
@@ -198,7 +200,7 @@ describe("メンバーの上限編集（ecs-ec2）", () => {
     expect(body).toMatchObject({ mem_limit: 4096 * 1048576, cpu_limit: 1024, disk_gb: 40 });
   });
 
-  it("プリセットは梯子そのもので、メモリ軸だけを動かす", async () => {
+  it("presets are the ladder itself and move only the memory axis", async () => {
     await mount();
     await openEditor();
     const chips = Array.from(document.querySelectorAll<HTMLButtonElement>(".le-presets .chip")).map(
@@ -210,25 +212,25 @@ describe("メンバーの上限編集（ecs-ec2）", () => {
     expect(numbers()).toEqual(["2", "16384", "40"]);
   });
 
-  it("メモリ欄は「上限」ではなく、実際に乗る箱を言う", async () => {
+  it("states the instance actually landed on, not a cap, in the memory field", async () => {
     await mount();
     await openEditor();
     const units = Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) =>
       (e.textContent || "").trim(),
     );
-    // 4096 MB は m7i.large に乗る（そして 8 GiB 丸ごと使える）。
+    // 4096 MB lands on an m7i.large, and the whole 8 GiB is usable.
     expect(units).toContain("→ m7i.large（2 vCPU / 8 GiB・専有）");
-    // ディスクは作業ディスクではなく永続 home である、と言う。
+    // The disk is stated to be the persistent home, not the work disk.
     expect(units.some((u) => u.includes("home の作成時にだけ反映され"))).toBe(true);
     expect(units.some((u) => u.includes("作業ディスクは停止すると消えます"))).toBe(false);
   });
 });
 
-// マシン種別（docs/log/70 §70.10）。押さえるのは 3 点。
-//   ① 1 クラスしか無いデプロイでは選択肢を出さない（答えが 1 つの質問を足さない）。
-//   ② クラスを変えるとメモリのチップ列がそのクラスの梯子で描き直され、「乗る箱」も
-//      そのクラスで再計算される —— 同じ MB でも別のクラスでは別の箱に乗る。
-//   ③ CPU の系統が変わるときだけ、home の入れ直しを警告する。
+// The machine class (docs/log/70 §70.10). Three things:
+//   1. A deployment with a single class shows no picker (never ask a question with one answer).
+//   2. Changing the class redraws the memory chips from that class's ladder and recomputes the
+//      instance landed on: the same MB figure lands on a different instance in another class.
+//   3. The warning about rebuilding home appears only when the CPU architecture changes.
 const SIZING_CLASSES = {
   ...SIZING_EC2,
   default_slot_class: "standard",
@@ -260,25 +262,25 @@ const SIZING_CLASSES = {
   ],
 };
 
-describe("メンバーのマシン種別", () => {
+describe("member machine class", () => {
   const useSizing = (s: unknown) =>
     api.mockImplementation((p: string) =>
       p === "api/admin/workspace-sizing" ? Promise.resolve(s) : Promise.resolve({ running: false, sessions: [] }),
     );
 
-  it("クラスが 1 つしか無いデプロイでは選択肢自体を出さない", async () => {
+  it("shows no picker at all on a deployment with only one class", async () => {
     useSizing(SIZING_EC2);
     await mount();
     await openEditor();
     expect(buttonWith("テナントの既定")).toBeUndefined();
   });
 
-  it("クラスを選ぶとメモリの梯子と「乗る箱」がそのクラスのものになる", async () => {
+  it("switches the memory ladder and the instance landed on to the chosen class", async () => {
     useSizing(SIZING_CLASSES);
     await mount();
     await openEditor();
 
-    // 既定（テナントの既定 = standard）の梯子。
+    // The ladder of the default class (the tenant default, standard).
     const chips = () =>
       Array.from(document.querySelectorAll<HTMLButtonElement>(".limit-edit .le-presets")).at(-1)!;
     expect(Array.from(chips().querySelectorAll(".chip")).map((b) => (b.textContent || "").trim())).toEqual([
@@ -289,16 +291,16 @@ describe("メンバーのマシン種別", () => {
     expect(units).toContain("→ m7i.large（2 vCPU / 8 GiB・専有）");
 
     await act(async () => buttonWith("省コスト（Arm）")!.click());
-    // 同じ 4096 MB が、arm クラスでは m7g.large に乗る。
+    // The same 4096 MB lands on an m7g.large in the arm class.
     units = Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) => (e.textContent || "").trim());
     expect(units).toContain("→ m7g.large（2 vCPU / 8 GiB・専有）");
 
-    // 梯子の段数が違うクラスに移ると、チップ列も入れ替わる。
+    // Moving to a class with a different number of steps swaps the chip row too.
     await act(async () => buttonWith("大きい（Intel）")!.click());
     expect(Array.from(chips().querySelectorAll(".chip")).map((b) => (b.textContent || "").trim())).toEqual(["32 GiB"]);
   });
 
-  it("保存すると slot_class が飛ぶ", async () => {
+  it("sends slot_class on save", async () => {
     useSizing(SIZING_CLASSES);
     await mount();
     await openEditor();
@@ -308,9 +310,10 @@ describe("メンバーのマシン種別", () => {
     expect(body).toMatchObject({ slot_class: "arm" });
   });
 
-  // ⚠️ home の入れ直しはアーキが変わるときだけ起きる。同じアーキ内のクラス変更で
-  // 警告を出すと「毎回何か壊れる」と読まれ、本当に壊れる回に効かなくなる。
-  it("警告は CPU の系統が変わるときだけ出す", async () => {
+  // Home is rebuilt only when the architecture changes. Warning on a class change within the
+  // same architecture reads as "something breaks every time" and stops being heeded on the one
+  // occasion something really does break.
+  it("warns only when the CPU architecture changes", async () => {
     useSizing(SIZING_CLASSES);
     await mount();
     await openEditor();
@@ -325,12 +328,12 @@ describe("メンバーのマシン種別", () => {
   });
 });
 
-// ⚠️ `member` is a snapshot taken when its row was clicked — the parent never refreshes
-// it (onChanged reloads the tenant LIST, not the selection). Re-seeding the editor from
-// that prop after a save shows the values from BEFORE the save, which on the machine
-// chips reads as "the setting did not save" while it very much did. Measured on a live
-// deployment (docs/log/70 §70.14.6).
-describe("保存した値が編集を開き直しても残る", () => {
+// `member` is a snapshot taken when its row was clicked — the parent never refreshes it
+// (onChanged reloads the tenant list, not the selection). Re-seeding the editor from that prop
+// after a save shows the values from before the save, which on the machine chips reads as "the
+// setting did not save" while it very much did. Measured on a live deployment
+// (docs/log/70 §70.14.6).
+describe("saved values survive reopening the editor", () => {
   beforeEach(() => {
     api.mockImplementation((p: string) =>
       p === "api/admin/workspace-sizing" ? Promise.resolve(SIZING_CLASSES) : Promise.resolve({ running: false, sessions: [] }),
@@ -340,38 +343,39 @@ describe("保存した値が編集を開き直しても残る", () => {
     );
   });
 
-  it("マシン種別も数値も、保存後に開き直すと保存した値になっている", async () => {
+  it("shows the saved machine class and numbers when reopened after a save", async () => {
     await mount();
     await openEditor();
     await act(async () => buttonWith("省コスト（Arm）")!.click());
-    // 数値はチップ経由で動かす。制御 input への .value 直代入は React の値トラッカを
-    // 更新しないので変更として拾われない（この面の既存テストも全てチップを押している）。
+    // Numbers are moved through the chips: assigning .value directly on a controlled input
+    // does not update React's value tracker, so it is not picked up as a change.
     await act(async () => buttonWith("16 GiB")!.click());
     await act(async () => buttonWith("保存")!.click());
 
-    // 開き直す。prop（member）は古いままなので、ここが実装の分かれ目になる。
+    // Reopen. The member prop is still stale, which is where implementations diverge.
     await openEditor();
     expect(buttonWith("省コスト（Arm）")!.className).toContain("on");
     expect(buttonWith("テナントの既定")!.className).not.toContain("on");
     expect(numbers()[1]).toBe("16384");
   });
 
-  it("保存した直後はアーキ変更の警告を出し続けない", async () => {
+  it("stops showing the architecture-change warning right after a save", async () => {
     await mount();
     await openEditor();
     await act(async () => buttonWith("省コスト（Arm）")!.click());
     expect(!!document.querySelector(".limit-edit .admin-hint.warn")).toBe(true);
     await act(async () => buttonWith("保存")!.click());
     await openEditor();
-    // 既に arm なのだから、開いた時点では「変わる」ものが無い。
+    // It is already arm, so on reopening there is nothing that would change.
     expect(!!document.querySelector(".limit-edit .admin-hint.warn")).toBe(false);
   });
 });
 
-// リソースのタイル（docs/log/63 §63.9）。ECS 構成では実測値が Agent から来るので、
-// ホストの cgroup が読めない＝タイルが 3 つとも「–」だった状態からの回復がここ。
-// 押さえるのは「測れない軸を 0 として描かない」ことと、割合の分母である。
-describe("ワークスペースのリソースのタイル", () => {
+// The resource tiles (docs/log/63 §63.9). On an ECS setup the measurements come from the Agent,
+// which is what recovers from all three tiles reading "–" because the host cgroup is unreadable.
+// What is pinned: an axis that cannot be measured is never drawn as 0, and the denominator of
+// the percentage.
+describe("workspace resource tiles", () => {
   const tiles = () =>
     Array.from(document.querySelectorAll<HTMLElement>(".res-tiles .res-tile")).map((t) => ({
       value: t.querySelector(".rt-value")?.textContent ?? "",
@@ -383,7 +387,7 @@ describe("ワークスペースのリソースのタイル", () => {
       p.endsWith("/stats") ? Promise.resolve(stats) : Promise.resolve({ sessions: [] }),
     );
 
-  it("メモリ・CPU・ディスクの実測値を描く", async () => {
+  it("draws the measured memory, CPU and disk values", async () => {
     withStats({
       running: true,
       mem_used: 2 * 1024 ** 3,
@@ -398,14 +402,16 @@ describe("ワークスペースのリソースのタイル", () => {
     expect(mem.sub).toContain("8.00G");
     expect(cpu.value).toBe("42%");
     expect(disk.value).toBe("20.0G");
-    // 分母は実測の容量。docs/log/63 §63.9 の要点は「稼働中なのに – のまま」を無くすこと。
+    // The denominator is the measured capacity; the point of docs/log/63 §63.9 is to remove
+    // "running, yet still showing –".
     expect(disk.sub).toContain("/ 40.0G");
     expect(disk.sub).toContain("50%");
   });
 
-  // 分母は実測（disk_total）が設定値（disk_quota）に優先する。ecs-ec2 の disk_gb は
-  // 作成時にしか効かないので、後から数字だけ変えられていると設定値は嘘になる。
-  it("実測の容量があれば設定値の上限より優先する", async () => {
+  // For the denominator the measured value (disk_total) wins over the configured one
+  // (disk_quota): ecs-ec2 applies disk_gb only at creation, so a number edited afterwards makes
+  // the configured value a lie.
+  it("prefers the measured capacity over the configured limit", async () => {
     withStats({
       running: true,
       disk_used: 30 * 1024 ** 3,
@@ -416,16 +422,18 @@ describe("ワークスペースのリソースのタイル", () => {
     expect(tiles()[2].sub).toContain("/ 60.0G");
   });
 
-  // 実測が無い構成（docker: du + 表示上のクォータ）は従来どおり設定値を分母にする。
-  it("実測の容量が無ければ設定値の上限を分母にする", async () => {
+  // Setups without a measurement (docker: du plus a display-only quota) keep the configured
+  // value as the denominator.
+  it("falls back to the configured limit as the denominator without a measurement", async () => {
     withStats({ running: true, disk_used: 10 * 1024 ** 3, disk_quota: 40 * 1024 ** 3 });
     await mount();
     expect(tiles()[2].sub).toContain("/ 40.0G");
     expect(tiles()[2].sub).toContain("25%");
   });
 
-  // 測れなかった軸は「–」。0 と書くと、測れていないことが画面から消える。
-  it("測れなかった軸は 0 ではなく – のままにする", async () => {
+  // An axis that could not be measured stays "–"; writing 0 hides the fact that nothing was
+  // measured.
+  it("leaves an unmeasured axis as – rather than 0", async () => {
     withStats({ running: true, mem_used: 1024 ** 3 });
     await mount();
     const [, cpu, disk] = tiles();

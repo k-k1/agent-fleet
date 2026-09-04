@@ -49,8 +49,8 @@ describe("repos store refresh", () => {
     expect(useReposStore.getState().repos).toEqual([]);
   });
 
-  // The regression: committing the 502's empty body wedged the rail on
-  // リポジトリがありません until the 60s poll came round.
+  // The regression: committing the 502's empty body wedged the rail on the
+  // "no repositories" empty state until the 60s poll came round.
   it("keeps the rail's repos on the agent-still-booting 502 and asks to retry", async () => {
     useReposStore.setState({ repos: [repo("agent-fleet")] });
     fetchMock.mockResolvedValue(agentUnreachable());
@@ -76,7 +76,7 @@ describe("repos store refresh", () => {
     expect(useReposStore.getState().repos).toEqual([]);
   });
 
-  // ★ A JSON body does NOT make a 500 an app error: the CP answers a database failure
+  // A JSON body does NOT make a 500 an app error: the CP answers a database failure
   // with {"error":{"code":"internal"}} and status 500. Reading that as terminal blanks
   // the rail and stops the retry — the same misreading that silently emptied the account
   // menu's admin items for a whole session (core/api isTransientErr).

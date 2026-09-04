@@ -1,9 +1,9 @@
-// エイリアス（ADR 0067 規律①: 呼び出し側を 1 行も触らない）。
+// Alias (ADR 0067 rule 1: do not touch a single line of the call sites).
 //
-// 実体は parts/mcpForm.tsx へ移した。features/repos/ProjectActionPanels.tsx が
-// `../settings/mcpForm.tsx` から Field / Meta を引いており、そこは FE-SETTINGS の
-// 所有外なので、旧パスをこの 1 枚で生かしておく。
+// The implementation lives in parts/mcpForm.tsx. features/repos/ProjectActionPanels.tsx
+// pulls Field / Meta from `../settings/mcpForm.tsx`, which is outside FE-SETTINGS's
+// ownership, so this one file keeps the old path alive.
 //
-// ★ 設定モーダルの外から使われている時点で、この部品は本来 src/ui の住人である。
-//    昇格は次のウェーブの別 PR（起動プロンプトの指示）。この 1 枚の回収も同じ機会に。
+// Being used from outside the settings modal means this part really belongs in src/ui.
+// Promoting it — and retiring this alias — is a separate PR in the next wave.
 export * from "./parts/mcpForm.tsx";

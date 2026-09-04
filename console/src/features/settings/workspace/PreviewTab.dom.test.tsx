@@ -1,9 +1,10 @@
-// プレビュー用サブドメインの独立タブ。押さえるのは「発行されないデプロイに、押しても
-// 何も起きない設定を出さない」こと:
-//   ① usePreviewAvailable は previewDomain が空なら false（＝レールに出さない）
-//   ② 判定が返るまでは null（＝出してから消える項目を作らない）
-//   ③ それでも section だけ残って直接来たときは、白紙ではなく「無い」と言う
-//   ④ 発行されるデプロイでは設定が出て、公開ポートは入力欄を離れたときに保存される
+// The standalone preview-subdomain tab. What matters is never offering a setting that does
+// nothing on a deployment that issues no subdomain:
+//   1. usePreviewAvailable is false when previewDomain is empty (so the rail hides it)
+//   2. it is null until the answer arrives (so no entry appears and then vanishes)
+//   3. reached directly anyway, the tab says "not available" instead of rendering blank
+//   4. where subdomains are issued the settings appear, and the published ports are saved
+//      on blur
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -34,8 +35,9 @@ const wsSettings = (extra: Record<string, unknown> = {}) => ({
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-// ★ 判定はモジュールスコープにキャッシュされる（設定を開くたびに GET しないため）ので、
-// テストごとに読み直す。使い回すと 2 件目以降が 1 件目の答えを見てしまう。
+// The availability answer is cached at module scope (so settings do not refetch on every
+// open), so each test re-imports the module; reusing it would make every later test read
+// the first one's answer.
 async function freshModule() {
   vi.resetModules();
   return await import("./PreviewTab.tsx");
@@ -78,7 +80,7 @@ describe("usePreviewAvailable", () => {
   };
   const read = () => document.querySelector("#v")!.textContent;
 
-  it("previewDomain があれば true", async () => {
+  it("is true when previewDomain is set", async () => {
     api.mockResolvedValue(wsSettings());
     const { usePreviewAvailable } = await freshModule();
     const P = probe(usePreviewAvailable);
@@ -86,7 +88,7 @@ describe("usePreviewAvailable", () => {
     expect(read()).toBe("true");
   });
 
-  it("previewDomain が空なら false（レールに出さない）", async () => {
+  it("is false when previewDomain is empty, so the rail hides the tab", async () => {
     api.mockResolvedValue(wsSettings({ previewDomain: "" }));
     const { usePreviewAvailable } = await freshModule();
     const P = probe(usePreviewAvailable);
@@ -94,8 +96,8 @@ describe("usePreviewAvailable", () => {
     expect(read()).toBe("false");
   });
 
-  it("答えが返るまでは null（出してから消えるのを避ける）", async () => {
-    api.mockReturnValue(new Promise(() => {})); // 応答しない
+  it("is null until the answer arrives, so nothing appears and then vanishes", async () => {
+    api.mockReturnValue(new Promise(() => {})); // never resolves
     const { usePreviewAvailable } = await freshModule();
     const P = probe(usePreviewAvailable);
     await mount(<P />);
@@ -104,7 +106,7 @@ describe("usePreviewAvailable", () => {
 });
 
 describe("PreviewTab", () => {
-  it("発行されないデプロイでは、設定ではなく「無い」と言う", async () => {
+  it("says not available, rather than showing settings, where nothing is issued", async () => {
     api.mockResolvedValue(wsSettings({ previewDomain: "" }));
     const { PreviewTab } = await freshModule();
     await mount(<PreviewTab />);
@@ -112,7 +114,7 @@ describe("PreviewTab", () => {
     expect(document.querySelector(".pad")!.textContent).toContain("発行されません");
   });
 
-  it("発行されるデプロイでは、いまの URL をポート順に出す", async () => {
+  it("lists the current URLs in port order where subdomains are issued", async () => {
     api.mockResolvedValue(wsSettings());
     const { PreviewTab } = await freshModule();
     await mount(<PreviewTab />);
@@ -120,7 +122,7 @@ describe("PreviewTab", () => {
     expect(urls).toEqual(["slug-3000.example.invalid", "slug-8080.example.invalid"]);
   });
 
-  it("公開ポートは打鍵ごとではなく、入力欄を離れたときに保存する", async () => {
+  it("saves the published ports on blur, not on every keystroke", async () => {
     api.mockResolvedValue(wsSettings());
     apiJSON.mockResolvedValue(wsSettings({ previewPorts: [3000, 5173] }));
     const { PreviewTab } = await freshModule();
@@ -128,14 +130,14 @@ describe("PreviewTab", () => {
     const input = document.querySelector<HTMLInputElement>(".ds-select")!;
     expect(input.value).toBe("3000, 8080");
     await act(async () => {
-      // React の制御された input に値を入れる（value の setter を直接呼ぶ）。
+      // Set the value on a React-controlled input by calling the value setter directly.
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
       setter.call(input, "3000, 5173");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(apiJSON).not.toHaveBeenCalled(); // 打ちかけの "3000, 5" では保存しない
+    expect(apiJSON).not.toHaveBeenCalled(); // half-typed "3000, 5" must not be saved
     await act(async () => {
-      // React の onBlur は native の focusout に載る（bubble しない blur では届かない）。
+      // React onBlur rides on the native focusout; a non-bubbling blur never reaches it.
       input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
     });
     expect(apiJSON).toHaveBeenCalledWith("api/env/ws-settings", "PUT", { previewPorts: [3000, 5173] });

@@ -1,12 +1,13 @@
-// ログイン面のうち「どこで何が読めるか」を固定する（docs/log/61 §61.11.6 / §61.11.8）。
-// 前半は登録簿（SignInMethodRegister）、後半はログイン規則に添えるデプロイ共通の
-// サインイン方法一覧。
+// Pins what is readable where on the sign-in surface (docs/log/61 §61.11.6 / §61.11.8). The
+// first half is the registry (SignInMethodRegister), the second the deployment-wide sign-in
+// method list shown beside the login rules.
 //
-// 登録簿で押さえるのは「承認がここで完結すること」だけ:
-//   ① 承認待ちの行で「承認して有効化」を押すと、その行の tenant_slug で組んだ
-//      POST .../tenants/{slug}/idp/{id}/status が飛ぶ（台帳は GET /api/admin/idp を
-//      読むので、slug は行から拾うしかない — ここを取り違えると別テナントを触る）
-//   ② 押したあと一覧を読み直す（1 回きりの fetch だと押した本人にだけ結果が見えない）
+// For the registry the only claim is that approval completes here:
+//   1. Approving a pending row POSTs .../tenants/{slug}/idp/{id}/status built from that row's
+//      tenant_slug. The ledger is read from GET /api/admin/idp, so the slug can only come from
+//      the row — get it wrong and you act on another tenant.
+//   2. The list is re-read afterwards; with a single fetch the person who pressed the button
+//      is the one who cannot see the result.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -70,10 +71,10 @@ afterEach(() => {
 });
 
 describe("SignInMethodRegister", () => {
-  it("承認待ちの行から、その行のテナントへ承認を投げて読み直す", async () => {
+  it("approves a pending row against that row's tenant, then re-reads", async () => {
     api.mockResolvedValueOnce({ providers: [ROW] });
     apiJSON.mockResolvedValue({});
-    // 2 回目の GET（承認後の読み直し）は有効化された姿を返す。
+    // The second GET (the re-read after approval) returns the row activated.
     api.mockResolvedValueOnce({ providers: [{ ...ROW, status: "active", usable: true }] });
     await mount();
     expect(api).toHaveBeenCalledWith("api/admin/idp");
@@ -90,13 +91,13 @@ describe("SignInMethodRegister", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/idp/idp1/status", "POST", {
       status: "active",
     });
-    expect(api).toHaveBeenCalledTimes(2); // 承認したら読み直す
-    // 承認済みの行は「停止する」に変わる（台帳は空にならず残る）。
+    expect(api).toHaveBeenCalledTimes(2); // approving re-reads
+    // An approved row switches to suspend (「停止する」); the ledger keeps the row.
     expect(findButton("承認して有効化")).toBeFalsy();
     expect(findButton("停止する")).toBeTruthy();
   });
 
-  it("有効な行からは停止できる", async () => {
+  it("suspends from an active row", async () => {
     api.mockResolvedValue({ providers: [{ ...ROW, status: "active", usable: true }] });
     apiJSON.mockResolvedValue({});
     await mount();
@@ -112,43 +113,43 @@ describe("SignInMethodRegister", () => {
 });
 
 
-// --- 受け入れる／ボタンに出す の代数（docs/log/61 §61.17.5）------------------------
+// --- the algebra of accept / show on a button (docs/log/61 §61.17.5) --------------------
 //
-// ここが P7-0 の本体。UI は真偽値しか触らず、CSV 2 本の読み書きはこの 4 関数だけが
-// やる。押さえるのは「空＝全部」という既存の意味から出る 3 つの罠で、どれも
-// **保存できてしまい、そして意図と逆に効く**種類のもの。
-describe("受け入れる／出す の代数", () => {
+// The UI touches booleans only; these four functions are the only readers and writers of the
+// two CSV columns. What is pinned are the three traps that follow from the existing meaning of
+// "empty = all", each of which saves happily and then does the opposite of what was intended.
+describe("accept / show algebra", () => {
   const KNOWN = ["google", "github", "t:acme:entra"];
 
-  it("空＝全部。未設定のテナントは全行 ON に見える", () => {
+  it("treats empty as all, so an unconfigured tenant shows every row on", () => {
     expect(acceptedIds(KNOWN, "")).toEqual(KNOWN);
     expect(ruleStateFor(KNOWN, "", "", "google")).toEqual({ accepted: true, shown: true });
   });
 
-  it("知らない id は落とす（消された方式が CSV に残っていても状態に影響させない）", () => {
+  it("drops unknown ids, so a deleted method left in the CSV cannot affect the state", () => {
     expect(acceptedIds(KNOWN, "google, okta")).toEqual(["google"]);
   });
 
-  // ★ 罠 1: 全部 ON を明示リストで書くと「デプロイに追従する」意味が消える。
-  it("全部 ON なら空で保存する（明示リストに固めない）", () => {
+  // Trap 1: writing "all on" as an explicit list loses the meaning "follow the deployment".
+  it("saves empty when everything is on, instead of freezing an explicit list", () => {
     const r = toggleRule(KNOWN, "google,github", "", "t:acme:entra", "accepted", true);
     expect(r.allowed_providers).toBe("");
   });
 
-  it("1 つ外すと、残りを knownIds の順で明示する", () => {
+  it("lists the remainder in knownIds order once one is switched off", () => {
     const r = toggleRule(KNOWN, "", "", "github", "accepted", false);
     expect(r.allowed_providers).toBe("google,t:acme:entra");
   });
 
-  // ★ 受け入れないなら「出さない」指定は意味を持たない。残すと、後で受け入れ直した
-  // ときに「出ない」が説明なく復活する。
-  it("受け入れるを OFF にすると、その行は hidden からも消える", () => {
+  // "Hidden" is meaningless once the method is not accepted; leaving it would resurrect "not
+  // shown" without explanation if the method is accepted again later.
+  it("removes the row from hidden when accept is switched off", () => {
     const r = toggleRule(KNOWN, "", "github", "github", "accepted", false);
     expect(r.hidden_providers).toBe("");
     expect(r.allowed_providers).toBe("google,t:acme:entra");
   });
 
-  it("出すを OFF にすると hidden に入り、受け入れは変わらない", () => {
+  it("adds to hidden when show is switched off, leaving accept unchanged", () => {
     const r = toggleRule(KNOWN, "", "", "google", "shown", false);
     expect(r.hidden_providers).toBe("google");
     expect(r.allowed_providers).toBe("");
@@ -158,44 +159,45 @@ describe("受け入れる／出す の代数", () => {
     });
   });
 
-  // ★ 罠 2: 全部 OFF は「制限なし＝全部 ON」として保存される。UI が止めないと
-  // 「絞ったつもりで全開」になるので、最後の 1 つは倒せない。
-  it("最後の 1 つは受け入れを外せない", () => {
+  // Trap 2: everything off saves as "no restriction", i.e. everything on. Unless the UI stops
+  // it, restricting opens the tenant wide, so the last one cannot be turned off.
+  it("will not let accept be switched off on the last one", () => {
     const locks = ruleLocks(KNOWN, KNOWN, "google", "", "google");
     expect(locks.acceptOffLocked).toBe(true);
-    // 2 つ受け入れているうちの 1 つなら外せる。
+    // One of two accepted can be switched off.
     expect(ruleLocks(KNOWN, KNOWN, "google,github", "", "google").acceptOffLocked).toBe(false);
   });
 
-  // ★ 罠 3: hidden にも「全部隠したら無視する」弁がある。全行 OFF は保存できて
-  // 効かない＝画面が嘘をつくので、こちらも最後の 1 つは倒せない。
-  it("最後の 1 つは「出す」も外せない", () => {
+  // Trap 3: hidden has its own "ignore it if everything is hidden" valve, so switching every
+  // row off saves and has no effect, which would make the screen lie. Same lock on the last one.
+  it("will not let show be switched off on the last one either", () => {
     expect(ruleLocks(KNOWN, KNOWN, "", "google,github", "t:acme:entra").showOffLocked).toBe(true);
     expect(ruleLocks(KNOWN, KNOWN, "", "google", "github").showOffLocked).toBe(false);
   });
 
-  // ★ 順序（§61.17.5）: 先に絞ってからテナント管理者を招くと、その人が入れない。
-  // 承認前の自前の行は usable でないので、この 1 本の規則が順序も兼ねる。
-  it("自前の行がまだ承認前なら、デプロイの方式は最後の 1 つとして外せない", () => {
-    const usable = ["google"]; // t:acme:entra は承認待ち、github は未導入とする
+  // Ordering (§61.17.5): restricting first and inviting the tenant admin afterwards locks that
+  // person out. A tenant's own row is not usable before approval, so this one rule covers the
+  // ordering as well.
+  it("keeps a deployment method locked as the last one while the tenant's own row is unapproved", () => {
+    const usable = ["google"]; // t:acme:entra is pending approval, github is not deployed
     expect(ruleLocks(KNOWN, usable, "google,t:acme:entra", "", "google").acceptOffLocked).toBe(true);
-    // 承認されて usable になれば外せる。
+    // Once approved and usable, it can be switched off.
     expect(
       ruleLocks(KNOWN, ["google", "t:acme:entra"], "google,t:acme:entra", "", "google").acceptOffLocked,
     ).toBe(false);
   });
 });
 
-// --- 統合リスト（docs/log/61 §61.17.5）--------------------------------------------
+// --- the merged list (docs/log/61 §61.17.5) ----------------------------------------
 //
-// 押さえるのは 4 つ:
-//   ① デプロイの方式と自前の行が**同じリスト**に並ぶ（以前はデプロイの方式がどこにも
-//      出ず、Google で毎日入っている会社でもこの面が空だった）
-//   ② ★ 「0 件」と「読めなかった」を混ぜない（§61.17.9 ②）
-//   ③ トグルを倒すと CSV 2 本にまとめて PUT され、**ドメインの 2 列は読んだ値のまま
-//      返る**（この PUT は 4 列を丸ごと置き換えるので、送らないと消える）
-//   ④ 倒せるのは super_admin だけ。テナント管理者には静的なチップ
-describe("サインイン方法の統合リスト", () => {
+// Four claims:
+//   1. Deployment methods and the tenant's own rows appear in one list. Without that, a
+//      company that signs in with Google every day sees an empty surface.
+//   2. "zero rows" and "could not read" are never conflated (§61.17.9 (2)).
+//   3. Flipping a toggle PUTs both CSV columns together, and the two domain columns are sent
+//      back as read — the PUT replaces all four columns, so anything omitted is cleared.
+//   4. Only super_admin can flip them; a tenant admin gets static chips.
+describe("merged sign-in method list", () => {
   const PROVIDERS = [
     { id: "google", label_ja: "Google でサインイン", label_en: "Sign in with Google", issuer: "https://accounts.google.com" },
     { id: "entra", label_ja: "Microsoft でサインイン", label_en: "Sign in with Microsoft", issuer: "https://login.microsoftonline.com/guid/v2.0" },
@@ -203,7 +205,8 @@ describe("サインイン方法の統合リスト", () => {
   const OWN = { ...ROW, provider_id: "t:acme:entra", status: "active", usable: true };
   const TENANT = { allowed_providers: "", hidden_providers: "", auto_join_domains: "@acme.co.jp", allowed_domains: "@acme.co.jp" };
 
-  // 2 本の GET を URL で振り分ける（この面は自前の行とデプロイの方式の両方を読む）。
+  // Route the two GETs by URL: this surface reads both the tenant's own rows and the
+  // deployment's methods.
   const routes = (own: unknown, deploy: unknown) =>
     api.mockImplementation((path: string) =>
       path === "api/admin/providers" ? Promise.resolve(deploy) : Promise.resolve(own),
@@ -211,7 +214,7 @@ describe("サインイン方法の統合リスト", () => {
 
   const flags = () => Array.from(host!.querySelectorAll<HTMLElement>(".adm-mcp-row .idp-flags"));
 
-  it("デプロイの方式と自前の行が同じリストに並ぶ", async () => {
+  it("shows deployment methods and the tenant's own rows in one list", async () => {
     routes({ providers: [OWN] }, { providers: PROVIDERS });
     await mount(<TenantSignInMethods slug="acme" isSuper tenant={TENANT} onChanged={() => {}} />);
     const rows = Array.from(host!.querySelectorAll(".adm-mcp-row"));
@@ -222,7 +225,7 @@ describe("サインイン方法の統合リスト", () => {
     expect(rows[2].querySelector(".as-name")?.textContent).toBe("entra");
   });
 
-  it("デプロイの方式が読めなかったときは「0 件」と言わない", async () => {
+  it("does not claim zero rows when the deployment methods could not be read", async () => {
     routes({ providers: [OWN] }, { error: { code: "forbidden", message: "tenant admin required" } });
     await mount(<TenantSignInMethods slug="acme" isSuper tenant={TENANT} onChanged={() => {}} />);
     const text = host!.textContent ?? "";
@@ -230,7 +233,7 @@ describe("サインイン方法の統合リスト", () => {
     expect(text).not.toContain("ボタンが出ません");
   });
 
-  it("通信断（reject）でも「0 件」と言わない", async () => {
+  it("does not claim zero rows on a dropped connection (a rejection) either", async () => {
     api.mockImplementation((path: string) =>
       path === "api/admin/providers" ? Promise.reject(new Error("network")) : Promise.resolve({ providers: [OWN] }),
     );
@@ -238,7 +241,7 @@ describe("サインイン方法の統合リスト", () => {
     expect(host!.textContent).toContain("読み込めませんでした");
   });
 
-  it("issuer が返らない相手には、空セルを作らない", async () => {
+  it("makes no empty cell for a provider that returns no issuer", async () => {
     routes({ providers: [] }, { providers: [{ id: "entra", label_ja: "Microsoft でサインイン", label_en: "Sign in with Microsoft" }] });
     await mount(<TenantSignInMethods slug="acme" isSuper={false} tenant={TENANT} onChanged={() => {}} />);
     const row = host!.querySelector(".adm-mcp-row")!;
@@ -246,11 +249,11 @@ describe("サインイン方法の統合リスト", () => {
     expect(row.querySelector(".as-repo")).toBeNull();
   });
 
-  it("トグルを倒すと CSV 2 本になり、ドメインの 2 列は読んだ値のまま返る", async () => {
+  it("folds a toggle into the two CSV columns and returns the domain columns as read", async () => {
     routes({ providers: [OWN] }, { providers: PROVIDERS });
     apiJSON.mockResolvedValue({});
     await mount(<TenantSignInMethods slug="acme" isSuper tenant={TENANT} onChanged={() => {}} />);
-    // 1 行目（google）の「ボタンに出す」を外す。
+    // Switch off "show on a button" for the first row (google).
     const show = flags()[0].querySelectorAll<HTMLInputElement>("input")[1];
     await act(async () => {
       show.click();
@@ -263,7 +266,7 @@ describe("サインイン方法の統合リスト", () => {
     });
   });
 
-  it("受け入れていない行の「出す」は倒せない", async () => {
+  it("does not let show be flipped on a row that is not accepted", async () => {
     routes({ providers: [OWN] }, { providers: PROVIDERS });
     await mount(
       <TenantSignInMethods slug="acme" isSuper tenant={{ ...TENANT, allowed_providers: "entra,t:acme:entra" }} onChanged={() => {}} />,
@@ -274,7 +277,7 @@ describe("サインイン方法の統合リスト", () => {
     expect(show.disabled).toBe(true);
   });
 
-  it("テナント管理者にはトグルを出さない（状態は読める）", async () => {
+  it("shows a tenant admin no toggles, but still shows the state", async () => {
     routes({ providers: [OWN] }, { providers: PROVIDERS });
     await mount(<TenantSignInMethods slug="acme" isSuper={false} tenant={TENANT} onChanged={() => {}} />);
     expect(host!.querySelectorAll(".idp-flags input")).toHaveLength(0);
@@ -282,13 +285,14 @@ describe("サインイン方法の統合リスト", () => {
   });
 });
 
-// 停止の順序ガード（docs/log/61 §61.17.4 · P7-3）。
+// Ordering guard on suspension (docs/log/61 §61.17.4, P7-3).
 //
-// 古い方式を止める前に、その方式しか使ったことのない人が居ないか CP に聞く。止めたあとで
-// 本人が別の方式を足すことはできない（紐づけにはサインインが要り、そのサインインに使うのが
-// 今止めようとしている方式）ので、あとから取り返せない種類の操作。
-// ★ 拒否ではなく確認。停止は「漏れた IdP を止める」手段でもあり、常に始めるより速くてよい。
-describe("サインイン方法の停止", () => {
+// Before an old method is suspended, ask the CP whether anyone has only ever used it. Such a
+// person cannot add another method afterwards — linking one requires signing in, and the sign-in
+// would use the method being suspended — so the action cannot be undone from their side.
+// It confirms rather than refuses: suspension is also how a leaked IdP is shut off, and stopping
+// may always be faster than starting.
+describe("suspending a sign-in method", () => {
   const ROW_ACTIVE = { ...ROW, id: "idp1", status: "active", usable: true, provider_id: "t:acme:entra" };
   const routes = () =>
     api.mockImplementation((path: string) =>
@@ -301,25 +305,25 @@ describe("サインイン方法の停止", () => {
     });
   };
 
-  it("その方式しか持たない人が居ると、人数を出して聞き返す", async () => {
+  it("asks back with a head count when someone has only that method", async () => {
     routes();
     apiJSON.mockResolvedValue({ error: { code: "tenant_idp_last_method_for_members" }, members: 3 });
     await mount(<TenantSignInMethods slug="acme" isSuper tenant={null} onChanged={() => {}} />);
     await clickSuspend();
-    // 1 回目は confirm 無しで飛ぶ。
+    // The first attempt goes out without confirm.
     expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/idp/idp1/status", "POST", { status: "suspended" });
-    // ★ 人数はサーバ由来。CP の英文ではなく、こちらの文言に差して出す。
+    // The count comes from the server, rendered into our own wording rather than the CP's English.
     expect(document.body.textContent).toContain("3 人");
   });
 
-  it("確認すると confirm=1 で通す（止めるのは常に始めるより速くてよい）", async () => {
+  it("goes through with confirm=1 once confirmed, since stopping may be faster than starting", async () => {
     routes();
     apiJSON.mockResolvedValue({ error: { code: "tenant_idp_last_method_for_members" }, members: 1 });
     await mount(<TenantSignInMethods slug="acme" isSuper tenant={null} onChanged={() => {}} />);
     await clickSuspend();
     apiJSON.mockResolvedValue({});
-    // ★ ダイアログの中のボタンを取る。行にも同じ文言のボタンがあるので、素の
-    // querySelectorAll("button") では行の方を掴んでしまう（confirm 無しで再送される）。
+    // Take the button inside the dialog. The row carries a button with the same label, so a
+    // plain querySelectorAll("button") grabs that one and re-sends without confirm.
     const ok = Array.from(
       document.querySelectorAll<HTMLButtonElement>(".confirm-actions button"),
     ).find((b) => (b.textContent || "").includes("停止する"));
@@ -331,7 +335,7 @@ describe("サインイン方法の停止", () => {
     });
   });
 
-  it("誰も困らないなら聞き返さない", async () => {
+  it("does not ask back when nobody is affected", async () => {
     routes();
     apiJSON.mockResolvedValue({});
     await mount(<TenantSignInMethods slug="acme" isSuper tenant={null} onChanged={() => {}} />);

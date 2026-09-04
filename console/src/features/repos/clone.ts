@@ -1,13 +1,14 @@
-// cloneRepo / svnCheckout — リポジトリの取り込み（docs/log/78）。POST は**開始**だけを行い、
-// 実処理は Agent 側のジョブになる（202 + job）。ここはそのジョブが終わるまで待ち、結末を
-// 呼び出し元に返す。
+// cloneRepo / svnCheckout — importing a repository (docs/log/78). The POST only *starts*
+// the work; the import itself runs as a job on the Agent (202 + job). This layer waits for
+// that job and returns its outcome to the caller.
 //
-// なぜこの形か（実際に起きた事故）: 取り込みは分〜時間かかるのに、上流のプロキシは 60 秒で
-// 応答を切る。同期 POST だった頃、この層は「エラーが返ったがフォルダが増えていれば成功」と
-// 読み替えていた。`svn checkout` は開始 1 秒で `.svn` を作るので、**この判定は必ず成功に倒れる**
-// —— 走行中の作業コピーを「チェックアウトしました」と報告し、そこへ 更新 を押した利用者は
-// E155037 / E200033 に迎えられ、30 分の上限を越えると作業コピーごと消えた。
-// 今はジョブの state が唯一の真実なので、切れた接続は結末に影響しない。
+// Why this shape: an import takes minutes to hours while the upstream proxy cuts the
+// response off at 60 seconds. When the POST was synchronous, this layer inferred success
+// from "an error came back, but the folder appeared" — a test `svn checkout` satisfies one
+// second in, since it creates `.svn` immediately, so it always fell to success. A
+// still-running working copy was reported as checked out, and the user who then pressed
+// refresh met E155037 / E200033, or lost the working copy once the 30-minute cap passed.
+// The job's state is now the only truth, so a dropped connection cannot affect the outcome.
 import { apiJSON, errText } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { useReposStore } from "./store.ts";
@@ -100,10 +101,10 @@ export async function cloneRepo(
   return awaitImport(job, toast, "rp.clone_failed");
 }
 
-// initRepo — POST /api/repos/init: 取り込み元が無いところから始める（~/repos/<name> を
-// 作って git init）。**ジョブを経由しない**のがクローン/チェックアウトとの違いで、それは
-// ネットワークを触らず数ミリ秒で終わるから —— 上の事故（60 秒で切れる応答を外形で補う）が
-// 起きようがない処理なので、結末はそのまま応答に入る。
+// initRepo — POST /api/repos/init: start with no import source (create ~/repos/<name> and
+// `git init`). Unlike clone/checkout it does NOT go through a job, because it touches no
+// network and finishes in milliseconds: the failure above (patching up a response the
+// 60-second cutoff truncated) cannot happen here, so the outcome rides in the response.
 export async function initRepo(
   name: string,
   toast: (msg: string) => void,

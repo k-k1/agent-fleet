@@ -72,7 +72,7 @@ export function TerminalView({
   const ref = useRef<HTMLDivElement>(null);
   const running = useWorkspaceStore((s) => s.state) === "running";
   // Session is stopped while shown here → mask the disconnected terminal with an
-  // in-place 再開 (resume is explicit; auto-resume is abolished).
+  // in-place resume button (resume is explicit; auto-resume is abolished).
   const stopped = !!session && sessionMeta != null && sessionMeta.alive === false;
   // Plain shells expect command input, so entering one with a Japanese IME still
   // active is almost always accidental. The class applies `ime-mode: disabled`
@@ -102,13 +102,13 @@ export function TerminalView({
       // reset() the grid (wiping the visible history) or yank focus every tick. When
       // already on this session, ensureAttached recovers a dead socket but no-ops
       // (just refits) on a live one, so it's non-disruptive.
-      // `attached` = we intend a LIVE PTY (a running session, or an explicit 再開).
+      // `attached` = we intend a LIVE PTY (a running session, or an explicit resume).
       // `stopped && !attached` = viewing a STOPPED session's READ-ONLY history: the CP
       // serves a finite scrollback replay that closes cleanly (code 1000), so the socket
       // ends in CLOSED. The live-recovery machinery below must NOT touch that: ensureAttached
       // treats a CLOSED socket as "not live" and re-attaches, and attach() resets the grid and
       // replays the whole history — so re-verifying a stopped session blanks-and-repaints the
-      // pane on every retry (the "切断された shell/ssm が4秒ごとにちらつく" bug), and re-opening
+      // pane on every retry (the "a disconnected shell/ssm flickers every 4s" bug), and re-opening
       // /ws/pty is "intent-to-work" so it can even silently auto-start the stopped session.
       // Load the history ONCE, then leave it alone. Only a genuinely live session gets the
       // re-verify + retry ladder (which exists to repaint a live pane that raced its bring-up).
@@ -116,7 +116,7 @@ export function TerminalView({
       if (sessionOf(paneId) !== session) attach(paneId, session);
       else if (wantLive) ensureAttached(paneId, session);
       if (!wantLive) return; // stopped read-only history: no re-verify, no retry ladder
-      // A session opened right after creation (repo 起動 / worktree launch) can
+      // A session opened right after creation (launch from a repo or a worktree) can
       // race its own bring-up: the first PTY connect may fail or die while the
       // agent is still starting, and the focus-reconnect path only fires on a
       // REFOCUS — leaving a silent black pane. Re-verify the socket a few times;
@@ -228,8 +228,8 @@ export function TerminalView({
                 mirrors (below). Renders null until the first sample. */}
             <TermRtt paneId={paneId} />
             {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
-            {/* 末尾＝右端。ミラー側（MirrorView）と同じ並びにして、チャット/ターミナルを
-                切り替えてもセル操作ボタンが同じ位置に留まるようにする。 */}
+            {/* Last = rightmost. Same order as the mirror side (MirrorView), so the cell buttons
+                stay in place when switching between chat and terminal. */}
             {headerActions}
           </>
         }

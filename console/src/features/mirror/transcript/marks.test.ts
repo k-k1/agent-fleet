@@ -13,12 +13,12 @@ describe("turnKey", () => {
     const b = turnKey({ role: "assistant", text: "same words" });
     const c = turnKey({ role: "assistant", text: "other words" });
     expect(a).toMatch(/^h:/);
-    expect(a).toBe(b); // 両側が同じ本文から同じキーを出す — 共有の前提
+    expect(a).toBe(b); // both sides derive the same key from the same body — sharing depends on it
     expect(a).not.toBe(c);
   });
 
-  // 送信直後のローカルエコーに印を置かせると、本物のターンが届いた瞬間に anchorId が付いて
-  // キーが変わり、置いた印が宙に浮く。
+  // A mark on the local echo right after send would dangle: the real turn arrives with an
+  // anchorId, the key changes, and the mark points at nothing.
   it("refuses a pending echo and a queued prompt", () => {
     expect(turnKey({ role: "user", text: "hi", pending: true })).toBe("");
     expect(turnKey({ role: "user", text: "hi", queued: true })).toBe("");
@@ -43,10 +43,11 @@ describe("markRootKey / parseRootKey", () => {
   });
 });
 
-// ⚠️ これが本命の回帰テスト。ミラーと共有ビューは別々の tail 窓を持つので、ブロックへ
-// 何行畳み込まれたかは両側で違う。root がブロック相対だと、その差がそのまま「共有先だけ
-// 印が 1 つ隣」になる（docs/log/69 §69.3.2）。
-describe("groupTurns の origins", () => {
+// The regression guard that matters here. The mirror and the shared view hold different tail
+// windows, so the two sides fold different numbers of rows into a block. A block-relative root
+// would turn that difference into a mark landing one element over for the recipient
+// (docs/log/69 §69.3.2).
+describe("groupTurns origins", () => {
   const older: Turn = {
     role: "assistant",
     anchorId: "uuid-1",
@@ -71,7 +72,7 @@ describe("groupTurns の origins", () => {
 
   it("gives the same part the same root whether or not the earlier turn is in the window", () => {
     const whole = groupTurns([older, newer]);
-    const windowed = groupTurns([newer]); // 上へ遡っていない側の窓
+    const windowed = groupTurns([newer]); // the window of a side that has not scrolled back
     expect(whole[0].origins.slice(1)).toEqual(windowed[0].origins);
   });
 
@@ -90,8 +91,8 @@ describe("groupTurns の origins", () => {
     expect(block.origins).toEqual(["uuid-3#0", ""]);
   });
 
-  // ユーザーの吹き出しはブロックの text を描くので、2 行以上畳んだ時点でその文字列は
-  // 「窓に何行入っていたか」で変わる。出現番号のアンカーはそこに置けない。
+  // A user bubble renders the block's text, so once two or more rows fold in, that string
+  // depends on how many rows the window held. An occurrence-number anchor cannot live there.
   it("drops the user body root once a block folds more than one turn", () => {
     const one = groupTurns([{ role: "user", anchorId: "u-1", text: "hello" }]);
     expect(one[0].bodyRoot).toBe("u-1#b");

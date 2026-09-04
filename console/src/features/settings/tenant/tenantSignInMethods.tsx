@@ -10,17 +10,17 @@ import type { TenantLoginFields, TenantIdP } from "./tenantLoginTypes.ts";
 import type { DeployProvider } from "./tenantLoginRules.tsx";
 import { ruleStateFor, ruleLocks, toggleRule, useDeploymentProviders } from "./tenantLoginRules.tsx";
 
-// idpStatusLabel は行の status を「読み手が知りたいこと」に写す。状態名ではなく、
-// 今この方法で誰かがサインインできるのかどうか。
+// Map the row's status onto what the reader actually wants to know — not the state name, but
+// whether anyone can sign in with this method right now.
 type IdPStatusKey =
   | "admin.idp_state_active"
   | "admin.idp_state_broken"
   | "admin.idp_state_suspended"
   | "admin.idp_state_pending";
 
-// idpSource は行の「身元の出どころ」を 1 行で言う。OIDC は issuer がその答えだが、
-// GitHub の issuer は全テナント共通の github.com なので、それを出しても何も区別が
-// つかない — 実際に効いているのは組織の方（docs/log/61 §61.15）。
+// idpSource states in one line where the row's identities come from. For OIDC the issuer is the
+// answer, but every GitHub row shares the issuer github.com, so printing it distinguishes
+// nothing — what actually applies there is the organisation (docs/log/61 §61.15).
 function idpSource(row: TenantIdP): string {
   if (row.kind === "github") return "GitHub: " + (row.allowed_orgs || "");
   return row.issuer;
@@ -45,32 +45,30 @@ const emptyIdP = (): TenantIdP => ({
   allowed_orgs: "",
 });
 
-// TenantSignInMethods — このテナントで使えるサインイン方法**ぜんぶ**（docs/log/61 §61.17.5）。
+// TenantSignInMethods — every sign-in method usable in this tenant (docs/log/61 §61.17.5).
 //
-// P7-0 でここが 1 本のリストになった。自前の行（作成・編集可・承認が要る）と、
-// デプロイの方式＝既定テナントの方式（バッジ「デプロイ共通」・編集不可）が同じ並びに出て、
-// 各行に 2 つのトグルが付く: **受け入れる** と **ボタンに出す**。
-// ★ これで「その画面が門の全体を映す」ようになる — 以前はデプロイの方式がどこにも
-// 出ず、Google で毎日入っている会社でもこの面が空だった（§61.17 の出発点）。
+// One list holds both the tenant's own rows (creatable, editable, needing approval) and the
+// deployment methods, i.e. the default tenant's methods (badged "deployment-wide"「デプロイ共通」
+// and not editable). Each row carries two toggles: accept, and show as a button. The point is
+// that the screen shows the whole gate; when deployment methods were not listed, a company
+// signing in with Google every day still saw this view empty (§61.17).
 //
-// ★ ［方式を追加］は「新しく作る」だけを指す。既定テナントの方式を*参照する*操作は
-// 作らない — それは「受け入れる」トグルと**同じ 1 ビット**で、同じことに 2 つの名前を
-// 与えると「参照行を編集できると思った」を生む（§61.17.5）。だから未参照の行も
-// 最初から並べ、トグルが OFF なだけにする。
+// "Add a method" means create a new one only. There is deliberately no operation to *reference*
+// a default-tenant method: that would be the same single bit as the accept toggle, and giving
+// one thing two names produces the belief that a referenced row can be edited (§61.17.5). So
+// unreferenced rows are listed from the start, simply with the toggle off.
 //
-// ★ この画面が必ず伝えないといけないのは 2 つ。どちらを外しても子会社のオンボードが
-// 止まる:
+// Two things this screen must convey; dropping either stalls a subsidiary's onboarding:
 //
-//  1. 新しい方法は、デプロイ管理者が承認するまで動かない。状態チップがそう言い、
-//     サインイン URL は承認後にしか出さない（ボタンの無い URL を配ると問い合わせに
-//     なるだけ・docs/log/61 §61.14 の 2 つ目）。
-//  2. 受け入れドメインは任意項目ではない。承認は「その範囲でこの issuer を信じてよい」
-//     に対して与えるものなので、範囲こそが承認の対象。
+//  1. A new method does nothing until the deployment admin approves it. The state chip says so,
+//     and the sign-in URL is only shown after approval — handing out a URL whose page has no
+//     button only produces support questions (docs/log/61 §61.14).
+//  2. The accepted domains are not an optional field. Approval is granted for "this issuer may
+//     be trusted within this scope", so the scope is the thing being approved.
 //
-// ★ トグルを**倒せる**のは super_admin だけ（PUT .../login は withSuperAdmin 固定＝
-// 決定 19 は変えていない）。テナント管理者には同じ状態を静的なチップで見せる —
-// 押せないトグルを出すのは「できる」と言って断ることで、能力が無い面には操作要素を
-// 置かない。
+// Only a super_admin can flip the toggles (PUT .../login is fixed at withSuperAdmin; decision 19
+// is unchanged). A tenant admin sees the same state as static chips: an un-pressable toggle
+// offers an ability and then refuses it, so a view without the ability carries no control.
 export function TenantSignInMethods({
   slug,
   isSuper,
@@ -79,7 +77,7 @@ export function TenantSignInMethods({
 }: {
   slug: string;
   isSuper: boolean;
-  /** ログイン規則の 4 列。方式の 2 列をこの面が読み書きする。 */
+  /** The four login-rule columns; this view reads and writes the two provider columns. */
   tenant?: TenantLoginFields | null;
   onChanged?: () => void;
 }) {
@@ -112,8 +110,8 @@ export function TenantSignInMethods({
         kind: form.kind || "oidc",
         issuer: form.issuer.trim(),
         client_id: form.client_id.trim(),
-        // 編集時に空のままなら保存済みの秘密をそのまま使う（サーバがマージする）。
-        // だからこの欄はマスクを流し込まず空にしてある。
+        // Left empty while editing means keep the stored secret (the server merges), which is
+        // why this field starts empty rather than pre-filled with a mask.
         client_secret: (form.client_secret || "").trim(),
         trust: form.trust,
         allowed_tids: (form.allowed_tids || "").trim(),
@@ -135,12 +133,11 @@ export function TenantSignInMethods({
     }
   };
 
-  // ★ 停止だけは 1 度だけ聞き返されることがある（docs/log/61 §61.17.4 の順序）。CP は
-  // 「その方式しか使ったことのない現役メンバーが N 人います」を 409 で返す — 停止すると
-  // その人たちは締め出され、しかも**自力で別の方式を足せない**（紐づけにはサインインが
-  // 要り、そのサインインに使うのが今止めようとしている方式だから）。
-  // ★ 拒否ではなく確認にしてあるのは、停止が「漏れた IdP を止める」手段でもあるため。
-  // 止めるのは常に、始めるより速くあってよい。
+  // Suspend is the one action that can ask back once (docs/log/61 §61.17.4). The CP answers 409
+  // with "N active members have only ever used this method": suspending locks them out, and
+  // they cannot add another method themselves, because linking one requires signing in with the
+  // very method being suspended. It is a confirmation rather than a refusal because suspend is
+  // also how a leaked IdP is stopped, and stopping may always be faster than starting.
   const [confirmSuspend, setConfirmSuspend] = useState<{ row: TenantIdP; members: number } | null>(null);
 
   const setStatus = async (row: TenantIdP, status: string, confirm?: boolean) => {
@@ -149,8 +146,8 @@ export function TenantSignInMethods({
       const q = confirm ? "?confirm=1" : "";
       const res = await apiJSON(`${base}/${encodeURIComponent(row.id)}/status${q}`, "POST", { status });
       if (res?.error?.code === "tenant_idp_last_method_for_members") {
-        // ★ 人数はサーバしか知らない。CP の英文をそのまま出すのではなく、数だけ受け取って
-        // こちら側の文言に差す（表示言語は Console のもので、CP のものではない）。
+        // Only the server knows the count. Take the number and put it into our own wording
+        // rather than showing the CP's sentence: the display language is the Console's.
         setConfirmSuspend({ row, members: Number(res.members) || 0 });
         return;
       }
@@ -183,24 +180,25 @@ export function TenantSignInMethods({
   const loginURL = new URL("login/" + encodeURIComponent(slug), document.baseURI).toString();
   const anyActive = (rows || []).some((r) => r.status === "active" && r.usable);
 
-  // --- 統合リスト（docs/log/61 §61.17.5）-----------------------------------------
+  // --- Unified list (docs/log/61 §61.17.5) ---------------------------------------
   //
-  // 並びはデプロイの方式 → 自前の行。id の集合はこの順序で固定して、CSV への
-  // 書き出しにもそのまま使う（保存のたびに順番が入れ替わると監査ログが読めない）。
+  // Order is deployment methods first, then the tenant's own rows. The id set is fixed in that
+  // order and reused for the CSV export: an order that changes on every save makes the audit
+  // log unreadable.
   const deployRows = Array.isArray(deployment) ? deployment : [];
   const ownRows = rows || [];
   const knownIds = [...deployRows.map((p) => p.id), ...ownRows.map((r) => r.provider_id || "").filter(Boolean)];
-  // usable は「いま実際に人が入れる方式」。デプロイの方式は常に、自前の行は承認済みで
-  // 壊れていないものだけ。ここが §61.17.5 の**順序**の規則になる。
+  // usable = the methods someone can actually sign in with right now: every deployment method,
+  // plus own rows that are approved and not broken. This is the ordering rule of §61.17.5.
   const usableIds = [
     ...deployRows.map((p) => p.id),
     ...ownRows.filter((r) => r.status === "active" && r.usable).map((r) => r.provider_id || ""),
   ].filter(Boolean);
 
-  // ★ トグルを触らせてよいのは、両方の一覧が揃っていて（＝knownIds が本物で）、
-  // かつ規則そのものを読めているときだけ。デプロイの方式が読めていないのに保存すると、
-  // 「全部 ON なら空」の正規化が**知らない id を落とした結果**で走り、絞ったつもりの
-  // ないテナントを絞ってしまう。
+  // The toggles may only be touched once both lists are in (so knownIds is real) and the rules
+  // themselves have been read. Saving while the deployment methods are unread would run the
+  // "all on means empty" normalisation over a set that silently dropped the unknown ids, and so
+  // restrict a tenant nobody meant to restrict.
   const rulesReady = isSuper && deployment !== null && deployment !== "error" && rows !== null && !!tenant;
 
   const toggle = async (id: string, field: "accepted" | "shown", value: boolean) => {
@@ -210,8 +208,9 @@ export function TenantSignInMethods({
     try {
       const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/login`, "PUT", {
         ...next,
-        // ★ この PUT は 4 列を丸ごと置き換える。ドメインの 2 列はこの面が持っていないので、
-        // 読んだ値をそのまま返す — 送らないと空で上書きされ、招待の上限が消える。
+        // This PUT replaces all four columns. This view does not own the two domain columns, so
+        // it echoes back what it read: omitting them overwrites them with empty and the invite
+        // restriction disappears.
         auto_join_domains: (tenant.auto_join_domains || "").trim(),
         allowed_domains: (tenant.allowed_domains || "").trim(),
       });
@@ -225,11 +224,12 @@ export function TenantSignInMethods({
     }
   };
 
-  // 1 行分の 2 トグル。super_admin には操作できるチェックボックス、それ以外には
-  // 同じ状態の静的なチップ（押せないトグルは「できる」と言って断ることになる）。
+  // The two toggles for one row: an operable checkbox for a super_admin, the same state as a
+  // static chip for everyone else (an un-pressable toggle offers an ability and then refuses).
   const toggles = (id: string) => {
-    // provider_id は CP が必ず組んで返す（tenant_idp_api.go）。それでも空の行が来たら
-    // トグルは出さない — 押せるのに何も起きない要素は、壊れているより分かりにくい。
+    // The CP always builds provider_id (tenant_idp_api.go). Should a row arrive without one,
+    // render no toggle: a control that responds to a click by doing nothing is harder to read
+    // than an obviously broken one.
     if (!id) return null;
     const { accepted, shown } = ruleStateFor(knownIds, tenant?.allowed_providers, tenant?.hidden_providers, id);
     const locks = ruleLocks(knownIds, usableIds, tenant?.allowed_providers, tenant?.hidden_providers, id);
@@ -241,8 +241,9 @@ export function TenantSignInMethods({
         </span>
       );
     }
-    // ★ OFF にできない場合が 2 つある。どちらも「絞ったつもりで全開／設定ごと無視」に
-    // なるので、保存させてから謝るのではなく最初から倒せなくする（§61.17.5）。
+    // Two cases cannot be switched off. Both would end as "meant to restrict, actually wide
+    // open / setting ignored", so the control is locked up front rather than apologised for
+    // after the save (§61.17.5).
     const acceptLocked = accepted && locks.acceptOffLocked;
     const showLocked = shown && locks.showOffLocked;
     return (
@@ -256,8 +257,8 @@ export function TenantSignInMethods({
           />
           <span>{tr("admin.idp_accept")}</span>
         </label>
-        {/* ★ 「出す」は「受け入れる」の従属。描画側は hidden の判定の中でも allowed を
-            要求するので、受け入れていない行の「出す」は ON にしても何も起きない。 */}
+        {/* "show" is subordinate to "accept": the render path requires allowed even inside the
+            hidden check, so turning "show" on for a row that is not accepted does nothing. */}
         <label
           className={"idp-flag" + (shown ? " on" : "")}
           title={!accepted ? tr("admin.idp_show_needs_accept") : showLocked ? tr("admin.idp_show_last") : undefined}
@@ -277,7 +278,7 @@ export function TenantSignInMethods({
   const deployLabel = (p: DeployProvider) =>
     (locale === "en" ? p.label_en : p.label_ja) || p.label_ja || p.label_en || p.id;
 
-  // 「受け入れているが出さない」行が 1 つでもあるか（＝素の /login の注記を出すか）。
+  // Is there any accepted-but-not-shown row (i.e. do we print the note about bare /login)?
   const anyHidden = knownIds.some((id) => {
     const s = ruleStateFor(knownIds, tenant?.allowed_providers, tenant?.hidden_providers, id);
     return s.accepted && !s.shown;
@@ -290,16 +291,16 @@ export function TenantSignInMethods({
         <span className="af-note">{tr("admin.idp_note")}</span>
       </h4>
       <p className="admin-hint">{tr("admin.idp_hint")}</p>
-      {/* デプロイの方式＝既定テナントの方式（§61.17）。編集はできない（issuer を
-          握っているのはオペレーターで、テナント管理者ではない）が、受け入れるか／
-          ボタンに出すかはこのテナントの選択なので、同じ行にトグルが付く。 */}
+      {/* Deployment methods are the default tenant's methods (§61.17). They cannot be edited
+          (the operator holds the issuer, not the tenant admin), but whether to accept them and
+          whether to show them as a button is this tenant's choice, so the row has toggles. */}
       {deployment === null ? (
         <p className="muted">{tr("common.loading")}</p>
       ) : deployment === "error" ? (
         <p className="admin-hint">{tr("admin.providers_unreadable")}</p>
       ) : deployment.length === 0 ? (
-        // 本当に 0 件（AUTH=dev / proxy、または env に 1 つも書かれていない）。
-        // 「読めなかった」とは別の文言でなければならない（§61.17.9 ②）。
+        // Genuinely zero (AUTH=dev / proxy, or nothing configured in env). This must read
+        // differently from "could not be read" (§61.17.9).
         <p className="admin-hint">{tr("admin.providers_none")}</p>
       ) : (
         deployment.map((p) => (
@@ -307,8 +308,8 @@ export function TenantSignInMethods({
             {toggles(p.id)}
             <span className="as-name">{deployLabel(p)}</span>
             <code>{p.id}</code>
-            {/* issuer は super_admin にしか返らない（§61.17.9 ①）。無いときは列ごと
-                出さない — 空セルは設定漏れに見える。 */}
+            {/* The issuer is only returned to a super_admin (§61.17.9). When absent, drop the
+                column entirely: an empty cell reads as a missing setting. */}
             {p.issuer && (
               <span className="as-repo muted" title={p.issuer}>
                 {p.issuer}
@@ -340,10 +341,10 @@ export function TenantSignInMethods({
                 <button type="button" className="ghost xs" disabled={busy} onClick={() => setForm({ ...row, client_secret: "" })}>
                   {tr("mcp.edit")}
                 </button>
-                {/* ★ 有効化はデプロイ管理者の一手であって、他の誰のものでもない —
-                    この非対称ひとつが、テナント管理者が自分をデプロイ管理者に
-                    格上げできない理由になっている（決定 30）。ボタンを出さない
-                    のは案内で、実体は CP の setStatus が見ている。 */}
+                {/* Activation is the deployment admin's move and nobody else's; that single
+                    asymmetry is why a tenant admin cannot promote themselves to deployment
+                    admin (decision 30). Hiding the button is presentation only — the CP's
+                    setStatus is what actually enforces it. */}
                 {isSuper && row.status !== "active" && (
                   <button type="button" className="ghost xs" disabled={busy} onClick={() => setStatus(row, "active")}>
                     {tr("admin.idp_approve")}
@@ -377,21 +378,20 @@ export function TenantSignInMethods({
           </button>
         )
       )}
-      {/* ★ 絞り込みの副作用は、絞る人の画面にしか書く場所が無い。兼務の人は他テナントの
-          方式で入っていることがあり、その方式の「受け入れる」を外すと切り替えが
-          provider_required で止まる（docs/log/61 §61.15 の運用上の注意）。 */}
+      {/* The side effect of restricting can only be stated on the screen of the person doing
+          the restricting. Someone who belongs to several tenants may have signed in with
+          another tenant's method, and un-accepting that method stops their tenant switch with
+          provider_required (docs/log/61 §61.15). */}
       {isSuper && <p className="admin-hint">{tr("admin.allowed_providers_shared_note")}</p>}
-      {/* サインイン URL は、その上で何かが動くようになって初めて出す。それ以前は
-          ボタンの無いページで、早く配られた URL は配らないより悪い。 */}
+      {/* The sign-in URL is only shown once something on that page works. Before then it is a
+          page with no buttons, and a URL handed out early is worse than none. */}
       {anyActive && (
         <p className="admin-hint">
           {tr("admin.login_url")} <code>{loginURL}</code>
         </p>
       )}
-      {/* ★ 「出さない」にした人にだけ出す。以前はここに「素の /login には効かないので
-          上の URL を配れ」という運用回避を置いていたが、P7-1（docs/log/61 §61.17.6）で素の
-          /login が既定テナントのページになり、効くようになった。残っているのは
-          **受け入れは続く**という一点だけ — 「隠した＝もう使えない」と読む人が居るため。 */}
+      {/* Shown only to someone who turned "show" off. The one point left to make is that the
+          method is still accepted, because "hidden" is read by some as "no longer usable". */}
       {anyHidden && <p className="admin-hint">{tr("admin.hidden_still_accepted_note")}</p>}
       {confirmDel && (
         <ConfirmDialog
@@ -437,9 +437,9 @@ function IdPForm({
 }) {
   const tr = useT();
   const set = (patch: Partial<TenantIdP>) => setForm({ ...form, ...patch });
-  // ★ 種類で「何を訊くか」が変わる。GitHub には issuer も tid も無く（発行元は
-  // github.com 1 つ）、代わりに組織が要る — 空欄のまま出すと、埋めようのない欄を
-  // 見せて 400 で弾くことになる（docs/log/61 §61.15）。
+  // The kind decides what is asked for. GitHub has neither an issuer nor a tid (there is one
+  // issuer, github.com) and needs an organisation instead; showing those fields anyway would
+  // present something unfillable and then reject it with a 400 (docs/log/61 §61.15).
   const isGitHub = form.kind === "github";
   const callbackURL = new URL("oauth2/callback", document.baseURI).toString();
   const valid =
@@ -455,10 +455,9 @@ function IdPForm({
           <input value={form.name} placeholder={isGitHub ? "github" : "entra"} onChange={(e) => set({ name: e.target.value })} />
         </Field>
         <Field label={tr("admin.idp_kind")} req hint={tr("admin.idp_kind_hint")}>
-          {/* ★ 種類を変えたら、もう一方の欄は捨てる。持ち越すと「issuer が
-              https://github.com の OIDC 行」のような、保存はできるのに動かない行が
-              作れてしまう（github 行の issuer はサーバが入れた定数なので、なおさら
-              残す意味が無い）。 */}
+          {/* Changing the kind discards the other kind's fields. Carrying them over would allow
+              rows that save but never work, such as an OIDC row whose issuer is
+              https://github.com (on a github row that issuer is a server-set constant anyway). */}
           <select
             value={form.kind || "oidc"}
             onChange={(e) =>
@@ -531,11 +530,10 @@ function IdPForm({
             <input value={form.allowed_tids || ""} onChange={(e) => set({ allowed_tids: e.target.value })} />
           </Field>
         )}
-        {/* ★ 自由入力ではなく選択にしてある。ここに書けるのは「IdP が割り当てる、
-            本人にも選べないクレーム」だけで、主張されるクレーム（email・upn …）を
-            書けると、同じ発行元を共有する方式の間で email 結合ができてしまう
-            （docs/log/61 §61.15.10）。選択肢は CP のホワイトリストの写しで、判断は
-            サーバが持つ（保存時に弾かれる）。 */}
+        {/* A select, not free text. Only a claim the IdP assigns and the subject cannot choose
+            belongs here; allowing an asserted claim (email, upn, ...) would permit email-based
+            linking between methods that share an issuer (docs/log/61 §61.15.10). The options
+            mirror the CP's allowlist; the decision stays on the server, which rejects on save. */}
         {!isGitHub && (
           <Field label={tr("admin.idp_link_claim")} wide hint={tr("admin.idp_link_claim_hint")}>
             <select value={form.link_claim || ""} onChange={(e) => set({ link_claim: e.target.value })}>
@@ -564,14 +562,14 @@ function IdPForm({
   );
 }
 
-// SignInMethodRegister — テナント定義のサインイン方法をデプロイ全体で見る台帳
-// （docs/log/61 §61.11.6）。デプロイ管理者専用。
+// SignInMethodRegister — the deployment-wide ledger of tenant-defined sign-in methods
+// (docs/log/61 §61.11.6). Deployment admins only.
 //
-// ★ これは「捌けて空になるキュー」ではなく、わざと「台帳」にしてある。承認は一度
-// きりの点検だが、その先の IdP は他人の管理下にあり続け、設定は後から変わり得る
-// （セルフサインアップが有効化される、が典型）。だから承認済みの行も、誰がいつ
-// 承認したかと一緒に残り、その一覧が定期点検の対象になる。承認待ちを先に並べるの
-// は、そこで誰かが待っているから。
+// Deliberately a ledger, not a queue that empties. Approval is a one-off review, but the IdP
+// behind it stays under someone else's control and its configuration can change later (self
+// sign-up being enabled is the typical case). So approved rows remain, together with who
+// approved them and when, and that list is what periodic review works from. Pending rows come
+// first because someone is waiting on them.
 export function SignInMethodRegister() {
   const tr = useT();
   const toast = useToast();
@@ -586,12 +584,11 @@ export function SignInMethodRegister() {
     load();
   }, [load]);
 
-  // ★ 承認はこの台帳から直接できる。件数だけ出して「承認はテナントの詳細画面で」と
-  // 案内していたが、待っている人が見えている場所と、待たせている人が動ける場所が
-  // 違うのは、ただの遠回りだった。叩く先はテナント側と同じ 1 本
-  // （POST /api/admin/tenants/{slug}/idp/{id}/status）で、行が持つ tenant_slug から
-  // 組み立てる。★ 権限は変わらない — CP の setStatus が super_admin を見ている
-  // （決定 30）。ここが super_admin にしか見えないのは、その事実の案内でしかない。
+  // Approval happens directly from this ledger: the place where the waiting is visible has to
+  // be the place where it can be acted on. The endpoint is the same single one as the tenant
+  // side (POST /api/admin/tenants/{slug}/idp/{id}/status), built from the row's tenant_slug.
+  // Permission is unchanged — the CP's setStatus checks super_admin (decision 30); this view
+  // being super_admin-only is presentation of that fact.
   const setStatus = async (row: TenantIdP, status: string) => {
     if (!row.tenant_slug) return;
     setBusy(true);
@@ -605,8 +602,8 @@ export function SignInMethodRegister() {
         toast(errText(res.error));
         return;
       }
-      // 承認したら状態も承認者・承認日時も変わる。1 回きりの fetch のままだと
-      // 押した本人にだけ結果が見えない画面になる。
+      // Approving changes the status as well as the approver and approval time. With a
+      // fetch-once view, the person who pressed the button would be the only one not to see it.
       await load();
     } finally {
       setBusy(false);
@@ -614,8 +611,8 @@ export function SignInMethodRegister() {
   };
 
   if (rows === null) return <p className="muted pad">{tr("common.loading")}</p>;
-  // ★ 以前はテナント一覧の下に積んでいたので「0 件なら出さない」で良かったが、
-  // 今はレールの 1 項目＝それだけが本文なので、空でも空だと分かる必要がある。
+  // This is a rail item and therefore the whole body, so an empty register must still say that
+  // it is empty; rendering nothing would leave a blank panel.
   if (rows.length === 0) {
     return (
       <section className="admin-panel">

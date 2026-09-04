@@ -1,5 +1,5 @@
 // WorkingDiffView — ONE working-tree file's diff in its own pane, opened from
-// the 変更 view. Port of views/WorkingDiffView.
+// the changes view. Port of views/WorkingDiffView.
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { api, isTransientErr } from "../../core/api/client.ts";
@@ -24,7 +24,8 @@ export function WorkingDiffView({
 }) {
   const tr = useT();
   const [diff, setDiff] = useState("");
-  // WS 起動直後は agent 不通で api() が http_5xx を返すので過渡的失敗は再試行（isTransientErr）。
+  // Right after a workspace start the agent is unreachable and api() returns http_5xx, so
+  // retry transient failures (isTransientErr).
   useRetryLoad(async (signal) => {
     if (!repo || !path) {
       setDiff("");

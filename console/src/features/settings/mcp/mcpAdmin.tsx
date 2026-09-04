@@ -1,7 +1,7 @@
-// テナントへ配布する MCP サーバの管理面。
+// Admin surface for the MCP servers distributed to a tenant.
 //
-// AdminTab.tsx から純粋移動した。CP 側は /api/admin/mcp-servers* を tenant_admin
-// （と super_admin）に開いているので、置き場は管理モーダルだけでなくテナント設定にも要る。
+// The CP opens /api/admin/mcp-servers* to tenant_admin (and super_admin), so this view has
+// to be reachable from tenant settings as well as from the admin modal.
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -35,13 +35,13 @@ import type { Tenant } from "../parts/adminShared.ts";
 // A tenant_admin registers a REMOTE MCP server once and every member of that tenant gets
 // it in their workspace — assistants and interactive sessions both. There is deliberately
 // no stdio option: distributing a command means the admin runs arbitrary code in every
-// member's container, so ADR0031 決定 2 keeps the columns out of the CP table entirely
+// member's container, so ADR0031 decision 2 keeps the columns out of the CP table entirely
 // rather than relying on a form that omits the field.
 //
 // Header values are write-only from here: they come back masked ("***") and sending them
-// back unchanged keeps the stored value. The 秘密 that CANNOT be protected is the one
+// back unchanged keeps the stored value. The secret that CANNOT be protected is the one
 // distributed with values — every member can read it in their own container — which is
-// what the "各メンバーが値を入力" toggle (user_secret) exists to avoid.
+// what the "each member supplies the value" toggle (user_secret) exists to avoid.
 
 export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
   const tr = useT();

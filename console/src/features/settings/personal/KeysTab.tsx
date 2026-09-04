@@ -55,21 +55,25 @@ function KeyCapture({ onCapture, onCancel }: { onCapture: (chord: string) => voi
   );
 }
 
-// 学習済みクイック返信の管理（返信サジェスト Layer A）。チップ側の削除・ピン留めは右クリック /
-// 長タップのメニューに集約したが、まとめて見直すのはここ。並びは実際のランキングと同じ
-// 「ピン留め（ピンした順）→ 使用回数 → 最近」。「すべて消去」は学習と隠しを落として初期状態
-// （シードだけ）へ戻す — ピンは明示的な指定なので、外すのは別のボタンにする。
-// 「1回だけの候補を消去」はその中間で、常用の候補を残したまま使い捨ての言い回しだけを落とす
-// （全消しは常用まで巻き添えにするので、掃除のたびに学習をやり直すことになる）。こちらは隠しに
-// 積まない＝また送れば学習し直す（oneTimeQuickReplies の注記）。
+// Managing learned quick replies (Layer A of the reply suggestions). Deleting and pinning from
+// the chip itself lives in the right-click / long-press menu; this is where they are reviewed
+// together. The order matches the real ranking: pinned (in pin order) → use count → recency.
+// "Clear all" drops the learned and hidden sets, returning to the initial state (seeds only).
+// Pins are an explicit choice, so removing them is a separate button.
+// "Clear one-off suggestions" sits in between: it keeps the frequently used ones and drops
+// only the throwaway phrasings, because clearing everything takes the frequent ones with it
+// and the learning has to start over after every cleanup. These are not added to the hidden
+// set, so sending the same text again re-learns it (see the note on oneTimeQuickReplies).
 function LearnedQuickReplies() {
   const s = useSettings();
   const learned = s.quickReplies || {};
   const hidden = s.quickRepliesHidden || [];
   const pinned = s.quickRepliesPinned || [];
-  // 保存キーではなく綴りから引き直したキーでまとめる。全角/半角の同一視を入れる前に別キーで
-  // 学習された同じ文（「ＯＫ」と「OK」）が2行に見えないように、チップ行と同じ畳み方で1件にする
-  // （回数は合算・綴りは新しい方。保存の実体はその文を次に送るか消したときに畳まれる）。
+  // Group by a key recomputed from the text, not by the stored key. Otherwise the same text
+  // learned under two keys before full-width/half-width folding was introduced ("ＯＫ" and
+  // "OK") shows as two rows; fold it into one exactly as the chip row does (counts summed,
+  // the newer spelling kept). The stored entries themselves are folded the next time that
+  // text is sent or deleted.
   const merged = new Map<string, { key: string; text: string; count: number; at: number }>();
   for (const v of Object.values(learned)) {
     const key = quickReplyKey(v.text);
@@ -82,13 +86,15 @@ function LearnedQuickReplies() {
     });
   }
   const learnedRows = [...merged.values()].sort((a, b) => b.count - a.count || b.at - a.at);
-  // ピンは学習に無い文（シードや✨候補）でも留められるので、行が無ければここで足す。
+  // A pin can hold a text that was never learned (a seed or a ✨ suggestion), so add a row here
+  // when there is none.
   const pinnedRows = pinned.map((text) => {
     const hit = learnedRows.find((r) => isQuickReplyPinned([text], r.text));
     return hit ?? { key: "pin:" + text, text, count: 0, at: 0 };
   });
   const rows = [...pinnedRows, ...learnedRows.filter((r) => !isQuickReplyPinned(pinned, r.text))];
-  // 消える行と件数は同じ判定から出す（ボタンの「{n}件」と実際に消える数がズレないように）。
+  // The rows that will go and the count come from the same computation, so the {n} on the
+  // button cannot drift from what is actually removed.
   const onceTexts = oneTimeQuickReplies(learned, pinned);
   if (!rows.length && !hidden.length) return null;
   return (
@@ -225,9 +231,10 @@ export function KeysTab() {
         </div>
         <p className="muted ds-note">{t("keys.kt.quickRepliesNote")}</p>
         {s.quickRepliesEnabled && <LearnedQuickReplies />}
-        {/* AI 返信候補（✨・replySuggestEnabled）は 設定 > AI補助 へ移した（docs/log/84）。
-            学習ベースのクイック返信（すぐ上）と違って LLM を呼ぶ機能で、優先順位と
-            モデルの設定と離れていると何が効くのか辿れなかった。 */}
+        {/* The AI reply suggestions (✨, replySuggestEnabled) live in the AI assist settings
+            (docs/log/84). Unlike the learning-based quick replies just above, they call an
+            LLM, and away from the priority-order and model settings there was no way to trace
+            what actually applies. */}
       </section>
 
       <section className="ds-group">

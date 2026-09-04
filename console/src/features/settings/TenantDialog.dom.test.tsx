@@ -1,10 +1,10 @@
-// テナント設定モーダル（docs/log/61 の面を管理モーダルから移した先）。ここが守るのは
-// 「画面の出し分けを、サーバが持つ権限より緩めない」ことなので、それだけを jsdom で押さえる:
-//   ① 既定＝テナント管理者（super_admin: false）で「承認して有効化」を出さないこと
-//      ★ テスト側で isSuper を作って渡すと、この既定の経路が無検証になる。だから
-//        フラグは常に GET /api/admin/tenants のレスポンス由来にする（本番と同じ経路）。
-//   ② super_admin: true が返ったときだけ承認が出ること（ハードコードで消していない）
-//   ③ ログイン規則は読み取り専用（PUT が withSuperAdmin 固定・ADR0043 決定 19）
+// The tenant settings modal (docs/log/61). What it guards is that the screen never shows more
+// than the permission the server holds, so only that is pinned in jsdom:
+//   1. By default — a tenant admin (super_admin: false) — "approve and enable" is not rendered.
+//      The flag always comes from the GET /api/admin/tenants response, the same path as
+//      production: injecting isSuper from the test would leave that default path unmeasured.
+//   2. Approval appears only when super_admin: true comes back (not hardcoded away).
+//   3. Login rules are read-only (the PUT is fixed to withSuperAdmin, ADR0043 decision 19).
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -69,7 +69,7 @@ async function mount(section: string) {
   await act(async () => {
     root!.render(<TenantDialog />);
   });
-  // テナント取得 → その slug で IdP 取得、の 2 段を流す。
+  // Flush the two stages: fetch the tenants, then fetch the IdPs for that slug.
   await act(async () => {
     await Promise.resolve();
   });
@@ -97,47 +97,48 @@ afterEach(() => {
 });
 
 describe("TenantDialog", () => {
-  it("テナント管理者には承認を出さない（既定＝super_admin: false）", async () => {
+  it("hides approval from a tenant admin (the default, super_admin: false)", async () => {
     respond(false);
     await mount("signin");
     expect(api).toHaveBeenCalledWith("api/admin/tenants");
     expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/idp");
-    // 編集・停止申請・削除はテナント管理者のもの。承認だけが出ない。
+    // Edit, request-stop and delete belong to a tenant admin; only approval is withheld.
     const texts = buttonTexts();
     expect(texts.length).toBeGreaterThan(0);
     expect(texts.some((t) => t.includes("承認して有効化"))).toBe(false);
   });
 
-  it("super_admin が返ったときだけ承認を出す", async () => {
+  it("shows approval only when super_admin comes back", async () => {
     respond(true);
     await mount("signin");
     expect(buttonTexts().some((t) => t.includes("承認して有効化"))).toBe(true);
   });
 
-  it("ログイン規則は読み取り専用で、未設定も値として読める", async () => {
+  it("renders login rules read-only, with 'not set' readable as a value", async () => {
     respond(false);
     await mount("rules");
     const content = document.querySelector(".settings-content")!;
-    // 入力欄も保存ボタンも置かない（PUT は super_admin 固定なので、押せる顔を作らない）。
+    // No input and no save button: the PUT is super_admin-only, so don't render something that
+    // looks pressable.
     expect(content.querySelector("input")).toBeNull();
     expect(content.querySelector(".admin-actions")).toBeNull();
     const vals = Array.from(content.querySelectorAll(".af-val")).map((e) => e.textContent || "");
-    // ★ 残るのはドメインの 2 列だけ。方式の 2 列（受け入れる／ボタンに出す）は P7-0 で
-    // この面から出て、「サインイン方法」の行ごとのトグルになった（docs/log/61 §61.17.5）。
-    // CSV を読み取り専用で見せても「うちは何で入れるのか」には答えないため。
+    // Only the two domain rows remain. The two provider rows (accepted / shown as a button) left
+    // this surface for per-row toggles on the sign-in methods screen (docs/log/61 §61.17.5): a
+    // read-only CSV does not answer "how do we actually sign in here".
     expect(vals).toHaveLength(2);
     expect(vals[0]).toBe("@sales.acme.co.jp");
     expect(vals[1]).toContain("未設定");
     expect(content.textContent).toContain("「サインイン方法」の面で行ごとに切り替え");
-    // このテナント専用のログイン URL は規則の面にも出る（人が配る導線・決定 28）。
+    // The tenant's own login URL also appears on the rules surface — a human hands it out
+    // (decision 28).
     expect(content.textContent).toContain("login/acme");
   });
 
-  // ⚠️ 実際に「設定にも管理にも見当たらない」と言われた。接続元の制限（docs/log/66）は
-  // テナント設定モーダルにしか置いておらず、そのモーダルの入口は **tenant_admin の
-  // 在籍だけ**で出るので、在籍の無い super_admin からは一生見えなかった。面はレールに
-  // 並んでいること、そして管理モーダル側にも置いてあること（AdminTab 側）を固定する。
-  it("接続元の制限がレールに並び、開ける", async () => {
+  // Network restrictions (docs/log/66) lived only in the tenant settings modal, whose entry
+  // point appears solely for members holding tenant_admin, so a super_admin with no membership
+  // could never reach them. This pins the item into the rail; AdminTab pins the admin-modal copy.
+  it("lists network restrictions in the rail and can open them", async () => {
     respond(false);
     await mount("network");
     expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/network");
@@ -145,23 +146,23 @@ describe("TenantDialog", () => {
     expect(rail.textContent).toContain("接続元の制限");
   });
 
-  // super_admin がこのモーダルから入ってきたら、規則は読み取り専用にしない——
-  // 「変更できるのはデプロイ管理者だけです」と書かれた画面を当のデプロイ管理者が
-  // 眺めることになる。出し分けはサーバの super_admin フラグに従う。
-  it("super_admin には規則を編集できる形で出す", async () => {
+  // A super_admin entering through this modal must not get the read-only rules, or the
+  // deployment administrator ends up staring at a screen saying only a deployment administrator
+  // can change this. The split follows the server's super_admin flag.
+  it("renders the rules editable for a super_admin", async () => {
     respond(true);
     await mount("rules");
     const content = document.querySelector(".settings-content")!;
     expect(content.querySelector("input")).not.toBeNull();
   });
 
-  it("メンバーは一覧 → 詳細の 2 段で、戻ると一覧に戻る", async () => {
+  it("drills members list → detail, and back returns to the list", async () => {
     respond(false);
     await mount("members");
     expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/members");
     const row = document.querySelector<HTMLButtonElement>(".member-row");
     expect(row).toBeTruthy();
-    expect(document.querySelector(".tenant-drill")).toBeNull(); // 一覧の段ではパンくずを出さない
+    expect(document.querySelector(".tenant-drill")).toBeNull(); // no breadcrumb at the list level
 
     await act(async () => {
       row!.click();
@@ -169,12 +170,13 @@ describe("TenantDialog", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    // 詳細（本文の中の段）。パンくずに一覧へ戻る導線が要る — レール項目は「メンバー」
-    // のままなので、それだけでは一覧に戻れない。
+    // The detail level, stacked inside the body. It needs a breadcrumb back to the list: the
+    // rail item stays on Members, so the rail alone cannot get back.
     expect(document.querySelector(".member-detail")).toBeTruthy();
     const crumb = document.querySelector<HTMLButtonElement>(".tenant-drill .admin-back");
     expect(crumb).toBeTruthy();
-    // 外す・home を掃除は tenant_admin の操作（docs/log/61 §61.10.6）なので出ている。
+    // Removing a member and cleaning their home are tenant_admin operations
+    // (docs/log/61 §61.10.6), so they are present.
     expect(document.querySelector(".member-detail")!.textContent).toContain("メンバーを外す");
 
     await act(async () => {
@@ -184,16 +186,16 @@ describe("TenantDialog", () => {
     expect(document.querySelector(".member-row")).toBeTruthy();
   });
 
-  it("運用の面はテナント 1 つに閉じる（テナント選択欄を出さない）", async () => {
+  it("keeps the operations surface to one tenant (no tenant picker)", async () => {
     respond(false);
     await mount("sessions");
     const content = document.querySelector(".settings-content")!;
     expect(api).toHaveBeenCalledWith("api/admin/sessions?tenant=acme");
-    // 跨いで見る画面ではないので、全テナントを選ぶ欄は無い。
+    // This screen never spans tenants, so there is no all-tenants selector.
     expect(content.querySelector(".usage-toolbar select")).toBeNull();
   });
 
-  it("MCP 配布はこのテナント宛に読む", async () => {
+  it("reads MCP distribution scoped to this tenant", async () => {
     respond(false);
     await mount("mcp");
     expect(api).toHaveBeenCalledWith("api/admin/mcp-servers?tenant=acme");

@@ -1,16 +1,15 @@
-// TrackerTab — 課題管理: the connections that feed the work item rail (docs/log/80).
-// ★ タブ名と左ペインのレール名（wi.title）は同じ「課題管理」。以前はレールが
-// 「作業項目」で、同じものを指す語が 2 つあり、どちらの設定なのかが読めなかった。
-// 語は UI から見える面だけ揃えてある（コード・docs の「作業項目 / work item」は
-// 内部の呼び名として残す —— 型名や API まで巻き込む改名に見合う利得が無い）。
+// TrackerTab — issue tracking: the connections that feed the work item rail (docs/log/80).
+// The tab name and the left-pane rail name (wi.title) are the same word (「課題管理」). Only
+// the surfaces a user sees were aligned; code and docs keep "work item" as the internal name,
+// because renaming type names and APIs would cost more than it is worth.
 //
-// ★ Its own tab rather than a category inside 運用・監視. Those cards are monitoring /
+// Its own tab rather than a category inside ops monitoring. Those cards are monitoring /
 // incident integrations the SRE assistant reads over MCP; this one feeds a rail the
-// user looks at, and nothing else. Sitting under that tab's opening sentence ("接続すると
-// 「SRE アシスタント」が…") it read as something it is not, and the disclaimer line the
+// user looks at, and nothing else. Sitting under that tab's opening sentence ("connect this
+// and the SRE assistant …") it read as something it is not, and the disclaimer line the
 // category needed was the tell.
 //
-// GitHub is deliberately absent: the rail reuses the Git connection (設定 > Git), because
+// GitHub is deliberately absent: the rail reuses the Git connection (Settings > Git), because
 // the token that clones is the token that lists issues. Only Jira needs its own.
 import { useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -29,9 +28,10 @@ export function TrackerTab() {
   const running = wsState === "running";
   const startWs = useWorkspaceStore((s) => s.start);
   const { conns, reload } = useConnections();
-  // 「OAuth で接続」を出してよいか。★ 押してから not_configured が返る形にしない ——
-  // アプリを登録するのはテナント管理者で、押した本人には直せない（docs/log/71 §71.4）。
-  // 答えは CP の DB にあるので、ワークスペースが止まっていても引ける。
+  // Whether the "connect with OAuth" button may be offered at all. It must never be a press
+  // that then returns not_configured: registering the app is the tenant admin's job and the
+  // person who pressed cannot fix it (docs/log/71 §71.4). The answer is in the CP database,
+  // so it can be read while the workspace is stopped.
   const [oauthOk, setOauthOk] = useState<boolean | null>(null);
   useEffect(() => {
     api("api/git-oauth")
@@ -41,8 +41,9 @@ export function TrackerTab() {
       .catch(() => {});
   }, []);
 
-  // 稼働してから（かつ停止→稼働の遷移でも）読み直す。資格情報はコンテナの中にあるので、
-  // 止まっている間はカードの状態が分からない —— AgentsTab / OpsTab と同じ作法。
+  // Re-read once running, including on a stopped -> running transition: the credentials live
+  // inside the container, so while it is stopped the card's state is unknown. Same as
+  // AgentsTab and OpsTab.
   useEffect(() => {
     if (running) reload();
   }, [running, reload]);
@@ -101,8 +102,8 @@ function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void;
     window.open(res.authorize_url, "_blank", "noopener");
     setMode("waiting");
     setStatus(tr("tracker.jira_waiting"));
-    // 認可はブラウザの別タブで進み、保存は CP → Agent で起きる。こちらからは
-    // 「接続済みになったか」を見に行くしかない（Bitbucket と同じ形）。
+    // Authorization happens in another browser tab and the save happens CP -> Agent, so all
+    // this side can do is poll for the connection turning connected (as Bitbucket does).
     poll({
       deadlineMs: 5 * 60 * 1000,
       firstDelayMs: 2500,

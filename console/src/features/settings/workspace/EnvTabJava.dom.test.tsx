@@ -1,7 +1,8 @@
-// ツールチェーンタブの Java 行。押さえるのは「選んだのに何も起きない」を作らないこと:
-//   ① 未インストールの major を選んだときだけ導入ボタンを出す（導入済みなら出さない）
-//   ② ボタンは POST /env/jdk-install を叩き、完了までポーリングしてから一覧を取り直す
-//   ③ 選択肢の見た目で「未インストール」が分かる（選んでから気づくのでは遅い）
+// The Java row of the toolchains tab. What matters is that selecting a version never
+// leaves the member with nothing happening:
+//   1. the install button appears only for a major that is not installed yet
+//   2. the button POSTs /env/jdk-install, polls to completion, then refetches the list
+//   3. the option itself reads as "not installed" (finding out after selecting is too late)
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -71,8 +72,8 @@ afterEach(() => {
 
 const javaBtn = () => document.querySelector<HTMLButtonElement>(".env-java-pick button");
 
-describe("EnvTab の Java 行", () => {
-  it("導入済みの major を選んでいるならボタンを出さない", async () => {
+describe("EnvTab Java row", () => {
+  it("shows no button when the selected major is already installed", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(path === "api/env/toolchains" ? toolchains(["21"], "21") : {}),
     );
@@ -80,13 +81,13 @@ describe("EnvTab の Java 行", () => {
     expect(javaBtn()).toBeNull();
   });
 
-  it("未インストールの major では導入ボタンと注記を出す", async () => {
+  it("shows the install button and its note for a major that is not installed", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(path === "api/env/toolchains" ? toolchains(["21"], "17") : {}),
     );
     await mount();
     expect(javaBtn()).not.toBeNull();
-    // 選択肢自体にも「未インストール」が読み取れること。
+    // The option itself has to read as "not installed".
     const opts = Array.from(document.querySelectorAll<HTMLOptionElement>(".env-java-pick option"));
     const absent = opts.find((o) => o.value === "17")!;
     const present = opts.find((o) => o.value === "21")!;
@@ -94,12 +95,13 @@ describe("EnvTab の Java 行", () => {
     expect(present.textContent).toBe("Temurin 21");
   });
 
-  it("押すと導入を開始し、完了後にツールチェーンを取り直してボタンが消える", async () => {
+  it("starts the install on click, refetches the toolchains and drops the button", async () => {
     let installed = ["21"];
     api.mockImplementation((path: string) =>
       Promise.resolve(path === "api/env/toolchains" ? toolchains(installed, "17") : {}),
     );
-    // 既に入っていた等で即 done が返る経路。ポーリング自体は kiro と同じ usePolling。
+    // The path where done comes back immediately (already present); polling itself is the
+    // same usePolling as kiro.
     apiJSON.mockImplementation(async () => {
       installed = ["17", "21"];
       return { state: "done", major: "17", java_installed: installed };
@@ -113,11 +115,11 @@ describe("EnvTab の Java 行", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    // 取り直した結果 17 が導入済みになり、ボタンは消える。
+    // After the refetch 17 is installed, so the button goes away.
     expect(javaBtn()).toBeNull();
   });
 
-  it("進行中はボタンを押せない（二重ダウンロードを人の手で起こさせない）", async () => {
+  it("disables the button while installing, so nobody can start a second download", async () => {
     api.mockImplementation((path: string) =>
       Promise.resolve(path === "api/env/toolchains" ? toolchains(["21"], "17") : { state: "installing" }),
     );
@@ -130,7 +132,8 @@ describe("EnvTab の Java 行", () => {
     const btn = javaBtn()!;
     expect(btn.disabled).toBe(true);
     expect(btn.textContent).toBe("インストール中…");
-    // セレクトも触らせない（別の major へ切り替えると進行中の対象が読めなくなる）。
+    // The select is locked too: switching major mid-install would make it unreadable which
+    // one is being installed.
     expect(document.querySelector<HTMLSelectElement>(".env-java-pick select")!.disabled).toBe(true);
   });
 });

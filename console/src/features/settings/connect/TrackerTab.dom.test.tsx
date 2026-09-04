@@ -1,7 +1,7 @@
-// Jira 接続カード（docs/log/80 §80.17）。芯は 2 つ:
-//   ① OAuth ボタンは「テナントがアプリを登録しているか」で出し分ける —— 押してから
-//      not_configured が返る形にしない（押した本人には直せない設定なので）
-//   ② API トークン経路を残す（アプリ未登録のテナントには他に入口が無い）
+// The Jira connection card (docs/log/80 §80.17). The point is two things:
+//   1. The OAuth button is shown or withheld on whether the tenant registered an app — never
+//      pressed only to return not_configured, since the person pressing cannot fix that setting.
+//   2. The API-token path stays, because a tenant with no registered app has no other way in.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -19,7 +19,7 @@ vi.mock("../../../core/api/client.ts", () => ({
 const { TrackerTab } = await import("./TrackerTab.tsx");
 const { useWorkspaceStore } = await import("../../../core/store/workspace.ts");
 const { ToastProvider } = await import("../../../ui/ToastProvider.tsx");
-// 接続済みのカードは切断ボタンを描き、それが useConfirm を要求する。
+// A connected card renders the disconnect button, which requires useConfirm.
 const { ConfirmProvider } = await import("../../../ui/ConfirmProvider.tsx");
 
 let root: Root | null = null;
@@ -62,7 +62,7 @@ afterEach(() => {
 });
 
 describe("TrackerTab", () => {
-  it("アプリ未登録なら OAuth ボタンは押せず、理由を出す", async () => {
+  it("disables the OAuth button and states why when no app is registered", async () => {
     apiMock.mockImplementation((p: string) => {
       if (p === "api/git-oauth") return Promise.resolve({ jira: { configured: false } });
       return Promise.resolve(conns({ connected: false }));
@@ -72,11 +72,11 @@ describe("TrackerTab", () => {
     expect(btn).toBeTruthy();
     expect(btn!.disabled).toBe(true);
     expect(text()).toContain(t("tracker.jira_oauth_unconfigured"));
-    // ★ トークン経路は残っている（アプリ未登録のテナントの唯一の入口）。
+    // The token path remains — the only way in for a tenant with no registered app.
     expect(buttons()).toContain(t("tracker.jira_use_token"));
   });
 
-  it("アプリが登録済みなら OAuth ボタンが押せる", async () => {
+  it("enables the OAuth button when an app is registered", async () => {
     apiMock.mockImplementation((p: string) => {
       if (p === "api/git-oauth") return Promise.resolve({ jira: { configured: true } });
       return Promise.resolve(conns({ connected: false }));
@@ -87,7 +87,7 @@ describe("TrackerTab", () => {
     expect(text()).not.toContain(t("tracker.jira_oauth_unconfigured"));
   });
 
-  it("API トークンを選ぶと 3 項目が出る（メールも資格情報）", async () => {
+  it("shows three fields when the API-token path is chosen (the email is a credential too)", async () => {
     apiMock.mockImplementation((p: string) =>
       Promise.resolve(p === "api/git-oauth" ? { jira: { configured: true } } : conns({ connected: false })),
     );
@@ -98,7 +98,7 @@ describe("TrackerTab", () => {
     expect(host.querySelectorAll("input.cinput").length).toBe(3);
   });
 
-  it("★ 接続済みで複数サイトなら選択できる（1 件なら出さない）", async () => {
+  it("offers a site picker when connected with several sites", async () => {
     const jira = {
       connected: true,
       authKind: "oauth",
@@ -128,7 +128,7 @@ describe("TrackerTab", () => {
     expect(apiJSONMock).toHaveBeenCalledWith("api/connections/jira/site", "PUT", { cloudId: "cid-2" });
   });
 
-  it("サイトが 1 件なら選択は出さない", async () => {
+  it("shows no picker when there is only one site", async () => {
     apiMock.mockImplementation((p: string) =>
       Promise.resolve(
         p === "api/git-oauth"
@@ -140,7 +140,7 @@ describe("TrackerTab", () => {
     expect(host.querySelector("select")).toBeNull();
   });
 
-  it("ワークスペースが止まっていれば、まず起動を促す（資格情報はコンテナの中）", async () => {
+  it("asks to start the workspace first when it is stopped (credentials live in the container)", async () => {
     useWorkspaceStore.setState({ state: "stopped" });
     apiMock.mockResolvedValue({ jira: { configured: true } });
     await render();

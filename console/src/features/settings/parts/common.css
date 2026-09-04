@@ -1,23 +1,23 @@
-/* 面をまたぐ小さな共通部品 — 設定ブロック（.ds-*）、確認ダイアログ、
- * 危険な操作のボタン、ディレクトリピッカー。
+/* Small pieces shared across surfaces — settings blocks (.ds-*), the confirm dialog, the
+ * destructive-action buttons and the directory picker.
  *
- * ⚠ .dirpick-* は features/repos だけが使っており、この設定モーダルからは 1 箇所も
- *   参照していない（repos.css にも同名の定義があり、いまも import 順で合成されている）。
- *   移すか消すかは所有権をまたぐので、この PR では触っていない。
+ * .dirpick-* is used only by features/repos and is referenced nowhere in this settings
+ * modal (repos.css defines the same names, and the two are still merged in @import order).
+ * Moving or deleting it crosses an ownership boundary, so it was left alone here.
  *
- * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
- * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
- * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
- * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ * One slice of `settings.css` (ADR 0067 / FE-SETTINGS). A class name must appear in exactly
+ * one file: every stylesheet in this Console is global, so the same class split across two
+ * files is not a conflict — it is silently merged in @import order (scripts/css-dup.mjs).
+ * Before adding a rule, check that its name exists nowhere else.
  *
- * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ * Load order is decided by the @import list in settings.css; rename this file there too.
  */
 /* display settings tab */
 .ds-group {
   margin-bottom: 22px;
 }
 
-/* Reset section (TTS tab bottom): a separator above the lone リセット button so it
+/* Reset section (TTS tab bottom): a separator above the lone reset button so it
    reads as a distinct, less-prominent action rather than another settings row. */
 .ds-reset {
   margin-top: 4px;
@@ -57,8 +57,8 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   line-height: 1.5;
-  /* 読み上げ辞書の textarea はテーマ配色を自前で持つ（settings-modal 側では
-     同値の再指定になるだけ）。 */
+  /* The TTS dictionary textarea carries its own theme colors; on the settings-modal side
+     this is only a restatement of the same values. */
   background: var(--btn);
   color: var(--fg);
   border: 1px solid var(--btn-border);
@@ -126,7 +126,7 @@
   font-size: 12px;
 }
 
-/* Directory picker (New Session · リポなし): breadcrumb + a scrollable list of
+/* Directory picker (New Session, no repo): breadcrumb + a scrollable list of
    subfolders; the browsed path is the launch dir. Replaces a confusing free-text
    path field. */
 .dirpick {
@@ -217,7 +217,7 @@
   opacity: 0.5;
 }
 
-/* Group heading (リポジトリ / フォルダ) inside the picker list. */
+/* Group heading (repositories / folders) inside the picker list. */
 .dirpick-head {
   font-size: 10px;
   font-weight: 600;
@@ -422,8 +422,8 @@
   letter-spacing: 0.04em;
 }
 
-/* Per-agent settings group inside a provider card (エージェントタブ): the connection
-   card's behavior toggles (Remote Control / 通知 / RTK / Web UI), shown once the
+/* Per-agent settings group inside a provider card (agents tab): the connection
+   card's behavior toggles (Remote Control / notifications / RTK / Web UI), shown once the
    agent is connected. */
 .p-settings {
   border-top: 1px solid var(--border);
@@ -578,7 +578,7 @@
 }
 
 /* Labeled, grouped SSM add-form (mock: console-ssm-mock.html): each field carries a
-   label, a required * marker, and a hint; grouped into 必須 / 詳細(任意). */
+   label, a required * marker, and a hint; grouped into required / advanced (optional). */
 .ssm-frm {
   display: flex;
   flex-direction: column;

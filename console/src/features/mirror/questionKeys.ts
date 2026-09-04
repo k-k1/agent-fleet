@@ -29,7 +29,7 @@ export interface QKQuestion {
 // single-select options (the tool's own contract), and whether the row layout below
 // changes is decided per question, not once for the whole form — a later question with
 // plain options reverts to the normal layout even if an earlier one had previews
-// (実測 v2.1.232, docs/build/92 §6).
+// (measured on v2.1.232, docs/build/92 §6).
 const hasPreview = (opts: QKOption[]): boolean => opts.some((o) => previewBody(o.preview) !== "");
 
 // The card's per-question state: the labels checked (single-select holds at most one)
@@ -44,7 +44,7 @@ const pickedIdx = (opts: QKOption[], labels: string[] | undefined): number[] =>
 const trimAt = (freeText: string[], qi: number) => (freeText[qi] || "").trim();
 
 // Free text bound for a TUI modal is folded to ONE line. A {t} step is delivered with
-// `tmux send-keys -l`, which puts the bytes on the pane verbatim (実測: a newline
+// `tmux send-keys -l`, which puts the bytes on the pane verbatim (measured: a newline
 // arrives as a raw LF, not as typed characters) — so an embedded newline acts as Enter
 // on the single-line "Type something" field, and a tab/ESC moves focus or dismisses the
 // modal. Either way the row the rest of the sequence assumes is gone and the trailing
@@ -107,7 +107,7 @@ export function buildClaudeSeq(qs: QKQuestion[], sel: string[][], freeText: stri
       // text is then silently swallowed there (option/menu rows ignore typed text) and
       // the trailing Enter activates "Chat about this", which claude treats as declining
       // the question — the exact "User declined to answer questions" / "(No answer
-      // provided)" rejection this was reported as (実測 v2.1.232, docs/build/92 §6).
+      // provided)" rejection this was reported as (measured on v2.1.232, docs/build/92 §6).
       // The fix: the cursor always starts a question's tab on option 0, so 'n' opens
       // notes there with no navigation needed; typing + Enter submits with no option
       // picked ("(no option selected) notes: …" — claude's own free-text equivalent
@@ -116,10 +116,11 @@ export function buildClaudeSeq(qs: QKQuestion[], sel: string[][], freeText: stri
       // 'n' rides as a {t} step, not a {k} one: the Agent's /input validates every {k}
       // against a NAMED-key whitelist (allowedKey in session_io.go — Up/Down/…/Enter),
       // and a step it doesn't know rejects the WHOLE request with 400 bad_key, so not a
-      // single keystroke reaches the pane and the card just sits there (the reported
-      // "自由入力してボタンを押しても無反応"). For a printable character the two are the
-      // same byte on the pane anyway — `send-keys n` and `send-keys -l n` both deliver
-      // 0x6e — and keeping it client-side means this works against an older Agent too.
+      // single keystroke reaches the pane and the card just sits there (reported as
+      // "typing free text and pressing the button does nothing"). For a printable
+      // character the two are the same byte on the pane anyway — `send-keys n` and
+      // `send-keys -l n` both deliver 0x6e — and keeping it client-side means this
+      // works against an older Agent too.
       // The step stays separate from the text so the 90ms pacing lets the notes field
       // open before it is typed into.
       seq.push({ t: "n" }, { t: ft }, { k: "Enter" });
@@ -173,7 +174,7 @@ export function buildClaudeSubmit(
 //
 // writeIn (agy only): the menu appends a "Write-in..." row just after the options.
 // Unlike claude's row it must be ENTERED before it accepts text — Enter opens the
-// "Your answer:" field and the trailing Enter submits it (agy 1.1.4 実測). Typing
+// "Your answer:" field and the trailing Enter submits it (measured on agy 1.1.4). Typing
 // without that first Enter lands on a plain option row, where the text is dropped and
 // Enter picks the highlighted option instead. Left false for codex/opencode, whose
 // menus have no verified write-in row.

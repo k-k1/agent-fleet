@@ -1,11 +1,11 @@
-// adminShared の純粋な表示ロジック。DOM は要らないので node プロジェクト側。
+// Pure display logic from adminShared. No DOM needed, so it lives in the node project.
 import { describe, it, expect } from "vitest";
 import { slotMemLabel } from "./adminShared.ts";
 
 describe("slotMemLabel", () => {
   // Two numbers exist once the workspace is capped, and the one a member can actually
   // spend is the cgroup's. Printing only the box would promise memory the kernel will
-  // not hand over (ADR 0045 決定 28).
+  // not hand over (ADR 0045 decision 28).
   const tr = ((k: string, v?: Record<string, string>) => `${v?.n} of ${v?.box}`) as never;
 
   it("leads with what the workspace gets and follows with the box", () => {

@@ -9,7 +9,7 @@ import { ProviderCard, StatusPill, Hint, DisconnectButton, ReauthButton } from "
 import { SettingRow, CardSettings, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
 
 // Claude: OAuth connect (start → approve in a new tab → paste code → complete), plus
-// its behavior settings (Remote Control / 通知 / RTK) once connected.
+// its behavior settings (Remote Control / notifications / RTK) once connected.
 export function ClaudeCard({
   running,
   st,
@@ -45,8 +45,8 @@ export function ClaudeCard({
     }
   };
   const complete = async () => {
-    // OAuth コードは code#state 形式。オートフィル等でコード末尾に URL が
-    // 連結されてしまった場合に備え、http(s):// 以降を切り落としてから送る。
+    // The OAuth code has the form code#state. Autofill and the like can append a URL to it, so
+    // cut everything from http(s):// onwards before sending.
     let c = code.trim();
     const u = c.search(/https?:\/\//i);
     if (u > 0) c = c.slice(0, u).trim();
@@ -69,14 +69,14 @@ export function ClaudeCard({
     await raw("api/connections/claude", { method: "DELETE" });
     reload();
   };
-  // 再認証。claude は自分の .credentials.json を所有していて「更新だけ」のコマンドを
-  // 持たないので、一度サインアウトしてから同じ OAuth フローを開き直す（＝これまで
-  // 利用者が手で踏んでいた 切断→接続 を 1 アクションにしたもの）。サーバ側でトークンが
-  // 失効しても `claude auth status` は手元の資格情報を見て loggedIn を返すため、カードは
-  // 接続済みのまま — この導線が無いと、認証切れは「切断してみる」以外に直しようがない。
+  // Re-authenticate. claude owns its own .credentials.json and has no refresh-only command, so
+  // this signs out and reopens the same OAuth flow as one action. When the token is revoked
+  // server side, `claude auth status` still reports loggedIn from the local credentials and the
+  // card stays "connected" — without this control, an expired login can only be fixed by
+  // guessing at disconnect.
   const reauth = async () => {
     await raw("api/connections/claude", { method: "DELETE" });
-    reload(); // 状態ピルを 未接続 へ戻す（フロー表示自体は下の分岐が先に効く）
+    reload(); // put the status pill back to "not connected"; the flow view below takes over first
     await start();
   };
 
@@ -86,9 +86,9 @@ export function ClaudeCard({
       name={kindDisplayName("claude")}
       status={
         running ? (
-          /* 期限切れは「接続済み」ではない: 資格情報は手元にあるので `claude auth status`
-             は loggedIn を返すが、それでターンは始まらない（docs/log/47 §4-8）。緑のピルの
-             ままにすると、この画面がまさに嘘をつく場所になる。 */
+          /* Expired is not "connected": the credentials are local, so `claude auth status`
+             returns loggedIn, but no turn will start (docs/log/47 §4-8). Leaving the pill
+             green makes this screen the exact place that lies. */
           <StatusPill on={st?.connected && !st?.expired}>
             {!st?.connected
               ? tr("conn.disconnected")
@@ -101,9 +101,9 @@ export function ClaudeCard({
     >
       {!running ? (
         <ConnPaused />
-      ) : /* フローを接続状態より先に見る: 再認証はサインアウト→フロー開始の順で走り、
-            api/connections の再取得はそれより遅れて届く。接続済みを先に見ていると、
-            開いたばかりのコード貼り付け欄がその一瞬だけ隠れてしまう。 */
+      ) : /* Check the flow before the connection state: re-auth runs sign-out then flow-start,
+            and the api/connections refetch lands later. Checking "connected" first would hide
+            the just-opened code field for that instant. */
       flow ? (
         <>
           <div className="p-desc">{tr("agents.claude_desc_flow")}</div>
@@ -116,9 +116,9 @@ export function ClaudeCard({
               {tr("agents.claude_hint_2")}
             </Hint>
             <div className="flow">
-              {/* 素の <input> だとパスワードマネージャ/ブラウザのオートフィルが働き、
-                  貼り付けた OAuth コード（code#state 形式）の末尾に claude.com の URL を
-                  差し込んで壊す事例がある。オートフィルを全面的に無効化しておく。 */}
+              {/* With a plain <input>, password managers and browser autofill kick in and can
+                  append a claude.com URL to the pasted OAuth code (code#state), breaking it.
+                  Disable autofill completely. */}
               <input
                 className="cinput"
                 type="text"
@@ -147,17 +147,19 @@ export function ClaudeCard({
             {st.email || tr("conn.connected")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
-          {/* 期限（docs/log/47 §4-8）。CLI 側の予告は残り1日以下・15秒で消える起動ヒント
-              だけで、切れた後は何も出ない。ここは消えない場所なので、切れる前から
-              静かに出しておく。日時は tooltip（行を伸ばさない）。 */}
+          {/* Expiry (docs/log/47 §4-8). The CLI only warns via a startup hint that appears with
+              under a day left and vanishes after 15 seconds, and says nothing once expired.
+              This surface does not disappear, so it shows the expiry quietly beforehand; the
+              exact timestamp is a tooltip, to keep the row from growing. */}
           {(st.expired || st.days_left !== undefined) && (
             <span className="p-exp" title={st.expires_at ? new Date(st.expires_at).toLocaleString() : undefined}>
               {st.expired
                 ? tr("conn.expired")
                 : st.days_left
                   ? tr("conn.expires_in", { days: st.days_left })
-                  : /* 残り 1 日未満、または更新期限は過ぎたが最後のアクセストークンで
-                       まだ動いている状態（数時間で止まる）。日数では言えない。 */
+                  : /* Under a day left, or the refresh deadline has passed but the last access
+                       token still works (it will stop within hours). Neither can be stated in
+                       whole days. */
                     tr("conn.expires_soon")}
             </span>
           )}
@@ -187,7 +189,7 @@ export function ClaudeCard({
           <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
         </SettingRow>
         <p className="ps-note">{tr("agents.note_claude_rate_limit_resume")}</p>
-        {/* Remote Control / 通知 / RTK are workspace-level files (independent of Claude
+        {/* Remote Control / notifications / RTK are workspace-level files (independent of Claude
             auth) — pre-settable, but need the api/claude/settings endpoint loaded. */}
         {claude && (
           <>

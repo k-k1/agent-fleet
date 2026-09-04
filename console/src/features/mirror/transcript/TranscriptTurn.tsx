@@ -59,28 +59,31 @@ export function TranscriptTurn({
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
   const spend = spendOf(turn);
   const maxSpend = caps.maxSpend || 0;
-  const bodyEl = useRef<HTMLDivElement>(null); // カラオケ朗読（turnTts）とマーカーの本文 DOM
-  // 印を被せるのは MarkdownView が innerHTML を描いたあと（子の effect が先に走るので、
-  // この effect の時点では本文が出来ている — DocView のプランコメントと同じ作法）。
+  const bodyEl = useRef<HTMLDivElement>(null); // body DOM for karaoke read-aloud (turnTts) and marks
+  // Marks are painted after MarkdownView has written its innerHTML: a child's effect runs first,
+  // so the body already exists by the time this effect runs (same idiom as DocView's plan
+  // comments).
   const painted = useRef("");
   const marks = caps.marks;
   useEffect(() => {
     if (!bodyEl.current || !marks) return;
     painted.current = paintTurnMarks(bodyEl.current, marks.byRoot, marks.authorSlot, painted.current);
   });
-  // 作業過程の畳み込み（folded）と開閉（open）。ターン単位の状態だが、いま載っている
-  // ターンごと ref に持つ: ミラーはペインがセッションを持ち替えても再マウントされず
-  // （props が変わるだけ）、転写の idx はセッション毎に 0 から振られるので、同じ位置の
-  // コンポーネントに別の会話のターンが載る。id が変わったら前のターンの状態は捨てる。
+  // Whether the work trace is folded, and whether it is open. Per-turn state, but held in a ref
+  // together with the turn it belongs to: the mirror is not remounted when its pane switches
+  // session (only the props change), and transcript idx restarts at 0 per session, so the
+  // component at a given position ends up holding a different conversation's turn. When the id
+  // changes, the previous turn's state is discarded.
   //
-  // **folded は片道。** foldWork は生きたポーリング値（セッションの working）から来るので
-  // 平気で往復する — ストリーミング中に一瞬 idle を拾う、operator/定時実行/peer の新しい
-  // プロンプトが転写へ届く前に working が立つ、といった具合に。往復させるとそのたびに
-  // 作業過程が展開⇄畳みで入れ替わり、読んでいる最中に本文の高さが跳ねて位置がズレる。
-  // 一度畳んだターンは開き直さない（中身は summary をクリックすれば読める）。
+  // folded is one-way. foldWork comes from a live polled value (the session's working flag) and
+  // flaps freely — a momentary idle reading mid-stream, or working going true before an
+  // operator / scheduled / peer prompt reaches the transcript. Following each flap would swing
+  // the work trace open and shut, jumping the body's height under a reader. A turn that has
+  // folded once never re-opens itself; the content is still one click on the summary away.
   //
-  // **open を決めるのは「初めて畳まれた瞬間の defaultWorkOpen」だけ** ＝そのとき末尾を
-  // 追っていたかどうか。以後は追従が切れても戻っても追随せず、読者のクリックだけが変える。
+  // open is decided ONLY by defaultWorkOpen at the moment the turn first folds — i.e. by whether
+  // the reader was following the tail then. Losing or regaining the tail afterwards changes
+  // nothing; only the reader's own click does.
   const work = useRef({ id: "", folded: false, open: false, defaulted: false });
   const [, redrawWork] = useReducer((n: number) => n + 1, 0);
   const workId = (caps.session || "") + "#" + turn.idx;
@@ -101,11 +104,11 @@ export function TranscriptTurn({
       item.kind === "toolrun" ? (
         <ToolRun key={"tr" + item.tools[0].i} tools={item.tools} onOpenDiff={caps.openDiff} />
       ) : item.p.kind === "question" ? (
-        // A question from the transcript is history, never clickable. 回答済み is claimed
+        // A question from the transcript is history, never clickable. "Answered" is claimed
         // only when the answer is actually here: claude writes the tool_use at ASK time,
         // so a part CAN arrive still open (the Agent hides the one whose card is pending,
-        // but a shared/exported transcript has no such card to defer to). Badging that
-        // 回答済み with nothing to show was the old, hardcoded lie.
+        // but a shared/exported transcript has no such card to defer to). Badging it
+        // answered with nothing to show was the old, hardcoded lie.
         <QuestionBlock
           key={item.i}
           questions={item.p.questions}
@@ -116,7 +119,7 @@ export function TranscriptTurn({
       ) : item.p.kind === "plan" ? (
         // A historical plan — show the outcome, open in a pane when this view can (the
         // shared view has no pane to open, so PlanBlock omits it). Same rule as the
-        // question above: 決定済み only once the tool_result (or the optimistic 却下 mark)
+        // question above: "decided" only once the tool_result (or the optimistic reject mark)
         // says so, not merely because the plan reached the transcript.
         <PlanBlock
           key={item.i}
@@ -143,7 +146,7 @@ export function TranscriptTurn({
         ) : null
       ) : item.p.kind === "thinking" ? (
         // The agent's chain-of-thought (codex reasoning / opencode reasoning),
-        // collapsed unless this agent's 動作設定 asks for it expanded.
+        // collapsed unless this agent's behaviour setting asks for it expanded.
         <ThinkingBlock
           key={item.i}
           text={item.p.text}
@@ -172,8 +175,9 @@ export function TranscriptTurn({
           baseDir={turn.cwd}
           repo={caps.repo}
           onOpenFile={caps.openFile}
-          // マーカーを数える範囲はこの part ひとつ（docs/log/69 §69.3）。ブロック相対ではなく
-          // 元ターン由来の root なので、共有先の tail 窓がずれても同じ場所を指す。
+          // Marks are counted within this one part (docs/log/69 §69.3). The root comes from the
+          // source turn rather than the block, so it points at the same place even when a
+          // recipient's tail window differs.
           markRoot={caps.marks ? turn.origins[item.i] : undefined}
           markKind={item.p.kind}
         />
@@ -182,27 +186,29 @@ export function TranscriptTurn({
   const fromOperator = isUser && turn.source === "operator";
   // Schedule origin (docs/log/38): the prompt was fired by scheduled execution — either a
   // timed fire ("schedule") or a run-now ("schedule-manual") — badged so schedule-driven
-  // turns are never mistaken for typed or operator input, and 定期/手動 read apart.
+  // turns are never mistaken for typed or operator input, and timed and manual reads apart.
   const fromSchedule = isUser && (turn.source === "schedule" || turn.source === "schedule-manual");
   const scheduleManual = isUser && turn.source === "schedule-manual";
-  // Automatic resume (docs/log/47 §4-6): the agent itself re-sent 「続けて」 after the turn was
-  // cut off. Nobody typed it and no operator sent it, so it needs its own badge — an
-  // unattributed "続けて" in the transcript is the most confusing kind of injected turn.
+  // Automatic resume (docs/log/47 §4-6): the agent itself re-sent "continue" (「続けて」) after
+  // the turn was cut off. Nobody typed it and no operator sent it, so it needs its own badge — an
+  // unattributed 「続けて」 in the transcript is the most confusing kind of injected turn.
   const fromAutoResume = isUser && turn.source === "auto-resume";
   // Peer origin (docs/log/58 / ADR 0041): ANOTHER SESSION typed into this one. Neither the
   // user nor the operator sent it, and this badge is its ONLY visualisation — the
   // sender's name exists nowhere else on this side except the server-built envelope
   // prefix, so read it back from the text.
   //
-  // 由来タグ(source)が無くても封筒があれば peer と見なす。タグはサーバが投入時に覚える
-  // 別ストア由来で、①記録が済む前に取ってきたターン（増分ポーリングは持っているターンを取り直さ
-  // ないので、そのまま固定される）②長寿命セッションで記録が上限を超えて押し出された、のどちらでも
-  // 落ちる（docs/log/58 §58.15）。封筒はサーバが本文の先頭に必ず付ける（呼び出し元には組ませない）
-  // ので、表示の根拠としてはタグと同格 — そして落ちたときに残る唯一の痕跡。
+  // An envelope alone is enough to count as peer, even without the origin tag (source). The tag
+  // comes from a separate store the server writes at injection time, and it goes missing in two
+  // ways (docs/log/58 §58.15): a turn fetched before that record was written stays tagless
+  // forever (incremental polling never refetches a turn it already holds), and on a long-lived
+  // session the record is pushed out past its cap. The envelope is always prepended to the body
+  // by the server (callers never build it), so as evidence for display it ranks with the tag —
+  // and it is the only trace left when the tag is gone.
   //
-  // 封筒が無い着信もある: claude 自前の cross-session チャネル（docs/log/58 §58.16）は AF を
-  // 通らないので封筒が付かない。そこは Agent が転写の `origin.name` から送信者を起こして
-  // `peerFrom` に載せてくるので、封筒 → それ、の順で拾う。
+  // Some arrivals have no envelope: claude's own cross-session channel (docs/log/58 §58.16) does
+  // not go through AF. There the Agent recovers the sender from the transcript's `origin.name`
+  // and puts it in `peerFrom`, so read the envelope first and fall back to that.
   const peerFrom = isUser ? (peerSenderOf(turn.text ?? "") ?? turn.peerFrom ?? null) : null;
   const fromPeer = isUser && (turn.source === "peer" || !!peerFrom);
   const peerIntent = fromPeer ? peerIntentOf(turn.text ?? "") : null;
@@ -239,7 +245,7 @@ export function TranscriptTurn({
           </span>
         )}
         {fromSchedule && (
-          // Fired by scheduled execution (docs/log/38) — timed (定時) vs run-now (手動発火).
+          // Fired by scheduled execution (docs/log/38) — timed vs run-now.
           <span
             className="mt-op mt-sched"
             title={tr(scheduleManual ? "mirror.from_schedule_manual_title" : "mirror.from_schedule_title")}
@@ -316,8 +322,8 @@ export function TranscriptTurn({
                     baseDir={turn.cwd}
                     repo={caps.repo}
                     onOpenFile={caps.openFile}
-                    // ユーザーの吹き出しが描くのは parts ではなくブロックの text なので、
-                    // 2 行以上畳んだブロックでは root が空になる（groupTurns 参照）。
+                    // A user bubble renders the block's text rather than its parts, so the root
+                    // is empty on a block that folded two or more turns (see groupTurns).
                     markRoot={caps.marks ? turn.bodyRoot : undefined}
                     markKind=""
                   />
@@ -330,8 +336,8 @@ export function TranscriptTurn({
                   </div>
                 )}
                 {files.length > 0 && (
-                  // Non-image attachments (drag&drop / ＋): a name chip — the file itself
-                  // lives under the session's pasted dir for the agent to read.
+                  // Non-image attachments (drag & drop, or the + button): a name chip — the
+                  // file itself lives under the session's pasted dir for the agent to read.
                   <div className="mt-attach-files">
                     {files.map((nm) => (
                       <span className="mt-attach-file" key={nm} title={nm}>
@@ -363,7 +369,7 @@ export function TranscriptTurn({
           renderAssistantParts(turn.parts)
         )}
       </div>
-      {/* Files this reply edited, as chips — the answer to 「さっき直したのはどれ」
+      {/* Files this reply edited, as chips — the answer to "which one did it just change"
           without expanding a folded ToolRun and reading tool traces. Only where a diff
           can actually be opened: the shared view has no pane, and its DTO drops the path
           anyway (transcript/capabilities.ts — absent capability, no affordance). */}

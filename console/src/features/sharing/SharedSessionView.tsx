@@ -40,9 +40,9 @@ import "./sharing.css";
 // window the mirror asks for. It used to be 60 for a faster first paint, but 60 claude
 // jsonl lines is often a fraction of ONE exchange (a single answer spans a thinking
 // line, every tool call and the reply), so the opening screen could start mid-answer
-// with the prompt that caused it out of frame, and 以前の会話を読み込む had to be
-// pressed over and over. The first-paint cost that motivated 60 was the per-request
-// inventory sync, which is now throttled per owner (docs/log/59 §3).
+// with the prompt that caused it out of frame, and the "load earlier conversation"
+// button had to be pressed over and over. The first-paint cost that motivated 60 was
+// the per-request inventory sync, which is now throttled per owner (docs/log/59 §3).
 const WINDOW = 400;
 // Poll cadence, matching the mirror's. The server allows 120 reads/min per
 // recipient+session, so even the working cadence stays well inside the limit.
@@ -50,13 +50,15 @@ const POLL_WORKING = 1200;
 const POLL_IDLE = 3000;
 // The owner's Workspace is stopped: nothing can change until they start it, so back off.
 const POLL_STOPPED = 5000;
-// 引き継ぎ提案の取得間隔。転写より粗くてよい(提案は所有者の操作でしか変わらない)。
-// 転写ポーリングと同じ 120回/分のバケツを共有するので、ここを詰めると転写の方が絞られる。
+// Fetch interval for handoff proposals. Coarser than the transcript is fine (a proposal only
+// changes when the owner acts), and it shares the transcript's 120 reads/min bucket, so
+// tightening it here throttles the transcript instead.
 const POLL_HANDOFF = 5000;
 const NEAR_BOTTOM_PX = 80;
-// 読者自身の操作(開閉)が起こす高さの変化を追わない窓。ミラーと同じ値。
+// Window in which height changes caused by the reader's own expand/collapse are not followed.
+// Same value as the mirror.
 const INTERACT_HOLD_MS = 600;
-// スクロールが止まったとみなして表示位置を控えるまで。
+// How long scrolling must be quiet before the reading position is recorded.
 const MARK_SETTLE_MS = 150;
 
 interface SharedTurn extends Turn {
@@ -79,7 +81,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   const tr = useT();
   const settings = useSettings();
   const meta = useSharedSessionsStore((s) => s.sessions.find((x) => x.id === sharedSessionId));
-  // 自分の login id。マーカーの「あなた」判定と、自分の印だけ消せる判定に使う。
+  // My own login id, used to decide which marks read as "you" and which ones I may delete.
   const myEmail = useTenantStore((s) => s.whoami?.email || "");
   const refreshList = useSharedSessionsStore((s) => s.refresh);
   const cached = transcriptCache.get(sharedSessionId);
@@ -91,52 +93,56 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  // 上へ読み返している間(自動追従が外れている間)だけ「最新へ」を出す。ミラーと同じ
-  // 見た目・同じ文言で、共有側にだけ無いと「下に何か来ているのか」が分からない。
+  // Show the jump-to-latest pill only while reading back up, i.e. while auto-follow is off. Same
+  // look and wording as the mirror; without it the recipient cannot tell that something arrived.
   const [showJump, setShowJump] = useState(false);
-  // 共有元が提案した引き継ぎ(propose_session_handoff)。転写に残るのはツール行と定型文
-  // だけで、本文は所有者側の別ストアにある — 出さないと「引き継いだ」ことしか分からず、
-  // 何を引き継いだのかが共有先には見えない。
+  // Handoffs proposed by the owner (propose_session_handoff). The transcript keeps only the tool
+  // line and a boilerplate sentence, while the body lives in a separate store on the owner side,
+  // so without this the recipient sees that a handoff happened but not what was handed over.
   const [handoffs, setHandoffs] = useState<Proposal[]>([]);
-  // メンバーから自分宛に届いた引き継ぎ（docs/log/77）。通知の行き先はこの面なので、受け取る口が
-  // ここに無いと「引き継ぎが届きました」を押した人が**どこにも辿り着けない**（唯一の口が
-  // レール見出しのアイコンだった）。⚠️ セレクタは id/名前だけを返す — offer 自体を返すと
-  // 15 秒ごとの取り直しで毎回別オブジェクトになり、読んでいる面が丸ごと再描画される。
+  // Handoffs another member sent to me (docs/log/77). Notifications land on this surface, so with
+  // no way to accept here the person who clicked the notification reaches a dead end (the only
+  // other entry point was an icon on the rail heading). The selectors must return only the id and
+  // name: returning the offer itself yields a new object on every 15-second refetch and repaints
+  // the whole surface the reader is on.
   const offerId = useHandoffStore((st) => st.received.find((o) => o.sessionId === sharedSessionId)?.id ?? "");
   const offerFrom = useHandoffStore((st) => st.received.find((o) => o.sessionId === sharedSessionId)?.ownerUserKey ?? "");
   const [offerOpen, setOfferOpen] = useState(false);
-  // 在庫はこの面でも自分で持つ（レールが無い切り離しタブでも帯が出るように）。ポーリングは
-  // 参照カウントで 1 本に束ねてある。
+  // This surface subscribes to the backlog itself so the band also appears in a detached tab with
+  // no rail. The polling is refcounted down to a single timer.
   useEffect(() => startHandoffPolling(), []);
-  // いま出ているモーダル(AskUserQuestion / ExitPlanMode)。所有者向けの応答と同じく転写とは
-  // **別枠**で届く — Agent は開いているあいだ、その質問/プランを messages から外して
-  // カーソルも手前で止める(hidePendingInteraction)ので、ここを描かないと共有先は
-  // 「質問が出ているあいだだけ何も見えない」ことになる。読むだけの面なので答える口は
-  // 出さない(押せない要素を出さない — transcript/capabilities.ts)。
+  // The modal currently open (AskUserQuestion / ExitPlanMode). Like the owner-facing answer it
+  // arrives outside the transcript: while one is open the Agent removes that question/plan from
+  // messages and holds the cursor before it (hidePendingInteraction), so without rendering it here
+  // the recipient would see nothing at all for as long as the question is up. This surface is
+  // read-only, so no way to answer is offered (never render a control that cannot be pressed —
+  // transcript/capabilities.ts).
   const [pendingQuestions, setPendingQuestions] = useState<Question[] | null>(null);
   const [pendingText, setPendingText] = useState("");
   const [pendingPlan, setPendingPlan] = useState<string | null>(null);
-  const seen = useRef(""); // 直近に受け取った提案の中身(同じなら state を触らない)
+  const seen = useRef(""); // the last proposals received; identical content leaves state untouched
   const cursor = useRef(cached?.cursor ?? 0);
   const firstLine = useRef(cached?.firstLine ?? 0);
   const bodyRef = useRef<HTMLDivElement>(null);
-  // 中身の高さと等しい内側のラッパ。ResizeObserver はこちらも見る(スクロール容器自体は
-  // ペインの寸法なので、転写が伸びても鳴らない)。ミラーの .mirror-scroll と同じ役目。
+  // Inner wrapper whose height equals the content. The ResizeObserver watches this too, because
+  // the scroll container itself has the pane's dimensions and never fires as the transcript grows.
+  // Same role as the mirror's .mirror-scroll.
   const scrollBoxRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
-  // 自分が最後に書いた scrollTop。onScroll はこれと比べて「自分のピンの下で中身が伸びた」と
-  // 「読者が上へ動かした」を見分ける(ミラーの selfTopRef と同じ — 生の距離で判定すると、
-  // 自分で留めた直後に伸びた分を「読者が上へ行った」と誤読して追従が切れる)。
+  // The last scrollTop we wrote ourselves. onScroll compares against it to tell "content grew
+  // below my pin" from "the reader moved up" (same as the mirror's selfTopRef): judging by raw
+  // distance reads the growth right after a self-pin as the reader scrolling up and drops follow.
   const selfTop = useRef(0);
-  // この時刻までの高さの変化は「読者が自分で広げた(作業過程の開閉など)」ものとして追わない。
+  // Height changes up to this instant count as the reader expanding something themselves (work
+  // trace and the like) and are not followed.
   const interactUntil = useRef(0);
-  // 位置復元(scrollMark): 戻ってきたときに復元する位置と、復元中かどうか。
+  // Position restore (scrollMark): where to land when coming back, and whether a restore is on.
   const restoreMark = useRef<ScrollMark | null>(null);
   const restoring = useRef(false);
-  // このセッションの初回着地(末尾 or 復元)を済ませたか。
+  // Whether the first landing for this session (tail or restore) has happened.
   const didInit = useRef(false);
-  // スクロールが止まるたびに控える「いま見ている位置」。離脱時に DOM から採り直せない
-  // (下の cleanup の注記)ので、生きているうちに控えておく。
+  // The position being read, recorded whenever scrolling settles. It cannot be measured again on
+  // the way out (see the cleanup note below), so record it while the DOM is still alive.
   const pendingMark = useRef<ScrollMark | null>(null);
   const markTimer = useRef(0);
   const loadingOlderRef = useRef(false);
@@ -144,12 +150,12 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   const anchor = useRef<number | null>(null);
 
   const path = `api/shared-sessions/${encodeURIComponent(sharedSessionId)}`;
-  // 位置の記憶はミラーと同じモジュール内 Map を使う。所有者側はセッション名、こちらは
-  // catalog id なので、鍵が混ざらないよう接頭辞を付ける。
+  // Reading positions live in the same module-level Map as the mirror's. The owner side keys by
+  // session name and this one by catalog id, so a prefix keeps the two from mixing.
   const markKey = `shared:${sharedSessionId}`;
-  // 会話へ引いたマーカー（docs/log/69 / ADR 0050）。読むのは RO でもでき、引けるのは RW だけ。
-  // 消せるのは自分の印だけ（判定は Agent 側、CP が login id を刻む）。所有者 Workspace が
-  // 停止中は転写と同じく取りに行かない。
+  // Marks drawn on the conversation (docs/log/69 / ADR 0050). RO may read them, only RW may draw.
+  // You may delete only your own (the Agent decides; the CP stamps the login id). While the
+  // owner's Workspace is stopped they are not fetched, same as the transcript.
   const marks = useMarksController({
     path: `${path}/marks`,
     canEdit: meta?.permission === "rw",
@@ -159,8 +165,8 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     youLabel: tr("chat.you"),
     paused: !!meta && meta.workspaceState !== "running",
   });
-  // 引き継ぎ提案のポーリング effect から呼ぶ（新しい周期を作らない）。実際の往復は
-  // useMarksController 側で間引かれる。
+  // Called from the handoff-proposal polling effect so no new interval is created; the actual
+  // round trips are throttled inside useMarksController.
   const marksReloadRef = useRef(marks.reload);
   marksReloadRef.current = marks.reload;
 
@@ -170,14 +176,15 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     setLoaded(!!entry);
     setHasMore(entry?.hasMore ?? false);
     setError("");
-    // 保留はキャッシュしない(別セッションのモーダルが一瞬残るのを避ける) — 最初の poll で入る。
+    // Pending interactions are not cached, so another session's modal cannot flash here; the
+    // first poll fills them in.
     setPendingQuestions(null);
     setPendingText("");
     setPendingPlan(null);
     cursor.current = entry?.cursor ?? 0;
     firstLine.current = entry?.firstLine ?? 0;
     atBottom.current = true;
-    setShowJump(false); // 別セッションを開いた直後は末尾にいる
+    setShowJump(false); // right after opening another session we are at the tail
     // Kick a list refresh so the header meta fills in if the store is still cold — but
     // never await it. Blocking the first transcript fetch behind a full
     // GET /api/shared-sessions (which probes every owner's Workspace state in turn) was
@@ -211,20 +218,21 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
         if (typeof d.firstLine === "number") firstLine.current = d.firstLine;
         if (typeof d.hasMore === "boolean") setHasMore(d.hasMore);
         setWorking(d.status === "working");
-        // 保留は毎回サーバが今の状態を返す(増分ポーリングでも窓に依らない)ので、
-        // 「入っていない = もう出ていない」。前回の値を残すと、決着したモーダルが
-        // 共有先にだけ出しっぱなしになる。
+        // The server returns the current pending state on every poll, independent of the window
+        // even for incremental fetches, so "absent" means "no longer open". Keeping the previous
+        // value would leave a settled modal on screen for the recipient only.
         setPendingQuestions(Array.isArray(d.pendingQuestions) && d.pendingQuestions.length ? (d.pendingQuestions as Question[]) : null);
         setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
         setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
         const incoming: SharedTurn[] = Array.isArray(d.messages) ? d.messages : [];
-        // reset: 所有者側の転写が縮んだ/差し替わった(圧縮など) — 置き換える。それ以外は
-        // idx を鍵にした冪等マージ。同じターンの再送(伸びている最中の assistant ターン)や
-        // ページ境界の重なりを、そのまま積み増さないため(mergeTurns の注記を参照)。
-        // 質問/プランの tool_use は「訊いた時点」で転写に書かれ、回答は別の行として
-        // あとから来る。窓がその2行をまたぐと持っているターンは未回答のままなので、
-        // qid を鍵にした全転写マップで後追いに貼る(ミラーと同じ patchAnswers)。
-        // 新しいターンが1つも無い poll でも貼る — 貼るべきなのはまさにその場合。
+        // reset: the owner's transcript shrank or was replaced (compaction and the like), so
+        // replace. Otherwise merge idempotently keyed by idx, so a resent turn (an assistant turn
+        // still growing) or an overlap at a page boundary is not appended twice (see mergeTurns).
+        // The tool_use of a question/plan is written to the transcript when it is asked and the
+        // answer arrives later as a separate line. When the window straddles those two lines the
+        // turn we hold stays unanswered, so answers are patched in afterwards from a whole-
+        // transcript map keyed by qid (patchAnswers, as in the mirror). This runs even on a poll
+        // that brought no new turn at all — that is exactly the case it exists for.
         const answers = d.answers && typeof d.answers === "object" ? (d.answers as Record<string, { text: string; declined?: boolean }>) : null;
         if (d.reset) setTurns(patchAnswers(incoming, answers));
         else setTurns((old) => patchAnswers(incoming.length ? mergeTurns(old, incoming) : old, answers));
@@ -238,22 +246,23 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     };
   }, [sharedSessionId, refreshList, tr, path]);
 
-  // 引き継ぎ提案は転写とは別ストアなので、別ポーリングで取る(ミラーの useHandoffProposals と
-  // 同じ形)。転写に相乗りさせると CP が所有者 Agent へ毎回2往復することになり、共有履歴の
-  // 読み出しコストが倍になる。所有者 Workspace が停止中は転写と同じく取りに行かない。
+  // Handoff proposals live in a store of their own, so they get their own poll (the same shape as
+  // the mirror's useHandoffProposals). Riding on the transcript poll would make the CP do two
+  // round trips to the owner's Agent every time, doubling the cost of reading a shared history.
+  // While the owner's Workspace is stopped they are not fetched, same as the transcript.
   useEffect(() => {
     let live = true;
     seen.current = "";
-    setHandoffs([]); // 別セッションの提案が一瞬残らないように(ペインはセッションを差し替える)
+    setHandoffs([]); // a pane swaps sessions in place, so never flash the previous one's proposals
     const load = async () => {
       const current = useSharedSessionsStore.getState().sessions.find((x) => x.id === sharedSessionId);
       if (current && current.workspaceState !== "running") return;
       marksReloadRef.current();
       const d = await api(`${path}/handoff-proposals`).catch(() => null);
-      if (!live || !d || d.error) return; // 一時的な失敗では今出ているカードを消さない
+      if (!live || !d || d.error) return; // a transient failure must not clear the visible cards
       const next = JSON.stringify(Array.isArray(d.proposals) ? d.proposals : []);
-      // 中身が変わっていないなら state を触らない。毎回新しい配列を入れると、5秒ごとに
-      // 転写ごと再描画し、末尾追従のレイアウト効果(下の useLayoutEffect)も空振りで回る。
+      // Unchanged content leaves state alone. Storing a fresh array every time repaints the whole
+      // transcript every 5 seconds and runs the tail-following layout effect below for nothing.
       if (next === seen.current) return;
       seen.current = next;
       setHandoffs(JSON.parse(next) as Proposal[]);
@@ -266,12 +275,12 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     };
   }, [sharedSessionId, path]);
 
-  // 表示位置の記憶(scrollMark・ミラーと同じ仕組みをそのまま使う)。
+  // Remembering the reading position (scrollMark, the mirror's mechanism used as is).
   //
-  // 初めて開いたときは末尾へ、いちど読んだ会話へ戻ったときは最後に見ていた位置へ。位置は px
-  // ではなくターン([data-turn-idx])を基準に持つ — 高さは遅れて確定するうえ、再訪では tail を
-  // 取り直すので、同じ px が同じ内容を指す保証が無い。タブが生きている間だけ覚える(リロードで
-  // 消える = 次は末尾)のもミラーと同じ。
+  // First open lands at the tail; returning to a conversation already read lands where it was left.
+  // The position is held as a turn ([data-turn-idx]), not px: heights settle late and a revisit
+  // refetches the tail, so the same px is not guaranteed to be the same content. It is kept only
+  // while the tab lives (a reload forgets it, so the next open is the tail), as in the mirror.
   useEffect(() => {
     restoreMark.current = loadMark(markKey);
     restoring.current = false;
@@ -281,11 +290,11 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     pendingMark.current = null;
     return () => {
       window.clearTimeout(markTimer.current);
-      // 同じペインで別の共有セッションへ持ち替えただけなら、まだ出ていく側の DOM が載って
-      // いるので測り直せる。**ペインを閉じた/自分のセッションへ切り替えた場合はこの面ごと
-      // unmount され、この後片付けが走る時点で ref は外れている**(測っても rect は全部 0)。
-      // ミラーは持ち替えで unmount しないので気づけない差 — そちら側だけを真似ると、
-      // 「読みかけで離れて戻る」という一番よくある道で位置が消える。
+      // Swapping to another shared session in the same pane still has the outgoing DOM mounted, so
+      // it can be measured again. Closing the pane or switching to one's own session unmounts this
+      // whole surface, and by the time this cleanup runs the ref is detached (every rect measures
+      // 0). The mirror does not unmount on a swap, so copying only its behaviour loses the position
+      // on the most common path of all: leave mid-read, come back.
       saveMark(markKey, captureMark(bodyRef.current, atBottom.current) ?? pendingMark.current);
     };
   }, [markKey]);
@@ -302,9 +311,8 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // just uses them, which is what lets the first fetch stay small.
   const loadOlder = async () => {
     const el = bodyRef.current;
-    // 進行中の判定は ref で持つ。state の loadingOlder はボタンの disabled が効くまでに
-    // 1 レンダー遅れるので、素早い2連打が同じ `before=` で二重に取りに行き、同じページを
-    // 2回積む(「押すと同じ履歴が何度も出てくる」)。
+    // "In flight" is tracked in a ref: the loadingOlder state disables the button one render late,
+    // so a fast double click fetches the same `before=` twice and stacks the same page twice.
     if (!el || loadingOlderRef.current || firstLine.current <= 0) return;
     loadingOlderRef.current = true;
     setLoadingOlder(true);
@@ -316,7 +324,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
       setHasMore(!!d.hasMore);
       if (incoming.length) {
         anchor.current = keep;
-        // 古いページを先頭に置いて、いま持っている分をマージし直す(idx 昇順)。
+        // Put the older page first and re-merge what we already hold (ascending idx).
         setTurns((old) => mergeTurns(incoming, old));
       }
     }
@@ -329,8 +337,8 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     selfTop.current = el.scrollTop;
   };
 
-  // スクロールが落ち着いたら位置を控える(離脱時に測り直せないため)。ターンを上から順に
-  // 当たるので、毎イベントではなく止まってから1回だけ。
+  // Record the position once scrolling settles, since it cannot be measured on the way out. It
+  // walks the turns from the top, so do it once after the scrolling stops, not on every event.
   const rememberMark = () => {
     window.clearTimeout(markTimer.current);
     markTimer.current = window.setTimeout(() => {
@@ -348,19 +356,19 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
       anchor.current = null;
       return;
     }
-    // このセッションでの初回着地。末尾で離れていた(または初めて開いた)なら末尾、途中まで
-    // 読んで離れていたならその位置へ。アンカーのターンが tail ウィンドウに載っていなければ
-    // 復元は諦めて末尾へ落とす(どのみち読み直せる位置)。
+    // First landing for this session: the tail if it was left at the tail (or opened for the first
+    // time), otherwise the position where reading stopped. If the anchor turn is not in the tail
+    // window, give the restore up and fall to the tail, which can be read from again anyway.
     if (!didInit.current) {
-      if (!turns.length && !loaded) return; // まだ何も無い — 次の更新で着地する
+      if (!turns.length && !loaded) return; // nothing yet; the next update lands
       didInit.current = true;
       const mark = restoreMark.current;
       if (mark && !mark.atBottom && applyMark(el, mark)) {
         selfTop.current = el.scrollTop;
-        atBottom.current = false; // 末尾ではない ⇒ 追従は切れ、「最新へ」が出る
-        restoring.current = true; // 以後、遅れて入る高さのたびにこのアンカーへ置き直す
+        atBottom.current = false; // not at the tail, so follow is off and the jump pill shows
+        restoring.current = true; // from now on, re-seat to this anchor on every late height
         setShowJump(true);
-        rememberMark(); // 触らずにまた離れても、この位置を覚えたままにする
+        rememberMark(); // leaving again without touching anything keeps this position
         return;
       }
       restoreMark.current = null;
@@ -368,17 +376,17 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
       rememberMark();
       return;
     }
-    // handoffs も追従の対象。カードは転写とは別のポーリングで後から届くので、turns だけを
-    // 見ていると末尾にいたまま高さだけが増え、その分だけ着地が上にずれる(実測 +263px)。
+    // handoffs are followed too: the cards arrive from a separate poll, so watching only turns
+    // leaves us at the tail while the height grows, landing that much too high (measured: +263px).
     if (atBottom.current) toBottom(el);
-    // 保留カードも追従の対象。転写の外に足される高さなので、turns だけを見ていると
-    // 質問が出た瞬間にその分だけ着地が上へずれる(handoffs と同じ理由)。
+    // Pending cards are followed for the same reason: their height is added outside the
+    // transcript, so watching only turns shifts the landing up the moment a question appears.
   }, [turns, handoffs, loaded, pendingQuestions, pendingPlan, pendingText]);
 
-  // 転写の高さはほぼ全部が遅れて確定する(markdown の流し込み → ハイライト → 画像 decode →
-  // web フォント)。発生源を数え上げるのではなく「追従中は末尾を、復元中はアンカーを保つ」で
-  // 受ける — ミラーと同じ規則。これが無いと、開いた直後に末尾から数百〜数千 px 手前で
-  // 止まったままになる(実測 gap 2096px)。
+  // Nearly all of the transcript's height settles late (markdown layout, then highlighting, then
+  // image decode, then web fonts). Rather than enumerating the sources, hold the invariant: keep
+  // the tail while following and the anchor while restoring, as the mirror does. Without it, an
+  // open stops hundreds to thousands of px short of the tail (measured: a 2096px gap).
   useEffect(() => {
     const el = bodyRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -389,10 +397,10 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
           selfTop.current = el.scrollTop;
           return;
         }
-        endRestore(); // 末尾追従へ戻った(「最新へ」)か、アンカーが消えた
+        endRestore(); // either tail-following resumed (jump to latest) or the anchor is gone
       }
       if (!atBottom.current) return;
-      if (Date.now() < interactUntil.current) return; // 読者自身が広げた分は追わない
+      if (Date.now() < interactUntil.current) return; // do not follow what the reader expanded
       if (el.scrollHeight - el.scrollTop - el.clientHeight < 1) return;
       toBottom(el);
     });
@@ -401,8 +409,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     return () => ro.disconnect();
   }, []);
 
-  // 追従するかは「読者の意図」で決める。生の距離で判定すると、自分で末尾へ留めた直後に伸びた
-  // 分を「読者が上へ行った」と読んでしまい、以後の再ピンが全部止まる(ミラーで実測済み)。
+  // Whether to follow is decided by the reader's intent. Judging by raw distance reads the growth
+  // right after a self-pin as the reader scrolling up, which stops every later re-pin (measured in
+  // the mirror).
   const onScroll = () => {
     const el = bodyRef.current;
     if (!el) return;
@@ -424,21 +433,21 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     restoreMark.current = null;
   };
 
-  // 復元を打ち切るのは読者が入力したときだけ。「scrollTop が自分の書いた値とズレた」を根拠に
-  // してはいけない — ブラウザのスクロールアンカリングが遅延レイアウトのたびに動かすので、
-  // それを「触られた」と読むと目的地の手前で固着する(ミラーで実測)。
+  // A restore is abandoned only on reader input. Never on "scrollTop differs from what I wrote":
+  // the browser's scroll anchoring moves it on every late layout, and reading that as a touch
+  // sticks short of the destination (measured in the mirror).
   const endRestoreOnInput = () => {
     if (restoring.current) endRestore();
   };
 
-  // 読者自身が起こす reflow(作業過程・思考・ツール実行の開閉)の窓を張る。ポインタとキーの
-  // 両方を capture で拾ってから reflow が来る。
+  // Open the window for a reflow the reader caused themselves (expanding the work trace, thinking
+  // or a tool run). Both pointer and key are caught in the capture phase, before the reflow.
   const noteInteraction = () => {
     interactUntil.current = Date.now() + INTERACT_HOLD_MS;
     endRestoreOnInput();
   };
 
-  // 「最新へ」: 末尾へ飛んで自動追従を再開する。
+  // Jump to latest: go to the tail and resume auto-follow.
   const jumpToBottom = () => {
     const el = bodyRef.current;
     if (!el) return;
@@ -474,20 +483,23 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // and fall back to self-contained renderings (tool edits and plans expand in place).
   const caps: TranscriptCaps = {
     agentName: agentOf(meta?.kind).assistantName,
-    // 発言者は読み手ではなく共有元。「あなた」のままだと、他人の会話を読んでいるのに
-    // 自分が書いたように見える。名乗りは共有元のログイン ID(メールアドレス) — user_key は
-    // sanitizeUser を通した正規化キーで、誰のことか読み手に伝わらない。
+    // The speaker is the owner, not the reader. Left as "you", someone else's conversation would
+    // read as if the reader had written it. The name shown is the owner's login id (email
+    // address): user_key is a key normalised through sanitizeUser and tells the reader nothing.
     userName: meta && ownerLabel(meta),
     expandThinking: expandThinking(settings, meta?.kind),
-    // 唯一の例外。読むだけの面でも印は「会話の一部」として要り、RW なら自分でも引ける
-    // （マーカーはエージェントを動かさないので、提案→承認には載せない — ADR 0050 決定 4）。
+    // The one exception: marks are part of the conversation even on a read-only surface, and RW
+    // may draw them. They never move the agent, so they do not go through propose-then-approve
+    // (ADR 0050 decision 4).
     marks,
   };
 
-  // 表示設定の「共有セッション」テーマ／背景(docs/log/59)。ミラー(.mirrorview)と同じ仕組み:
-  // data-theme がこの面だけの基本トークンを切り替え、--chat-bg / --chat-accent はこの面の
-  // 実効テーマから導く(アプリ側の色をそのまま持ち込むと、反転した面で浮く)。他人の会話を
-  // 読んでいる面を自分のミラーと違う色にできることが、この設定の目的。
+  // The shared-session theme and background from the display settings (docs/log/59). Same
+  // mechanism as the mirror (.mirrorview): data-theme switches the base tokens for this surface
+  // only, and --chat-bg / --chat-accent are derived from this surface's effective theme (carrying
+  // the app's colours in verbatim makes them clash on an inverted surface). The point of the
+  // setting is that the surface where someone else's conversation is read can differ from one's
+  // own mirror.
   const sharedEff = effectiveTheme(settings.sharedTheme, settings.theme);
   const sharedBg = surfaceBg(settings.sharedColor, sharedEff);
   const sharedAccent = surfaceAccent(settings.sharedColor);
@@ -496,10 +508,11 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
       className="shared-view"
       data-theme={settings.sharedTheme !== "inherit" ? settings.sharedTheme : undefined}
       style={{
-        // 文字サイズ・フォントは色と違って面ごとに分けない — 読みやすさの好みは読み手のもので、
-        // 自分のミラーだけ大きくても意味がない。表示設定「セッションミラー」の値をそのまま渡す
-        // (MirrorView と同じ契約)。渡さないと本文 .mirror-turn .markdown が CSS 側の
-        // フォールバック 13.5px / system-ui で固まり、設定を変えてもここだけ動かなかった。
+        // Unlike colour, font size and family are not split per surface: legibility is the
+        // reader's preference and enlarging only one's own mirror would be pointless. The session
+        // mirror settings are passed through as they are (the same contract as MirrorView).
+        // Without them the body .mirror-turn .markdown freezes at the CSS fallback of 13.5px /
+        // system-ui, and this surface alone ignores the setting.
         "--chat-font": chatFontStack(settings.chatFont),
         "--chat-size": settings.chatSize + "px",
         ...(sharedBg ? { "--chat-bg": sharedBg } : {}),
@@ -520,9 +533,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
         </div>
         {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
-      {/* 自分宛の引き継ぎ（docs/log/77）。本文と一緒にスクロールさせない —— 転写は末尾に
-          追従するので、中に置くと「届いているのに画面外」になる。押すと受信箱がこの 1 件に
-          絞って開き、受諾も辞退もそこで完結する。 */}
+      {/* A handoff addressed to me (docs/log/77). It must not scroll with the body: the transcript
+          follows its tail, so placing it inside would push a waiting handoff off screen. Clicking
+          opens the inbox narrowed to this one offer, where both accept and decline complete. */}
       {offerId && (
         <div className="shared-view-handoff">
           <Icon name="git-branch" />
@@ -536,23 +549,25 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
         </div>
       )}
       {offerOpen && <HandoffInboxModal offerId={offerId} onClose={() => setOfferOpen(false)} />}
-      {/* マーカーの一覧（docs/log/69 §69.7）。ミラーと同じ位置＝ヘッド直下の帯に置く。 */}
+      {/* The list of marks (docs/log/69 §69.7), in the same place as the mirror: the band
+          directly under the head. */}
       <MarkStrip marks={marks} storageKey={`shared:${sharedSessionId}`} />
       <div
         className="shared-view-body"
-        // 縦へ送って読む面 — 横へはみ出しても横スワイプを殺さない（app/swipeGuard.ts）。
+        // A surface read by scrolling vertically: horizontal overflow must not kill the sideways
+        // swipe (app/swipeGuard.ts).
         data-swipe-y=""
         ref={bodyRef}
         onScroll={onScroll}
-        // 位置復元の打ち切り条件。ホイールとタッチはここで拾う — 下の pointerdown/keydown は
-        // ホイールでは出ない。
+        // What abandons a position restore. Wheel and touch are caught here; the pointerdown /
+        // keydown below never fire for a wheel.
         onWheelCapture={endRestoreOnInput}
         onTouchStartCapture={endRestoreOnInput}
         tabIndex={-1}
       >
-        {/* 高さが転写と等しい内側のラッパ。ResizeObserver がこれを見て、遅れて入る高さのたびに
-            末尾(または復元中のアンカー)へ置き直す。開閉の操作はここで捕まえて「読者が広げた
-            reflow」として観測側へ伝える。 */}
+        {/* Inner wrapper whose height equals the transcript. The ResizeObserver watches it and
+            re-seats to the tail (or, while restoring, to the anchor) on every late height.
+            Expand/collapse gestures are caught here and reported as a reader-caused reflow. */}
         <div
           className="mirror-scroll"
           ref={scrollBoxRef}
@@ -582,8 +597,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
               </div>
             )
           ) : groups.length === 0 && handoffs.length === 0 && !pendingQuestions && !pendingPlan ? (
-            // handoffs.length === 0: 転写が空なら提案カードだけが出すものになる(空表示は
-            // TranscriptView ごと飛ばしてしまうので、ミラーと同じ条件にする)。
+            // handoffs.length === 0: with an empty transcript the proposal cards are all there is
+            // to show, and the empty state skips TranscriptView entirely, so use the mirror's
+            // condition.
             <div className="mirror-empty muted">{tr("mirror.no_history")}</div>
           ) : (
             <TranscriptView
@@ -591,9 +607,10 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
               caps={caps}
               working={working}
               autoCollapseWork={atBottom.current}
-              // 読むだけの面なので、編集・破棄・起動は出さない(押せない要素を出さない)。
-              // 置き場所はミラーと同じ「提案された時点」— 末尾に固定すると、以後の会話が
-              // ずっとカードの裏に隠れる(handoffPlacement の注記)。
+              // Read-only surface, so no edit, discard or launch (never render a control that
+              // cannot be pressed). Placed where the mirror places it, at the moment it was
+              // proposed: pinned to the tail it would hide the rest of the conversation behind
+              // the card forever (see handoffPlacement).
               inlineCards={handoffs.map((h) => ({
                 at: h.created_at,
                 node: (
@@ -604,10 +621,11 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
               }))}
             />
           )}
-          {/* いま出ているモーダル。転写からは外されて別枠で届くので(上の pendingQuestions
-              の注記)、ここで描かないと共有先はモーダルが開いているあいだ何も見えない。
-              決着すると Agent がその行をカーソルごと出し直し、決定済みのカードとして
-              転写側に現れる — 入れ替わりであって二重にはならない。 */}
+          {/* The modal currently open. It is removed from the transcript and delivered separately
+              (see the pendingQuestions note above), so without rendering it here the recipient
+              sees nothing while a modal is up. Once it settles the Agent re-emits that line with
+              the cursor and it appears in the transcript as a decided card: a swap, not a
+              duplicate. */}
           {pendingPlan && (
             <div className="mirror-turn assistant">
               <div className="mirror-turn-head">
@@ -615,8 +633,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
                 <span className="mt-model muted">{tr("mirror.plan_pending")}</span>
               </div>
               <div className="mirror-turn-body">
-                {/* 承認・却下は所有者の判断。pending を渡すとその2つのボタンが出るので
-                    渡さない(押せない要素を出さない) — 本文はその場で開ける。 */}
+                {/* Approving or rejecting is the owner's call. Passing pending would render those
+                    two buttons, so it is not passed (never render a control that cannot be
+                    pressed); the body still expands in place. */}
                 <PlanBlock plan={pendingPlan} />
               </div>
             </div>
@@ -629,18 +648,20 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
               </div>
               <div className="mirror-turn-body">
                 {pendingText && <MarkdownView source={pendingText} />}
-                {/* 転写に残った質問と同じ不活性カード。選択肢も preview もそのまま読めて、
-                    答える口だけが無い(答えるのは所有者)。 */}
+                {/* The same inert card as a question left in the transcript: options and preview
+                    read exactly as they are, only the way to answer is missing (the owner
+                    answers). */}
                 <QuestionBlock questions={pendingQuestions} />
               </div>
             </div>
           )}
           {showJump && (
-            // ミラーと同じ sticky ピル(mirror.css)。高さ0の帯なのでスクロール量を増やさない。
-            // .mirror-jump-row は飾りではなく位置そのもの: これが無いとボタンは高さ0の帯の中に
-            // in-flow で置かれ、左端に寄り、箱は帯より下へはみ出す(実測 左1px / 下端を 13px
-            // はみ出し / スクロール量 +24px)。row(absolute bottom:0 + center)を挟むと
-            // ミラーと同じ「中央・下端から 11px・スクロール量そのまま」になる。
+            // The mirror's sticky pill (mirror.css). The band has zero height, so it adds no
+            // scrollable length. .mirror-jump-row is not decoration but the positioning itself:
+            // without it the button sits in flow inside that zero-height band, hugs the left edge
+            // and overflows below it (measured: 1px from the left, 13px past the bottom, +24px of
+            // scroll). The row (absolute bottom:0 plus centring) restores the mirror's placement:
+            // centred, 11px from the bottom, scroll length unchanged.
             <div className="mirror-jump-wrap">
               <div className="mirror-jump-row">
                 <button

@@ -121,10 +121,10 @@ interface ProjectFilesProps {
   /** The tree's home-relative root folder ("" = home itself, the rail default). */
   root: string;
   /** Mark top-level working-copy folders with the repo/worktree icon (matching
-   * the リポジトリ section rows) instead of the plain folder — for the tree
+   * the repositories section rows) instead of the plain folder — for the tree
    * rooted at "repos", whose depth-0 dirs ARE the working copies. */
   markRepos?: boolean;
-  /** When set, a non-empty 絞り込み query switches this tree to a flat, recursive
+  /** When set, a non-empty quick-filter query switches this tree to a flat, recursive
    * filename search over the whole subtree (rg-backed) instead of filtering only
    * the loaded rows. Enabled for the repos tree; the home tree keeps the cheap
    * visible-row filter. */
@@ -154,7 +154,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // Declared here (not next to the search effect below) because the auto-refresh
   // above it stands down while a recursive search owns the rows.
   const searchMode = !!searchable && !!nq;
-  const wset = useActiveWorkingSet(); // 作業グループ (docs/log/52) — repos ツリーの絞り込み
+  const wset = useActiveWorkingSet(); // Working sets (docs/log/52) — scoping of the repos tree
   const focusInput = useFilesFilter((s) => s.focusInput);
   const focusTreeN = useFilesFilter((s) => s.focusTreeN);
   const askConfirm = useConfirm();
@@ -227,9 +227,9 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
 
   // Load (mount / manual refresh via files tick): fetch the root folder's children
   // and re-fetch every currently-open dir, preserving expansion + selection.
-  // WS 起動直後は agent 不通で fsList が {error: http_5xx} を返す（fsList の .catch は本物の
-  // 例外だけ拾う）。running 中の過渡的失敗はバックオフ再試行し、停止中はそのまま空を確定して
-  // 無駄なポーリングを避ける。
+  // Right after a WS start the agent is unreachable and fsList returns {error: http_5xx}
+  // (fsList's .catch only takes real exceptions). A transient failure while running is retried
+  // with backoff; while stopped the result is settled as empty, to avoid pointless polling.
   useRetryLoad(async (signal) => {
     const r = await fsList(root);
     if (signal.aborted) return true;
@@ -449,7 +449,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
 
   // Scoped auto-refresh: a session's turn ended, so re-read what is on screen
   // under its working copy (features/files/sessionRefresh.ts). Deliberately NOT
-  // the whole tree — that is what the 更新 button still does.
+  // the whole tree — that is what the refresh button still does.
   useEffect(() => {
     const prefix = scopedRefresh.prefix;
     // A tick that predates this mount is already covered by the initial load
@@ -502,7 +502,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // that lead to them (so the match keeps its place in the tree). Rows are
   // pre-order with a depth, so an ancestor stack resolves lineage in one pass.
   // It filters the rows currently shown (loaded / expanded) — the same scope as
-  // the リポジトリ filter.
+  // the repositories filter.
   const filteredRows = useMemo(() => {
     if (!nq) return rows;
     const keep = new Array<boolean>(rows.length).fill(false);
@@ -553,7 +553,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   }, [searchMode, q, root, filesTick]);
 
   // The rows actually shown / navigated: flat search hits in search mode, else
-  // the (tree-)filtered rows — both scoped to the active 作業グループ (docs/log/52)
+  // the (tree-)filtered rows — both scoped to the active working set (docs/log/52)
   // for the repos-rooted tree: a row is kept when its top-level working copy
   // belongs to the group (worktree folders resolve via their "<base>@" prefix).
   const allRows = searchMode ? searchRows ?? NO_ROWS : filteredRows;
@@ -593,7 +593,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       // re-ran this effect on every one of those renders (displayRows was a fresh
       // [] while the debounced search was in flight). That loop hit React's
       // "maximum update depth" (error #185), which unmounts the whole root: the
-      // Console went blank the moment a query was typed into the ファイル filter.
+      // Console went blank the moment a query was typed into the files filter.
       setSticky((old) => (old.rows.length || old.top ? { rows: [], top: 0 } : old));
       return;
     }
@@ -773,7 +773,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   }, [focusTreeN]);
 
   // Reveal: when something requests a path under the root (a clone just landed,
-  // or a repo row's フォルダを開く), expand its ancestor chain — and the target
+  // or a repo row's "open folder"), expand its ancestor chain — and the target
   // itself when it's a directory — then select it. root "" (home) contains every
   // home-relative path.
   useEffect(() => {
@@ -1021,7 +1021,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
           const isActiveFile = r.type === "file" && activeFile === r.path;
           const isDir = r.type === "dir";
           // The working copy this row IS (depth 0 under repos/), if any: it wears
-          // that リポジトリ row's icon, and a worktree also shows its branch —
+          // that repository row's icon, and a worktree also shows its branch —
           // the folder is "<base>@<slug>" and never says what is checked out.
           // segPaths[0] survives chain folding (the row name may read "repo/sub").
           const wc = markRepos && isDir && r.depth === 0
@@ -1050,7 +1050,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
                 >
                   <Icon name={collapsedRepos.has(repoOf(r.path)) ? "chevron-right" : "chevron-down"} />
                   <Icon name="root-folder" />
-                  {/* Same handle as the 変更 view's bands: project + branch. */}
+                  {/* Same handle as the changes view's bands: project + branch. */}
                   <span className="files-search-group-name">
                     <WorkingCopyLabel folder={repoOf(r.path)} />
                   </span>

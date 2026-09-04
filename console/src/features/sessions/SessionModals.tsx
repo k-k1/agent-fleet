@@ -2,7 +2,7 @@
 // don't belong to any one rail section (rows live in many containers now: the
 // project tree's nodes and the orphan catch-all). Driven by the useSessionUI
 // store (per-row rename / branch-rename / SSM resume / archive browser). Session
-// CREATION lives in the はじめる hub (repos/StartHost) since Ph3 retired the
+// CREATION lives in the start hub (repos/StartHost) since Ph3 retired the
 // NewSessionModal.
 import { useSessionsStore } from "./store.ts";
 import { useSessionUI } from "./ui.ts";
@@ -49,7 +49,7 @@ export function SessionModals() {
         // Cleanup mutates working copies (delete_worktree), branches, and sessions on
         // disk, so — like clone — re-pull all three left-pane stores, not just sessions.
         // Otherwise the repo tree stays stale until the 60s poll and the file tree (which
-        // has no poll) stays stale until a manual 更新.
+        // has no poll) stays stale until a manual refresh.
         <CleanupModal
           onClose={close}
           onChanged={() => {

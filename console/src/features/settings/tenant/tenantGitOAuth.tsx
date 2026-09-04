@@ -1,18 +1,16 @@
-// テナントの git プロバイダ OAuth アプリ（docs/log/71・ADR 0052）。
+// The tenant's git provider OAuth apps (docs/log/71, ADR 0052).
 //
-// メンバーの「接続」タブに出る GitHub / Bitbucket の **OAuth で接続** ボタンが、
-// どの OAuth アプリを叩くかをここで決める。以前はデプロイの env
-// （GITHUB_OAUTH_CLIENT_ID / BITBUCKET_OAUTH_KEY・SECRET）だったので、テナントごとに
-// 変えられず、登録も運用者頼みだった。アプリが置かれるのは各社の GitHub org /
-// Bitbucket ワークスペースなので、持ち主はテナント管理者である。
+// This decides which OAuth app the "connect with OAuth" buttons for GitHub / Bitbucket on a
+// member's connections tab talk to. The app lives in the customer's own GitHub org or
+// Bitbucket workspace, so the tenant admin owns it — it is not a deployment-wide env setting.
 //
-// ★ 承認の段は無い（決定 3）。サインイン方法（tenantLogin）は super_admin の承認が
-// 要るが、あれは「誰であるか」を宣言する権限だから。ここは clone するためのアプリで
-// identity を増やさないし、redirect_uri は CP 固定・トークンは本人のワークスペースに
-// しか渡らない。保存した瞬間に効く。
+// There is no approval step (decision 3). Sign-in methods (tenantLogin) need super_admin
+// approval because they grant the power to declare who someone is; these apps only clone, add
+// no identity, have a CP-fixed redirect_uri, and hand the token only to the owner's own
+// workspace. They take effect the moment they are saved.
 //
-// ★ client_secret は書き込み専用。保存済みの値は二度と返らないので、空のまま保存
-// したら「変えない」の意味にする（サーバも同じ契約）。
+// client_secret is write-only. A stored value is never returned, so saving with the field
+// empty means "leave unchanged" (the server keeps the same contract).
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errText, raw } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -30,15 +28,15 @@ interface GitOAuthApp {
 
 const PROVIDER_LABEL: Record<string, string> = { github: "GitHub", bitbucket: "Bitbucket", jira: "Jira" };
 
-// 登録の入口。「client_id をどこで取るのか」が分からないと詰まるので、行き先を出す。
-// ★ Bitbucket の OAuth コンシューマはワークスペース配下（/{workspace}/workspace/
-// settings/api）で、ワークスペース名はこちらが知らない。当てずっぽうの URL を出すと
-// 404 に送ることになるので、手順のドキュメントを指す。
+// Where to register: without a destination an admin is stuck on "where do I get a client_id".
+// Bitbucket's OAuth consumers live under a workspace (/{workspace}/workspace/settings/api) and
+// we do not know the workspace name, so guessing a URL would send them to a 404 — point at the
+// procedure documentation instead.
 const REGISTER_URL: Record<string, string> = {
   github: "https://github.com/settings/developers",
   bitbucket: "https://support.atlassian.com/bitbucket-cloud/docs/use-oauth-on-bitbucket-cloud/",
-  // ⚠️ Jira は Bitbucket と同じ Atlassian でも登録先が別（3LO アプリは Developer
-  // Console）。Bitbucket のコンシューマを流用することはできない（docs/log/80 §80.17）。
+  // Jira is Atlassian like Bitbucket but registers elsewhere: 3LO apps live in the Developer
+  // Console, and a Bitbucket consumer cannot be reused (docs/log/80 §80.17).
   jira: "https://developer.atlassian.com/console/myapps/",
 };
 
@@ -51,7 +49,7 @@ export function TenantGitOAuthView({ slug }: { slug: string }) {
       const d = await api(`api/admin/tenants/${encodeURIComponent(slug)}/git-oauth`);
       if (d && !d.error) setApps(d.providers || []);
     } catch {
-      /* transient; 直前の値のまま置く */
+      /* transient; keep the previous values */
     }
   }, [slug]);
   useEffect(() => {
@@ -122,8 +120,8 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
           <span className="af-cap">{tr("tenant.git_oauth_client_id")}</span>
           <input type="text" value={clientID} onChange={(e) => setClientID(e.target.value)} />
         </label>
-        {/* GitHub は device flow なので secret を持たない。持たない欄を灰色で出すより
-            項目ごと作らない（何を入れる欄なのか分からないものを置かない）。 */}
+        {/* GitHub uses the device flow and has no secret. Omit the field entirely rather than
+            greying it out: never show a field whose contents nobody can guess. */}
         {app.needs_secret && (
           <label className="admin-fld wide">
             <span className="af-cap">{tr("tenant.git_oauth_client_secret")}</span>
@@ -137,9 +135,10 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
           </label>
         )}
       </div>
-      {/* コールバックは provider 側の登録画面に貼るもの。出さないと詰む。
-          ★ コールバックを持つプロバイダなのに URL が空なら PUBLIC_BASE_URL 未設定で、
-          直せるのは運用者。ここで言わないと「登録したのに使えない」で止まる。 */}
+      {/* The callback is what gets pasted into the provider's registration screen; withhold it
+          and the admin is stuck. An empty URL on a provider that has a callback means
+          PUBLIC_BASE_URL is unset, which only the operator can fix — saying so here is the
+          difference between that and "registered it, but it does not work". */}
       {app.needs_secret &&
         (app.redirect_uri ? (
           <p className="admin-hint">
@@ -149,15 +148,16 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
           <p className="admin-hint warn">{tr("tenant.git_oauth_no_base_url")}</p>
         ))}
       {app.provider === "github" && <p className="admin-hint">{tr("tenant.git_oauth_gh_device")}</p>}
-      {/* ★ Bitbucket は認可 URL に scope を載せない —— コンシューマの Permissions で
-          チェックした物がそのまま渡る。だから「どれを入れるか」はここで言うしかなく、
-          Pull requests: Read を後から足した場合はメンバーの再接続が要る
-          （既存トークンには古い権限が焼かれている・docs/log/80 §80.19.3）。 */}
+      {/* Bitbucket puts no scope on the authorize URL: whatever is ticked in the consumer's
+          Permissions is what gets granted, so which boxes to tick can only be said here.
+          Adding Pull requests: Read later requires every member to reconnect, because existing
+          tokens have the old permissions baked in (docs/log/80 §80.19.3). */}
       {app.provider === "bitbucket" && <p className="admin-hint">{tr("tenant.git_oauth_bb_scopes")}</p>}
-      {/* ★ 3LO アプリは既定で「開発中」＝作成者本人しか認可できない。作った管理者が試すと
-          通ってしまうので登録時のテストをすり抜け、他のメンバー全員が Atlassian 側の
-          「You don't have access to this app」で止まる —— しかも認可画面より手前なので
-          af には何も返ってこず、無言で未接続のままになる。 */}
+      {/* A 3LO app defaults to "in development", where only its creator can authorize it. The
+          admin who created it can connect, so the check at registration time passes, and every
+          other member is stopped by Atlassian's "You don't have access to this app" — which
+          happens before the authorize screen, so af gets nothing back and they stay silently
+          unconnected. */}
       {app.provider === "jira" && (
         <>
           <p className="admin-hint">{tr("tenant.git_oauth_jira_access")}</p>

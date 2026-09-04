@@ -1,9 +1,11 @@
-// キー設定の「学習済みの候補」ブロック。学習は送信のたび黙って増えるので、掃除の導線が
-// 「すべて消去」しかないと、一度きりの言い回しを片付けるたびに常用の候補まで巻き添えになる。
-// ここで押さえるのは:
-//   ① 1回だけの候補があるときにその件数付きのボタンが出る（無ければ出ない）
-//   ② 押すと 1 回の候補だけが消え、常用とピンは残る
-//   ③ 隠しリストは増やさない（＝また送れば学習し直す。「二度と出すな」ではない）
+// The "learned suggestions" block of the keyboard settings. Learning grows silently on every
+// send, so if the only way to clean up were "clear all", tidying away a one-off phrasing would
+// take the frequently used suggestions with it. What is pinned down here:
+//   1. When one-off suggestions exist, a button appears carrying their count (and not
+//      otherwise).
+//   2. Pressing it removes only the one-off suggestions; frequent ones and pins survive.
+//   3. The hidden list does not grow (sending the text again re-learns it; this is not
+//      "never show this again").
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -34,7 +36,8 @@ async function mount() {
   });
 }
 
-// 表示言語に依らないようクラスで引く（件数だけラベルから読む）。
+// Look the buttons up by class so the test does not depend on the display language; only the
+// count is read from the label.
 const btn = (cls: string) => document.querySelector<HTMLButtonElement>(".qr-learned ." + cls);
 
 beforeEach(() => {
@@ -53,8 +56,8 @@ afterEach(() => {
   host = null;
 });
 
-describe("KeysTab の学習済みクイック返信", () => {
-  it("1回だけの候補を件数付きで一括削除し、常用・ピン・隠しには手を出さない", async () => {
+describe("KeysTab learned quick replies", () => {
+  it("clears the one-off suggestions in bulk with their count, leaving frequent, pinned and hidden alone", async () => {
     setSetting("quickReplies", {
       ok: { text: "OK", count: 7, at: 30 },
       "後で": { text: "後で", count: 1, at: 20 },
@@ -67,18 +70,18 @@ describe("KeysTab の学習済みクイック返信", () => {
 
     const clear = btn("qr-clear-once")!;
     expect(clear).toBeTruthy();
-    expect(clear.textContent).toContain("2"); // ピン留めの1回は数えない
+    expect(clear.textContent).toContain("2"); // the pinned one-off is not counted
     await act(async () => {
       clear.click();
     });
 
     expect(Object.keys(getSettings().quickReplies)).toEqual(["ok", "ピン留めの一言"]);
     expect(getSettings().quickRepliesPinned).toEqual(["ピン留めの一言"]);
-    expect(getSettings().quickRepliesHidden).toEqual(["やめて"]); // 隠しは増やさない
-    expect(btn("qr-clear-once")).toBeNull(); // 対象が無くなればボタンも消える
+    expect(getSettings().quickRepliesHidden).toEqual(["やめて"]); // the hidden list does not grow
+    expect(btn("qr-clear-once")).toBeNull(); // with nothing left to clear, the button goes too
   });
 
-  it("1回だけの候補が無ければボタンを出さない（「すべて消去」は出したまま）", async () => {
+  it("hides the button when there is no one-off suggestion (clear all stays)", async () => {
     setSetting("quickReplies", { ok: { text: "OK", count: 3, at: 30 } });
     await mount();
     expect(btn("qr-clear-once")).toBeNull();

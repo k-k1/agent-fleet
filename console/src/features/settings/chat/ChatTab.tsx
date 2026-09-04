@@ -7,13 +7,14 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { DiscordCard } from "./DiscordCard.tsx";
 import { SlackCard } from "./SlackCard.tsx";
 
-// ChatTab (チャット連携) — the chat-bridge CONNECTIONS (Discord / Slack, docs/log/37), split
-// out of 運用・監視 into their own 接続 tab: these are notification destinations, not
-// monitoring providers. Each card separates CONNECT (token → verify → pick channel →
-// 接続, minimal) from the detail SETTINGS (threads / mention / receive / mirror / events /
-// full-text), which live in a collapsible 通知設定 disclosure that AUTO-SAVES each toggle
-// (like the agent 動作設定) — no 編集/保存 button. The master 通知 ON/OFF lives in
-// 個人設定 › 通知. Credentials are stored container-side (encrypted) and injected into the
+// ChatTab (the chat integrations tab) — the chat-bridge CONNECTIONS (Discord / Slack,
+// docs/log/37), split out of ops monitoring into their own connections tab: these are
+// notification destinations, not monitoring providers. Each card separates CONNECT (token →
+// verify → pick channel → connect, minimal) from the detail SETTINGS (threads / mention /
+// receive / mirror / events / full-text), which live in a collapsible notification-settings
+// disclosure that AUTO-SAVES each toggle (like the agent behavior settings) — no edit/save
+// button. The master notifications on/off lives in personal settings › notifications.
+// Credentials are stored container-side (encrypted) and injected into the
 // MCP/bridge at spawn; they never reach the CP.
 export function ChatTab() {
   const tr = useT();

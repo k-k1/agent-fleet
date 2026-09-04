@@ -1,11 +1,10 @@
-// 名簿に「いつ止まるか / なぜ止まらないか」を出す（docs/log/75 P4）。
+// Showing "when it stops / why it will not" on the roster (docs/log/75 P4).
 //
-// この画面が存在する理由は、自動停止が効かないときに運用者へ見えるものが何も無かった
-// こと（reaper はログを出すだけで、調べる唯一の手段が他人のコンテナへ docker exec して
-// status ファイルを読むことだった）。だから固定したいのは次の 3 点:
-//   ①「止まらない」は「予定が出ていない」と別物として見えること
-//   ② 止めている主体（セッション名・ピン・在席）が言えること
-//   ③ 稼働していない Workspace に停止予定を出さないこと
+// This surface exists because an operator had nothing to look at when auto-stop was not
+// firing. Three things are pinned:
+//   1. "will not stop" must read differently from "no schedule yet".
+//   2. Whatever is holding it open (session name, pin, a watcher) has to be named.
+//   3. A Workspace that is not running gets no stop schedule at all.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -53,8 +52,8 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("メンバー名簿の自動停止の見通し", () => {
-  it("止まる予定は残り時間で出る", async () => {
+describe("auto-stop outlook on the member roster", () => {
+  it("shows a scheduled stop as time remaining", async () => {
     await mountRoster([
       {
         user_key: "a",
@@ -63,10 +62,10 @@ describe("メンバー名簿の自動停止の見通し", () => {
         idle: { enabled: true, stopAt: inHours(1.5), observedAt: new Date().toISOString() },
       },
     ]);
-    expect(rowText(0)).toMatch(/1h(2[0-9]|30)m/); // 「あと 1h30m で停止」
+    expect(rowText(0)).toMatch(/1h(2[0-9]|30)m/); // "stops in 1h30m"
   });
 
-  it("★止まらない行は理由と主体を出し、予定時刻では埋めない", async () => {
+  it("names the reason and the holder on a row that will not stop, instead of a time", async () => {
     await mountRoster([
       {
         user_key: "a",
@@ -81,12 +80,12 @@ describe("メンバー名簿の自動停止の見通し", () => {
       },
     ]);
     const t = rowText(0);
-    expect(t).toContain("s5"); // 誰が止めているか
-    expect(t).not.toMatch(/1h/); // 予定は出さない（出すと「もうすぐ止まる」と誤読される）
-    expect(document.querySelector(".mr-idle.hold")).toBeTruthy(); // 注意色（費用が出続けている）
+    expect(t).toContain("s5"); // who is holding it open
+    expect(t).not.toMatch(/1h/); // no schedule: showing one reads as "about to stop"
+    expect(document.querySelector(".mr-idle.hold")).toBeTruthy(); // warning colour: cost keeps accruing
   });
 
-  it("自動停止が無効なテナントは「無効」と言う（予定なしと区別する）", async () => {
+  it("says disabled for a tenant with auto-stop off, distinct from having no schedule", async () => {
     await mountRoster([
       { user_key: "a", role: "member", state: "running", idle: { enabled: false, observedAt: new Date().toISOString() } },
     ]);
@@ -94,7 +93,7 @@ describe("メンバー名簿の自動停止の見通し", () => {
     expect(document.querySelector(".mr-idle.hold")).toBeFalsy();
   });
 
-  it("停止中の Workspace には何も出さない（止める予定は存在しない）", async () => {
+  it("shows nothing for a stopped Workspace, which has no stop schedule to show", async () => {
     await mountRoster([
       {
         user_key: "a",
@@ -102,7 +101,7 @@ describe("メンバー名簿の自動停止の見通し", () => {
         state: "stopped",
         idle: { enabled: true, stopAt: inHours(1), observedAt: new Date().toISOString() },
       },
-      { user_key: "b", role: "member", state: "running" }, // 観測がまだ無い行
+      { user_key: "b", role: "member", state: "running" }, // a row with no observation yet
     ]);
     expect(document.querySelectorAll(".mr-idle").length).toBe(0);
   });
