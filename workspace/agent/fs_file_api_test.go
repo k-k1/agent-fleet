@@ -209,6 +209,67 @@ func TestFSFileSymlinksDeniedForGetDownloadAndPut(t *testing.T) {
 	}
 }
 
+func TestCodexGeneratedImagesAreReadOnlyAndNotEnumerable(t *testing.T) {
+	t.Setenv("AF_BROWSE_ROOT", t.TempDir())
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	dir := filepath.Join(codexGeneratedImagesRoot(), "job")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	image := filepath.Join(dir, "result.png")
+	if err := os.WriteFile(image, []byte{'p', 'n', 'g'}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	get := httptest.NewRecorder()
+	handleFSFile(get, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(image), nil))
+	if get.Code != http.StatusOK {
+		t.Fatalf("generated image GET: status=%d body=%s", get.Code, get.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(get.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["path"] != image || payload["editabilityReason"] != "read_only_root" {
+		t.Fatalf("generated image response = %#v", payload)
+	}
+
+	for _, endpoint := range []string{"/fs/tree?path=", "/fs/search?path="} {
+		rec := httptest.NewRecorder()
+		httpReq := httptest.NewRequest(http.MethodGet, endpoint+url.QueryEscape(codexGeneratedImagesRoot()), nil)
+		if strings.Contains(endpoint, "search") {
+			httpReq.URL.RawQuery += "&q=result"
+			handleFSSearch(rec, httpReq)
+		} else {
+			handleFSTree(rec, httpReq)
+		}
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s generated-images root: status=%d body=%s", endpoint, rec.Code, rec.Body.String())
+		}
+	}
+
+	for _, name := range []string{"notes.txt", "vector.svg"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("not an image"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(path), nil))
+		if rec.Code != http.StatusForbidden || responseErrorCode(t, rec) != errCodeFSDenied {
+			t.Errorf("GET %s: status=%d body=%s", name, rec.Code, rec.Body.String())
+		}
+	}
+	if err := os.Symlink("result.png", filepath.Join(dir, "linked.png")); err != nil {
+		t.Fatal(err)
+	}
+	symlink := httptest.NewRecorder()
+	handleFSFile(symlink, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(filepath.Join(dir, "linked.png")), nil))
+	if symlink.Code != http.StatusBadRequest || responseErrorCode(t, symlink) != errCodeFSSymlinkNotAllowed {
+		t.Fatalf("GET generated-image symlink: status=%d body=%s", symlink.Code, symlink.Body.String())
+	}
+}
+
 func TestFSFilePathAndDenylistValidation(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("AF_BROWSE_ROOT", root)
