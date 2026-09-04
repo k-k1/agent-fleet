@@ -202,7 +202,7 @@ func (a gitServerAPI) blob(w http.ResponseWriter, r *http.Request, _ store.Ident
 // gitBlobWire — GET /api/internal-git/repos/{name}/blob のレスポンス
 // （Console の `Blob`、console/src/features/settings/workspace/InternalRepoBrowser.tsx）。
 //
-// 旧: map[string]any{"ref":…, "path":…, "size":…} を resp に置き、4 つの出口が
+// was: map[string]any{"ref":…, "path":…, "size":…} を resp に置き、4 つの出口が
 //
 //	それぞれ too_large / lfs(+lfs_oid) / binary / content を足して返す。
 //	つまり**出口ごとにキー集合が違う**ので、任意キーは omitempty で表す。

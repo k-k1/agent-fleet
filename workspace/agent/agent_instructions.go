@@ -298,7 +298,7 @@ func handleUserNotesPreview(w http.ResponseWriter, r *http.Request) {
 // instrStateWire — GET/PUT /instructions のレスポンス（Console の `Payload`、
 // console/src/features/settings/personal/InstructionsTab.tsx）。
 //
-// 旧: map[string]any{"text":…, "bytes":…, "max_bytes":…, "enabled":…, "path":…,
+// was: map[string]any{"text":…, "bytes":…, "max_bytes":…, "enabled":…, "path":…,
 //
 //	"targets":…, "fleet_bytes":…}
 //

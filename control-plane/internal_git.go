@@ -31,7 +31,7 @@ func (a gitServerAPI) cloneURL(slug, name string) string {
 // internalRepoWire — 内部 git リポジトリ 1 件のワイヤ形（Console の `InternalRepo`、
 // console/src/features/settings/workspace/InternalReposTab.tsx）。
 //
-// 旧: map[string]any{"name":…, "default_branch":…, "clone_url":…, "created_at":…, "provider":…}
+// was: map[string]any{"name":…, "default_branch":…, "clone_url":…, "created_at":…, "provider":…}
 // 5 キーとも無条件なので **omitempty は付けない**（default_branch / created_at は
 // 空文字を取りうるので、付けるとキーごと消えてワイヤが変わる）。
 //

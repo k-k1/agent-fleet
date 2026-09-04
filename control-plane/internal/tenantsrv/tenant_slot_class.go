@@ -112,7 +112,7 @@ func (a Admin) tenantLimitsFor(r *http.Request, tenantID string) Limits {
 // tenantSlotClassWire — GET /api/admin/tenants/{slug}/slot-class のレスポンス
 // （Console の `MachineView`、console/src/features/settings/tenant/tenantMachine.tsx）。
 //
-// 旧: map[string]any{"tenant":…, "slot_class":…, "classes":…,
+// was: map[string]any{"tenant":…, "slot_class":…, "classes":…,
 //
 //	"default_slot_class":…, "editable":…}
 //

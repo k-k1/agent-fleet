@@ -77,7 +77,7 @@ func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ store.Iden
 // hostStatsWire — GET /api/admin/host-stats のレスポンス（Console の `HostStats`、
 // console/src/app/WsBar.tsx）。
 //
-// 旧: map[string]any{"load1":…, "ncpu":…, "mem_used":…, "mem_total":…}
+// was: map[string]any{"load1":…, "ncpu":…, "mem_used":…, "mem_total":…}
 // 4 キーとも無条件なので **omitempty は付けない**。
 // ⚠️ Go の型は readHostStats の戻り値そのまま（load1 float64 / ncpu int /
 // mem_* uint64）。**uint64 を float64 で受け直さないこと**——大きな値で桁が落ちる。

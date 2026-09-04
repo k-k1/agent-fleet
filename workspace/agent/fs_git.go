@@ -63,7 +63,7 @@ func handleFSChanges(w http.ResponseWriter, r *http.Request) {
 // lineMarksWire — GET /fs/line-marks のレスポンス（Console の `LineMarks`、
 // console/src/features/viewer/CodeView.tsx）。
 //
-// 旧: map[string]any{"added":…, "modified":…, "deleted":…}
+// was: map[string]any{"added":…, "modified":…, "deleted":…}
 // 3 キーとも無条件なので **omitempty は付けない**。
 // ⚠️ 3 つとも **nil ではなく空スライス**でなければならない（nil は JSON で `null`、
 // 空は `[]`）。emptyMarks / parseDiffMarks / 未追跡経路のいずれも make か []int{} で

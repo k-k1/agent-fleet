@@ -135,7 +135,7 @@ func splitLabels(s string) []string {
 // workItemsPayloadWire — GET /api/workitems（と 更新 ボタンの POST）のレスポンス
 // （Console の `WorkItemPayload`、console/src/features/workitems/read.ts）。
 //
-// 旧: map[string]any{"items":…, "queries":…, "sessions":…, "fetchedAt":…, "running":…}
+// was: map[string]any{"items":…, "queries":…, "sessions":…, "fetchedAt":…, "running":…}
 // 5 キーとも無条件なので **omitempty は付けない**。3 つのスライスは呼び出し側で
 // make(…, 0, n) 済み＝**nil にならないので `[]` が出る**（nil なら `null` になり別物）。
 // この形状は 3 サイト（list ×1 / refresh ×2）が共有しているので、

@@ -365,7 +365,7 @@ func HandleSessionSettings(w http.ResponseWriter, r *http.Request) {
 // managedThreadSettingsWire — GET /sessions/{name}/settings のレスポンス
 // （Console の `ManagedThreadSettings`、console/src/core/api/client.ts）。
 //
-// 旧: map[string]any{"model":…, "effort":…, "mode":…, "dynamicModel":…,
+// was: map[string]any{"model":…, "effort":…, "mode":…, "dynamicModel":…,
 //
 //	"dynamicEffort":…, "dynamicMode":…}
 //

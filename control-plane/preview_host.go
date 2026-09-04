@@ -1,13 +1,14 @@
-// preview_host.go — ホスト方式のプレビュー（docs/log/81 / ADR 0062）。
+// preview_host.go — host-based preview (docs/log/81 / ADR 0062).
 //
-// パス方式（preview.go の /preview/{port}/…）と違い、こちらは **Host ヘッダだけ**を
-// 手がかりに Workspace を決める:
+// Unlike the path form (/preview/{port}/… in preview.go), this one picks the
+// workspace from the Host header alone:
 //
 //	https://{slug}-{port}.{AF_PREVIEW_DOMAIN}/…  →  Agent /proxy/{port}/…
 //
-// slug は Workspace の起動ごとに引き直され（workspace_lifecycle.go）、停止で消える。
-// ★ ラベルが 1 段なのは ACM のワイルドカード証明書が 1 段しか受け持たないため
-// （`{port}.{slug}.…` は `*.*.…` を要求して発行できない — ADR 0062 決定 2）。
+// The slug is redrawn on every workspace start (workspace_lifecycle.go) and dies
+// with the stop. The name is one label deep because an ACM wildcard certificate
+// only covers one label — `{port}.{slug}.…` would need `*.*.…`, which cannot be
+// issued (ADR 0062 decision 2).
 package main
 
 import (
@@ -20,25 +21,27 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// previewSlugAlphabet は DNS ラベルに置ける文字のうち、slug に使うもの。`-` を含めない
-// のはポートとの区切りに使っているから（`{slug}-{port}`）。紛らわしい字を落とさないのは、
-// この文字列を人が読み上げたり書き写したりしないため（コピーして貼るだけ）。
+// previewSlugAlphabet is the subset of DNS-label characters a slug may use. `-` is
+// excluded because it separates the slug from the port (`{slug}-{port}`). Look-alike
+// characters are kept because nobody reads this string aloud or copies it by hand.
 const previewSlugAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
-// previewSlugLen は 36^20 ≒ 2^103。URL そのものが「まだ認証していない人から見た唯一の
-// 障壁」ではない（既定は認証必須）が、公開モード（docs/log/81 §6.1）では鍵そのものになる。
+// previewSlugLen gives 36^20 ≈ 2^103. The URL is not the only barrier facing an
+// unauthenticated visitor (auth is required by default), but in public mode
+// (docs/log/81 §6.1) it is the key itself.
 const previewSlugLen = 20
 
-// newPreviewSlug mints one start's slug. crypto/rand の失敗は握りつぶさない — 弱い
-// slug を配るくらいなら発行しない方がよく、呼び出し側は「プレビュー無しで起動」に倒す。
+// newPreviewSlug mints one start's slug. A crypto/rand failure is never swallowed —
+// better to issue nothing than a weak slug, and the caller falls back to starting
+// without a preview.
 func newPreviewSlug() (string, error) {
 	b := make([]byte, previewSlugLen)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	// 36 は 256 を割り切らないので剰余に偏りが出る（0-3 がわずかに厚い）。ここでの
-	// 用途（推測不能性）には無視できる差だが、rejection sampling で消しておく方が
-	// 「なぜ偏っていいのか」を後から説明せずに済む。
+	// 36 does not divide 256, so a plain modulo skews slightly towards 0-3. The bias
+	// is negligible for unguessability, but rejection sampling removes it and with it
+	// the need to argue later about why a biased slug is acceptable.
 	out := make([]byte, 0, previewSlugLen)
 	for len(out) < previewSlugLen {
 		if len(b) == 0 {
@@ -49,7 +52,7 @@ func newPreviewSlug() (string, error) {
 		}
 		c := b[0]
 		b = b[1:]
-		if int(c) >= 252 { // 252 = 36*7、これ以上は捨てる
+		if int(c) >= 252 { // 252 = 36*7; anything above is discarded
 			continue
 		}
 		out = append(out, previewSlugAlphabet[int(c)%len(previewSlugAlphabet)])
@@ -57,23 +60,24 @@ func newPreviewSlug() (string, error) {
 	return string(out), nil
 }
 
-// previewHost は 1 つのプレビュー用ホスト名の中身。
+// previewHost is what one preview hostname carries.
 type previewHost struct {
 	slug string
 	port int
 }
 
-// parsePreviewHost は Host ヘッダを {slug}-{port}.{domain} として読む。domain が空
-// （AF_PREVIEW_DOMAIN 未設定）のときは常に一致しない ＝ ホスト方式そのものが無い。
+// parsePreviewHost reads a Host header as {slug}-{port}.{domain}. An empty domain
+// (AF_PREVIEW_DOMAIN unset) never matches — the host form simply does not exist then.
 //
-// ★ 一致しなかったときに「惜しい」を返さない: 呼び出し側はこれを **素通しの判定**に
-// 使うので、ALB のヘルスチェック（Host がタスクの IP）も Console のホストも、ここで
-// false になってそのまま通常の mux へ行く。
+// A near miss is not reported as one: callers use this as a pass-through test, so the
+// ALB health check (Host is the task IP) and the Console's own host both come back
+// false here and continue to the normal mux.
 func parsePreviewHost(host, domain string) (previewHost, bool) {
 	if domain == "" || host == "" {
 		return previewHost{}, false
 	}
-	// Host にはポートが付き得る（開発時の 127.0.0.1:8080 や、非標準ポートの公開）。
+	// Host may carry a port (127.0.0.1:8080 in development, or a non-standard
+	// public port).
 	if i := strings.LastIndexByte(host, ':'); i >= 0 && !strings.Contains(host[i:], "]") {
 		host = host[:i]
 	}
@@ -84,7 +88,7 @@ func parsePreviewHost(host, domain string) (previewHost, bool) {
 	}
 	label := host[:len(host)-len(suffix)]
 	if label == "" || strings.Contains(label, ".") {
-		return previewHost{}, false // ラベルは 1 段だけ（証明書がそれしか受け持たない）
+		return previewHost{}, false // one label only — the certificate covers no more
 	}
 	i := strings.LastIndexByte(label, '-')
 	if i <= 0 || i == len(label)-1 {
@@ -101,8 +105,9 @@ func parsePreviewHost(host, domain string) (previewHost, bool) {
 	return previewHost{slug: slug, port: port}, true
 }
 
-// validPreviewSlug は「自分が発行した形か」だけを見る。DB を引く前に弾くことで、
-// ワイルドカードに向かって投げられた雑なホスト名が毎回 1 クエリになるのを防ぐ。
+// validPreviewSlug only checks that the shape is one we could have issued. Rejecting
+// before the DB lookup keeps junk hostnames aimed at the wildcard from costing a query
+// each.
 func validPreviewSlug(s string) bool {
 	if len(s) != previewSlugLen {
 		return false
@@ -116,7 +121,7 @@ func validPreviewSlug(s string) bool {
 	return true
 }
 
-// previewHostname は発行済みの slug とポートから公開ホスト名を組み立てる。
+// previewHostname builds the public hostname from an issued slug and a port.
 func previewHostname(slug string, port int, domain string) string {
 	if slug == "" || domain == "" {
 		return ""
@@ -124,8 +129,8 @@ func previewHostname(slug string, port int, domain string) string {
 	return slug + "-" + strconv.Itoa(port) + "." + strings.TrimPrefix(domain, ".")
 }
 
-// previewURLFor は同上の https URL。プレビューの入口は必ず TLS（ワイルドカード証明書を
-// 貼るのはそのため）なので、scheme は固定でよい。
+// previewURLFor is the same name as an https URL. The preview entrance is always TLS
+// (that is what the wildcard certificate is for), so the scheme can be fixed.
 func previewURLFor(slug string, port int, domain string) string {
 	h := previewHostname(slug, port, domain)
 	if h == "" {
@@ -134,9 +139,10 @@ func previewURLFor(slug string, port int, domain string) string {
 	return "https://" + h
 }
 
-// previewOpenPathFor は「起動をまたいで有効な、貼れるリンク」の相対パス（決定 17）。
-// ★ 形を組み立てるのはここ 1 か所にする —— Console 側で組み立てると、パラメータ名を
-// 変えた瞬間に**貼られた古いリンクではなく、これから作るリンクが**壊れる。
+// previewOpenPathFor is the relative path of a pasteable link that stays valid across
+// starts (decision 17). This is the only place the shape is assembled: build it in the
+// Console too and renaming a parameter breaks the links yet to be made, not the old
+// ones already pasted.
 func previewOpenPathFor(ownerUserKey string, port int) string {
 	if ownerUserKey == "" {
 		return ""
@@ -147,16 +153,18 @@ func previewOpenPathFor(ownerUserKey string, port int) string {
 	return previewOpenPath + "?" + q.Encode()
 }
 
-// defaultPreviewPorts は Workspace 設定が空のときの許可ポート（docs/log/81 §5・ADR 0062
-// 決定 6）。要望そのもの（React 3000 / Spring Boot 8080）を既定にしてある。
+// defaultPreviewPorts is the allow-list used when the workspace setting is empty
+// (docs/log/81 §5, ADR 0062 decision 6). The default is what was actually asked for:
+// React on 3000, Spring Boot on 8080.
 var defaultPreviewPorts = []int{3000, 8080}
 
-// maxPreviewPorts は設定に置ける数の上限。「全部開ける」へ向かう圧力に対する線で、
-// 意図せず立っているサービス（DB 管理画面・デバッガ・MCP サーバ）を露出させないための
-// 列挙という目的が、際限なく増やせる時点で失われるため。
+// maxPreviewPorts caps how many ports the setting may hold. It is the line against
+// the pull towards "just open everything": an enumeration exists to keep incidentally
+// running services (DB admin UIs, debuggers, MCP servers) off the internet, and that
+// purpose is gone the moment the list can grow without bound.
 const maxPreviewPorts = 8
 
-// previewPortsOf は Workspace 設定の許可ポート（空 = 既定）。
+// previewPortsOf returns the workspace's allowed ports (empty = the defaults).
 func previewPortsOf(st wsSettings) []int {
 	if len(st.PreviewPorts) == 0 {
 		return defaultPreviewPorts
@@ -164,7 +172,7 @@ func previewPortsOf(st wsSettings) []int {
 	return st.PreviewPorts
 }
 
-// previewPortAllowed は「この Workspace でそのポートを外に出してよいか」。
+// previewPortAllowed reports whether this workspace may expose that port.
 func previewPortAllowed(st wsSettings, port int) bool {
 	for _, p := range previewPortsOf(st) {
 		if p == port {
@@ -174,9 +182,9 @@ func previewPortAllowed(st wsSettings, port int) bool {
 	return false
 }
 
-// auditPreviewPublic records the public-mode toggle (ADR 0062 決定 12). ★ 監査に残す
-// のは「誰が見たか」ではなく「誰が開けたか」——公開の事故は開けた瞬間ではなく、
-// 忘れられた後に効いてくるので、後から辿れる形が要る。
+// auditPreviewPublic records the public-mode toggle (ADR 0062 decision 12). What the
+// audit keeps is who opened it, not who looked: an exposure accident bites long after
+// the switch was flipped, so it has to stay traceable.
 func auditPreviewPublic(ctx context.Context, m *manager, res *resolved, on bool) {
 	state := "off"
 	if on {
@@ -189,15 +197,15 @@ func auditPreviewPublic(ctx context.Context, m *manager, res *resolved, on bool)
 	})
 }
 
-// auditPreviewShare records the tenant-share toggle (ADR 0062 決定 14), for the same
+// auditPreviewShare records the tenant-share toggle (ADR 0062 decision 14), for the same
 // reason as auditPreviewPublic: the accident is not the moment it is switched on, it is
 // the months afterwards when nobody remembers it is.
 //
-// ★ 値が変わったときだけ書く。公開モードと違い、この設定は起動をまたいで残るので、
-// 設定画面を開いて保存するたびに同じ行が積まれると、監査ログの側が使えなくなる。
+// Write only when the value changes. Unlike public mode this setting survives restarts,
+// so appending a row every time the settings dialog is saved would drown the audit log.
 //
-// ⚠️ 閲覧者の**アクセス**は残さない。静的アセット 1 本ごとに 1 行になる。残すのは
-// 「誰が開けたか」であって「誰が見たか」ではない（docs/log/81 §14.7）。
+// Never record a viewer's accesses: that is one row per static asset. What is kept is
+// who opened it, not who looked (docs/log/81 §14.7).
 func auditPreviewShare(ctx context.Context, m *manager, res *resolved, on bool) {
 	state := "off"
 	if on {
@@ -213,18 +221,19 @@ func auditPreviewShare(ctx context.Context, m *manager, res *resolved, on bool) 
 // previewViewerAllowed reports whether `membershipID` may open THIS workspace's preview
 // right now — the one place the question is answered, for both halves of the handshake.
 //
-// ★ 毎回引き直すことに意味がある（ADR 0062 決定 15）。呼び出し側は cookie に焼いた
-// membership を渡してくるだけで、「見てよい」は cookie の中に無い。共有を切った瞬間、
-// テナントから外した瞬間に、次のリクエストから閉じる。
+// Re-deciding on every request is the point (ADR 0062 decision 15). The caller only
+// hands over the membership baked into a cookie; permission to view is not in that
+// cookie. Turning sharing off, or removing someone from the tenant, closes the door on
+// the next request.
 //
-// GetMembershipByID は active 行しか返さないので、無効化された membership はここで
-// 落ちる（git_http.go が同じ理由で同じ関数を使っている）。
+// GetMembershipByID returns only active rows, so a revoked membership fails here
+// (git_http.go uses the same function for the same reason).
 func previewViewerAllowed(ctx context.Context, m *manager, ws store.Workspace, st wsSettings, membershipID string) bool {
 	if membershipID == "" {
 		return false
 	}
 	if membershipID == ws.MembershipID {
-		return true // 所有者本人
+		return true // the owner themselves
 	}
 	if !st.PreviewTenantShare {
 		return false
@@ -233,9 +242,10 @@ func previewViewerAllowed(ctx context.Context, m *manager, ws store.Workspace, s
 	return err == nil && ok && mv.TenantID == ws.TenantID
 }
 
-// sanitizePreviewPorts normalizes what the Console sent: 1..65535、重複を潰し、
-// 上限で切る。エラーにせず落とすのは、設定画面の保存が「並びの些細な違い」で
-// 失敗するより、保存された値が常に意味を持つ方が扱いやすいため。
+// sanitizePreviewPorts normalizes what the Console sent: 1..65535, duplicates
+// collapsed, truncated at the cap. Bad entries are dropped rather than rejected —
+// a saved value that always means something is easier to live with than a settings
+// dialog that refuses to save over a trivial difference in the list.
 func sanitizePreviewPorts(in []int) []int {
 	var out []int
 	seen := map[int]bool{}

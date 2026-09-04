@@ -139,7 +139,7 @@ func TestWireEquivConvertedSitesAreAllCovered(t *testing.T) {
 // 「証明が要る型」と「元から struct だった型」が混ざる。
 // **「その型が map を置き換えたものか」は名前ではなく由来の情報**なので、
 // 由来をコメントに書き、それを機械が読む。
-const wiremapConvertedMarker = "旧: map[string]any"
+const wiremapConvertedMarker = "was: map[string]any"
 
 func wiremapConvertedWireTypes(t *testing.T, root string) []string {
 	t.Helper()

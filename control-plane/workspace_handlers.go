@@ -1,5 +1,4 @@
-// workspace_handlers.go — Workspace/Session の backend 非依存 HTTP ハンドラ群。
-// runtime.go からの機械的分割（docs/log/23 P2-W1）→ workspaceAPI struct に集約（docs/log/23 残③）。
+// workspace_handlers.go — backend-independent HTTP handlers for Workspace/Session.
 package main
 
 import (
@@ -22,11 +21,11 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// workspaceAPI は Workspace ライフサイクル + Session 管理の機能ハンドラ集
-// （docs/log/23 残③）。解決プリアンブルは埋め込みの memberAuth（登録側で
-// withResolved に包む）。Session 系ハンドラは末尾で Agent へ素通しするため
-// agentProxyAPI を保持し、autostart（P3-9 on-demand start フラグ）だけ config
-// から写す — それ以外の依存はすべて a.mgr 経由で足りる。
+// workspaceAPI is the handler set for the Workspace lifecycle and Session management. The
+// resolution preamble comes from the embedded memberAuth (registration wraps it in
+// withResolved). Session handlers end by passing the request through to the Agent, so it
+// holds an agentProxyAPI, and it copies only autostart (the P3-9 on-demand start flag) from
+// config — every other dependency is reachable through a.mgr.
 type workspaceAPI struct {
 	memberAuth
 	proxy     agentProxyAPI
@@ -169,15 +168,15 @@ func (a workspaceAPI) whoami(w http.ResponseWriter, r *http.Request) {
 // workspacePayload composes the GET /api/workspace body. Shared by the REST
 // handler and the /api/events push channel so both emit the identical shape.
 //
-// state は呼び出し側が引いて渡す。events の tick では stats 側でも同じ状態が要り、
-// ecs-ec2 の State() は実 AWS 呼び出しなので、1 tick 1 回に束ねている
-// （docs/log/63 §63.9）。
+// state is looked up by the caller and passed in: an events tick needs the same state on
+// the stats side as well, and ecs-ec2's State() is a real AWS call, so it is taken once per
+// tick (docs/log/63 §63.9).
 func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state string) map[string]any {
 	rt := res.rt
 	m := map[string]any{"name": rt.Name(), "state": state}
 	// Live boot-install phase for the "starting" dialog (native rootfs only —
 	// docs/log/35 §35.9-9). State() now says "starting" for that window too, but only
-	// bootPhase can say WHAT is taking minutes (どの CLI を落としているか), which is
+	// bootPhase can say WHAT is taking minutes (which CLI is being downloaded), which is
 	// the difference between a progress dialog and a silent spinner. Only the native
 	// runtime implements it; a non-empty value means a boot is in progress.
 	if bp, ok := rt.(interface{ BootPhase() string }); ok {
@@ -186,8 +185,8 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state
 		}
 	}
 	// Backend drift: the container is running older code than a fresh start would
-	// use (workspace_stale.go). The Console turns this into the WS-bar 要再起動 badge
-	// and into the extra line of the update toast. Only meaningful while running —
+	// use (workspace_stale.go). The Console turns this into the WS-bar "restart required"
+	// badge and into the extra line of the update toast. Only meaningful while running —
 	// a stopped workspace picks up the new image on its next start anyway — and only
 	// emitted when true, so the payload keeps its usual shape.
 	if m["state"] == "running" && workspaceStale(ctx, rt) {
@@ -233,9 +232,10 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	// Stop は「まだ存在しない」等は許容する(best-effort)が、まだ生きているなら中断する
-	// — ライブ bind-mount 配下の削除は不整合を起こすため。"starting"（起動途中で
-	// Agent 未応答）も生きている側: コンテナは走っていて home に書き込みうる。
+	// Stop tolerates "does not exist yet" and the like (best-effort), but abort when the
+	// workspace is still alive — deleting under a live bind-mount leaves it inconsistent.
+	// "starting" (container up, Agent not answering yet) counts as alive: it is running
+	// and can write to home.
 	if err := res.rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(res.rt.State(r.Context())) {
 		log.Printf("recreate: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; recreate aborted"})
@@ -274,8 +274,8 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 // survive; everything else in home (repos, ~/.local, ~/.cache, ~/.gradle, dotfiles)
 // is wiped and re-seeded by the entrypoint on start. Same self-serve member action
 // as recreate — the Console guards it behind its own warning dialog. (The admin
-// "home 掃除" uses the same cleanHome but leaves the container stopped; here we start
-// back up so the member lands in a working, freshly-seeded environment.)
+// "clean home" action uses the same cleanHome but leaves the container stopped; here we
+// start back up so the member lands in a working, freshly-seeded environment.)
 func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *resolved) {
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
@@ -296,8 +296,8 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	// recreate と同じく、Stop 失敗かつまだ生きているなら中断(ライブ bind-mount 配下
-	// の削除を避ける)。
+	// As in recreate: abort when Stop failed and the workspace is still alive, to avoid
+	// deleting under a live bind-mount.
 	if err := res.rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(res.rt.State(r.Context())) {
 		log.Printf("clean-home: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; clean-home aborted"})
@@ -343,20 +343,21 @@ func (a workspaceAPI) ensureWorkspaceStarted(ctx context.Context, res *resolved)
 // a cold boot can still be installing when it returns.
 //
 // So this is where the waiting lives now, and it is bounded twice over:
-//   - agentReadyWait (既定 55 秒) keeps the response inside the ingress idle timeout;
+//   - agentReadyWait (55s by default) keeps the response inside the ingress idle timeout;
 //     blocking past it does not deliver a slower success, it delivers a 504.
-//   - past that we answer 409 workspace_starting — a code the Console already renders
-//     as「起動中です」and a caller can retry — instead of the old 500 whose body was the
-//     raw "agent did not become healthy within 15s". The boot keeps going either way.
+//   - past that we answer 409 workspace_starting — a code the Console already renders as
+//     "starting up" and a caller can retry — instead of a 500 whose body was the raw
+//     "agent did not become healthy within 15s". The boot keeps going either way.
 func (a workspaceAPI) ensureWorkspaceReady(ctx context.Context, res *resolved) *apiError {
-	// 期限は **入口で 1 回** 決める。Start 自身も同期猶予ぶん待つので、そこを数えないと
-	// 「起動の待ち＋到達の待ち」で合計が ingress の上限を越え、応答ごと消える。
+	// Fix the deadline ONCE, at the entrance. Start itself waits out its own synchronous
+	// grace period, and not counting that makes "wait for the start + wait for
+	// reachability" exceed the ingress limit, taking the response with it.
 	deadline := time.Now().Add(runtime.AgentReadyWait())
 	if aerr := a.ensureWorkspaceStarted(ctx, res); aerr != nil {
 		return aerr
 	}
 	if res.rt.State(ctx) == "running" {
-		return nil // 既に応答している(=印が落ちている)。追加の probe すら要らない。
+		return nil // Already answering (the starting mark is gone); not even a probe is needed.
 	}
 	if remaining := time.Until(deadline); remaining > 0 {
 		err := runtime.WaitAgentHealthy(ctx, res.rt.Endpoint(), remaining)
@@ -459,12 +460,13 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	if err := lease.checkpoint(ctx); err != nil {
 		return workspaceLifecycleLeaseError(err)
 	}
-	// docs/log/81 §4: このコンテナ起動ぶんのプレビュー slug を、コンテナが作られる **前** に
-	// 確定させ、URL を env に載せた runtime で起動する。順番が逆だと、アプリが自分の
-	// 公開 URL を env から知る作り（Next.js の NEXTAUTH_URL / AUTH_URL / metadataBase）
-	// では「URL は出たがアプリは自分の場所を間違えている」状態になる。プレビューが
-	// 無効なデプロイ、または slug を用意できなかったときは rt をそのまま使う——
-	// プレビューが付かないことは起動を止める理由にならない。
+	// docs/log/81 §4: fix this container run's preview slug BEFORE the container is
+	// created and start with a runtime that carries the URL in its env. In the other
+	// order, an app that learns its own public URL from the env (Next.js NEXTAUTH_URL /
+	// AUTH_URL / metadataBase) ends up in the "the URL is up but the app has the wrong
+	// idea of where it lives" state. Where preview is disabled for the deployment, or no
+	// slug could be prepared, use rt as-is — not getting a preview is no reason to block
+	// the start.
 	if armed := a.mgr.armPreviewForStart(ctx, res, extraEnv); armed != nil {
 		rt = armed
 	}
@@ -543,29 +545,30 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 type sessionWire struct {
 	Name string `json:"name"`
 	Kind string `json:"kind"`
-	// Driver（docs/log/27 P1.5）: "managed" = 共有 runtime 駆動の paneless セッション。
-	// この struct は Agent 応答を decode→再 emit する中継なので、ここに無い field は
-	// silently drop される（下の Title の前科と同型）— 載せ忘れると Console の
-	// isManagedSession が一生 false になり managed UI が起動しない。DB ミラー
-	// （停止中の再配信）には列が無いので載らず、停止中は tui 扱いで表示され、
-	// 再開後の次ポーリングで正しい driver に戻る。
+	// Driver (docs/log/27 P1.5): "managed" = a paneless session driven by the shared
+	// runtime. This struct is a relay that decodes the Agent response and re-emits it, so
+	// any field absent here is silently dropped — without this one the Console's
+	// isManagedSession stays false forever and the managed UI never starts. The DB mirror
+	// (re-serving while stopped) has no column for it, so a stopped session displays as
+	// tui and returns to the right driver on the first poll after it resumes.
 	Driver string `json:"driver,omitempty"`
 	Dir    string `json:"dir"`
 	// Subdir: the folder BENEATH Dir the agent actually runs in ("" = Dir itself).
 	// Same relay caveat as the fields around it — absent here, the Console never sees
-	// which folder a session was launched in. DB ミラーには列が無いので停止中は載らない。
+	// which folder a session was launched in. The DB mirror has no column for it, so it is
+	// absent while stopped.
 	Subdir        string `json:"subdir,omitempty"`
 	Repo          string `json:"repo"`
 	WorkingCopyID string `json:"workingCopyId,omitempty"`
-	// Title: the user-supplied display title. Console の displayName は title を最優先
-	// で見るが、この struct に無かった頃は中継で silently drop されていた（claude 系は
-	// label にも title が埋まるため露見せず、label を使わない shell/ssm だけ表示名が
-	// フォールバックに落ちるバグ）。DB ミラー（停止中の再配信）には列が無いので載らない。
+	// Title: the user-supplied display title, which the Console's displayName prefers above
+	// everything else. Dropping it in the relay barely shows for claude kinds (title is
+	// baked into label too) — only shell/ssm, which use no label, fall back to a wrong
+	// display name. The DB mirror (re-serving while stopped) has no column for it.
 	Title   string `json:"title,omitempty"`
 	Display string `json:"display"` // human-readable name from the Agent (title → label → repo@time)
 	// Color: terminal background hue (hex; SSM sessions carry their host color).
-	// この struct に無かった頃は中継で drop され、CP 経由では SSM の背景色が
-	// 常に既定色だった。DB ミラーには列が無いので停止中は載らない。
+	// Dropped in the relay, an SSM session's background always arrives through the CP as
+	// the default colour. The DB mirror has no column for it, so it is absent while stopped.
 	Color     string `json:"color,omitempty"`
 	Label     string `json:"label"`
 	Started   string `json:"started"`
@@ -585,16 +588,17 @@ type sessionWire struct {
 	BackgroundBusy bool `json:"backgroundBusy"`
 	// BackgroundBusyReason passes through WHAT is running ("process" | "subagent" |
 	// "shell"), which only picks the badge's wording. Dropping it here would not hide the
-	// badge, just silently pin every session to the generic 「BG実行中」.
+	// badge, just silently pin every session to the generic "running in background" wording.
 	BackgroundBusyReason string `json:"backgroundBusyReason,omitempty"`
-	// RateLimitResumeAt passes through the Agent's「予約済み自動再開の時刻」(state ==
-	// "limited" のときだけ入る RFC3339)。これが落ちると Console のチップは
-	// 「制限解除待ち」とだけ言い、いつ動くのかを言えなくなる。DB ミラーには列が無い
-	// （停止中のワークスペースに進行中のエピソードは無い）。
+	// RateLimitResumeAt passes through the Agent's scheduled auto-resume time (RFC3339,
+	// present only while state == "limited"). Dropped, the Console's chip can only say it
+	// is waiting for the limit to lift and not when work will resume. No DB-mirror column
+	// (a stopped workspace has no episode in progress).
 	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
-	// Context: claude のコンテキスト残量（ContextBar の元データ）。shape は Agent と
-	// Console（chat view）が所有し CP は解釈しないので RawMessage で素通しする。
-	// この struct に無かった頃は中継で drop され、CP 経由では ContextBar が出なかった。
+	// Context: claude's remaining context (the source data for ContextBar). The shape is
+	// owned by the Agent and the Console (chat view) and the CP does not interpret it, so
+	// it is relayed as RawMessage. Dropped in the relay, ContextBar never appears through
+	// the CP.
 	Context json.RawMessage `json:"context,omitempty"`
 	// Branch/worktree metadata passed through from the Agent (this struct decodes the
 	// Agent's /sessions response and is re-emitted to the Console, so any field absent
@@ -604,27 +608,30 @@ type sessionWire struct {
 	CurrentBranch string `json:"currentBranch,omitempty"`
 	BranchDrift   bool   `json:"branchDrift,omitempty"`
 	Worktree      bool   `json:"worktree,omitempty"`
-	// Exit cause of a STOPPED session (docs/log/26): "oom" | "killed" | "crashed"、
-	// クリーン終了・意図停止では空。ExitCode は pane の生 wait status（137 = OOM
-	// SIGKILL）、ExitSignal は導出シグナル番号。この struct に無かった頃は中継で
-	// drop され、docs/log/26 の exit chip（OOM/クラッシュ表示）が CP 経由では一度も
-	// 表示されなかった。DB ミラーには列が無いので停止中の再配信には載らない
-	// （exit を持つのは停止セッションなので、Agent 停止中は chip も消える点は既知の割り切り）。
-	// NOTE: Agent の wire にはこの他に tmux（"claude_"+name、Console 未使用・導出可能）
-	// があるが、これは意図して中継しない。新 field を Agent 側 wire（internal/session
-	// の Session）に足すときは、ここへの追加漏れ＝silent drop になることに注意。
+	// Exit cause of a STOPPED session (docs/log/26): "oom" | "killed" | "crashed"; empty
+	// after a clean or deliberate stop. ExitCode is the pane's raw wait status (137 = OOM
+	// SIGKILL), ExitSignal the derived signal number. Dropped in the relay, the docs/log/26
+	// exit chip (OOM / crash) never shows through the CP. The DB mirror has no column, so
+	// it is absent while stopped — an accepted trade-off, since only stopped sessions have
+	// an exit and the chip therefore disappears while the Agent is down.
+	// NOTE: the Agent wire also carries tmux ("claude_"+name), which the Console does not
+	// use and could derive; it is deliberately not relayed. When adding a field to the
+	// Agent-side wire (Session in internal/session), remember that forgetting it here is a
+	// silent drop.
 	ExitReason string `json:"exitReason,omitempty"`
 	ExitCode   int    `json:"exitCode,omitempty"`
 	ExitSignal int    `json:"exitSignal,omitempty"`
-	// KeepAwakeUntil: 利用者が「アイドル自動停止から守れ」と宣言した期限（RFC3339・
-	// docs/log/75）。この struct に無いと silent drop で、押したピンが reaper に届かない
-	// ＝「押したのに止まった」になる。DB ミラーには列を作らない — 停止中の Workspace に
-	// 守るべき走行中のジョブは無い（次に起きたとき Agent が改めて申告する）。
+	// KeepAwakeUntil: the deadline until which the user declared this session protected
+	// from idle auto-stop (RFC3339, docs/log/75). Absent here it is silently dropped and
+	// the pin never reaches the reaper — "I pinned it and it stopped anyway". No DB-mirror
+	// column: a stopped Workspace has no running job to protect (the Agent declares it
+	// again the next time it wakes).
 	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
-	// Carried は「畳まれたときに答えを待っていた対話」の種類（docs/log/75 §75.6.5）。
-	// 中継漏れは silent drop なので、この struct と DB ミラーの**両方**に要る:
-	// 稼働中は Agent 由来のこの値、停止中は ReplaceSessions で焼いた列が一覧を作る。
-	// 片方だけだと「Workspace を止めた瞬間にバッジが消える」形の嘘になる。
+	// Carried is the kind of interaction that was waiting for an answer when the session
+	// was folded away (docs/log/75 §75.6.5). A gap in the relay is a silent drop, so it is
+	// needed in BOTH this struct and the DB mirror: while running the list is built from
+	// this Agent-supplied value, while stopped from the column baked in by ReplaceSessions.
+	// With only one of the two, the badge lies by vanishing the moment the Workspace stops.
 	Carried string `json:"carried,omitempty"`
 }
 
@@ -669,7 +676,8 @@ func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[st
 		out = append(out, sessionWire{
 			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
 			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false,
-			// 停止中でも「答えを待っている質問がある」ことは出す（docs/log/75 §75.6.5）。
+			// Surface "something is still waiting for an answer" even while the
+			// workspace is stopped (docs/log/75 §75.6.5).
 			Carried: r0.Carried,
 			// Container is down: we can't check the dir, so assume resumable; the
 			// Agent re-checks and refuses on actual attach if the dir is gone.
@@ -743,23 +751,24 @@ func (a workspaceAPI) sessionStart(w http.ResponseWriter, r *http.Request, res *
 	a.proxy.rest(w, r, res)
 }
 
-// attention は「人が今この Console を触っている」という 1 ビット（docs/log/75 P3）。
+// attention is the single bit "a human is touching this Console right now" (docs/log/75 P3).
 //
-// なぜ要るか: 在席の判定を端末の打鍵に絞った結果、**打鍵も送信もせずミラーで過去ログを
-// 読み続けている人**が不在に見える。読んでいる最中に Workspace が止まると、Agent ごと
-// 落ちるので転写すら取れなくなる（ミラーは「停止中は履歴を取得できません」に変わる）。
+// Presence is otherwise decided by terminal keystrokes, which makes someone who is reading
+// back through the mirror — neither typing nor sending — look absent. If the Workspace stops
+// while they read, the Agent goes down with it and even the transcript becomes unavailable
+// (the mirror switches to "history cannot be fetched while stopped").
 //
-// ★「タブが開いている」ではなく「人が操作した」を送る。Console は document が可視の
-// あいだの実操作（pointerdown / keydown / wheel）を 60 秒に 1 回だけここへ投げる。
-// 開きっぱなしのタブは何も送らないので、P3 が消した「ソケットがあるだけで温まる」は
-// 戻らない。
+// What is reported is "a human acted", not "a tab is open": the Console posts here at most
+// once every 60 seconds, on real interaction (pointerdown / keydown / wheel) while the
+// document is visible. An idle open tab sends nothing, so "a socket alone keeps it warm",
+// which P3 removed, does not come back.
 //
-// ★auto-start は通さない。ここを通すと、停止した Workspace のタブを開いて画面を
-// クリックしただけでコンテナが起き上がる（端末アタッチが auto-start しないのと同じ理屈）。
-// 起こすのは利用者の明示操作だけ。
+// Deliberately not routed through auto-start: otherwise opening the tab of a stopped
+// Workspace and clicking would bring the container up (the same reasoning that keeps
+// terminal attach from auto-starting). Only an explicit user action wakes it.
 func (a workspaceAPI) attention(w http.ResponseWriter, r *http.Request, res *resolved) {
-	// 停止処理と競合したときの 409 は無視してよい: 在席の記録が 1 回落ちるだけで、
-	// 次の操作でまた届く。呼び出し側（ビーコン）も応答を見ない。
+	// A 409 from racing a stop is fine to ignore: one presence record is lost and the next
+	// interaction sends another. The caller (a beacon) does not read the response either.
 	_ = a.mgr.touchWorkspace(r.Context(), res.ws.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -767,8 +776,9 @@ func (a workspaceAPI) attention(w http.ResponseWriter, r *http.Request, res *res
 // sessionCarriedAnswer answers a carried interaction (docs/log/75): the question / plan /
 // permission that was on screen when the session was folded away. Like sessionStart it
 // auto-starts a cold workspace first — this is the ONE write whose whole point is to
-// reach a workspace the idle-stop reaper turned off, and the user pressing 回答して再開
-// in the Console is exactly the deliberate "I am using this now" action auto-start is for.
+// reach a workspace the idle-stop reaper turned off, and the user pressing "answer and
+// resume" in the Console is exactly the deliberate "I am using this now" action auto-start
+// is for.
 // The Agent then resumes the session and delivers the answer as ordinary prose.
 func (a workspaceAPI) sessionCarriedAnswer(w http.ResponseWriter, r *http.Request, res *resolved) {
 	if a.autostart {

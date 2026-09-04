@@ -67,7 +67,7 @@ func updateStatus(w http.ResponseWriter, _ *http.Request) {
 // hostUpdateStatusWire — GET /api/update/status のレスポンス（Console の
 // `HostUpdateStatus`、console/src/features/settings/hostUpdate.ts）。
 //
-// 旧: map[string]any{"current":…, "installed":…, "restartRequired":…, "systemd":…}
+// was: map[string]any{"current":…, "installed":…, "restartRequired":…, "systemd":…}
 // 4 キーとも無条件なので **omitempty は付けない**。とくに `installed` は
 // 「staged が無い」を **空文字で**表しており、omitempty を付けるとキーごと消えて
 // Console 側の「更新なし」判定が変わる（キーの有無とゼロ値は別物）。

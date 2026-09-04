@@ -1216,7 +1216,7 @@ func (a Admin) PoolStatus(w http.ResponseWriter, r *http.Request, _ store.Identi
 // tenantLoginWire — PUT /api/admin/tenants/{slug}/login の応答
 // （Console の `TenantLoginFields`、console/src/features/settings/tenant/tenantLoginTypes.ts）。
 //
-// 旧: map[string]any{"tenant":…, "allowed_providers":…, "auto_join_domains":…,
+// was: map[string]any{"tenant":…, "allowed_providers":…, "auto_join_domains":…,
 //
 //	"allowed_domains":…, "hidden_providers":…}
 //

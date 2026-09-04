@@ -329,7 +329,7 @@ func HandleMemoryImportApply(w http.ResponseWriter, r *http.Request) {
 // memoryRootsWire — GET /memory/roots のレスポンス（Console の `RootsPayload`、
 // console/src/features/settings/memory/memoryTypes.ts）。
 //
-// 旧: map[string]any{"roots":…, "inactive":…, "auto":…, "autoLocked":…} ＋
+// was: map[string]any{"roots":…, "inactive":…, "auto":…, "autoLocked":…} ＋
 //
 //	head が非ゼロのときだけ "lastSnapshot" を足す。
 //

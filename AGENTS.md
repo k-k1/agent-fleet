@@ -62,6 +62,12 @@ Leave out:
 When a paragraph of history carries nothing but a reason, keep the reason as one sentence
 and drop the story. Go doc comments still open with the identifier's name.
 
+One exception, and a test enforces it: a wire type that replaced a `map[string]any` must
+keep the line `was: map[string]any{…}` in its doc comment. That is provenance a name
+suffix cannot carry, and `wiremapConvertedMarker` (`wiremap_convert_test.go`, in both Go
+modules) greps for that exact literal to decide which types owe an equivalence proof.
+Delete it and the type silently leaves the scan.
+
 The house style is already in the tree: `control-plane/reaper.go` and
 `control-plane/internal/runtime/runtime_ecs_stale.go` are written to it.
 

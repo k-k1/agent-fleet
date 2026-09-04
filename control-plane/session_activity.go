@@ -2,42 +2,43 @@ package main
 
 import "time"
 
-// セッション 1 行を「コンテナを起こし続ける理由になるか」「畳んでよいか」へ落とす分類
-// （docs/log/75 §75.5）。reaper の 2 段はここだけを見る。
+// Classification of a single session row into "is this a reason to keep the container
+// awake" and "may it be folded away" (docs/log/75 §75.5). The reaper's two tiers look
+// only at this.
 //
-// なぜ関数 1 つに集約するのか: この判定はもともと reaper.go の中にインラインの真偽式が
-// 2 つ（tier2 の busy 判定と、フェンス取得後の再判定）あるだけで、テストが 1 本も無かった。
-// 実際 2026-07-31 の blocked、2026-08-19/20 の limited / spend_limit と 2 回ドリフトし、
-// そのたびに 2 箇所を手で合わせている。状態は今後も増える（agents.State* を見よ）ので、
-// 「増えた状態をどちらにも入れ忘れる」を構造的に潰す。
+// It is one function because the decision used to be two inline boolean expressions in
+// reaper.go (tier 2's busy test, and the re-test after taking the fence) with no test at
+// all, and the two drifted apart twice — each time matched up again by hand. States keep
+// being added (see agents.State*), so "the new state was forgotten in one of the two
+// places" is closed structurally.
 type activity int
 
 const (
-	// activityUnknown: 何が起きているか分からない。shell / ssm（走行中のジョブが
-	// 見えない）と、この CP が知らない新しい状態。**どちらにも倒さない** — 起こし
-	// 続ける理由にはしない（新状態が出るたび Workspace が永久に温まるのを防ぐ）が、
-	// 畳みもしない（理解していないものを殺さない）。
+	// activityUnknown: what is happening cannot be known — shell / ssm (a running job is
+	// invisible) and any state this CP does not know. Falls on NEITHER side: not a reason
+	// to stay awake (otherwise every new state warms the workspace forever), and not
+	// foldable either (do not kill what you do not understand).
 	activityUnknown activity = iota
-	// activityIdleWait: ターンは終わっていて、次に動くのは人か時計。畳んでよく、
-	// 畳んでも失われるものが無い。
+	// activityIdleWait: the turn is over and the next move belongs to a human or to the
+	// clock. Foldable, and folding loses nothing.
 	activityIdleWait
-	// activityHumanWait: 人の判断を待って止まっている。畳んでよいが、**畳む前に
-	// 保留中の対話を持ち越す**必要がある（docs/log/75 §75.6）。コンテナを起こし続ける
-	// 理由にはならない — 人待ちは何日でも続きうる。
+	// activityHumanWait: stopped waiting for a human decision. Foldable, but the pending
+	// interaction must be carried over before folding (docs/log/75 §75.6). Not a reason to
+	// keep the container awake — a human wait can last days.
 	activityHumanWait
-	// activityMachineBusy: 機械が動いている。触ってはならない。
+	// activityMachineBusy: a machine is working. Must not be touched.
 	activityMachineBusy
 )
 
-// 状態名。Agent 側（internal/agents/notify.go・internal/status）が正で、ここは
-// ワイヤ越しに来る文字列の写し。
+// State names. The Agent side (internal/agents/notify.go, internal/status) is
+// authoritative; these are copies of the strings that arrive over the wire.
 const (
 	stateWorking = "working"
-	// stateCompacting は codex が文脈圧縮を走らせている（agents/codex の WireLive）。
-	// ワイヤに出る 10 個目の状態で、§75.2.1 の 9 状態の表から漏れていた — 分類が
-	// 無いと unknown に落ち、**圧縮の最中に Workspace ごと止まる**（機械が動いている
-	// のに起こし続ける理由に数えられない）。決定 9 のとおり、分からないものは
-	// どちらにも倒さないが、これは分かっている: 明確に machineBusy である。
+	// stateCompacting is codex running a context compaction (WireLive in agents/codex).
+	// Without a classification it falls to unknown and the whole workspace stops in the
+	// middle of the compaction, because a working machine is then not counted as a reason
+	// to stay awake. Per decision 9 what is not understood falls on neither side, but this
+	// one is understood: it is machineBusy.
 	stateCompacting = "compacting"
 	stateIdle       = "idle"
 	stateQuestion   = "question"
@@ -49,13 +50,14 @@ const (
 	stateSpendLimit = "spend_limit"
 )
 
-// busyState は state 単独で「機械が動いている」を意味するか。
+// busyState reports whether the state alone means "a machine is working".
 //
-// **一覧はここだけを見ること**（idle_forecast.go の holdersOf）。この集合を 2 箇所に
-// 書くと、増えた状態を片方に入れ忘れる: 実際 stateCompacting は sessionActivity に
-// だけ足され、holdersOf は working しか見ないままだった＝ reaper は正しく止めないのに
-// 画面は「もうすぐ止まります」と言う、という docs/log/75 決定 11（画面は reaper の決定を
-// そのまま公開する）違反が再発している。
+// The list lives here only; idle_forecast.go's holdersOf reads it rather than keeping a
+// copy. Written in two places, a newly added state gets forgotten in one of them:
+// stateCompacting was added to sessionActivity alone while holdersOf still looked at
+// working, so the reaper correctly refused to stop while the screen said "stopping soon"
+// — a repeat of the docs/log/75 decision 11 violation (the screen publishes the reaper's
+// decision as it is).
 func busyState(state string) bool {
 	switch state {
 	case stateWorking, stateCompacting:
@@ -66,22 +68,22 @@ func busyState(state string) bool {
 
 // sessionActivity classifies one live session row.
 //
-// 生きていない行は activityUnknown（畳む対象でも、起こし続ける理由でもない）。
+// A row that is not alive is activityUnknown: neither foldable, nor a reason to stay awake.
 func sessionActivity(s sessionWire) activity {
 	if !s.Alive {
 		return activityUnknown
 	}
-	// 利用者の「停止しない」ピン（docs/log/75）。分類の一番外に置くのは、これが**唯一の
-	// 逃げ道**である shell / ssm では state が空＝ unknown で、その先の分岐に一切
-	// 引っかからないから。生きている行にしか効かない（上の !Alive で落ちる）ので、
-	// 死んだセッションのピンがコンテナを抱え込むことはない。
+	// The user's "do not stop" pin (docs/log/75). It sits outermost because for shell /
+	// ssm — the only escape hatch those have — state is empty, i.e. unknown, so none of
+	// the branches below would ever catch it. It applies to live rows only (the !Alive
+	// check above), so a pin on a dead session cannot hold the container.
 	if keepAwake(s.KeepAwakeUntil, time.Now()) {
 		return activityMachineBusy
 	}
-	// BackgroundBusy は state と直交する: state は idle でも run_in_background の
-	// ジョブ・in-process のサブエージェント / Workflow・S 状態の背景シェルが走って
-	// いることがある（Agent の WireLive が立てる）。reaper はこれを一度も見ておらず、
-	// 走っている背景作業ごと halt / stop していた。**machineBusy 側で最初に見る。**
+	// BackgroundBusy is orthogonal to state: with state idle there can still be a
+	// run_in_background job, an in-process subagent / Workflow, or a background shell in
+	// state S (the Agent's WireLive sets it). Checked first on the machineBusy side — the
+	// reaper never looked at it and halted / stopped running background work with it.
 	if s.BackgroundBusy {
 		return activityMachineBusy
 	}
@@ -90,33 +92,36 @@ func sessionActivity(s sessionWire) activity {
 	}
 	switch s.State {
 	case stateIdle, stateLimited:
-		// limited は「時計待ち」。リセット時刻に CP の定時実行が起こす（docs/log/47 §4-9）
-		// ので、畳んでも失われるものは無い＝ idle と同じ扱い。
+		// limited is a wait on the clock: CP's scheduled run wakes it at the reset time
+		// (docs/log/47 §4-9), so folding loses nothing — the same treatment as idle.
 		return activityIdleWait
 	case stateQuestion, statePlan, statePermission, stateBlocked, stateAuth, stateSpendLimit:
-		// blocked（上限メニュー）・auth（再認証）・spend_limit（増枠）は「人が今やる」側で、
-		// question / plan / permission と同じく人待ち。待っても自分では解けない。
+		// blocked (the limit menu), auth (re-authentication) and spend_limit (a quota
+		// raise) are all "a human acts now", a human wait like question / plan /
+		// permission. Waiting does not resolve them by itself.
 		return activityHumanWait
 	}
 	return activityUnknown
 }
 
-// holdsWorkspace: この行があるあいだ tier2 は Workspace を止めてはならないか。
+// holdsWorkspace reports whether tier 2 must leave the workspace running while this row
+// exists.
 //
-// **機械が動いているときだけ**。人待ち（question / plan / permission / blocked / auth /
-// spend_limit）は理由にならない — 人待ちは何日でも続きうるので、それでコンテナを起こし
-// 続けるとそのまま課金になる（docs/log/75 §75.1。question が唯一の例外として残っていた頃が
-// 「AUQ が出ていると Workspace が永久に停止しない」の原因そのものだった）。
+// Only while a machine is working. A human wait (question / plan / permission / blocked /
+// auth / spend_limit) is not a reason — it can last days, and keeping the container awake
+// for it bills the user straight through (docs/log/75 §75.1; question surviving as the one
+// exception was exactly the cause of "an open AUQ means the workspace never stops").
 //
-// 畳んでも失われないことは持ち越し（docs/log/75 §75.6）が担保する: 保留中の質問/プラン/許可は
-// halt の直前に carried へ退避され、Console から答えれば再開して届く。
+// That folding loses nothing is guaranteed by carry-over (docs/log/75 §75.6): a pending
+// question/plan/permission is moved to carried just before the halt, and answering it from
+// the Console resumes the session and delivers it.
 func holdsWorkspace(s sessionWire) bool {
 	return sessionActivity(s) == activityMachineBusy
 }
 
-// tier1Reapable: tier1（セッション halt）の対象か。畳んでよい＝ machineBusy でも
-// unknown でもないもの。どのタイムアウトを当てるかは呼び出し側が分類で決める
-// （idleWait は session_idle_timeout、humanWait は interaction_idle_timeout）。
+// tier1Reapable reports whether tier 1 (session halt) may take this row: foldable, i.e.
+// neither machineBusy nor unknown. Which timeout applies is decided by the caller from the
+// classification (idleWait: session_idle_timeout, humanWait: interaction_idle_timeout).
 func tier1Reapable(s sessionWire) bool {
 	a := sessionActivity(s)
 	return a == activityIdleWait || a == activityHumanWait
@@ -124,10 +129,10 @@ func tier1Reapable(s sessionWire) bool {
 
 // keepAwake reports whether a user pin is still in force.
 //
-// 読めない値は「ピンされていない」に倒す: この文字列は af 自身の Agent が書くので、
-// 壊れているのはバグであり、そのバグが「Workspace が永久に止まらない」＝黙って課金し
-// 続ける、という形で表に出るのは最悪の縮退である。逆側（守り損ねる）はジョブが 1 本
-// 落ちるだけで、利用者が押し直せる。
+// An unreadable value means "not pinned": the string is written by af's own Agent, so a
+// broken one is a bug, and the worst way for that bug to surface is "the workspace never
+// stops" — billing silently forever. Erring the other way (failing to protect) costs one
+// job, which the user can start again.
 func keepAwake(until string, now time.Time) bool {
 	if until == "" {
 		return false
@@ -139,15 +144,16 @@ func keepAwake(until string, now time.Time) bool {
 	return now.Before(t)
 }
 
-// tier1Foldable は kind を「halt して安全か」で分ける（docs/log/75 P5）。
+// tier1Foldable splits kinds by "is halting this safe" (docs/log/75 P5).
 //
-// halt は resumable な停止（claude は --resume、managed は runtime handle の再接続）
-// なので、エージェントのセッションはどの kind でも畳んでよい。**shell / ssm だけが
-// 例外**で、こちらの halt は走っているジョブごと殺すことを意味し、しかも af からは
-// 何が走っているのか見えない（前景コマンド名では放置された less とビルドが区別できず、
-// ssm は常に aws を張る）。守りたいものがあるときは「自動停止しない」ピンで宣言する。
+// A halt is a resumable stop (claude via --resume, managed by reconnecting the runtime
+// handle), so an agent session of any kind may be folded. shell / ssm are the exception:
+// halting one means killing the job it is running, and af cannot see what that job is (a
+// foreground command name does not tell an abandoned less from a build, and ssm always
+// shows aws). Anything worth protecting is declared with the "do not auto-stop" pin.
 //
-// 空文字は kind を持たない古いセッション＝ claude（normalizeKind と同じ既定）。
+// An empty string is an old session carrying no kind, i.e. claude (the same default as
+// normalizeKind).
 func tier1Foldable(kind string) bool {
 	switch kind {
 	case "shell", "ssm":

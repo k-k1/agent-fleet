@@ -152,7 +152,7 @@ func (a egressAPI) checkHosts(w http.ResponseWriter, r *http.Request, _ store.Id
 // egressCheckWire — GET /api/egress/check のレスポンス（Console の `EgressCheck`、
 // console/src/features/settings/mcp/egressCheck.ts）。
 //
-// 旧: map[string]any{"configured":…, "mode":…, "enforce":…, "hosts":…}
+// was: map[string]any{"configured":…, "mode":…, "enforce":…, "hosts":…}
 // 4 キーとも無条件に入っていたので **omitempty は付けない**（付けると
 // configured=false / mode="" のときにキーが消えてワイヤが変わる）。
 // Hosts は make 済みで nil にならないため `{}` が出る。等価は

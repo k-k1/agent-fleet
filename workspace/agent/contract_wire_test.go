@@ -240,30 +240,32 @@ func TestContractFamilies(t *testing.T) {
 	}
 }
 
-// ===== 共有機構ここから（control-plane と workspace/agent で byte 一致・下の検査が見張る）=====
-// 🔴 **両モジュールで共有する道具は、必ずこの区間の中に置くこと。**
-// 検査が守っているのは「この区間」であって「ファイル」ではない——**区間の外に足した共有ヘルパは
-// 片側だけに在っても緑のまま通る**（#346 のレビュワーが実測）。見ない場所を作った以上、
-// どこが見られているかを人に伝える文言が要る（免除表に理由を書くのと同じ構造）。
-// contractFamily は 1 家系分の契約。
+// ===== shared machinery starts here (byte-identical in control-plane and workspace/agent; the check below watches it) =====
+// Anything shared by both modules must live inside this region. What the check below
+// protects is the region, not the file: a shared helper added outside it can exist on only
+// one side and still pass green (measured). Since there is a place that is not looked at,
+// the text has to tell the reader which place is.
+// contractFamily is the contract for one family.
 type contractFamily struct {
-	name string // 家系名（エラーメッセージ用）
+	name string // family name, for error messages
 
-	// Go 側のワイヤ型。**経路は 2 つあり、選び方は機械的**（下の goStructFieldsFromSource の
-	// コメント参照）: 同じパッケージから届くなら goType（reflect）、
-	// 別パッケージの非公開型なら goPath + goName（go/ast）。**両方を埋めてはいけない。**
+	// The Go-side wire type. There are two routes and the choice is mechanical (see the
+	// goStructFieldsFromSource comment): goType (reflect) when the type is reachable from
+	// this package, goPath + goName (go/ast) for an unexported type in another package.
+	// Never fill in both.
 	goType  reflect.Type
-	goPath  string            // reflect で届かないときだけ。宣言ファイルへの相対パス
-	goName  string            // 同上。struct 名
-	binding map[string]string // Go フィールド名 → json キー（①の原本）
+	goPath  string            // only when reflect cannot reach it: path to the declaring file
+	goName  string            // ditto; struct name
+	binding map[string]string // Go field name → json key (the source for ①)
 
-	tsPath string          // Console の手書き型の在り処
-	tsName string          // TS の interface 名
-	tsKeys map[string]bool // TS 側のキー集合（②の原本）
+	tsPath string          // where the Console's hand-written type lives
+	tsName string          // TS interface name
+	tsKeys map[string]bool // TS-side key set (the source for ②)
 
-	// 免除。🔴 **増やすときは必ず理由を書くこと。ここは「まだ直していない」を隠す場所ではない。**
-	tsOnly map[string]string // TS に在って Go が出さない
-	goOnly map[string]string // Go が出すが TS に無い
+	// Exemptions. Always write down the reason when adding one: this is not a place to
+	// hide "not fixed yet".
+	tsOnly map[string]string // declared in TS, not emitted by Go
+	goOnly map[string]string // emitted by Go, not declared in TS
 }
 
 func keySet(keys ...string) map[string]bool {
@@ -274,17 +276,19 @@ func keySet(keys ...string) map[string]bool {
 	return m
 }
 
-// checkContractFamily は 1 家系に ①bind ②scan ③match を当てる。
+// checkContractFamily applies ①bind ②scan ③match to one family.
 //
-// 🔴 **原本の取り方に意味がある**（#339 で片肺だった反省）:
-//   - ③ が読む Go 側は **reflect（実際の struct）**——手書きの表を材料にすると、
-//     構造体を直しても③に届かず、免除の寿命の逆検査が鳴らなくなる。
-//   - ③ が読む TS 側は **実際に走査した結果**——表を材料にすると、TS を直しても③に届かない。
-//   - 表（binding / tsKeys）は **①②が守るもので、③が読むものではない。**
+// Where each check takes its source from matters:
+//   - The Go side ③ reads is reflect (the actual struct). Feed it the hand-written table
+//     instead and a fix to the struct never reaches ③, so the reverse check on an
+//     exemption's lifetime stops firing.
+//   - The TS side ③ reads is the actual scan result; feed it the table instead and a fix
+//     to the TS never reaches ③.
+//   - The tables (binding / tsKeys) are what ①② protect, not what ③ reads.
 func checkContractFamily(t *testing.T, f contractFamily) {
 	t.Helper()
 
-	// --- ① Go フィールド名 ↔ json キーの結び付き ---
+	// --- ① the binding between Go field name and json key ---
 	goFields := contractGoFields(t, f)
 	for name, want := range f.binding {
 		got, ok := goFields[name]
@@ -304,7 +308,7 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 		}
 	}
 
-	// --- ② TS 側のキー集合を表に固定する（走査が壊れたことを捕まえるのはここだけ）---
+	// --- ② pin the TS-side key set to the table ---
 	scanned := consoleInterfaceFields(t, f.tsPath, f.tsName)
 	for k := range f.tsKeys {
 		if !scanned[k] {
@@ -321,7 +325,7 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 		}
 	}
 
-	// --- ③ TS ↔ Go のキー集合（免除つき）---
+	// --- ③ TS ↔ Go key sets, with exemptions ---
 	goKeys := map[string]bool{}
 	for _, k := range goFields {
 		goKeys[k] = true
@@ -352,7 +356,7 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 		}
 	}
 
-	// --- 免除の寿命（4 方向。「揃った」だけでなく「消えた」も見る）---
+	// --- exemption lifetime: four directions, "now aligned" and also "now gone" ---
 	for k, why := range f.tsOnly {
 		if goKeys[k] {
 			t.Errorf("%s: 免除 %q (%s) はもう要らない——%s が出すようになった", f.name, k, why, f.name)
@@ -373,7 +377,7 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 	}
 }
 
-// contractGoFields は家系の経路に従って「Go フィールド名 → json キー」を取る。
+// contractGoFields collects "Go field name → json key" along the family's route.
 func contractGoFields(t *testing.T, f contractFamily) map[string]string {
 	t.Helper()
 	if (f.goType == nil) == (f.goPath == "") {
@@ -392,18 +396,20 @@ func contractGoFields(t *testing.T, f contractFamily) map[string]string {
 	return out
 }
 
-// reflectJSONFields は struct の「Go フィールド名 → json キー」を返す。
+// reflectJSONFields returns a struct's "Go field name → json key".
 //
-// 🔴 **埋め込み（無名フィールド）は encoding/json と同じく昇格する。**
-// 素朴に `Tag.Get("json")` が空なら飛ばす書き方だと、**タグの無い埋め込みごと飛ばして
-// 昇格したキーを丸ごと落とす**——実例 `usageHourPoint`（control-plane/usage_hourly.go:55）は
-// `store.UsageHourCounters` を埋め込んでおり、飛ばすと **8 キーのうち 7 つが消えて**
-// 「TS のみ」が 7 件に化ける。**浅く読んで偽の赤を出すのが、この面のいちばん怖い壊れ方。**
+// Embedded (anonymous) fields are promoted, exactly as encoding/json promotes them.
+// Written naively as "skip when `Tag.Get("json")` is empty", the untagged embedded field
+// is skipped along with every key it promotes: `usageHourPoint`
+// (control-plane/usage_hourly.go:55) embeds `store.UsageHourCounters`, and skipping it
+// drops 7 of its 8 keys, which then surface as 7 "TS only" findings. Reading shallowly and
+// producing a false red is the worst way this side can break.
 //
-// 🔴 **追えない形に出会ったら浅い結果を返さずに落ちる**（AST 経路と同じ規律）:
-// 2 段以上の埋め込みと、キーがぶつかる昇格は error にしてある。
-// **json の昇格規則はもっと複雑**（深さ優先・同深さの衝突は両方消えるなど）なので、
-// **近似で通さず、想定外はすべて落とす。**
+// A shape that cannot be followed fails instead of returning a shallow result (the same
+// discipline as the AST route): embedding two or more levels deep, and a promotion whose
+// keys collide, are errors. json's promotion rules are more intricate than that
+// (depth-first, a same-depth collision drops both), so nothing passes on an approximation
+// — everything unexpected fails.
 func reflectJSONFields(rt reflect.Type, depth int) (map[string]string, error) {
 	if rt.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("%s は struct ではない", rt)
@@ -413,16 +419,17 @@ func reflectJSONFields(rt reflect.Type, depth int) (map[string]string, error) {
 		fl := rt.Field(i)
 		tag := fl.Tag.Get("json")
 		if fl.Anonymous && tag == "" {
-			// タグの無い埋め込み＝昇格。1 段だけ許す。
+			// An untagged embedded field is a promotion. Only one level is allowed.
 			et := fl.Type
 			if et.Kind() == reflect.Pointer {
 				et = et.Elem()
 			}
 			if et.Kind() != reflect.Struct {
-				// 🔴 **公開された非 struct の埋め込みは、json が「型名」をキーにして出す**
-				// （`MyDur int64` を埋め込むと `{"MyDur":0}`）。飛ばすと**取りこぼし**になる。
-				// 非公開なら json も出さないが、**出す／出さないを型名の公開性で判断するのは
-				// この走査の役目ではない**ので、まとめて落とす。
+				// json emits an exported non-struct embedded field under its type name
+				// (embedding `MyDur int64` yields `{"MyDur":0}`), so skipping it would
+				// lose a key. An unexported one json does not emit, but deciding
+				// emitted-or-not from the exportedness of a type name is not this
+				// scanner's job, so both fail here.
 				if fl.IsExported() {
 					return nil, fmt.Errorf("%s に公開された非 struct の埋め込みが在る（%s %s）"+
 						"——json は型名をキーにして出すが、この走査は追わない。"+
@@ -447,10 +454,10 @@ func reflectJSONFields(rt reflect.Type, depth int) (map[string]string, error) {
 			continue
 		}
 		if tag == "-" || (tag == "" && !fl.IsExported()) {
-			continue // json:"-" と非公開はワイヤに出ない
+			continue // json:"-" and unexported fields never reach the wire
 		}
-		// 🔴 **タグ無しの公開フィールドは、json が「Go のフィールド名」をキーにして出す。**
-		// 「タグが空なら飛ばす」と書くと取りこぼす（差分試験で実測）。
+		// json emits an exported field with no tag under its Go field name; "skip when the
+		// tag is empty" loses it (measured by differential test).
 		name := splitJSONName(tag)
 		if name == "" {
 			name = fl.Name
@@ -462,24 +469,25 @@ func reflectJSONFields(rt reflect.Type, depth int) (map[string]string, error) {
 	return out, nil
 }
 
-// --- 別パッケージの非公開型を読む経路（go/ast）---
+// --- Route for reading an unexported type in another package (go/ast) ---
 //
-// 🔴 **どちらの経路を使うかは機械的に決まる。迷ったら分岐条件を読むこと。**
+// Which route to use is decided mechanically; when in doubt, read the branch condition:
 //
-//	同じパッケージから届く（package main の型・別パッケージの公開型） → reflect（goType）
-//	別パッケージの**非公開**型                                        → go/ast（goPath + goName）
+//	from this package (package main, or an exported type) → reflect (goType)
+//	an unexported type in another package                 → go/ast (goPath + goName)
 //
-// reflect で届かない型のためだけの経路である。**届くなら必ず reflect を使う**——
-// reflect は「実際の型」を見るが、AST は**ソースの見た目**しか見ないので、
-// 埋め込み・型別名・生成コードのぶんだけ弱い。
+// This route exists only for types reflect cannot reach; always use reflect when it can.
+// reflect sees the actual type, the AST sees only what the source looks like, so it is
+// weaker by exactly the embedding, type aliases and generated code it cannot follow.
 //
-// 🔴 **AST が追えない構文に出会ったら、浅い結果を返さずに落ちること。**
-// 「今日の入力には埋め込みが 0 件だから AST と reflect は等価」という実測は
-// **今日の入力に対してだけ**成立する。**次に誰かが埋め込みを足した日に黙って浅く読む**ので、
-// 埋め込みを見つけたら Fatal にしてある。パスが移送で変わったときも同じ（Skip で黙らせない）。
+// Syntax the AST cannot follow fails rather than returning a shallow result. The
+// measurement "today's input has zero embedded fields, so AST and reflect are equivalent"
+// holds for today's input only, and the day someone adds an embedded field it would
+// silently read shallow — hence Fatal on an embedded field, and likewise when a move
+// changes the path (never silence it with Skip).
 
-// goStructFieldsFromSource は parseGoStructFields の薄い包み。読めなければ **Fatal**。
-// （Skip で黙らせない。移送でパスが変わったら家系表の goPath を直すこと。）
+// goStructFieldsFromSource is a thin wrapper over parseGoStructFields; Fatal when it
+// cannot read. Never Skip — when a move changes the path, fix goPath in the family table.
 func goStructFieldsFromSource(t *testing.T, path, name string) map[string]string {
 	t.Helper()
 	out, err := parseGoStructFields(path, name)
@@ -489,11 +497,12 @@ func goStructFieldsFromSource(t *testing.T, path, name string) map[string]string
 	return out
 }
 
-// parseGoStructFields は <path> の `type <name> struct` を読み、
-// 「Go フィールド名 → json キー」を返す。**追えない構文に出会ったら浅い結果ではなく error。**
+// parseGoStructFields reads `type <name> struct` in <path> and returns
+// "Go field name → json key". Syntax it cannot follow is an error, not a shallow result.
 //
-// 📌 **error を返す形にしてあるのは、落ちること自体を対照で確かめられるようにするため**
-// （TestGoStructFieldsFromSourceGuards）。Fatal のままだと「落ちるはず」を検査できない。
+// It returns an error rather than calling Fatal so that the failing itself can be checked
+// by a control (TestGoStructFieldsFromSourceGuards); with Fatal, "it should fail" is not
+// testable.
 func parseGoStructFields(path, name string) (map[string]string, error) {
 	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 	if err != nil {
@@ -515,9 +524,9 @@ func parseGoStructFields(path, name string) (map[string]string, error) {
 	}
 	out := map[string]string{}
 	for _, fl := range st.Fields.List {
-		// 🔴 埋め込み（無名フィールド）。AST では中身を追えないので、
-		// **浅い結果を返さずに落ちる**。reflect なら見える差なので、
-		// 埋め込みが要るようになったらこの家系は reflect 経路へ移すこと。
+		// An embedded (anonymous) field: the AST cannot follow its contents, so fail
+		// instead of returning a shallow result. reflect can see the difference, so move
+		// the family to the reflect route once it needs embedding.
 		if len(fl.Names) == 0 {
 			return nil, fmt.Errorf("%s の %s に埋め込みフィールドが在る（%s）"+
 				"——AST では埋め込み先の json タグを追えない。浅く読むと「TS のみ」の見落としと"+
@@ -572,10 +581,12 @@ func splitJSONName(tag string) string {
 	return tag
 }
 
-// tsProbeFixture は走査の陽性対照に使う合成標本。**実際に踏んだ／踏みかけた形だけ**を並べてある。
+// tsProbeFixture is the synthetic fixture used as the scanner's positive control. It holds
+// only shapes that were actually hit, or nearly hit.
 //
-// 📌 別ファイル（testdata/*.ts）ではなく定数に畳んである理由: この 1 枚は検査と一体で、
-// 分けると移送で孤児になるうえ、所有権の単位も分かれる（`console/src/types/*` とは別物）。
+// It is folded into a constant rather than a separate file (testdata/*.ts) because this one
+// page is of a piece with the check: split off, it is orphaned by a move, and its ownership
+// unit differs from `console/src/types/*`.
 const tsProbeFixture = `
 // ① 1 行 1 フィールド（Session が実際にこの形。ここだけ通っても意味がない）
 export interface OnePerLine {
@@ -637,18 +648,19 @@ export interface PreExtra {
 }
 `
 
-// TestTSInterfaceFieldsParser は**走査そのものの陽性対照**。
+// TestTSInterfaceFieldsParser is the positive control for the scanner itself.
 //
-// 🔴 この検査が要る理由: `Session` は 1 行 1 フィールドなので、**走査が壊れていても
-// Session だけは通ってしまう。**案 A を他の家系へ写したとき、`a: string; b?: number;` の形が
-// 1 つでもあると、**取りこぼしたキーが「TS に無い」に化けて偽の赤／穴の見落としになる。**
-// 合成標本（上の tsProbeFixture）は、実際に踏んだ形だけを並べてある。
+// Why it is needed: `Session` is one field per line, so Session alone passes even with a
+// broken scanner. Carried over to other families, a single `a: string; b?: number;` turns a
+// missed key into "absent from TS" — a false red, or a real gap gone unnoticed. The
+// synthetic fixture above holds only shapes that were actually hit.
 //
-// 🔥 **レビュワーが #343 で実測**: 走査を壊す変異（`;` を文の区切りから外す／深さ判定を外す）を
-// 当てても、①`TestSessionWireFieldBinding` と ②`TestSessionWireMatchesConsoleType` は
-// **どちらも PASS のまま**だった——**実入力の `Session` が 1 行 1 フィールドなので、
-// 走査が壊れても本番の突き合わせは何も言わない。**この対照だけが鳴る。
-// **横展開する家系にも必ず合成標本を付けること**（実入力は易しすぎて対照にならない）。
+// Measured: with the scanner mutated (dropping `;` as a statement separator, dropping the
+// depth test), both ①`TestSessionWireFieldBinding` and
+// ②`TestSessionWireMatchesConsoleType` stayed PASS — the real `Session` is one field per
+// line, so a broken scanner leaves the production comparison silent and only this control
+// fires. Every family added here needs its own synthetic fixture: real input is too easy
+// to serve as a control.
 func TestTSInterfaceFieldsParser(t *testing.T) {
 	src := tsProbeFixture
 	for _, tc := range []struct {
@@ -656,14 +668,16 @@ func TestTSInterfaceFieldsParser(t *testing.T) {
 		want []string
 	}{
 		{"OnePerLine", []string{"a1", "a2", "a3"}},
-		// 同じ行に 2 キー。行単位の走査は b11 を落とす（総数 11 なので Fatal には落ちない）。
+		// Two keys on one line: a line-based scan drops b11, and with 11 in total it
+		// does not trip the Fatal.
 		{"Mixed", []string{"b01", "b02", "b03", "b04", "b05", "b06", "b07", "b08", "b09", "b10", "b11"}},
-		// 入れ子の name / display を拾ってはいけない。
+		// The nested name / display must not be picked up.
 		{"Nested", []string{"n1", "n2", "n3"}},
-		// コメント／文字列の中の `t9` を拾ってはいけない。
+		// A `t9` inside a comment or a string must not be picked up.
 		{"Tricky", []string{"t1", "t2", "t3"}},
-		// 前方一致する別の型を掴んではいけない（Pre が PreExtra を拾わない）。
-		// type 別名も interface と同じに読めること（読めないと家系ごと Fatal する）。
+		// A different type with a matching prefix must not be grabbed (Pre must not
+		// pick up PreExtra). A type alias must read like an interface; otherwise the
+		// whole family Fatals.
 		{"AliasShape", []string{"al1", "al2", "al3"}},
 		{"Pre", []string{"p1", "p2", "p3"}},
 		{"PreExtra", []string{"x1", "x2", "x3"}},
@@ -689,8 +703,8 @@ func TestTSInterfaceFieldsParser(t *testing.T) {
 		}
 	}
 
-	// TS のテンプレートリテラル型（バッククォート）でも深さを見失わないこと。
-	// 上の標本は raw string なので、この 1 例だけ通常の文字列で組む。
+	// A TS template literal type (backticks) must not make the depth count go astray.
+	// The fixture above is a raw string, so this one case is built as an ordinary string.
 	tmpl := "export interface Tmpl {\n  m1: `a;b{c}`;\n  m2: string;\n  m3: string;\n}\n"
 	if got, err := tsInterfaceFields(tmpl, "Tmpl"); err != nil {
 		t.Errorf("Tmpl: %v", err)
@@ -698,13 +712,14 @@ func TestTSInterfaceFieldsParser(t *testing.T) {
 		t.Errorf("Tmpl: テンプレートリテラルで深さを見失っている: %v", got)
 	}
 
-	// 無いものを探したら Fatal 相当のエラーになること（Skip や空返しで黙らない）。
+	// Looking for something absent must be an error — no Skip, no silent empty result.
 	if _, err := tsInterfaceFields(src, "NoSuchInterface"); err == nil {
 		t.Error("存在しない interface でエラーにならない＝この検査が無言化しうる")
 	}
 }
 
-// consoleInterfaceFields は TS の `interface <name> { ... }` の**深さ 1 の**フィールド名を返す。
+// consoleInterfaceFields returns the depth-1 field names of the TS
+// `interface <name> { ... }`.
 func consoleInterfaceFields(t *testing.T, path, name string) map[string]bool {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -716,43 +731,47 @@ func consoleInterfaceFields(t *testing.T, path, name string) map[string]bool {
 	if err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
-	// 🔴 **件数の下限は「0 件」しか見ない。これは抜けではなく、意図してこうしてある。**
+	// The only lower bound on the count is "zero". That is deliberate, not an omission.
 	//
-	// 以前は「表に固定したキー数」を下限にして Fatal していたが、**診断が誤った方向を指した**——
-	// TS からキーが 1 つ消えると必ず Fatal し、文言は「走査が壊れている」。**実際の原因は
-	// 「キーが意図して消された」で走査は無傷**であり、しかも Fatal が後続を止めるので
-	// **「免除を外せ」という正しい指示が出なかった**（死んだ TS 宣言を消す作業がこの経路を通る）。
+	// A bound of "the number of keys pinned in the table" pointed the diagnosis the wrong
+	// way: removing one key from TS always Fataled with the wording "the scanner is
+	// broken", when the real cause was a key removed on purpose and the scanner was
+	// intact — and since the Fatal stopped everything after it, the correct instruction
+	// ("drop the exemption") never appeared. Deleting a dead TS declaration goes through
+	// this path.
 	//
-	// 件数ガードが要らない理由: **呼び出し側の②（キー集合を表と突き合わせる）が、同じ面を
-	// 「どのキーが」まで含めて見ている。**走査が痩せれば、読めなかったキーが②で名指しで赤くなり、
-	// ③でも「Go のみ」として出る。**件数は情報を足していない**どころか、キーが 6〜7 個の
-	// 小さい家系（SsmHost / SsmProfileEntry / GitOAuthApp）を誤って Fatal させていた。
-	// **下限が無いのを見て足しに来ないこと。**
+	// The count guard is unnecessary because the caller's ② (matching the key set against
+	// the table) covers the same surface down to which key it is: if the scan goes thin,
+	// the unreadable key reddens by name in ②, and shows up as "Go only" in ③. The count
+	// adds no information, and it wrongly Fataled the small families of 6-7 keys (SsmHost
+	// / SsmProfileEntry / GitOAuthApp). Do not add a lower bound back on seeing none here.
 	//
-	// ⚠️ 走査の壊れ全般を捕まえるのは②でも③でもなく **TestTSInterfaceFieldsParser（合成標本）**。
-	// 実入力はどの家系も 1 行 1 フィールドで、壊れた枝を通らない（実測）。
+	// What catches scanner breakage in general is neither ② nor ③ but
+	// TestTSInterfaceFieldsParser (the synthetic fixture): every family's real input is one
+	// field per line and never reaches the broken branch (measured).
 	if len(out) == 0 {
 		t.Fatalf("interface %s のフィールドを 1 つも読めなかった＝走査が無言化している", name)
 	}
 	return out
 }
 
-// tsInterfaceFields は TS の interface 本体を 1 文字ずつ辿り、**深さ 1 の**フィールド名を返す。
+// tsInterfaceFields walks a TS interface body one character at a time and returns the
+// depth-1 field names.
 //
-// 🔴 **行単位で「1 行 1 キー」を取ってはいけない。**`a: string; b?: number;` のように
-// 同じ行にキーが並ぶ形を取りこぼす。取りこぼしても総数は 10 を超えるので上の Fatal に落ちず、
-// **「TS のみ」の検出漏れ（＝穴の見落とし）と「Go のみ」の誤検出（＝偽の赤）を同時に起こす。**
+// Never take "one key per line" line by line: a shape like `a: string; b?: number;` puts
+// several keys on one line and is missed, and since the total still exceeds 10 it does not
+// trip the Fatal above — it produces a missed "TS only" (a gap gone unnoticed) and a false
+// "Go only" (a false red) at the same time.
 //
-// 🔴 **だからといって行を `;` で割るのも誤り。**入れ子の 1 行オブジェクトを巻き込む——
-// 実例 `sessions?: { name: string; display?: string }[];` を `;` で割ると
-// `name` / `display` を**この型の直下のキーとして数えてしまう**（測定器で実際に踏んだ）。
-// **深さを見るしかない。**
+// Splitting the line on `;` is wrong too: it pulls in a one-line nested object. Splitting
+// `sessions?: { name: string; display?: string }[];` on `;` counts `name` / `display` as
+// keys directly under this type (hit for real). Depth is the only way.
 func tsInterfaceFields(src, name string) (map[string]bool, error) {
 	start := -1
-	// `interface X { … }` と `type X = { … }` の両方を見る。
-	// 🔴 **`type` 別名を見ないと、その家系だけ「見つからない」で Fatal する**——
-	// 実例 `UptimePoint`（console/src/features/usage/uptime.ts:11）は `export type … = { … }`。
-	// TS ではどちらの書き方も同じだけ普通なので、片方しか見ない走査は家系を選べない。
+	// Both `interface X { … }` and `type X = { … }` are considered. Without the `type`
+	// alias, that family alone Fatals with "not found": `UptimePoint`
+	// (console/src/features/usage/uptime.ts:11) is `export type … = { … }`. Both spellings
+	// are equally ordinary in TS, so a scanner that sees only one cannot choose families.
 	for _, pre := range []string{
 		"export interface " + name, "interface " + name,
 		"export type " + name, "type " + name,
@@ -762,9 +781,10 @@ func tsInterfaceFields(src, name string) (map[string]bool, error) {
 				continue
 			}
 			if i > 0 && isTSIdentRune(rune(src[i-1])) {
-				continue // 別の名前の末尾に一致しただけ（SessionFoo など）
+				continue // only matched the tail of another name (SessionFoo and the like)
 			}
-			// 宣言名の直後は識別子の続きであってはならない（Session と SessionContextUsage）
+			// The declared name must not be followed by more identifier runes
+			// (Session vs SessionContextUsage).
 			if j := i + len(pre); j < len(src) && isTSIdentRune(rune(src[j])) {
 				continue
 			}
@@ -783,7 +803,7 @@ func tsInterfaceFields(src, name string) (map[string]bool, error) {
 
 	out := map[string]bool{}
 	depth := 0
-	stmt := true // 「文の頭」＝ここから始まる識別子だけがフィールド名になりうる
+	stmt := true // at a statement head: only an identifier starting here can be a field name
 	for i := start; i < len(src); i++ {
 		c := src[i]
 		switch {
@@ -834,7 +854,8 @@ func tsInterfaceFields(src, name string) (map[string]bool, error) {
 			stmt = false
 			continue
 		}
-		// 深さ 1 の文頭。識別子を読み、`?` を挟んで `:` が続けばフィールド名。
+		// Statement head at depth 1: read an identifier; with an optional `?` before a
+		// `:`, it is a field name.
 		j := i
 		for j < len(src) && isTSIdentRune(rune(src[j])) {
 			j++
@@ -866,11 +887,11 @@ func isTSIdentRune(r rune) bool {
 	return r == '_' || r == '$' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
 
-// putJSONField は 1 件足す。🔴 **重複判定は「Go フィールド名」ではなく「json 名」で行う。**
-// `encoding/json` の衝突規則は json 名で決まる——**Go 名が違っても json 名が同じなら、
-// json は（同深さなら）どちらも出さない。**Go 名で見ていると
-// **「json は出さないのにこちらは出す」**という最悪の向きの食い違いになる
-// （レビュワーが json.Marshal との差分試験で実測。#350 参考 1）。
+// putJSONField adds one entry. Duplicates are judged by json name, not by Go field name:
+// `encoding/json`'s collision rule is decided on the json name, so two different Go names
+// sharing one json name are both dropped by json (at the same depth). Judging by Go name
+// gives the worst direction of disagreement — "json does not emit it but we do" (measured
+// by differential test against json.Marshal).
 func putJSONField(out map[string]string, rt reflect.Type, field, jsonName string) error {
 	for f, j := range out {
 		if j == jsonName {
@@ -885,15 +906,17 @@ func putJSONField(out map[string]string, rt reflect.Type, field, jsonName string
 	return nil
 }
 
-// TestReflectJSONFieldsMatchesEncodingJSON は **仕様の実装そのものと差分試験する**。
+// TestReflectJSONFieldsMatchesEncodingJSON differential-tests against the implementation of
+// the spec itself.
 //
-// 🔥 `reflectJSONFields` の目標は「`encoding/json` の昇格規則に合わせる」ことなので、
-// **目標そのものが手元で動く**——机上で規則を読むより、合成型を両方に通して出力を比べるほうが
-// 速くて強い。**レビュワーがこの方法で 3 件の食い違いを見つけた**（#350 参考 1）。
+// The goal of `reflectJSONFields` is to match `encoding/json`'s promotion rules, and that
+// goal is executable: running a synthetic type through both and comparing the output is
+// faster and stronger than reading the rules on paper. Three disagreements were found this
+// way.
 //
-// 期待は 2 通りだけ書ける: **json と同じキー集合になる**か、**error（＝安全側に倒す）**か。
-// 🔴 **「json は出さないのにこちらは出す」は許さない**——それは検査が実在しないキーを
-// 契約に載せることで、免除表に偽の穴が生える。
+// Only two expectations can be written: the same key set as json, or an error (erring on
+// the safe side). "json does not emit it but we do" is not allowed — that puts a key which
+// does not exist into the contract, and grows a false gap in the exemption table.
 func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 	type inner struct {
 		A string `json:"a"`
@@ -903,7 +926,7 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 		P string `json:"p"`
 	}
 	type innerDup2 struct {
-		P2 string `json:"p"` // Go 名は違うが json 名は innerDup と同じ
+		P2 string `json:"p"` // different Go name, same json name as innerDup
 	}
 	type deep2 struct{ inner }
 	type MyDur int64
@@ -911,7 +934,7 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		v       any
-		wantErr bool // true = 追えない形なので error に倒す（json より狭くてよい）
+		wantErr bool // true = a shape we cannot follow, so err out (narrower than json is fine)
 	}{
 		{"① 素の 1 段埋め込み", struct {
 			Hour string `json:"hour"`
@@ -921,15 +944,16 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 			Hour  string `json:"hour"`
 			Inner inner  `json:"inner"`
 		}{}, false},
-		// ③ は同一 struct 内で json 名が重なる形。
-		// 📌 **この形はソースに書くと `go vet`（structtag）が弾く**ので、実行時に組んで渡す。
+		// ③ is a json-name collision within one struct. Written in source it is rejected
+		// by `go vet` (structtag), so it is built and passed at run time.
 		//
-		// 🔴 **vet との役割分担（実測して切り分け直した。#351 のコメントは誤りだった）**:
-		//   vet が見る  … ③ 同一 struct 内 ／ **⑤ 埋め込み同士**（昇格したタグの重複まで見る）
-		//   vet が見ない … **④ 外側のフィールドと埋め込み** ／ ⑥ 2 段の埋め込み
-		//                  ／ ⑨ 公開された非 struct の埋め込み ／ ⑩ タグ無しの公開フィールド
-		// #351 で「④⑤ は struct を跨ぐので vet は見ない」と書いたが、**⑤ は見ていた。**
-		// **この走査でしか守れないのは ④⑥⑨⑩ の 4 形。**
+		// Division of labour with vet, measured:
+		//   vet sees … ③ within one struct, and ⑤ between embedded fields (it checks
+		//   duplicates among promoted tags too).
+		//   vet does not see … ④ an outer field against an embedded one, ⑥ two-level
+		//   embedding, ⑨ an exported non-struct embedded field, ⑩ an exported field with
+		//   no tag.
+		// So the shapes only this scanner can protect are ④⑥⑨⑩.
 		{"③ 別の Go 名・同じ json 名（実行時に組む）", reflect.New(reflect.StructOf([]reflect.StructField{
 			{Name: "X", Type: reflect.TypeOf(""), Tag: `json:"a"`},
 			{Name: "Y", Type: reflect.TypeOf(""), Tag: `json:"a"`},
@@ -938,18 +962,20 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 			A string `json:"a"`
 			inner
 		}{}, true},
-		// ⑤-a は**衝突しない**側の対照（埋め込みは 1 つ・json:"-" は出ない）。
-		// 📌 ラベルを中身に合わせてある——**雛形ではラベルと本文の不一致が、
-		// 実装の誤りと同じだけ伝播する**（#342 の罠 ⑤ 欠番・#343 の存在しない testdata と同じ族）。
+		// ⑤-a is the control for the non-colliding side: one embedded field, and json:"-"
+		// is not emitted. The label is kept consistent with the body — in a template, a
+		// label that disagrees with its body propagates as far as an error in the
+		// implementation does.
 		{"⑤-a 埋め込み 1 つ・衝突なし（json:\"-\" は出ない）", struct {
 			innerDup
 			Other struct{} `json:"-"`
 		}{}, false},
-		// ⑤-b が本来の「同深さの 2 つの埋め込みが同じ json 名」。
-		// 🔴 encoding/json は**どちらも出さない**ので、走査は error に倒す。
-		// **実装は元から正しかったが、常設の対照にこの形が無かった**——
-		// `putJSONField` の条件や走査順を触ったときに戻っても気付けない状態だった。
-		// 📌 ③ と同じく**ソースに書くと `go vet`(structtag) が弾く**ので実行時に組む。
+		// ⑤-b is the real "two embedded fields at the same depth with the same json name".
+		// encoding/json emits neither, so the scanner errs out. The implementation was
+		// already right, but no permanent control covered this shape, so a regression from
+		// touching `putJSONField`'s condition or the scan order would have gone unnoticed.
+		// Like ③, written in source it is rejected by `go vet` (structtag), so it is built
+		// at run time.
 		{"⑤-b 同深さの 2 つの埋め込みが同じ json 名（実行時に組む）",
 			reflect.New(reflect.StructOf([]reflect.StructField{
 				{Name: "InnerDupA", Type: reflect.TypeOf(innerDup{}), Anonymous: true},
@@ -959,8 +985,8 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 			Z string `json:"z"`
 			deep2
 		}{}, true},
-		// ⚠️ ポインタ埋め込みは **nil だと json がフィールドを出さない**ので、
-		// 非 nil の値で比べる（対照の作りの問題であって、規則の違いではない）。
+		// A nil pointer embed makes json omit the fields, so compare with a non-nil value.
+		// That is a property of how the control is built, not a difference in the rules.
 		{"⑦ ポインタ埋め込み（非 nil）", struct {
 			Hour string `json:"hour"`
 			*inner
@@ -985,7 +1011,7 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 			t.Errorf("%s: 追えるはずの形で error: %v", tc.name, err)
 			continue
 		}
-		// json.Marshal が実際に出すキー集合と比べる。
+		// Compare against the key set json.Marshal actually emits.
 		b, mErr := json.Marshal(tc.v)
 		if mErr != nil {
 			t.Errorf("%s: marshal: %v", tc.name, mErr)
@@ -1014,12 +1040,14 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 	}
 }
 
-// TestReflectJSONFieldsEmbedding は **reflect 経路の埋め込みの扱いの陽性対照**。
+// TestReflectJSONFieldsEmbedding is the positive control for how the reflect route handles
+// embedding.
 //
-// 🔴 素朴に「json タグが空なら飛ばす」と書くと、**タグの無い埋め込みごと飛ばして
-// 昇格したキーを丸ごと落とす**。実入力（usageHourPoint）は 1 段の埋め込みなので、
-// **昇格が壊れても「TS のみ」が 7 件出るだけで、原因が埋め込みだとは読めない。**
-// だから合成型で、昇格すること・追えない形では落ちることを固定する。
+// Written naively as "skip when the json tag is empty", the untagged embedded field is
+// skipped along with every key it promotes. The real input (usageHourPoint) embeds one
+// level, so a broken promotion only shows up as 7 "TS only" findings and the embedding
+// cannot be read as the cause. Hence a synthetic type pins both that promotion happens and
+// that unfollowable shapes fail.
 func TestReflectJSONFieldsEmbedding(t *testing.T) {
 	type inner struct {
 		A string `json:"a"`
@@ -1028,11 +1056,11 @@ func TestReflectJSONFieldsEmbedding(t *testing.T) {
 	type deeper struct{ inner }
 	type flat struct {
 		X string `json:"x"`
-		Y string // タグ無しの公開フィールド＝json は "Y" で出す
-		z string // 非公開＝出ない
+		Y string // exported with no tag: json emits it as "Y"
+		z string // unexported: not emitted
 	}
 
-	// ① 1 段の埋め込みは昇格する。
+	// ① One level of embedding is promoted.
 	type promoted struct {
 		Hour string `json:"hour"`
 		inner
@@ -1045,17 +1073,17 @@ func TestReflectJSONFieldsEmbedding(t *testing.T) {
 		t.Fatalf("昇格の結果が違う: %v（外側 1 ＋ 昇格 2 のはず）", got)
 	}
 
-	// ② タグ無しの**公開**フィールドは json が Go 名をキーにして出すので、こちらも出す。
-	// 非公開はワイヤに出ないので落とす。
-	// 📌 **この対照は当初「タグ無しは落とす」と書いていて誤っていた**——
-	// json.Marshal との差分試験（TestReflectJSONFieldsMatchesEncodingJSON）が正で、
-	// **手で書いた期待値のほうが間違っていた。**規則の正は常に標準ライブラリ側にある。
+	// ② An exported field with no tag is emitted by json under its Go name, so it is
+	// emitted here too; an unexported one never reaches the wire and is dropped. The
+	// differential test against json.Marshal (TestReflectJSONFieldsMatchesEncodingJSON) is
+	// the authority: a hand-written expectation of "drop untagged fields" was simply wrong.
+	// On the rules, the standard library is always the authority.
 	got, err = reflectJSONFields(reflect.TypeOf(flat{}), 0)
 	if err != nil || len(got) != 2 || got["X"] != "x" || got["Y"] != "Y" {
 		t.Fatalf("タグ無しフィールドの扱いが違う: %v (%v)", got, err)
 	}
 
-	// ③ 🔴 2 段以上の埋め込みは**浅い結果ではなく error**。
+	// ③ Two or more levels of embedding is an error, not a shallow result.
 	type twoLevel struct {
 		Z string `json:"z"`
 		deeper
@@ -1065,7 +1093,8 @@ func TestReflectJSONFieldsEmbedding(t *testing.T) {
 			"——json の昇格規則は深さ優先で衝突の扱いも複雑なので、近似で通してはいけない")
 	}
 
-	// ④ 昇格が外側とぶつかったら error（json は同深さの衝突で両方消える）。
+	// ④ A promotion colliding with the outer field is an error (json drops both on a
+	// same-depth collision).
 	type clash struct {
 		A string `json:"outerA"`
 		inner
@@ -1074,18 +1103,18 @@ func TestReflectJSONFieldsEmbedding(t *testing.T) {
 		t.Error("昇格したフィールド名が外側とぶつかっているのに error にならない")
 	}
 
-	// ⑤ struct でないものを渡したら error（無言で空を返さない）。
+	// ⑤ A non-struct argument is an error — never a silent empty result.
 	if _, err := reflectJSONFields(reflect.TypeOf(""), 0); err == nil {
 		t.Error("struct でない型で error にならない＝この経路が無言化しうる")
 	}
 }
 
-// TestGoStructFieldsFromSourceGuards は **AST 経路そのものの陽性対照**。
+// TestGoStructFieldsFromSourceGuards is the positive control for the AST route itself.
 //
-// 🔴 この経路は「今日の入力に埋め込みが 0 件」という実測に乗っている。
-// **次に誰かが埋め込みを足した日に黙って浅く読む**のが最も怖い壊れ方なので、
-// 合成標本で「落ちること」を固定する。（TS 走査に合成標本を付けたのと同じ理由——
-// 実入力が易しいままだと、壊れても本番の突き合わせは何も言わない。）
+// This route rides on the measurement "today's input has zero embedded fields". Its worst
+// failure mode is reading shallow, silently, the day someone adds an embedded field, so a
+// synthetic fixture pins that it fails. (Same reason the TS scanner has one: while the real
+// input stays easy, a breakage leaves the production comparison silent.)
 func TestGoStructFieldsFromSourceGuards(t *testing.T) {
 	dir := t.TempDir()
 	write := func(base, body string) string {
@@ -1096,7 +1125,8 @@ func TestGoStructFieldsFromSourceGuards(t *testing.T) {
 		return p
 	}
 
-	// 素の形は正しく読めること（この対照が空を測っていないことの確認）。
+	// A plain shape must read correctly — the check that this control is not measuring
+	// nothing.
 	ok := write("ok.go", "type T struct {\n\tA string `json:\"a\"`\n\tB int    `json:\"b,omitempty\"`\n\tC string `json:\"-\"`\n\tD string\n}\n")
 	got, err := parseGoStructFields(ok, "T")
 	if err != nil {
@@ -1106,28 +1136,28 @@ func TestGoStructFieldsFromSourceGuards(t *testing.T) {
 		t.Fatalf("素の struct の読み取りが違う: %v（json:\"-\" とタグ無しは落とす）", got)
 	}
 
-	// 🔴 埋め込み（無名フィールド）→ 浅い結果ではなく error。
+	// An embedded (anonymous) field is an error, not a shallow result.
 	emb := write("emb.go", "type Base struct {\n\tX string `json:\"x\"`\n}\n\ntype T struct {\n\tBase\n\tA string `json:\"a\"`\n}\n")
 	if _, err := parseGoStructFields(emb, "T"); err == nil {
 		t.Error("埋め込みフィールドが在るのに error にならない" +
 			"——AST は埋め込み先の json タグを追えないので、浅く読むと穴の見落としと偽の赤が同時に出る")
 	}
 
-	// 型が無い → error（無言化しない）。
+	// A missing type is an error; this route must not go silent.
 	if _, err := parseGoStructFields(ok, "NoSuchType"); err == nil {
 		t.Error("存在しない型で error にならない＝この経路が無言化しうる")
 	}
 
-	// パスが無い → error（移送でパスが変わった場合）。
+	// A missing path is an error (the case where a move changed the path).
 	if _, err := parseGoStructFields(filepath.Join(dir, "nope.go"), "T"); err == nil {
 		t.Error("存在しないパスで error にならない＝移送のパス変更を黙って通す")
 	}
 
-	// json タグが 1 つも無い → error（「0 件」を結果として採らない）。
+	// Not a single json tag is an error: "zero found" is never taken as a result.
 	none := write("none.go", "type T struct {\n\tA string\n\tB int\n}\n")
 	if _, err := parseGoStructFields(none, "T"); err == nil {
 		t.Error("json タグ 0 件で error にならない＝この経路が無言化しうる")
 	}
 }
 
-// ===== 共有機構ここまで =====
+// ===== shared machinery ends here =====

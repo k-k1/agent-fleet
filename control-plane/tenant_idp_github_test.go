@@ -11,18 +11,20 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// docs/log/61 §61.15 / ADR0043 決定 34 / 35 — テナントが GitHub をサインイン方法にする。
-// P4（OIDC）と違うのは信頼の根拠だけで、ここで固定するのはその差が実装から消えて
-// いないこと:
+// docs/log/61 §61.15 / ADR0043 decisions 34 / 35 — a tenant using GitHub as a sign-in
+// method. The only difference from P4 (OIDC) is what the trust rests on; what is pinned
+// here is that the difference has not disappeared from the implementation:
 //
-//   - github 行は org と受け入れドメインの両方が要る（issuer は共有なので、org が
-//     テナントの境界そのもの）
-//   - 1 ドメイン 1 テナントの台帳は kind を問わず効く
-//   - org の追加は承認のやり直し（承認は「この org のメンバーを」に対して与えた）
-//   - 規則 1.5: 同じ GitHub アカウントなら、デプロイのボタンでもテナントのボタンでも
-//     同じ人。email 一致ではないので、テナントが他人を名乗る道は開かない
+//   - a github row needs both an org and accepted domains (the issuer is shared, so the
+//     org is the tenant boundary itself)
+//   - the one-domain-one-tenant ledger applies regardless of kind
+//   - adding an org sends the row back for approval (approval was given for "members of
+//     this org")
+//   - rule 1.5: the same GitHub account is the same person whether pressed from the
+//     deployment's button or the tenant's. It is not an email match, so it opens no way
+//     for a tenant to claim someone else
 
-// --- 行 → アダプタ ------------------------------------------------------------
+// --- row -> adapter -----------------------------------------------------------
 
 func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
 	base := store.TenantIdP{
@@ -40,24 +42,24 @@ func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
 	if gh.ID() != "t:sub:github" {
 		t.Fatalf("id = %q", gh.ID())
 	}
-	// org は小文字化して突合する（GitHub の org 名は大文字小文字を区別しない）。
+	// Orgs are matched lowercased (GitHub org names are case-insensitive).
 	if strings.Join(gh.AllowedOrgs, ",") != "acme-sub,other" {
 		t.Fatalf("orgs = %v", gh.AllowedOrgs)
 	}
 	if !gh.AllowDomains["sub.co.jp"] {
 		t.Fatalf("domains = %v", gh.AllowDomains)
 	}
-	// ★ 行から github.com を差し替えられないこと。ここが動かせると、テナントが
-	// 自分のサーバを立てて任意の subject を名乗れる＝規則 1.5 の鍵が偽造できる。
+	// A row must not be able to replace github.com. If these could be moved, a tenant could
+	// stand up its own server and claim any subject — forging rule 1.5's key.
 	if gh.Web() != "https://github.com" || gh.API() != "https://api.github.com" {
 		t.Fatalf("row must not be able to move the endpoints: %s / %s", gh.Web(), gh.API())
 	}
-	// realm は「どこで身元が証明されたか」。これが env の GitHub と一致することが
-	// 規則 1.5 の前提（一致しなければ別人になる）。
+	// The realm is "where the identity was proven". Rule 1.5 rests on it matching the
+	// env-configured GitHub; without a match the account becomes a different person.
 	if auth.ProviderRealm(gh) != auth.GithubWebBase {
 		t.Fatalf("realm = %q", auth.ProviderRealm(gh))
 	}
-	// ★ デプロイ共通の許可リストにも名簿にもフォールバックしない（決定 32-3）。
+	// No fallback to the deployment-wide allow list or roster (decision 32-3).
 	if gh.DeployAllowed != nil || gh.DBAllowed != nil || gh.DeployHasList {
 		t.Fatal("a tenant row must not inherit the deployment-wide entry gate")
 	}
@@ -76,13 +78,13 @@ func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
 			t.Fatalf("%s: must be refused", label)
 		}
 	}
-	// 秘密が空（復号できなかった等）でも組めてはいけない。
+	// An empty secret (decryption failed, say) must not build either.
 	if _, err := auth.BuildTenantProvider(base, store.TenantRef{Slug: "sub"}, ""); err == nil {
 		t.Fatal("an empty client_secret must be refused")
 	}
 }
 
-// --- 保存時の検証（API 側と実行時側で同じ規則） --------------------------------
+// --- save-time validation (the same rules on the API side and at runtime) ------
 
 func TestTenantGitHubSaveTimeValidation(t *testing.T) {
 	ctx := context.Background()
@@ -110,8 +112,9 @@ func TestTenantGitHubSaveTimeValidation(t *testing.T) {
 	if w := post(`{"name":"github","kind":"github","client_id":"c","client_secret":"s","allowed_orgs":"acme-sub"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("no domains must be refused: %d %s", w.Code, w.Body.String())
 	}
-	// ★ 1 ドメイン 1 テナントは kind を問わない。GitHub は他社ドメインの verified
-	// email を偽造できないが、台帳の枠を先に取ること自体が他社の登録を塞ぐ。
+	// One domain, one tenant, regardless of kind. GitHub cannot forge a verified email on
+	// another company's domain, but taking the ledger slot first blocks that company from
+	// registering at all.
 	if w := post(`{"name":"github","kind":"github","client_id":"c","client_secret":"s","allowed_orgs":"acme-sub","allowed_domains":"sibling.co.jp"}`); w.Code != http.StatusConflict {
 		t.Fatalf("a domain another tenant claims must be refused: %d %s", w.Code, w.Body.String())
 	}
@@ -125,8 +128,8 @@ func TestTenantGitHubSaveTimeValidation(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %+v", rows)
 	}
-	// ★ issuer と trust はフォームから来ない。github 行の身元の出どころは 1 つしか
-	// なく、そこを行が名乗れると登録簿と監査ログが嘘をつく。
+	// issuer and trust never come from the form. A github row has exactly one source of
+	// identity, and letting the row declare it makes the registry and the audit log lie.
 	switch row := rows[0]; {
 	case row.Issuer != auth.GithubWebBase:
 		t.Fatalf("issuer = %q, want the constant %q", row.Issuer, auth.GithubWebBase)
@@ -141,8 +144,8 @@ func TestTenantGitHubSaveTimeValidation(t *testing.T) {
 	}
 }
 
-// ★ 承認は「この org のメンバーを、このドメイン範囲で」に対して与えたもの。org が
-// 増えれば対象の人の集合が変わるので、承認をやり直す。減るのは戻さない。
+// Approval was given for "members of this org, within this domain range". Adding an org
+// changes the set of people it covers, so approval starts over; removing one does not.
 func TestGitHubRowRepends(t *testing.T) {
 	active := store.TenantIdP{
 		Kind: auth.TenantIdPKindGitHub, Status: "active", ClientID: "c", Issuer: auth.GithubWebBase,
@@ -170,11 +173,12 @@ func TestGitHubRowRepends(t *testing.T) {
 	}
 }
 
-// --- 規則 1.5（決定 35）--------------------------------------------------------
+// --- rule 1.5 (decision 35) ---------------------------------------------------
 
-// ★ 同じ GitHub アカウントを、デプロイのボタンとテナントのボタンから押した場合。
-// P4 のままだと 2 つ目が email_taken で拒否され、兼務の人が締め出される。realm と
-// subject が一致する＝ GitHub が同一アカウントだと言っている、が根拠。
+// The same GitHub account pressed from the deployment's button and from the tenant's. With
+// P4 alone the second is refused as email_taken and someone holding both roles is locked
+// out. The grounds are realm and subject matching, i.e. GitHub itself saying it is the
+// same account.
 func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const email = "yamada@acme.co.jp"
@@ -186,7 +190,7 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deployment github: %v", err)
 	}
-	// テナント定義の行なので EmailJoin=false — つまり規則 2 は使えない。
+	// A tenant-defined row, so EmailJoin=false — rule 2 is not available here.
 	second, isNew, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "t:sub:github", Subject: "42", Realm: auth.GithubWebBase, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: false,
@@ -201,8 +205,9 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 		t.Fatalf("identity rows = %d, want 1", n)
 	}
 
-	// ★ realm が違えば、subject がたまたま同じでも別物。数値 subject は IdP を
-	// またぐと衝突し得るので、ここを緩めると他人の workspace に着地する。
+	// A different realm means a different account even when the subject happens to match.
+	// Numeric subjects can collide across IdPs, so loosening this lands one person in
+	// another person's workspace.
 	if _, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "t:sub:keycloak", Subject: "42", Realm: "https://idp.sub.co.jp/realms/x",
 		Email: email, FallbackKey: sanitizeUser(email), EmailJoin: false,
@@ -210,7 +215,7 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 		t.Fatal("別 realm・同 subject は結合してはいけない（email はすでに他人のもの）")
 	}
 
-	// realm を持たない行（0041 以前・proxy 経由）は従来どおり拒否のまま。
+	// A row carrying no realm (pre-0041, through the proxy) stays refused.
 	if _, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "t:sub:entra", Subject: "99", Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: false,
@@ -219,13 +224,13 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 	}
 }
 
-// 起動時の埋め戻し。0041 より前に書かれた行は realm が空で、そのままだと
-// 「デプロイの GitHub で入っていた人」がテナントのボタンで拒否される。
+// Backfill at startup. Rows written before 0041 carry an empty realm, and left that way
+// someone who signed in through the deployment's GitHub is refused at the tenant's button.
 func TestFillProviderRealmMakesOldRowsJoinable(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const email = "yamada@acme.co.jp"
 
-	// realm を知らなかった頃のログイン。
+	// A login recorded when the realm was not known.
 	first, _, err := st.LinkIdentity(ctx, linkOf(auth.GithubProviderID, "42", email, true))
 	if err != nil {
 		t.Fatalf("legacy login: %v", err)
@@ -251,8 +256,8 @@ func TestFillProviderRealmMakesOldRowsJoinable(t *testing.T) {
 		t.Fatalf("埋め戻し後も別人のまま: %s want %s", joined.ID, first.ID)
 	}
 
-	// ★ 既に記録された realm は上書きしない（別の provider id に付け替えられた
-	// デプロイで、過去のログインの事実を書き換えないため）。
+	// An already recorded realm is never overwritten, so that a deployment repointed at
+	// another provider id cannot rewrite what past logins actually were.
 	if err := st.FillProviderRealm(ctx, "t:sub:github", "https://idp.example/"); err != nil {
 		t.Fatalf("re-fill: %v", err)
 	}
@@ -266,20 +271,23 @@ func TestFillProviderRealmMakesOldRowsJoinable(t *testing.T) {
 	}
 }
 
-// --- 受け入れるが出さない（§61.15.9）------------------------------------------
+// --- accepted but not offered (§61.15.9) --------------------------------------
 
-// ★ 子会社が「自社の GitHub だけ」で運用したいのに、本社から来ている兼務の人は
-// 本社の方式でしか入れない、という形。受け入れる方式から本社の分を外すとその人が
-// 締め出されるので、外すのは**ボタンだけ**にできる必要がある。
+// The shape: a subsidiary wants to run on "our own GitHub only", but a person seconded
+// from the parent company can sign in only through the parent's method. Dropping the
+// parent's method from what is accepted locks that person out, so it must be possible to
+// drop the button alone.
 //
-// ここで固定するのは「隠しても入れる」— 表示は表示であって、門ではない（決定 14）。
+// What is pinned here is "hidden still gets in" — display is display, not a gate
+// (decision 14).
 func TestHiddenProvidersHideTheButtonButNotTheDoor(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
 	mgr := p4Manager(t, st)
 	tn, _ := st.CreateTenant(ctx, "sub", "子会社")
 	seedTenantIdP(t, st, tn.ID, "entra", "sub.co.jp", "active")
-	// 受け入れるのは自社の方式＋本社の google。ボタンに出すのは自社の方式だけ。
+	// Accepted: the subsidiary's own method plus the parent's google. Shown as a button:
+	// the subsidiary's own method only.
 	if err := st.SetTenantLogin(ctx, tn.ID, "t:sub:entra,google", "", "", "google"); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
@@ -305,14 +313,15 @@ func TestHiddenProvidersHideTheButtonButNotTheDoor(t *testing.T) {
 	if !strings.Contains(page, "t%3Asub%3Aentra") {
 		t.Fatalf("自社の方式のボタンは出ていないといけない:\n%s", page)
 	}
-	// ★ ここが本題。隠しても、その方式で入った人はこのテナントを使える。
+	// The point of the test: hidden or not, someone who signed in with that method can use
+	// this tenant.
 	ok, _ := mgr.tenantLogin.providerAllowed(ctx, tn.ID, "google")
 	if !ok {
 		t.Fatal("隠した方式が門でも閉じている — 兼務の人が締め出される（表示と強制を混ぜている）")
 	}
 
-	// 全部隠したら、隠す指定の方を無視する。ボタンの無いログイン画面は行き止まりで、
-	// テナント側の設定ミスがそれを作れてはいけない。
+	// When everything is hidden, the hide list is ignored instead: a login page with no
+	// button is a dead end, and a tenant's misconfiguration must not be able to create one.
 	if err := st.SetTenantLogin(ctx, tn.ID, "", "", "", "google,t:sub:entra"); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
@@ -322,16 +331,17 @@ func TestHiddenProvidersHideTheButtonButNotTheDoor(t *testing.T) {
 	}
 }
 
-// --- ボタン文言の書き分け（docs/log/61 §61.15.10）---------------------------------
+// --- telling the buttons apart (docs/log/61 §61.15.10) ---------------------------
 
-// env の GitHub とテナントの GitHub は同じ画面（/login/<slug>）に並ぶ。id は衝突
-// しないが、id はボタンに出ない — 既定ラベルが同じ「GitHub でサインイン」のままだと、
-// 見分けのつかない 2 つのボタンが別々の OAuth アプリへ人を送ることになる。
+// The env GitHub and a tenant's GitHub sit on the same page (/login/<slug>). Their ids do
+// not collide, but the id is not on the button — while both keep the same default "sign in
+// with GitHub" label, two indistinguishable buttons send people to different OAuth apps.
 //
-// ★ 固定するのは 3 点:
-//   - テナント行の既定ラベルにテナント名が入り、env のボタンと文字列が違う
-//   - 行が label_ja / label_en を書いていればそちらが勝つ（優先順位は変えない）
-//   - 二言語とも効く（日本語だけ直すと英語の面で元の衝突が残る）
+// Three things are pinned:
+//   - a tenant row's default label carries the tenant name, so it differs from the env
+//     button's string
+//   - a row's own label_ja / label_en wins (the precedence is unchanged)
+//   - both languages are covered (fixing Japanese alone leaves the collision in English)
 func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -352,7 +362,7 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 		cookieSecret:  []byte("0123456789abcdef0123456789abcdef"),
 		mgr:           mgr,
 	}
-	// デプロイ自身の GitHub ボタン（env 由来）。既定の文言を持っている。
+	// The deployment's own GitHub button (from env), carrying the default wording.
 	cfg.setProviders([]auth.LoginProvider{&auth.GitHubProvider{
 		ProviderID: auth.GithubProviderID, LabelJA: "GitHub でサインイン", LabelEN: "Sign in with GitHub",
 	}})
@@ -374,8 +384,8 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 		if !strings.Contains(page, tc.tenant) {
 			t.Fatalf("%s: テナント行のボタンに会社名が入っていない（%q が無い）:\n%s", tc.lang, tc.tenant, page)
 		}
-		// env のボタンは元の文言のまま。テナント行の文言はそれを含むので、
-		// 「同じ文字列のボタンが 2 つ」でないことは出現回数で見る。
+		// The env button keeps its original wording, and the tenant row's wording contains
+		// it, so "two buttons with the same string" is checked by the occurrence count.
 		if n := strings.Count(page, tc.env); n != 2 {
 			t.Fatalf("%s: %q の出現が %d（env の 1 つ＋テナント行の接頭辞 1 つ = 2 のはず）:\n%s",
 				tc.lang, tc.env, n, page)
@@ -385,8 +395,8 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 		}
 	}
 
-	// ★ 行が自分でラベルを書いていればそちらが勝つ。既定を補うのが目的で、
-	// 管理者が選んだ文言を上書きするのは別のこと。
+	// A row that writes its own label wins: the point is to fill in a default, not to
+	// overwrite wording an administrator chose.
 	row.LabelJA, row.LabelEN = "子会社の GitHub", "Subsidiary GitHub"
 	p, err := auth.BuildTenantProvider(row, store.TenantRef{Slug: "sub", Name: "子会社"}, "s")
 	if err != nil {
@@ -397,8 +407,8 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 	}
 }
 
-// 表示名の無いテナント（name が空）では slug で代用する。会社名が読めなくても、
-// 「どちらのボタンか」が分かることのほうが大事。
+// A tenant with no display name (empty name) falls back to the slug: knowing which button
+// is which matters more than being able to read the company name.
 func TestTenantLabelFallsBackToTheSlug(t *testing.T) {
 	if got := auth.TenantLabelSuffix("GitHub でサインイン", store.TenantRef{Slug: "sub"}, "ja"); got != "GitHub でサインイン（sub）" {
 		t.Fatalf("ja = %q", got)
@@ -406,7 +416,7 @@ func TestTenantLabelFallsBackToTheSlug(t *testing.T) {
 	if got := auth.TenantLabelSuffix("Sign in with GitHub", store.TenantRef{Slug: "sub"}, "en"); got != "Sign in with GitHub (sub)" {
 		t.Fatalf("en = %q", got)
 	}
-	// slug も名前も無いのは実際には起きないが、そのときは接尾辞を足さない。
+	// Neither slug nor name does not happen in practice; when it does, no suffix is added.
 	if got := auth.TenantLabelSuffix("x", store.TenantRef{}, "ja"); got != "x" {
 		t.Fatalf("empty tenant = %q", got)
 	}

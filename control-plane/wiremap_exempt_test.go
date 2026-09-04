@@ -1,11 +1,13 @@
-// wiremap_exempt_test.go — struct 化しない map サイトの免除表と、**免除の寿命の逆検査**。
+// The exemption table for map sites that are not converted to structs, plus the reverse
+// checks that bound each exemption's lifetime.
 //
-// 🔴 README §4: 免除表を足すなら、**免除が要らなくなったら外させる逆検査を同じコミットで**
-// 入れる。入れないと「免除だから見ない」が積み上がり、検査が名前だけになる。
-// #339 では**免除が要らなくなる 2 つの道のうち片方が緑のまま**だったのが【要対応】になった。
-// ここは最初から**両方向**で書く。
+// README §4: an exemption table ships with the reverse check that forces the exemption out
+// once it is no longer needed, in the same commit. Without it, "exempt, so nobody looks"
+// piles up and the check is a name only. Both ways an exemption can stop being needed are
+// covered here, because covering only one leaves the other silently green.
 //
-// 免除の理由は 1 件ずつ書く。理由の無い免除は、次の人には穴と区別が付かない。
+// Every exemption states its own reason. An exemption with no reason is indistinguishable
+// from a hole to the next reader.
 package main
 
 import (
@@ -15,61 +17,62 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/wiretest"
 )
 
-// wiremapExemption — 「この map サイトは struct 化しない」という宣言。
+// wiremapExemption declares that a given map site is not converted to a struct.
 type wiremapExemption struct {
-	// Func はゴールデンの 2 列目（<レシーバ>.<メソッド> か関数名）。
+	// Func is the golden's second column (<receiver>.<method>, or a function name).
 	Func string
-	// Why は免除の理由。**書けないなら免除ではなく、まだ調べていないだけ。**
+	// Why is the reason for the exemption. If you cannot write one, this is not an
+	// exemption — it is a site nobody has looked at yet.
 	Why string
-	// NeedsFlag は「その理由がゴールデン上でどう見えるはずか」。
-	// dyn = キー集合が静的に確定しない / partial = 開けきれていない。
-	// 🔴 これが**逆検査の軸**になる: 印が消えたら理由も消えている。
+	// NeedsFlag is how that reason must show up in the golden: dyn = the key set is not
+	// statically determined, partial = the walk could not open it fully. This is the axis
+	// the reverse check turns on: if the flag is gone, so is the reason.
 	NeedsFlag string
 }
 
-// wiremapExemptions — CP 側で struct 化しないと決めたサイト。
+// wiremapExemptions lists the CP-side sites that are deliberately left as maps.
 //
-// ⚠️ ここに無い map サイトは「まだ変換していない」だけであって、免除ではない。
-// 免除は「**構造的に変換できない**」ものに限る。
+// A map site absent from this table is merely not converted yet; that is not an exemption.
+// An exemption is limited to what cannot be converted structurally.
 func wiremapExemptions() []wiremapExemption {
 	return []wiremapExemption{
 		{
 			Func: "workspaceAPI.stats",
-			// metrics.go の workspaceStats は containerStats() の map に
-			// **Agent から来た map を for k, v := range で丸ごと合流**させる。
-			// キー集合は Agent が何を返したかで決まるので静的に確定せず、
-			// struct 化すると **Agent が足したフィールドが無言で消える**。
-			// wire_golden_test.go 冒頭のコメントも「撮れない経路」として名指ししている。
+			// workspaceStats in metrics.go merges the whole map that came from the
+			// Agent into containerStats()'s map with a for k, v := range. The key set
+			// is whatever the Agent answered, so it is not statically determined, and
+			// converting to a struct would silently drop any field the Agent added.
+			// The header comment of wire_golden_test.go names this path as one the
+			// golden cannot capture.
 			Why:       "Agent 応答の map を range で合流させるためキー集合が静的に確定しない",
 			NeedsFlag: "dyn",
 		},
 		{
 			Func: "adminAPI.memberStats",
-			// 同じ workspaceStats を通るので同じ理由。
+			// Goes through the same workspaceStats, so the same reason applies.
 			Why:       "workspaceAPI.stats と同じ workspaceStats を経由する",
 			NeedsFlag: "dyn",
 		},
 		{
 			Func: "sessionShareAPI.messages",
-			// 所有者 Workspace の Agent から受けた JSON を allowlist で絞って
-			// そのまま中継する。キーは相手の応答で決まる。
+			// Relays the JSON received from the owner Workspace's Agent, narrowed by
+			// an allowlist. The keys are decided by that response.
 			Why:       "所有者 Agent の応答をそのまま中継するためキー集合が静的に確定しない",
 			NeedsFlag: "dyn",
 		},
 	}
 }
 
-// exemptionStillNeeded — **免除がまだ必要か**の判定。
+// exemptionStillNeeded decides whether an exemption is still needed.
 //
-// 🔴 **この関数が唯一の実装であることが重要。** 本物の逆検査
-// （TestWiremapExemptionsAreStillNeeded）と、その逆検査自身を検査する対照
-// （TestWiremapExemptionReverseCheckActuallyFires）の**両方がここを呼ぶ**。
+// This must stay the only implementation of that decision: the shipped reverse check
+// (TestWiremapExemptionsAreStillNeeded) and the control that checks the reverse check itself
+// (TestWiremapExemptionReverseCheckActuallyFires) both call it. When the decision was
+// duplicated, breaking the shipped copy left the control green (measured: turning the real
+// `if !still {` into `if false {` still passed all four exemption tests). Duplicate the
+// checker and the checked, and only the copy gets tested.
 //
-// 以前はこの判定が 2 箇所に写しで在り、**出荷される側を潰しても対照は緑のまま**だった
-// （#345 のレビューで実測: 本物の `if !still {` を `if false {` にしても免除まわり 4 本すべて PASS）。
-// **検証する側とされる側が二重化すると、写しだけが検査される。**
-//
-// 戻り値: (まだ必要か, 必要でないと判断した理由)
+// Returns (still needed, why it was judged unnecessary).
 func exemptionStillNeeded(ex wiremapExemption, byFunc map[string][]wireMapSite) (bool, string) {
 	got, ok := byFunc[ex.Func]
 	if !ok {
@@ -90,7 +93,7 @@ func exemptionStillNeeded(ex wiremapExemption, byFunc map[string][]wireMapSite) 
 	return false, ex.NeedsFlag + " 印が付いていない（キー集合が確定するようになったか、走査が痩せた）"
 }
 
-// wiremapSitesByFunc は走査結果を関数名で引ける形にする。
+// wiremapSitesByFunc reshapes the scan result so it can be looked up by function name.
 func wiremapSitesByFunc(t *testing.T) map[string][]wireMapSite {
 	t.Helper()
 	byFunc := map[string][]wireMapSite{}
@@ -100,25 +103,28 @@ func wiremapSitesByFunc(t *testing.T) map[string][]wireMapSite {
 	return byFunc
 }
 
-// TestWiremapExemptionsAreStillNeeded — **逆検査その 1（Go 側の方向）**。
+// TestWiremapExemptionsAreStillNeeded is reverse check 1: the structural direction.
 //
-// 免除の理由は「キー集合が静的に確定しない」こと。その根拠はゴールデンの `dyn` / `partial` 印。
-// 🔴 **印が消えたら、免除の理由も消えている**——それは
+// An exemption's reason is that the key set is not statically determined, and the evidence
+// for it is the golden's `dyn` / `partial` flag. If the flag is gone, the reason is gone too,
+// which means either
 //
-//	(a) 実装が変わってキーが確定するようになった（＝変換できるので免除を外すべき）か
-//	(b) 走査が痩せて印を落とした（＝道具が壊れている）
+//	(a) the implementation changed and the keys are now determined (so it can be
+//	    converted and the exemption should be dropped), or
+//	(b) the walk got thinner and lost the flag (so the tool is broken).
 //
-// のどちらかで、**どちらも黙って通してはいけない。**
+// Neither may pass silently.
 func TestWiremapExemptionsAreStillNeeded(t *testing.T) {
 	reportStaleExemptions(t, wiremapExemptions(), wiremapSitesByFunc(t))
 }
 
-// reportStaleExemptions — **出荷される逆検査の本体**（判定 ＋ 報告）。
+// reportStaleExemptions is the body of the shipped reverse check: decision plus reporting.
 //
-// 🔴 テスト関数ではなくここに本体を置くのは、**対照がこれを最後まで駆動できるようにする**ため。
-// 判定だけを共有して報告をテスト関数に書くと、**報告側（t.Errorf）を消しても対照は緑のまま**
-// になり、#345 で指摘された穴が形を変えて残る。
-// 引数の t を interface にしてあるので、対照は wiretest.Recorder を渡して「実際に報告されたか」を見る。
+// The body lives here rather than in the test function so the control can drive it end to
+// end. Sharing only the decision and writing the reporting in the test function would leave
+// the control green when the reporting side (t.Errorf) is deleted — the same hole in another
+// shape. t is an interface so the control can pass a wiretest.Recorder and see whether a
+// report was actually made.
 func reportStaleExemptions(t wiretest.TB, exs []wiremapExemption, byFunc map[string][]wireMapSite) {
 	t.Helper()
 	for _, ex := range exs {
@@ -132,28 +138,29 @@ func reportStaleExemptions(t wiretest.TB, exs []wiremapExemption, byFunc map[str
 	}
 }
 
-// wiremapDeferred — **免除のもう一方の種類**: 構造的には変換できるのに、
-// この PR では変換しないと決めたサイト。
+// wiremapDeferred is the other kind of exemption: a site that could be converted
+// structurally but is deliberately left alone for now.
 //
-// 🔴 構造的免除（上）とは寿命の切れ方が違うので、逆検査も別に要る。
-// 上は「理由が消えたか」を見るが、こちらは「**まだ変換されていないか**」を見る。
-// これを機械で持たないと、**変換候補が計画から静かに落ちる**（誰も気付かない）。
+// Its lifetime ends differently from a structural exemption, so it needs its own reverse
+// check: the one above asks whether the reason is gone, this one asks whether the site is
+// still unconverted. Without a machine holding it, a conversion candidate drops out of the
+// plan and nobody notices.
 var wiremapDeferred = []wiremapExemption{
 	{
 		Func: "registerAuthRoutes",
-		// routes.go:141 の DeploymentVersion。Console に手書き型が在る J=1.0 の
-		// 変換候補だが、registerAuthRoutes 内のインライン map で共有度が高く、
-		// 司令塔判断で owners.tsv の CONTRACT-MAP から外れている。
+		// DeploymentVersion at routes.go:141. A J=1.0 conversion candidate (the Console
+		// has a hand-written type for it), but it is an inline map inside
+		// registerAuthRoutes with a high degree of sharing, and the coordinating owner
+		// left it out of the CONTRACT-MAP in owners.tsv.
 		Why: "control-plane/routes.go は CONTRACT-MAP の所有外（司令塔判断・共有度が高い）",
 	},
 }
 
-// TestWiremapDeferredAreStillMaps — **逆検査その 2（保留の方向）**。
+// TestWiremapDeferredAreStillMaps is reverse check 2: the deferred direction.
 //
-// 保留したサイトが**もう map ではなくなっていたら**、誰かが変換したか消したかで、
-// 保留の理由は無くなっている。**表から外させる。**
-// 🔴 これが無いと「所有外だから保留」がそのまま化石になり、
-// **変換候補が計画から消えたことに誰も気付かない。**
+// If a deferred site is no longer a map, somebody converted or deleted it and the reason for
+// deferring is gone, so it has to leave the table. Without this, "deferred because it is not
+// ours" fossilizes and nobody notices that a conversion candidate left the plan.
 func TestWiremapDeferredAreStillMaps(t *testing.T) {
 	sites := scanWireMapSites(t, ".")
 	byFunc := map[string]bool{}
@@ -172,8 +179,8 @@ func TestWiremapDeferredAreStillMaps(t *testing.T) {
 	}
 }
 
-// TestWiremapExemptionsHaveReasons — 理由の無い免除を作らせない。
-// 🔴 理由が書けない免除は「調べていない」であって免除ではない。
+// TestWiremapExemptionsHaveReasons keeps anyone from adding an exemption with no reason.
+// An exemption whose reason cannot be written down means "not investigated", not "exempt".
 func TestWiremapExemptionsHaveReasons(t *testing.T) {
 	seen := map[string]bool{}
 	for _, ex := range wiremapExemptions() {
@@ -193,18 +200,18 @@ func TestWiremapExemptionsHaveReasons(t *testing.T) {
 	}
 }
 
-// TestWiremapExemptionReverseCheckActuallyFires — **逆検査を検査する。**
+// TestWiremapExemptionReverseCheckActuallyFires checks the reverse check itself.
 //
-// 🔴 README §4:「緑」は検査が対象を拾っていることを確かめてから採用する。
-// 逆検査は**免除が要らなくなったときだけ**赤くなる仕掛けなので、
-// 平常時は必ず緑＝**壊れていても緑**と区別が付かない。
-// そこで「理由が裏付けられない免除」を**合成して**当て、実際に赤くなることを見る。
+// README §4: a green result counts only once the check is shown to be picking up its target.
+// The reverse check goes red only when an exemption stops being needed, so in normal times it
+// is always green — indistinguishable from green because it is broken. So a synthetic
+// exemption whose reason nothing backs is fed to it, and it must actually go red.
 func TestWiremapExemptionReverseCheckActuallyFires(t *testing.T) {
 	byFunc := wiremapSitesByFunc(t)
-	// 🔴 **出荷される逆検査を最後まで駆動する。**判定を写して書き直すと、
-	// 本物を潰しても対照が緑のままになる（#345 のレビューで実測された穴）。
-	// wiretest.Recorder を渡すので、判定と報告の**どちらを潰しても**この対照が赤くなる。
-	check := func(ex wiremapExemption) bool { // true = 実際に報告された＝赤くなるべき
+	// Drive the shipped reverse check end to end. Rewriting a copy of the decision here
+	// would leave this control green while the real one is broken (measured). Passing a
+	// wiretest.Recorder makes it go red whether the decision or the reporting is broken.
+	check := func(ex wiremapExemption) bool { // true = actually reported, i.e. should go red
 		rec := &wiretest.Recorder{}
 		reportStaleExemptions(rec, []wiremapExemption{ex}, byFunc)
 		return len(rec.Errs()) > 0
@@ -217,7 +224,8 @@ func TestWiremapExemptionReverseCheckActuallyFires(t *testing.T) {
 	})
 
 	t.Run("印が裏付けない免除は赤くなる", func(t *testing.T) {
-		// dyn 印を持たない実在サイトを 1 つ選び、dyn を理由にした免除を合成する。
+		// Pick one real site that carries no dyn flag and synthesize an exemption that
+		// claims dyn as its reason.
 		var plain string
 		for fn, ss := range byFunc {
 			clean := true
@@ -240,7 +248,8 @@ func TestWiremapExemptionReverseCheckActuallyFires(t *testing.T) {
 	})
 
 	t.Run("本物の免除は通る", func(t *testing.T) {
-		// 陰性だけでなく陽性も見る。全部赤くする検査は何も守らない。
+		// Positive control as well as negative: a check that reddens everything protects
+		// nothing.
 		for _, ex := range wiremapExemptions() {
 			if check(ex) {
 				t.Errorf("実在する免除 %q を赤にした（検査が厳しすぎる）", ex.Func)

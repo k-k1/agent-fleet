@@ -193,7 +193,7 @@ func writeMCPErr(w http.ResponseWriter, err error) {
 // mcpRegistryWire — GET /mcp/servers のレスポンス（Console の `Registry`、
 // console/src/features/settings/mcp/mcpWire.ts）。
 //
-// 旧: map[string]any{"servers":…, "tenantFetchedAt":…, "shadowed":…}
+// was: map[string]any{"servers":…, "tenantFetchedAt":…, "shadowed":…}
 // 🔴 3 キーとも**無条件に**入っていたので omitempty は付けない。
 // とくに mcpreg.Registry 側の同名フィールドは `omitempty` 付きだが、**それは別の型の
 // 別の経路**であって、ここの map は 0 でも nil でもキーを出していた。**写してはいけない。**

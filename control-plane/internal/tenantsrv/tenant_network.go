@@ -146,7 +146,7 @@ func (a Admin) SetTenantNetwork(w http.ResponseWriter, r *http.Request) {
 // tenantNetworkWire — GET /api/admin/tenants/{slug}/network のレスポンス
 // （Console の `NetworkView`、console/src/features/settings/tenant/tenantNetwork.tsx）。
 //
-// 旧: map[string]any{"tenant":…, "allowed_cidrs":…, "proxy_hops":…, "your_ip":"",
+// was: map[string]any{"tenant":…, "allowed_cidrs":…, "proxy_hops":…, "your_ip":"",
 //
 //	"editable":…, "reason":…} ＋ info.OK なら your_ip を**上書き**。
 //
@@ -168,7 +168,7 @@ type tenantNetworkWire struct {
 // tenantNetworkSavedWire — PUT の応答。保存後の**正規化済みテキスト**を返す
 // （192.0.2.7/24 → 192.0.2.0/24）。GET とはキー集合が違うので別の型にする。
 //
-// 旧: map[string]any{"tenant":…, "allowed_cidrs":…}
+// was: map[string]any{"tenant":…, "allowed_cidrs":…}
 type tenantNetworkSavedWire struct {
 	Tenant       string `json:"tenant"`
 	AllowedCIDRs string `json:"allowed_cidrs"`
