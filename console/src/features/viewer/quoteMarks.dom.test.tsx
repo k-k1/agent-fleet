@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyQuoteMarks, clearQuoteMarks } from "./quoteMarks.ts";
+import { anchorForRange, applyQuoteMarks, clearQuoteMarks } from "./quoteMarks.ts";
 
 // 描画済みプランの上に引用ハイライトを被せる側。Markdown は innerHTML で描かれるので、
 // 対象は要素をまたぐこともある（強調の途中、段落をまたぐ選択）。
@@ -61,5 +61,101 @@ describe("applyQuoteMarks", () => {
     clearQuoteMarks(el);
     expect(el.querySelectorAll("mark.quote-mark")).toHaveLength(0);
     expect(el.innerHTML).toBe("<p>承認する。承認する。</p>");
+  });
+
+  it("改行をまたぐ引用も塗れる（保存済みの引用は畳んでから数える）", () => {
+    const el = root("<p>全リソース\n一覧に裸の出現</p>");
+    // 採取時に畳まれた形でも、古い生の形でも、同じ場所へ戻る。
+    expect(applyQuoteMarks(el, [{ quote: "リソース 一覧に", nth: 0 }])).toEqual([true]);
+    clearQuoteMarks(el);
+    expect(applyQuoteMarks(el, [{ quote: "リソース\n一覧に", nth: 0 }])).toEqual([true]);
+    expect(el.textContent).toBe("全リソース\n一覧に裸の出現");
+  });
+
+  it("箇条書きの項目をまたぐ引用は、隙間の空白ノードを塗らない", () => {
+    const el = root("<ul><li>first bullet</li>\n<li>second bullet</li></ul>");
+    expect(applyQuoteMarks(el, [{ quote: "bullet second", nth: 0 }])).toEqual([true]);
+    expect([...el.querySelectorAll("mark.quote-mark")].map((m) => m.textContent)).toEqual([
+      "bullet",
+      "second",
+    ]);
+    expect(el.querySelector("ul > mark")).toBeNull(); // <ul> の直下に <mark> を作らない
+  });
+});
+
+// ⚠️ ここが「選択したのにピッカーが出ない」の回帰テスト。Selection.toString() は描画テキスト
+// （ソース改行は空白、<br>・段落・箇条書きの境界は改行）を返すので、実ブラウザの選択文字列を
+// 手で渡して、生テキストとの差を吸収できているかを見る。jsdom の Selection は生テキストを
+// 返してしまい、この差をそもそも作れない。
+describe("anchorForRange", () => {
+  const rangeOver = (el: HTMLElement, from: [Node, number], to: [Node, number]) => {
+    const r = el.ownerDocument.createRange();
+    r.setStart(from[0], from[1]);
+    r.setEnd(to[0], to[1]);
+    return r;
+  };
+  const texts = (el: Node): Text[] => {
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const out: Text[] = [];
+    for (let n = w.nextNode(); n; n = w.nextNode()) out.push(n as Text);
+    return out;
+  };
+
+  it("段落内のソース改行をまたいでもアンカーになる（Chrome は空白 1 個で返す）", () => {
+    const el = root("<p>の全リソース\n一覧に裸の出現</p>");
+    const t = texts(el)[0];
+    const r = rangeOver(el, [t, 2], [t, 10]);
+    expect(anchorForRange(el, r, "リソース 一覧に")).toEqual({ quote: "リソース 一覧に", nth: 0 });
+  });
+
+  it("<br> をまたいでもアンカーになる（生テキストには区切りが無い）", () => {
+    const el = root("<p>prompt line one<br>prompt line two</p>");
+    const ns = texts(el);
+    const r = rangeOver(el, [ns[0], 7], [ns[1], 13]);
+    expect(anchorForRange(el, r, "line one\nprompt line")).toEqual({
+      quote: "line one prompt line",
+      nth: 0,
+    });
+  });
+
+  it("段落をまたいでもアンカーになる（境界の改行は生テキストに無い）", () => {
+    const el = root("<p>first para</p><p>second para</p>");
+    const ns = texts(el);
+    const r = rangeOver(el, [ns[0], 6], [ns[1], 6]);
+    expect(anchorForRange(el, r, "para\n\nsecond")).toEqual({ quote: "para second", nth: 0 });
+  });
+
+  it("箇条書きの項目をまたいでもアンカーになる", () => {
+    const el = root("<ul><li>first bullet</li><li>second bullet</li></ul>");
+    const ns = texts(el);
+    const r = rangeOver(el, [ns[0], 6], [ns[1], 6]);
+    expect(anchorForRange(el, r, "bullet\nsecond")).toEqual({ quote: "bullet second", nth: 0 });
+  });
+
+  it("同じ語が何度も出るとき、選んだ場所の出現番号を返す", () => {
+    const el = root("<p>承認する。却下する。\n承認する。</p>");
+    const t = texts(el)[0];
+    const r = rangeOver(el, [t, 11], [t, 13]);
+    expect(anchorForRange(el, r, "承認")).toEqual({ quote: "承認", nth: 1 });
+  });
+
+  it("要素から始まる選択（ダブルクリック）でも、その段落の出現を指す", () => {
+    const el = root("<p>承認する。</p><p>承認する。</p>");
+    const second = el.querySelectorAll("p")[1];
+    const r = rangeOver(el, [second, 0], [texts(second)[0], 2]);
+    expect(anchorForRange(el, r, "承認")).toEqual({ quote: "承認", nth: 1 });
+  });
+
+  it("root の外へ出た選択と空の選択は null", () => {
+    const el = root("<p>本文</p>");
+    const outside = document.createElement("p");
+    outside.textContent = "外";
+    document.body.append(el, outside);
+    const r = rangeOver(el, [texts(el)[0], 0], [texts(outside)[0], 1]);
+    expect(anchorForRange(el, r, "本文外")).toBeNull();
+    const inner = rangeOver(el, [texts(el)[0], 0], [texts(el)[0], 2]);
+    expect(anchorForRange(el, inner, "  \n ")).toBeNull();
+    el.remove();
+    outside.remove();
   });
 });
