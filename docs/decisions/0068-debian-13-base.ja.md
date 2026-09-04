@@ -2,9 +2,9 @@
 
 [English](0068-debian-13-base.md) | 日本語
 
-- 状態: **採用・未着手**（2026-09-04）。段取りは下の「実行順」。ベースを動かす動機と 5 案
-  （A〜E）の比較は [docs/70 §70.9.3](../log/70-slot-instance-classes.md)、その 🔴 訂正が
-  この ADR の直接の引き金。
+- 状態: **採用・①〜④ 実施済み（hosted CI で緑）/ ⑤⑥ 未**（2026-09-04）。実測は下の
+  「実行順」の各行に記録した。ベースを動かす動機と 5 案（A〜E）の比較は
+  [docs/70 §70.9.3](../log/70-slot-instance-classes.md)、その 🔴 訂正がこの ADR の直接の引き金。
 - 関連: [0018-container-browser-pane.ja.md](0018-container-browser-pane.ja.md)（chromium を
   Playwright 配布ではなく **Debian パッケージで revision まで固定して**採ると決めた記録。
   この ADR の期限はそこから来る）/ [0026-kiro-agent-kind.ja.md](0026-kiro-agent-kind.ja.md)
@@ -105,6 +105,26 @@ major を刻み、変わっていたら知らせる）だが、**製品が入れ
 | **⑤** | 両アーキの golden を焼き直す | golden はアーキ毎に要る（docs/70 §70.6）。⚠️ §70.14.7 の「image が同じだけで選ばれていた」を踏まないこと |
 | **⑥** | rtk を arm で使うなら Graviton 実機 | ②の QEMU は「ロードするか」までしか答えない（下の帰結） |
 
+**①〜④ の実測（2026-09-04・hosted CI・すべて成功）**:
+
+- **① amd64**（run 33843064097）: python `3.13.5-1` / git-delta `0.18.2-4+b1` /
+  `Chromium 152.0.7977.75 built on Debian GNU/Linux 13 (trixie)`。chromium は pin 一致と
+  setuid sandbox の `0:0:4755` を Dockerfile 内の `test` が通した。
+- **② arm64**（run 33843699642・QEMU）: 🔴 **rtk aarch64-gnu が起動した。**
+  `+ /usr/local/bin/rtk --version` → `err=rtk 0.47.0`——つまり Dockerfile の
+  「動かなければ消して理由を残す」分岐に**入らなかった**（`rtk-unavailable` は作られていない）。
+  glibc 2.41 ≥ 2.39 が効いている。chromium・python・git-delta も amd64 と同じ。
+- **③ e2e**（run 33843817457）: **L1 smoke が NG 0 件で `== smoke OK ==`**。
+  `chromium 152.0.7977.75-1~deb13u1` / `tmux 3.5a` / `rtk 0.47.0` / CLI 9 種の版一致、
+  `versions.json` の全キー一致、日本語スクリーンショット、setuid helper が唯一の
+  setuid 実行ファイルであること、2 ページ同時 CDP まで通過。L2 / L3（ui-e2e）も success。
+  L4（live-smoke）は quota を使うので skip。
+- **④ lean 枝**（run 33843815539・`BAKE_OPTIONAL_TOOLS=0`）: 成功。t64 改名の 6 個
+  （`libasound2t64` / `libglib2.0-0t64` / `libatk1.0-0t64` / `libatspi2.0-0t64` /
+  `libatk-bridge2.0-0t64` / `libcups2t64`）が実際に解決・展開されたことをログで確認。
+  ⚠️ **この枝は従来 CI から焼けなかった**ので、`release.sh` に `BAKE_OPTIONAL_TOOLS` を通し
+  `dev-image.yml` に入力を足して塞いだ（既定は 1 ＝既存の呼び出し側は不変）。
+
 差し替える箇所——**4 箇所ではなく 8 ファイル**:
 
 - `workspace/Dockerfile`（`:8` builder / `:19` runtime）・`control-plane/Dockerfile`（`:33` `:43` `:62`）・
@@ -127,12 +147,15 @@ major を刻み、変わっていたら知らせる）だが、**製品が入れ
 
 - **git-delta が入る。** trixie main に `git-delta` がある。「bookworm に無いので意図的に外した」
   （`workspace/Dockerfile` のコメント）が解消し、代償ではなく利得の側に移る。
-- **arm64 のメンバーが rtk を使えるようになる（見込み）。** rtk aarch64-gnu の要求は
+- **arm64 のメンバーが rtk を使える見込みが立った。** rtk aarch64-gnu の要求は
   `pidfd_getpid` / `pidfd_spawnp` の `GLIBC_2.39` 2 シンボルだけで、trixie は 2.41。
-  ⚠️ ただし **QEMU が答えるのは「ロードするか」まで**——`pidfd_spawnp` はまさに QEMU の
-  user-mode が実装していない可能性がある種類の syscall である。**実運用の可否は Graviton 実機で
-  確かめるまで「動くはず」以上には言わない**（docs/70 §70.9.4 の「対応済みと書いてある」と
-  「実際に動く」は別の主張である、の再来を避ける）。
+  ②で **QEMU 上の実 arm64 イメージが `rtk --version` を成功させた**（上の実測）。
+  ⚠️ ただし **QEMU が答えたのは「ロードして版を答えるか」まで**——`pidfd_spawnp` はまさに
+  QEMU の user-mode が実装していない可能性がある種類の syscall で、rtk が実際に子プロセスを
+  起こす経路はまだ踏まれていない。**実運用の可否は Graviton 実機（⑥）まで「動くはず」以上に
+  言わない**（docs/70 §70.9.4 の「対応済みと書いてある」と「実際に動く」は別の主張である、の
+  再来を避ける）。⚠️ また §70.3.3 の「arm のメンバーは rtk を使えない」という判断材料は
+  ⑥が通るまで撤回しないこと。
 - **上流の rtk への働きかけは変わらない。** PR #3318 を待つ姿勢はそのままで、**この移行を
   「解決したから取り下げる」根拠に使わない**——musl 変種が無いことは他の利用者にとって
   依然として上流の穴である。

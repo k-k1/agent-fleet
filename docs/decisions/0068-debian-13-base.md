@@ -2,9 +2,10 @@
 
 English | [日本語](0068-debian-13-base.ja.md)
 
-- Status: **accepted, not yet started** (2026-09-04). The sequence is under "Order of work"
-  below. The motivation for moving the base and the comparison of the five options (A–E) are
-  in [docs/70 §70.9.3](../log/70-slot-instance-classes.md); the 🔴 correction there is what
+- Status: **accepted — ①–④ done and green on hosted CI, ⑤ and ⑥ outstanding** (2026-09-04).
+  The measurements are recorded under "Order of work" below. The motivation for moving the
+  base and the comparison of the five options (A–E) are in
+  [docs/70 §70.9.3](../log/70-slot-instance-classes.md); the 🔴 correction there is what
   triggered this ADR.
 - Related: [0018-container-browser-pane.md](0018-container-browser-pane.md) (the record of
   choosing Debian's `chromium` package — pinned down to the revision — over Playwright's
@@ -123,6 +124,27 @@ authority for real images.
 | **⑤** | Re-bake the golden snapshots on both architectures | Golden is per-architecture (docs/70 §70.6). ⚠️ Do not repeat §70.14.7, where golden was selected on image identity alone |
 | **⑥** | Real Graviton hardware, if rtk on arm is actually wanted | ②'s QEMU only answers "does it load" (see Consequences) |
 
+**Measurements for ①–④ (2026-09-04, hosted CI, all successful):**
+
+- **① amd64** (run 33843064097): python `3.13.5-1`, git-delta `0.18.2-4+b1`,
+  `Chromium 152.0.7977.75 built on Debian GNU/Linux 13 (trixie)`. The Dockerfile's own
+  `test`s passed for the pin match and the setuid sandbox's `0:0:4755`.
+- **② arm64** (run 33843699642, QEMU): 🔴 **rtk's aarch64-gnu build started.**
+  `+ /usr/local/bin/rtk --version` → `err=rtk 0.47.0` — meaning the Dockerfile's "remove it
+  and record why if it cannot run" branch was **not** taken (no `rtk-unavailable` file).
+  glibc 2.41 ≥ 2.39 is doing its job. Chromium, Python and git-delta match amd64.
+- **③ e2e** (run 33843817457): **the L1 smoke reported zero NG and `== smoke OK ==`**.
+  `chromium 152.0.7977.75-1~deb13u1`, `tmux 3.5a`, `rtk 0.47.0`, all nine CLI versions,
+  every `versions.json` key, the Japanese screenshot, the setuid helper being the only
+  setuid executable, and two simultaneous CDP Pages all passed. L2 and L3 (ui-e2e) also
+  succeeded. L4 (live-smoke) was skipped because it spends quota.
+- **④ the lean branch** (run 33843815539, `BAKE_OPTIONAL_TOOLS=0`): succeeded. The six t64
+  renames (`libasound2t64`, `libglib2.0-0t64`, `libatk1.0-0t64`, `libatspi2.0-0t64`,
+  `libatk-bridge2.0-0t64`, `libcups2t64`) were confirmed in the log as actually resolved
+  and unpacked. ⚠️ **This branch was previously unreachable from CI**, so
+  `BAKE_OPTIONAL_TOOLS` was threaded through `release.sh` and exposed as a `dev-image.yml`
+  input (default 1, so every existing caller is unchanged).
+
 The tags to swap — **eight files, not four**:
 
 - `workspace/Dockerfile` (`:8` builder, `:19` runtime), `control-plane/Dockerfile`
@@ -150,12 +172,15 @@ the `BAKE_OPTIONAL_TOOLS=0` branch lists explicitly, **six do not exist in trixi
 - **git-delta becomes available.** trixie's main has `git-delta`. The "not in bookworm, so
   intentionally omitted" note in `workspace/Dockerfile` goes away; this moves from the cost
   column to the benefit column.
-- **arm64 members should get rtk.** rtk's aarch64-gnu build needs exactly two `GLIBC_2.39`
-  symbols (`pidfd_getpid`, `pidfd_spawnp`), and trixie is 2.41. ⚠️ But **QEMU only answers
-  "does it load"** — `pidfd_spawnp` is exactly the kind of syscall QEMU's user mode may not
-  implement. **Say nothing stronger than "should work" until real Graviton hardware confirms
-  it**, so as not to repeat docs/70 §70.9.4 ("documented as supported" and "actually runs" are
-  different claims).
+- **arm64 members are on track to get rtk.** rtk's aarch64-gnu build needs exactly two
+  `GLIBC_2.39` symbols (`pidfd_getpid`, `pidfd_spawnp`), and trixie is 2.41; in ② a real
+  arm64 image under QEMU ran `rtk --version` successfully (see the measurements above).
+  ⚠️ But **what QEMU answered is "does it load and report a version"** — `pidfd_spawnp` is
+  exactly the kind of syscall QEMU's user mode may not implement, and the path where rtk
+  actually spawns a child has not been exercised. **Say nothing stronger than "should work"
+  until real Graviton hardware (⑥) confirms it**, so as not to repeat docs/70 §70.9.4
+  ("documented as supported" and "actually runs" are different claims). ⚠️ Likewise, do not
+  retract §70.3.3's "arm members cannot use rtk" until ⑥ passes.
 - **Nothing changes about pushing upstream on rtk.** Waiting on PR #3318 stands, and **this
   migration is not grounds to withdraw it as "solved"** — the missing musl variant is still an
   upstream gap for everyone else.
