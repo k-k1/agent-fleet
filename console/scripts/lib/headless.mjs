@@ -59,6 +59,12 @@ export function serveDir(dir) {
 // 既定を 1 本のパス文字列で持っていると、**在るあいだは正しく、無くなった日に
 // 「debugging port が開かない」という原因を指さない形で落ちる**（spawn の ENOENT は
 // stdio を捨てているので誰の目にも入らない）。候補を並べて、選んだ実体を名前で言う。
+//
+// 🔴 **ランナーには日本語フォントが 1 つも無い**（実測 2026-09-04: `fc-list :lang=ja` が
+// **0 件**。このコンテナには Noto CJK が焼いてある）。いまの pdf:check / doc:check は
+// 「描かれたか・アセットを配れたか」しか見ないので判定は動かない（標本の日本語は
+// **豆腐で描かれたまま緑になる**）が、**字形・文字幅・スクリーンショットの比較を
+// この土台の上に足すと、CI でだけ壊れる**。そのときはフォントを入れる段が要る。
 const CHROMIUM_CANDIDATES = ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"];
 
 const usable = (p) => {

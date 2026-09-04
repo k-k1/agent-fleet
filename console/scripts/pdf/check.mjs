@@ -195,6 +195,10 @@ try {
   check(styled === "flex", "viewer.css の parts が当たっている", `.pdfview display=${styled}`);
 
   // 2. 1 枚目に本当に絵が出ている（白でない画素の割合）。
+  // ⚠️ 下限（0.001）を上げないこと。**この値は測る時刻で揺れる** —— until() は閾値を
+  // 超えた最初の値で返すので、描画途中の canvas を読む（実測 2026-09-04: 素の実行で
+  // 1.07%〜3.35%）。⚠️ 環境でも動く（ランナーは日本語フォントが 0 件で豆腐になり 1.65%。
+  // headless.mjs の解説）。**ink は「何かが描かれた」までしか言わない検査である。**
   const inked = await until(
     b.evaluate,
     `(() => { const c = document.querySelector('.pdfview-canvas');
