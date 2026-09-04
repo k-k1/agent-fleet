@@ -105,6 +105,19 @@ func resolveFDReadPath(input string) (fdReadPath, *fsAPIError) {
 			root: browse, relative: input, display: input, browseRoot: true,
 		}, nil
 	}
+	generatedRoot, err := absoluteTrustedRoot(codexGeneratedImagesRoot())
+	if err == nil {
+		if relative, ok := pathUnderRoot(input, generatedRoot); ok {
+			// image_gen announces only these raster outputs. Do not serve SVG
+			// or arbitrary files from Codex's otherwise-private state tree.
+			switch strings.ToLower(filepath.Ext(relative)) {
+			case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+				return fdReadPath{root: generatedRoot, relative: relative, display: input, readOnly: true}, nil
+			default:
+				return fdReadPath{}, fsErr(403, errCodeFSDenied, "only generated image files may be read from CODEX_HOME")
+			}
+		}
+	}
 
 	roots := allowedReadRoots()
 	for i, rawRoot := range roots {

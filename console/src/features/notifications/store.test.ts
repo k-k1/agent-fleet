@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { setLocale } from "../../lib/i18n/index.ts";
 import type { FleetNotification } from "./store.ts";
 import { unseenSessionEventIDs } from "./read.ts";
-import { notificationWording } from "./wording.ts";
+import { notificationRowSubtitle, notificationWording } from "./wording.ts";
 
 const event = (id: string, targetID: string, seen = false, type = "session"): FleetNotification => ({
   seq: Number(id.replace(/\D/g, "")) || 1,
@@ -25,6 +25,27 @@ describe("unseenSessionEventIDs", () => {
     ];
     expect(unseenSessionEventIDs(items, "active")).toEqual(["e1"]);
     expect(unseenSessionEventIDs(items, "")).toEqual([]);
+  });
+});
+
+describe("通知行の副題", () => {
+  const report = (payload: Record<string, unknown>) => ({
+    kind: "session-report",
+    displayName: "プラン検証",
+    payload,
+  });
+
+  it("セッション報告は「報告元 → 宛先の会話」まで出す", () => {
+    expect(notificationRowSubtitle(report({ conversationTitle: "運用オペレーター" }))).toBe("プラン検証 → 運用オペレーター");
+  });
+
+  it("会話名が無ければ従来どおり報告元だけ", () => {
+    expect(notificationRowSubtitle(report({}))).toBe("プラン検証");
+    expect(notificationRowSubtitle(report({ conversationTitle: "" }))).toBe("プラン検証");
+  });
+
+  it("他の kind は displayName のまま（会話名は既に displayName に入っている）", () => {
+    expect(notificationRowSubtitle({ kind: "chat-auto-paused", displayName: "運用", payload: { conversationTitle: "運用" } })).toBe("運用");
   });
 });
 

@@ -40,6 +40,7 @@ func TestSafeBrowsePath(t *testing.T) {
 		// absolute under the scratch base → served, display path is the absolute path
 		{"abs in scratch", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", true},
 		{"abs in staged docs", agentFleetDocsRoot() + "/guide/member/README.md", agentFleetDocsRoot() + "/guide/member/README.md", agentFleetDocsRoot() + "/guide/member/README.md", true},
+		{"abs in codex generated images", codexGeneratedImagesRoot() + "/job/image.png", codexGeneratedImagesRoot() + "/job/image.png", codexGeneratedImagesRoot() + "/job/image.png", true},
 
 		// absolute outside every allowed root → refused
 		{"abs outside all", "/etc/passwd", "", "", false},

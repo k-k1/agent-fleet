@@ -124,6 +124,18 @@ func persist(sid string, s SessionStatus) {
 
 func Read(sid string) (SessionStatus, bool) { return statusFiles.Read(sid) }
 
+// StateAt は「その状態を書いた時刻」（ペイロードの捕捉時刻と同じく mtime）。保留の掃除
+// （sessionx の sweepSettledPending）が、決着より前に書かれた**モーダル状態**を見分ける
+// ために使う — ペイロードだけ消して state を残すと、決めるカードが無いのに送信を断る。
+func StateAt(sid string) (time.Time, bool) { return statusFiles.ModTime(sid) }
+
+// ModalState reports whether state CLAIMS a modal is on screen. これらの状態は
+// applyPendingPayloads（唯一の書き手）が必ず対応するペイロードと一緒に書くので、
+// 「モーダル状態なのにペイロードが無い」は決着後の残骸を意味する。
+func ModalState(state string) bool {
+	return state == "question" || state == "plan" || state == "permission"
+}
+
 func Remove(sid string) {
 	statusFiles.Remove(sid)
 	RemovePendingQuestion(sid)

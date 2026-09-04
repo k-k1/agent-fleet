@@ -1,7 +1,9 @@
 import { create } from "zustand";
-import { api, apiJSON } from "../../core/api/client.ts";
+import { api, apiJSON, chatGet, isTransientErr } from "../../core/api/client.ts";
 import { pushHealthy } from "../../core/push/events.ts";
 import { getSettings } from "../../lib/settings.ts";
+import { toast } from "../../ui/toast.ts";
+import { t as tr } from "../../lib/i18n/index.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { announce, sessionVoiceOpts } from "../chat/tts.ts";
@@ -81,26 +83,64 @@ async function deliver(n: FleetNotification): Promise<void> {
   }
 }
 
-export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<boolean> {
+// NotificationOpenResult は「開けたか」だけでなく「**宛先の会話がもう無い**」を返す。
+// 通知は Control Plane に 7 日残るのに会話は消えうる（利用者の削除、あるいはテストが
+// 実 HOME へ落とした幽霊通知）ので、開いた先が「会話が見つかりません」の赤字ペインで
+// 行き止まりになる——押した人には、消えたのか壊れたのかも、どの会話だったのかも分からない。
+// missingConversation はその場合だけ立ち（値は会話名。無題なら空文字）、呼び出し側が
+// 理由を出す。
+export interface NotificationOpenResult {
+  opened: boolean;
+  missingConversation?: string;
+}
+
+// conversationReachable は chatGet の結果を「その会話をこのまま開いてよいか」に畳む。
+// ⚠️ **「取れなかった＝消えた」ではない**。WS の起動中に CP が返す 5xx も、通信断で
+// reject した場合（呼び出し側が null にする）も、会話は生きている — ChatView が再試行して
+// 開く経路なので、ここで「消えた」と判定するとセッションへ飛ばして利用者を混乱させる。
+// 消えたと言えるのは **4xx（chat_conversation_not_found）で解決したとき**だけ。
+export function conversationReachable(res: unknown): boolean {
+  if (!res) return true; // throw（通信断）— 恒久的に無いことの証拠にはならない
+  if (typeof (res as { id?: string }).id === "string" && (res as { id?: string }).id) return true;
+  return isTransientErr(res);
+}
+
+export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<NotificationOpenResult> {
   // A session report's destination is the operator CONVERSATION, not the reporting
   // session (docs/log/30) — the conversation id rides the payload.
   if ((n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure" || n.kind === "chat-context-overflow") && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
-    openChat(n.payload.conversation_id);
-    return true;
+    const convID = n.payload.conversation_id;
+    // 取得は「恒久的に無い」ことの確認にだけ使う。WS 起動中の 5xx や通信断（throw）は
+    // ChatView 側の再試行に任せてそのまま開く —— ここで「消えた」と判定すると、起動待ちの
+    // 一瞬に押しただけでセッションへ飛ばされる。
+    const conv = await chatGet(convID).catch(() => null);
+    if (conversationReachable(conv)) {
+      openChat(convID);
+      return { opened: true };
+    }
+    // 会話は本当に無い。session-report なら報告元セッション（target.id）が残っていること
+    // があるので、そこへ落とす。他の kind は宛先が会話しかない。
+    // 理由はここで言う（OS 通知からのクリックも同じ経路を通るので、UI 層へ返して各所で
+    // 出し分けると片方が無言になる）。
+    const title = typeof n.payload.conversationTitle === "string" ? n.payload.conversationTitle : "";
+    const label = title || tr("noti.conversation_untitled");
+    const r = n.kind === "session-report" ? await openNotificationSession(n, split) : { opened: false };
+    toast(tr(r.opened ? "noti.conversation_gone_session" : "noti.conversation_gone", { title: label }), { kind: "warn" });
+    return { ...r, missingConversation: title };
   }
   // A submodule notice belongs to a working copy, not a session (it is filed before any
   // session exists). Its answer to "what now?" is the Source Control view, which lists the
   // submodules and whether they are fetched.
   if (n.kind === "submodule-sync" && typeof n.payload.repo === "string" && n.payload.repo) {
     openRepoScm(n.payload.repo);
-    return true;
+    return { opened: true };
   }
   // メンバーから受け取った引き継ぎ（docs/log/77）。行き先は自分のセッションではなく**共有ビュー**
   // なので、下の session 解決には落とせない。共有が切れたあとは開けないが、それは正しい
   // （offer は共有 ACL の派生物で、ACL が消えれば本文も消えている）。
   if (n.kind === "handoff-offer" && typeof n.payload.catalogId === "string" && n.payload.catalogId) {
     openSharedSession(n.payload.catalogId, split);
-    return true;
+    return { opened: true };
   }
   // 定時実行の失敗/スキップ（docs/log/38）。行き先はセッションではなく左レールの
   // スケジュール行で、しかも**実行履歴**——「なぜ動かなかったのか」はそこにしか無い。
@@ -108,25 +148,32 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   // （落とすと「該当セッションは一覧にありません」という無関係な警告で終わる）。
   if (n.target.type === "schedule" && n.target.id) {
     useSchedulesStore.getState().revealSchedule(n.target.id);
-    return true;
+    return { opened: true };
   }
-  if (n.target.type !== "session" || !n.target.id) return false;
+  return openNotificationSession(n, split);
+}
+
+// openNotificationSession は通知の target（セッション）を開く。上の kind 別の行き先が
+// どれも当てはまらなかったときの既定の解決であり、**宛先の会話が消えていた報告**の
+// フォールバックでもある（報告元セッションは残っていることが多い）。
+async function openNotificationSession(n: FleetNotification, split: boolean): Promise<NotificationOpenResult> {
+  if (n.target.type !== "session" || !n.target.id) return { opened: false };
   let session = useSessionsStore.getState().sessions.find((s) => s.name === n.target.id);
   if (!session) {
     await useSessionsStore.getState().refresh();
     session = useSessionsStore.getState().sessions.find((s) => s.name === n.target.id);
   }
-  if (!session) return false;
+  if (!session) return { opened: false };
   const caps = agentOf(session.kind).caps;
   if (session.alive) {
     (caps.chat ? (split ? openSessionChatSplit : openSessionChat) : split ? openSessionTerminalSplit : openSessionTerminal)(session.name);
-    return true;
+    return { opened: true };
   }
   if (caps.transcript) {
     (split ? openSessionChatSplit : openSessionChat)(session.name);
-    return true;
+    return { opened: true };
   }
-  return false;
+  return { opened: false };
 }
 
 export const useNotificationStore = create<NotificationState>((set, get) => ({

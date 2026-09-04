@@ -236,11 +236,38 @@ func newTestHandle(t *testing.T, srv *httptest.Server) *threadHandle {
 	// プロセス共有の状態通知 seam（agents.SetStateNotifier）へ同じ sid の遷移を流し込む。
 	// 実測: 負荷時に TestManagedTurnNotifiesCompletion が
 	// `transition = [sid-test idle idle]` / `[sid-test  idle]` で落ちる（8 反復に 1 回程度）。
-	return &threadHandle{
+	h := &threadHandle{
 		name: "slot-test", dir: "/tmp", ocSid: "sid-" + t.Name(),
 		addr: srv.URL, ses: "ses_test", alive: true, gen: 1,
 		events: make(chan agents.Event, 64),
 	}
+	// 🔥 上の隔離は「待って初めて」成立する。テストが turn を走らせたまま返ると、HOME が
+	// **復帰したあと**に pump の MarkTurnEnd → status.Persist が走り、書き先は
+	// 実 `~/.config/agent-fleet` になる（実測: 利用者の session-status/ に
+	// `sid-TestQuestionFlow.json` と `sid-TestRespondRejectOnCancel.json` が残っていた）。
+	// t.Cleanup は LIFO なので、**t.Setenv の後**に積んだこの待ちが HOME 復帰より先に走る
+	// （前に積むと復帰の後＝手遅れ）。mock サーバの Close も newMockServe 側で先に積まれて
+	// いるので、待っている間はまだ生きている。
+	t.Cleanup(func() { waitPumpIdle(t, h) })
+	return h
+}
+
+// waitPumpIdle blocks until the handle's pump has drained: キューに残りが無く
+// （pumping=false）、走っている turn も無い（running=false）状態。落ちる方向は安全側 —
+// 待てないまま抜けると実 HOME を汚すので、黙って諦めずに失敗させる。
+func waitPumpIdle(t *testing.T, h *threadHandle) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		h.mu.Lock()
+		busy := h.pumping || h.running
+		h.mu.Unlock()
+		if !busy {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Error("pump がテスト終了後も走っている: このまま HOME を戻すと実 ~/.config/agent-fleet へ書く")
 }
 
 func waitState(t *testing.T, h *threadHandle, want agents.TurnState) {

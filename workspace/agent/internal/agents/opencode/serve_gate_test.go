@@ -21,6 +21,12 @@ import (
 func unspawnableAddr(t *testing.T) *Supervisor {
 	t.Helper()
 	t.Setenv(serveAddrEnv, "tcp://127.0.0.1:7799")
+	// HOME も隔離する。ensure は接続ゲートで secrets.Load() を通り、隔離しないと
+	// **利用者の実 ~/.config/agent-fleet の資格情報ストア**を読んで（そして
+	// `secrets.enc.lock` を作って）判定する —— opencode に接続済みの開発機では
+	// 「未接続なら起こさない」の検査が成立しなくなる。実測: このヘルパを使う
+	// テストだけが実 HOME に lock ファイルを残していた。
+	t.Setenv("HOME", t.TempDir())
 	s := &Supervisor{}
 	t.Cleanup(s.Shutdown)
 	return s

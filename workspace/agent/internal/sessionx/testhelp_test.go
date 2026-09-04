@@ -50,10 +50,16 @@ var tmuxSocketSeq atomic.Int64
 // --- withTempHome: workspace/agent/chat_main_test.go の写し ---
 // withTempHome points HOME at a temp dir so the fstore/conversation stores write
 // under the test's own tree（移送前の chat_report_test.go と同じ形）。
+//
+// 🔥 配送 goroutine の待ちは **`t.Setenv` の後**に積む（Cleanup は LIFO ＝ HOME 復帰より
+// 先に走る）。待たないと chatx の配送が復帰後の実 HOME へ通知を書き、利用者の Console に
+// 幽霊通知が出る（chatx/chat_report.go の interimDeliveries）。
 func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Cleanup(chatx.WaitInterimDeliveries)
+	t.Cleanup(WaitInputMirrors) // 同上。こちらは secrets ストア（実測: secrets.enc.lock）
 	return dir
 }
 
