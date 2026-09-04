@@ -1,10 +1,10 @@
 package opencode
 
 // The fake daemon replies with the shapes measured against a live `opencode serve`
-// 1.18.13（OpenAPI /doc・docs/log/54 §契約）: every response is a {location, data}
+// 1.18.13 (its OpenAPI /doc, docs/log/54 §contract): every response is a {location, data}
 // envelope, attempt statuses are pending|complete|failed|expired, and the Console
 // connection surfaces as connections[].type == "credential" with the org name as its
-// label（env 由来の OPENCODE_API_KEY は別 type）。
+// label (an OPENCODE_API_KEY coming from the env is a different type).
 
 import (
 	"encoding/json"
@@ -26,7 +26,8 @@ type fakeDaemon struct {
 	// finished loading: health is up, but the integration (and its device method)
 	// is not published yet — the real 500 `OAuth method not found` window.
 	notReady int
-	// nullData makes the integration GET answer data:null（起動直後の実挙動）。
+	// nullData makes the integration GET answer data:null, as it really does just after
+	// startup.
 	nullData bool
 	startErr int // non-zero => connect/oauth replies with this status
 }
@@ -69,7 +70,7 @@ func newFakeDaemon(t *testing.T) *fakeDaemon {
 			}
 			methods := []map[string]any{{"type": "key"}, {"type": "env", "names": []string{"OPENCODE_API_KEY"}}}
 			if d.notReady > 0 {
-				d.notReady-- // プラグイン読み込み中: device メソッドがまだ生えていない
+				d.notReady-- // plugin still loading: the device method has not appeared yet
 			} else {
 				methods = append(methods, map[string]any{"id": "device", "type": "oauth", "label": "OpenCode Console account"})
 			}
@@ -143,9 +144,9 @@ func TestOAuthStartReturnsVerificationURL(t *testing.T) {
 	newFakeDaemon(t)
 	code, out := doJSON(t, HandleOAuthStart, "POST", "/connections/opencode/oauth/start", "")
 	if !Available() {
-		// opencode が居ない環境（CI の一部）では start は 409 で止まるのが正しい。
+		// Where opencode is absent (some CI runners), start correctly stops at 409.
 		if code != http.StatusConflict {
-			t.Fatalf("opencode 不在時は 409 のはず: %d %v", code, out)
+			t.Fatalf("with opencode absent this should be 409: %d %v", code, out)
 		}
 		return
 	}
@@ -158,14 +159,15 @@ func TestOAuthStartReturnsVerificationURL(t *testing.T) {
 	if u, _ := out["url"].(string); !strings.HasPrefix(u, "https://console.opencode.ai/auth/device") {
 		t.Errorf("url = %v", out["url"])
 	}
-	// device は mode=auto — Console にコード入力欄を出さない判断の根拠なので固定する。
+	// device is mode=auto, which is the basis for not showing a code entry field in the
+	// Console, so it is pinned here.
 	if out["mode"] != "auto" {
 		t.Errorf("mode = %v, want auto", out["mode"])
 	}
 	if out["instructions"] == "" {
-		t.Errorf("instructions が空")
+		t.Errorf("instructions is empty")
 	}
-	// 手順①として見せるコード。URL のクエリが第一情報源。
+	// The code shown as step 1. The URL's query is the primary source.
 	if out["user_code"] != "ABCD-EFGH" {
 		t.Errorf("user_code = %v, want ABCD-EFGH", out["user_code"])
 	}
@@ -175,10 +177,10 @@ func TestUserCodeExtraction(t *testing.T) {
 	for _, tc := range []struct {
 		name, url, instructions, want string
 	}{
-		{"URL のクエリ優先", "https://x/auth/device?user_code=WXYZ-1234", "Enter code: OTHER-CODE", "WXYZ-1234"},
-		{"クエリが無ければ文言から", "https://x/auth/device", "Enter code: ABCD-EFGH", "ABCD-EFGH"},
-		{"どちらにも無ければ空", "https://x/auth/device", "Approve in your browser", ""},
-		{"壊れた URL でも落ちない", "://", "Enter code: ABCD-EFGH", "ABCD-EFGH"},
+		{"the URL query wins", "https://x/auth/device?user_code=WXYZ-1234", "Enter code: OTHER-CODE", "WXYZ-1234"},
+		{"falls back to the instructions text", "https://x/auth/device", "Enter code: ABCD-EFGH", "ABCD-EFGH"},
+		{"empty when neither carries one", "https://x/auth/device", "Approve in your browser", ""},
+		{"a broken URL does not crash it", "://", "Enter code: ABCD-EFGH", "ABCD-EFGH"},
 	} {
 		if got := userCode(tc.url, tc.instructions); got != tc.want {
 			t.Errorf("%s: userCode = %q, want %q", tc.name, got, tc.want)
@@ -186,16 +188,17 @@ func TestUserCodeExtraction(t *testing.T) {
 	}
 }
 
-// 実機の再現（ref=err_91d98832）: 起動 85ms 後の click。/global/health は 200 でも
-// device メソッドはまだ登録されておらず、素直に POST すると daemon が 500
-// `OAuth method not found: opencode/device` を返す。メソッドが生えるまで待つこと。
+// Reproduces the field failure (ref=err_91d98832): a click 85ms after startup.
+// /global/health answers 200 while the device method is not registered yet, so a naive
+// POST gets a 500 `OAuth method not found: opencode/device` from the daemon. Wait until
+// the method appears.
 func TestOAuthStartWaitsForPluginLoad(t *testing.T) {
 	if !Available() {
-		t.Skip("opencode CLI がこの環境に無い")
+		t.Skip("the opencode CLI is not present in this environment")
 	}
 	d := newFakeDaemon(t)
 	d.mu.Lock()
-	d.notReady = 3 // 3 回ぶん「まだ読み込み中」を返す
+	d.notReady = 3 // answer "still loading" three times
 	d.mu.Unlock()
 	orig := oauthReadyPoll
 	oauthReadyPoll = time.Millisecond
@@ -203,17 +206,18 @@ func TestOAuthStartWaitsForPluginLoad(t *testing.T) {
 
 	code, out := doJSON(t, HandleOAuthStart, "POST", "/connections/opencode/oauth/start", "")
 	if code != http.StatusOK {
-		t.Fatalf("読み込み待ちの後に成功すべき: status=%d out=%v", code, out)
+		t.Fatalf("should succeed after waiting for the load: status=%d out=%v", code, out)
 	}
 	if out["flow_id"] != "att_1" {
 		t.Errorf("flow_id = %v", out["flow_id"])
 	}
 }
 
-// いつまでもメソッドが生えないとき（古い CLI 等）は、待ち続けず理由を返す。
+// When the method never appears (an older CLI, say), report the reason instead of waiting
+// forever.
 func TestOAuthStartGivesUpWhenMethodNeverAppears(t *testing.T) {
 	if !Available() {
-		t.Skip("opencode CLI がこの環境に無い")
+		t.Skip("the opencode CLI is not present in this environment")
 	}
 	d := newFakeDaemon(t)
 	d.mu.Lock()
@@ -229,23 +233,24 @@ func TestOAuthStartGivesUpWhenMethodNeverAppears(t *testing.T) {
 		t.Fatalf("status=%d out=%v", code, out)
 	}
 	if msg, _ := out["error"].(map[string]any); msg == nil || msg["code"] != "serve_not_ready" {
-		t.Errorf("理由が伝わっていない: %v", out)
+		t.Errorf("the reason did not come through: %v", out)
 	}
 }
 
-// 起動直後は integration そのものが data:null。ここで「未接続」を確定させない。
+// Just after startup the integration itself is data:null. Do not conclude "not connected"
+// from that.
 func TestOAuthStatusIgnoresNullIntegration(t *testing.T) {
 	d := newFakeDaemon(t)
 	d.setConns([]map[string]any{{"type": "credential", "id": "con_1", "label": "acme-inc"}})
 	if st := oauthStatus(); !st.connected {
-		t.Fatal("前提: 接続済みを読めていない")
+		t.Fatal("precondition: the connected state was not read")
 	}
 	invalidateOAuthStatus()
 	d.mu.Lock()
 	d.nullData = true
 	d.mu.Unlock()
 	if st := oauthStatus(); !st.connected || st.label != "acme-inc" {
-		t.Errorf("起動レース中に接続表示が消えた: %+v", st)
+		t.Errorf("the connection display vanished during the startup race: %+v", st)
 	}
 }
 
@@ -272,13 +277,13 @@ func TestOAuthPollMapsAttemptStatuses(t *testing.T) {
 			t.Errorf("status = %v, want %v", out["status"], tc.status)
 		}
 		if tc.status == "failed" && out["message"] != "authorization denied" {
-			t.Errorf("failed の理由が落ちている: %v", out["message"])
+			t.Errorf("the reason for failed was dropped: %v", out["message"])
 		}
 	}
 }
 
-// 成立時にモデルカタログのキャッシュを落とすこと。ここが抜けると、ログイン直後の
-// 起動モーダルが最大60秒ぶん古い（ログイン前の）モデル集合を出す。
+// On success the model catalog cache must be dropped. Without this, the launch modal
+// right after signing in shows a model set up to 60 seconds stale, i.e. the pre-login one.
 func TestOAuthPollCompleteInvalidatesModelsCache(t *testing.T) {
 	d := newFakeDaemon(t)
 	d.set("complete")
@@ -295,14 +300,14 @@ func TestOAuthPollCompleteInvalidatesModelsCache(t *testing.T) {
 	fresh := modelsAt.IsZero()
 	modelsMu.Unlock()
 	if !fresh {
-		t.Error("ログイン成立後もモデルキャッシュが有効なまま")
+		t.Error("the model cache is still valid after a successful sign-in")
 	}
 }
 
 func TestOAuthPollRequiresFlowID(t *testing.T) {
 	newFakeDaemon(t)
 	if code, _ := doJSON(t, HandleOAuthPoll, "POST", "/connections/opencode/oauth/poll", `{}`); code != http.StatusBadRequest {
-		t.Errorf("flow_id 無しは 400 のはず: %d", code)
+		t.Errorf("a request with no flow_id should be 400: %d", code)
 	}
 }
 
@@ -312,13 +317,13 @@ func TestOAuthCancelDeletesAttempt(t *testing.T) {
 		t.Fatalf("cancel status=%d", code)
 	}
 	if got := d.deletes(); len(got) != 1 || got[0] != "/api/integration/attempt/att_1" {
-		t.Errorf("attempt を消していない: %v", got)
+		t.Errorf("the attempt was not deleted: %v", got)
 	}
 }
 
-// 切断先は credential ID 指定の削除。v1 の `DELETE /auth/opencode` では消えない
-// （あれは auth.json 側で、Console アカウントの資格情報は SQLite に載っている —
-// 実機で叩いても新規プロセスから接続が見え続けた）。
+// Disconnecting means deleting by credential ID. v1's `DELETE /auth/opencode` does not
+// remove it: that one works on auth.json, while the Console account's credential lives in
+// SQLite. Measured: after calling it, a fresh process still saw the connection.
 func TestOAuthDisconnectRemovesCredential(t *testing.T) {
 	d := newFakeDaemon(t)
 	d.setConns([]map[string]any{
@@ -330,12 +335,12 @@ func TestOAuthDisconnectRemovesCredential(t *testing.T) {
 		t.Fatalf("status=%d out=%v", code, out)
 	}
 	if got := d.deletes(); len(got) != 1 || got[0] != "/api/credential/cred_1" {
-		t.Errorf("資格情報の削除先が違う: %v", got)
+		t.Errorf("the credential was deleted from the wrong place: %v", got)
 	}
 }
 
-// 接続が無いのに押された場合（表示のズレ・二重クリック）は冪等に成功で返し、
-// env 側の APIキー接続を巻き添えで消しにいかないこと。
+// Pressed with no connection (a stale display, a double click) it must succeed
+// idempotently and must not take the env API-key connection down with it.
 func TestOAuthDisconnectIdempotentWithoutCredential(t *testing.T) {
 	d := newFakeDaemon(t)
 	d.setConns([]map[string]any{{"type": "env", "name": "OPENCODE_API_KEY"}})
@@ -344,17 +349,17 @@ func TestOAuthDisconnectIdempotentWithoutCredential(t *testing.T) {
 		t.Fatalf("status=%d out=%v", code, out)
 	}
 	if got := d.deletes(); len(got) != 0 {
-		t.Errorf("消すものが無いのに DELETE した: %v", got)
+		t.Errorf("issued a DELETE with nothing to delete: %v", got)
 	}
 }
 
 func TestOAuthStatusReadsCredentialConnection(t *testing.T) {
 	d := newFakeDaemon(t)
 
-	// env 接続だけ = APIキー方式。Console アカウントは未接続。
+	// An env connection alone means the API-key method; the Console account is not connected.
 	d.setConns([]map[string]any{{"type": "env", "name": "OPENCODE_API_KEY"}})
 	if st := oauthStatus(); st.connected || !st.known {
-		t.Errorf("env のみで connected=%v known=%v", st.connected, st.known)
+		t.Errorf("with env only: connected=%v known=%v", st.connected, st.known)
 	}
 
 	invalidateOAuthStatus()
@@ -364,24 +369,24 @@ func TestOAuthStatusReadsCredentialConnection(t *testing.T) {
 	})
 	st := oauthStatus()
 	if !st.connected || st.label != "acme-inc" {
-		t.Errorf("credential 接続を拾えていない: %+v", st)
+		t.Errorf("the credential connection was not picked up: %+v", st)
 	}
 }
 
-// daemon が落ちている間に「未接続」へ落とさないこと（stale-if-error）。接続表示が
-// 点滅すると、ユーザーはログインし直しに誘導されてしまう。
+// While the daemon is down the status must not drop to "not connected" (stale-if-error).
+// A flickering connection display pushes the user into signing in all over again.
 func TestOAuthStatusKeepsLastKnownWhenDaemonDown(t *testing.T) {
 	d := newFakeDaemon(t)
 	d.setConns([]map[string]any{{"type": "credential", "id": "con_1", "label": "acme-inc"}})
 	if st := oauthStatus(); !st.connected {
-		t.Fatal("前提: 接続済みを読めていない")
+		t.Fatal("precondition: the connected state was not read")
 	}
 	invalidateOAuthStatus()
 	orig := oauthProbe
 	oauthProbe = func() (string, bool) { return "", false }
 	defer func() { oauthProbe = orig }()
 	if st := oauthStatus(); !st.connected || st.label != "acme-inc" {
-		t.Errorf("daemon 停止で接続表示が消えた: %+v", st)
+		t.Errorf("the connection display vanished when the daemon stopped: %+v", st)
 	}
 }
 
@@ -392,6 +397,6 @@ func TestOAuthStatusUnknownBeforeAnyRead(t *testing.T) {
 	defer func() { oauthProbe = orig }()
 	st := oauthStatus()
 	if st.connected || st.known {
-		t.Errorf("一度も読めていないなら unknown のはず: %+v", st)
+		t.Errorf("never having read it, this should be unknown: %+v", st)
 	}
 }

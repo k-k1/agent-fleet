@@ -144,8 +144,9 @@ func main() {
 	seedGitOAuthBridge()
 	// Make claude emit working/idle/question via hooks into the status files.
 	claude.EnsureStatusHooks()
-	// 持ち越し（docs/log/75）の寿命切れを落とす。ここでしか消えない — セッションが消えた後の
-	// 持ち越しを掃除する経路が他に無く、寿命の無い pending-* は実際に 5〜6 週間分たまっていた。
+	// Drop expired carried interactions (docs/log/75). This is the only place they are
+	// ever deleted — nothing else sweeps a carried interaction whose session is gone, and
+	// the lifetime-less pending-* files really did pile up five to six weeks deep.
 	if n := status.SweepCarried(); n > 0 {
 		log.Printf("carried-interaction: dropped %d expired entr(y|ies)", n)
 	}
@@ -175,49 +176,52 @@ func main() {
 	mcpx.StartTenantSync()
 	// Pull the role-scoped docs when the runtime mounted none (ECS — docs/build/04 §4.9).
 	// Backgrounded: it is a few hundred KB over the network and nothing at boot waits on
-	// it, but the Console's 利用ガイド and every agent's environment answers need it.
+	// it, but the Console's user guide and every agent's environment answers need it.
 	go syncWorkspaceDocs("agent boot")
 	startTerminalHistoryJanitor()
-	// managed driver（hook を持たない）の turn 完了を、hook 経路と同じ通知/報告
-	// （応答あり notice ＋ docs/log/30 のオペレーター報告）へ流す。driver は
-	// internal/agents 配下で package main を import できないため、判定の 1 実装を
-	// ここで seam に登録する。app-server 起動と reconcile より前に張ること。
+	// Route a managed driver's turn completion (it has no hooks) into the same
+	// notification/report path the hook route uses (the "answered" notice plus the
+	// docs/log/30 operator report). Drivers live under internal/agents and cannot import
+	// package main, so the single implementation of that decision is registered on the
+	// seam here. Must be installed before the app-server start and the reconcilers below.
 	agents.SetStateNotifier(sessionx.RecordSessionNotification)
-	// 完了報告の消費判定（docs/log/51 Phase 1 / ADR 0035）。フック・notify seam・
-	// record-exit の kick は起床ヒントでしかなく、「指示が完了したか」を決めるのは
-	// このリコンサイラの tick だけ。ヒントが死んでも次の tick が同じ状態をレベルで
-	// 見て拾うので、取りこぼしは報告の消失ではなく遅延に縮退する。
-	// docs/log/51 Phase 2: 旧 arm（1bit）で待っていた指示を台帳の行へ変換してから回す。
-	// リコンサイラより前に走らせること — 変換前の tick は「未報告の指示なし」を見る。
+	// The decision that an instruction's report has been consumed (docs/log/51 Phase 1 /
+	// ADR 0035). The hooks, the notify seam and record-exit's kick are wake-up hints only;
+	// whether an instruction is complete is decided by this reconciler's tick alone. A
+	// dead hint costs nothing because the next tick reads the same state by level, so a
+	// miss degrades into a late report rather than a lost one.
+	// docs/log/51 Phase 2: convert instructions still waiting on the old 1-bit arm into
+	// ledger rows first. Run before the reconciler — a tick before the conversion sees
+	// "no unreported instructions".
 	chatx.MigrateReportArms()
 	chatx.StartReportReconciler()
-	// ブラウザ attach ハンドオフの配送台帳（docs/log/53 完了通知節）: 前回起動時に
-	// resolveBrowserHandoff は済んだが deliverBrowserHandoff が完了する前に落ちた
-	// 分を拾い直す。busy/idle の settle 判定を持たないので上のリコンサイラとは
-	// 無関係に一度きりでよい。
+	// Delivery ledger for browser attach handoffs (docs/log/53, completion-notice section):
+	// pick up the ones where resolveBrowserHandoff finished last boot but
+	// deliverBrowserHandoff did not. It has no busy/idle settle decision, so unlike the
+	// reconciler above a single pass is enough.
 	browserx.SweepUndeliveredBrowserHandoffs()
-	// リポジトリ取り込みジョブ（docs/log/78）: 前回の clone / checkout は Agent ごと死ぬ
-	// （タスク入れ替え・idle-stop）。生き残った marker を「中断」として復元しないと、
-	// 半端な作業コピーだけが普通のリポジトリ顔で一覧に戻る。
+	// Repo import jobs (docs/log/78): a clone / checkout dies with the Agent (task
+	// replacement, idle-stop). Unless a surviving marker is restored as "interrupted", a
+	// half-made working copy comes back into the list looking like an ordinary repository.
 	sweepRepoJobMarkers()
-	// Codex sessions use a shared local app-server when available（P3 からは
-	// codex.Serve() の RuntimeSupervisor が daemon を所有する）。AF attaches
-	// a read-only observer per loaded thread: compaction state, rate limits, and
-	// the model-switch observation log (docs/log/27 P1).
-	// ここで daemon を起こすことはしない（docs/log/27 §7 補遺）: 需要——managed の
-	// Resume と TUI の起動——が起こし、需要ゼロが続けば畳む。張るのは継ぎ目と
-	// オブザーバだけ。
+	// Codex sessions use a shared local app-server when available (from P3 on, the
+	// RuntimeSupervisor in codex.Serve() owns the daemon). AF attaches a read-only
+	// observer per loaded thread: compaction state, rate limits, and the model-switch
+	// observation log (docs/log/27 P1).
+	// This does NOT wake the daemon (docs/log/27 §7 addendum): demand — a managed Resume
+	// or a TUI launch — wakes it, and it folds away once demand stays at zero. All that is
+	// installed here is the seam and the observer.
 	startCodexAppServer()
-	// managed セッション（docs/log/27 P2: opencode / P3: codex）を再接続する — Agent
-	// 再起動を挟んでも tmux の tui セッションが生き残るのと同じ体感にする（§6 の
-	// reconciliation）。runtime が必要なら Ensure が起こす。managed メタが無ければ
-	// 即 no-op。
+	// Reconnect managed sessions (docs/log/27 P2: opencode / P3: codex) so an Agent
+	// restart feels like the tmux tui sessions surviving one (§6, reconciliation). Ensure
+	// starts a runtime if one is needed; with no managed metadata this is an immediate
+	// no-op.
 	go opencode.ReconcileManaged("agent boot")
 	go codex.ReconcileManaged("agent boot")
 	go copilot.ReconcileManaged("agent boot")
 	go cursor.ReconcileManaged("agent boot")
 	go kiro.ReconcileManaged("agent boot")
-	// Assistant-conversation slugs (docs/log/38 アシスタント発火): stamp "a…" slugs onto
+	// Assistant-conversation slugs (docs/log/38 assistant triggering): stamp "a…" slugs onto
 	// conversations created before the field existed, so schedules/operator tools can
 	// address every conversation. One-time per store state; cheap when nothing to do.
 	go chatx.BackfillConvSlugs()
@@ -234,21 +238,23 @@ func main() {
 	// "origin advanced" without a manual fetch (fetch_loop.go).
 	startAutoFetch()
 
-	// エージェントメモリの自動 snapshot（docs/log/39 / ADR 0022 P1）: claude/codex の
-	// メモリ md を bare repo へ差分保存する。ポーリング契機（memory_trigger.go）で、
-	// 変更が静穏かつ対象セッションが非稼働のときだけ積む。AF_MEMORY_SNAPSHOT=off で無効。
+	// Automatic agent-memory snapshots (docs/log/39 / ADR 0022 P1): store claude's and
+	// codex's memory markdown into a bare repo as diffs. Driven by polling
+	// (memory_trigger.go), committing only when the changes have gone quiet and the
+	// session in question is not running. AF_MEMORY_SNAPSHOT=off disables it.
 	memoryx.StartMemorySnapshotLoop()
 
-	// 利用上限で止まった claude セッションの自動復帰（docs/log/47 §4-4）: メニューを既定の
-	// 「リセットまで待つ」で解除し、上限が解ける時刻に「続けて」を送る一回限りの
-	// スケジュールを CP へ預ける。誰も画面を見ていないときに効く必要があるので、
-	// 一覧ポーリングではなく専用のループで回す。
+	// Automatic recovery of a claude session stopped by a rate limit (docs/log/47 §4-4):
+	// dismiss the menu on its default ("wait for the reset") and hand the CP a one-shot
+	// schedule that sends "continue" when the limit lifts. It has to work while nobody is
+	// watching the screen, so it runs on its own loop rather than off the list polling.
 	sessionx.StartRateLimitWatch()
 
-	// 再送で直る中断（接続断・一時的なレート制限・ストリームの番犬）からの自動再開
-	// （docs/log/47 §4-6）: 転写の末尾が retryable な中断で終わっている claude セッションへ
-	// Agent 自身が「続けて」を送る。アシスタント会話を持たないセッションでも効き、
-	// 打ち切ったときだけ報告としてアシスタント／利用者へ上がる。
+	// Automatic resume from an abort that a retry fixes — a dropped connection, a
+	// transient rate limit, the stream watchdog (docs/log/47 §4-6): the Agent itself sends
+	// "continue" to a claude session whose transcript ends in a retryable abort. It works
+	// for sessions with no assistant conversation too, and only reaches the assistant or
+	// the user as a report when it gives up.
 	sessionx.StartAbortResumeWatch()
 
 	// Chat-bridge delivery loop (docs/log/37 P1): drains the on-disk queue that

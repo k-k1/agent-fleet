@@ -14,11 +14,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// claude jsonl transcript の読み出しと解析（docs/log/23 残① Wave F: 旧 package main
-// session_io.go の jsonl 読み出し + session_transcript.go の claude パーサ）。
-// /messages・/output の HTTP ハンドラ（ウィンドウ処理・ページング・internal/status
-// の pending 合成）は package main の session_transcript.go / session_io.go に残り、
-// ここの exported 関数を呼ぶ。共有の turn/part モデルは internal/transcript。
+// Reading and parsing the claude jsonl transcript (docs/log/23 remaining item 1, Wave F).
+// The HTTP handlers for /messages and /output — windowing, paging, and composing
+// internal/status' pending state — live in package main's session_transcript.go /
+// session_io.go and call the exported functions here. The shared turn/part model is
+// internal/transcript.
 
 // jsonlByMtime returns sid's conversation logs newest-first. claude can leave more
 // than one <sid>.jsonl under projects/* (a cwd change, a CLAUDE_CONFIG_DIR switch,
@@ -34,8 +34,8 @@ func jsonlByMtime(sid string) []string {
 	return paths
 }
 
-// jsonlMtime は package main の同名ヘルパの複製（極小 stat のため共有せず重複を
-// 許容 — main 側は generic /messages でも使う）。
+// jsonlMtime duplicates the same-named helper in package main. The duplication is deliberate:
+// it is a one-line stat, and main needs its own for the generic /messages path.
 func jsonlMtime(p string) time.Time {
 	fi, err := os.Stat(p)
 	if err != nil {
@@ -75,7 +75,7 @@ func TranscriptRead(sid string) (lines [][]byte, path string, matched []string) 
 
 // lastLineWhere returns the LAST line of p that ok accepts, scanning backwards. It reads
 // the tail window first and only falls back to the whole file when the window holds no
-// accepted line, so the polled callers (freshness / 中断検知) do not re-read a multi-MB
+// accepted line, so the polled callers (freshness / abort detection) do not re-read a multi-MB
 // transcript every tick just to look at its end.
 func lastLineWhere(p string, ok func([]byte) bool) ([]byte, bool) {
 	for _, lines := range tailThenWhole(p) {
@@ -137,8 +137,9 @@ func tailThenWhole(p string) [][][]byte {
 // /messages hands the client `len(lines)` as its cursor, the parser drops the unreadable
 // fragment, and every later window starts AFTER it — so that turn is never delivered
 // again and silently vanishes from the mirror (a lost user prompt then also leaves its
-// optimistic echo stuck at 「反映待ち」 forever). A complete line always ends in "\n", so
-// cut anything past the last one and let the next poll read the line once it's whole.
+// optimistic echo stuck at Pending (mirror.pending) forever). A complete line always ends
+// in "\n", so cut anything past the last one and let the next poll read the line once it is
+// whole.
 func readJSONLLines(p string) [][]byte {
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -238,7 +239,7 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 				a := answers[t.Parts[pi].QID]
 				t.Parts[pi].Answer = a.Text
 				if t.Parts[pi].Kind == "plan" {
-					t.Parts[pi].Answer = planAnswerHead(a.Text) // 承認結果に丸ごと載る計画本文は落とす
+					t.Parts[pi].Answer = planAnswerHead(a.Text) // drop the plan body the approval result repeats in full
 				}
 				if t.Parts[pi].Kind == "question" {
 					t.Parts[pi].Declined = a.Declined
@@ -264,27 +265,28 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 }
 
 // lineOrigin is claude's own `origin` object: who this line came from, when it did not
-// come from the keyboard. `kind:"peer"` は **claude 自身の cross-session チャネル**
-// （ListAgents / SendMessage、`/tmp/cc-socks/<pid>.sock`）で**隣のセッションが**この
-// セッションへ書き込んだ、という印（docs/log/58 §58.16）。
+// come from the keyboard. `kind:"peer"` marks a line another session wrote into this one over
+// claude's OWN cross-session channel (ListAgents / SendMessage, `/tmp/cc-socks/<pid>.sock`) —
+// docs/log/58 §58.16.
 //
-// この経路は AF の `send_to_peer_session` とは別物で、封筒も指示台帳も通らない。AF の
-// 設計上は塞ぐ判断だったが、**claude 2.1.251 では env の遮断を貫通して現に開いている**
-// （実測）。塞ぐ塞がないに関わらず、**開いている間に来たものは画面に出す**のがここの役目
-// — 出さないと「利用者もオペレーターも送っていない指示で相手が動いた」が無言で起きる。
+// That route is not AF's `send_to_peer_session`: it passes through neither the envelope nor the
+// instruction ledger. AF's design decision was to block it, but on claude 2.1.251 it punches
+// through the env blocking and is in fact open (measured). Blocked or not, the job here is to
+// SHOW whatever arrives while it is open — otherwise "the agent acted on an instruction neither
+// the user nor the operator sent" happens in silence.
 type lineOrigin struct {
 	Kind string `json:"kind"` // "peer" | "human" | ""
-	Name string `json:"name"` // 送信側の claude --name（＝AF のラベル）
-	Body string `json:"body"` // 送信側が書いた本文そのもの（ラッパ無し）
+	Name string `json:"name"` // the sender's claude --name (i.e. the AF label)
+	Body string `json:"body"` // exactly what the sender wrote, without the wrapper
 }
 
 // peer reports whether this line was written by another session.
 func (o lineOrigin) peer() bool { return o.Kind == "peer" }
 
-// text は画面に出す本文。`body` を優先するのは、行そのものには
-// `Another Claude session sent a message:\n<cross-session-message …>` という**配送の
-// 包装**が被っていて、それを人間に読ませる意味が無いため。body が無い版に当たったら
-// 包装ごと出す（何も出さないより桁違いにマシ）。
+// text is the body to display. `body` wins because the line itself is wrapped in delivery
+// packaging — `Another Claude session sent a message:\n<cross-session-message …>` — and there is
+// no point making a human read that. On a version that carries no body, show the packaging too:
+// far better than showing nothing.
 func (o lineOrigin) text(fallback string) string {
 	if b := strings.TrimSpace(o.Body); b != "" {
 		return b
@@ -292,10 +294,11 @@ func (o lineOrigin) text(fallback string) string {
 	return strings.TrimSpace(fallback)
 }
 
-// sender は peer バッジに出す送信者名。`origin.name` は送信側の `--name` ＝ AF のラベル
-// なので、そこからセッション名を読み戻せれば**それ**を出す（利用者が list や rail で
-// 突き合わせられる唯一の識別子）。読み戻せない（他所で起動した claude・旧ラベル）ときは
-// ラベルからタグだけ落として素で出す。"" のときは Console 側が「別のセッション」に落とす。
+// sender is the name shown on the peer badge. `origin.name` is the sender's `--name`, i.e. the
+// AF label, so when a session name can be read back out of it that is what goes on the badge —
+// the only identifier the user can match against the list or the rail. When it cannot be read
+// back (a claude started elsewhere, an old label), strip the tag off the label and show the rest.
+// On "" the Console falls back to its own "another session" wording.
 func (o lineOrigin) sender() string {
 	if n := session.LabelSessionName(o.Name); n != "" {
 		return n
@@ -313,7 +316,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		Timestamp string `json:"timestamp"`
 		// UUID is the line's own id in claude's uuid/parentUuid DAG. It is the fork
 		// anchor (docs/log/55): claude's own --fork-session rewrites only sessionId and
-		// leaves uuid/parentUuid untouched (実測), so a message keeps the same uuid
+		// leaves uuid/parentUuid untouched (measured), so a message keeps the same uuid
 		// across branches — it is a durable handle, unlike the line index.
 		UUID             string `json:"uuid"`
 		IsMeta           bool   `json:"isMeta"`
@@ -321,9 +324,9 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		IsCompactSummary bool   `json:"isCompactSummary"`
 		GitBranch        string `json:"gitBranch"`
 		Cwd              string `json:"cwd"`
-		// 合成 API エラーレコードの3点（errors.go）。abort.go が中断判定に使うのと
-		// 同じフィールドだが、あちらは「ターンが落ちて終わったか」、ここは「画面に
-		// どう出すか」— 用途が違うので読み手も別で持つ。
+		// The three fields of a synthesized API-error record (errors.go). abort.go reads the
+		// same fields for its abort decision, but it asks "did the turn die", while this asks
+		// "how is it rendered" — different questions, so each keeps its own reader.
 		IsAPIError     bool   `json:"isApiErrorMessage"`
 		APIErrorStatus int    `json:"apiErrorStatus"`
 		Error          string `json:"error"`
@@ -350,14 +353,15 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	if json.Unmarshal(line, &ev) != nil {
 		return transcript.Turn{}, false
 	}
-	// 隣のセッションからの着信（claude 自前の cross-session チャネル）。**相手が idle の
-	// ときはこの形**で、`type:"user"` + `isMeta:true` + `origin.kind:"peer"` として載る。
-	// isMeta の門より前で拾うこと — 後ろに置くと下の一行で落ちる。実際これが「送ったのに
-	// 届かない」の正体だった（CLI には届いていて、ミラーだけが捨てていた・docs/log/58 §58.16）。
+	// An incoming message from another session over claude's own cross-session channel. This is
+	// the shape it takes when the receiver is IDLE: `type:"user"` + `isMeta:true` +
+	// `origin.kind:"peer"`. It must be caught BEFORE the isMeta gate — placed after it, the line
+	// below drops it. That was the real cause of "sent but never arrived": the CLI had it and
+	// only the mirror threw it away (docs/log/58 §58.16).
 	//
-	// **AnchorID は付けない**（下の queued_command と同じ理由 + isMeta）。forkat.go の
-	// cutIndex は isMeta 行を明示的に拒むので、uuid を渡すと「ここから分岐」の導線が出て
-	// 必ず 400 になる。
+	// No AnchorID, for the same reason as queued_command below plus isMeta: forkat.go's cutIndex
+	// explicitly refuses isMeta lines, so handing it a uuid offers a "fork from here" affordance
+	// that always ends in 400.
 	peerTurn := func(o lineOrigin, txt string) (transcript.Turn, bool) {
 		if txt == "" {
 			return transcript.Turn{}, false
@@ -379,10 +383,11 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	// injects the queued text. Surface it as the user turn it is, or the mirror never
 	// shows mid-run prompts.
 	//
-	// Origin distinguishes WHO queued it. 人間の割り込みと、**相手が busy のときの peer
-	// 着信**（同じ queued_command に `origin.kind:"peer"` が付く）はここで合流する — 片方
-	// だけ通していたので、忙しい相手へ送ったメッセージが丸ごと画面から消えていた。
-	// 「まだ見たことが無い」は「起こらない」ではない、の実例（docs/log/58 §58.16）。
+	// Origin distinguishes WHO queued it. A human interruption and a peer message that arrived
+	// while the receiver was BUSY (the same queued_command, carrying `origin.kind:"peer"`) meet
+	// here. Only the first was let through, so a message sent to a busy session vanished from the
+	// screen entirely — a worked example of "never seen it" not meaning "cannot happen"
+	// (docs/log/58 §58.16).
 	if ev.Type == "attachment" {
 		a := ev.Attachment
 		txt := a.Origin.text(a.Prompt)
@@ -393,11 +398,12 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		if a.Origin.peer() {
 			return peerTurn(a.Origin, txt)
 		}
-		// AnchorID は**付けない**（docs/log/55）。この行は type:"attachment" で、分岐点の検査
-		// （forkat.go の cutIndex）は type:"user" の行しか受け付けないため、uuid を渡すと
-		// 「ここから分岐」の導線が出るのに必ず 400（エージェントの発言からは分岐できません）
-		// になる。割り込みはターンの途中（tool_use と tool_result の間）に注入されるので、
-		// その手前で切る分岐はそもそも成立しない — 導線を出さないのが正しい答え。
+		// No AnchorID (docs/log/55). This line is type:"attachment", and the fork-point check
+		// (forkat.go's cutIndex) accepts only type:"user" lines, so handing it a uuid offers a
+		// "fork from here" affordance that always ends in 400 ("cannot fork from an agent's
+		// message"). An interruption is injected mid-turn, between a tool_use and its
+		// tool_result, so a fork cutting just before it cannot exist in the first place — not
+		// offering the affordance is the right answer.
 		return transcript.Turn{
 			Role: "user", Parts: []transcript.Part{{Kind: "text", Text: txt}}, Text: txt,
 			Idx: idx, TS: ev.Timestamp, Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
@@ -409,10 +415,10 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	var parts []transcript.Part
 	var text string
 	if ev.Type == "assistant" && ev.IsAPIError {
-		// 失敗したターンは回答ではない。text part にすると普通の回答と同じ吹き出しで
-		// 出てしまうので、専用の error part にする（errors.go）。Text は他エージェント
-		// と同じ `[error] …` の平坦形 — コピー・get_session_output・チャットブリッジは
-		// これを読む。
+		// A failed turn is not an answer. As a text part it would render in the same bubble as a
+		// normal answer, so it becomes a dedicated error part (errors.go). Text stays the flat
+		// `[error] …` form the other agents use — copy, get_session_output and the chat bridge
+		// all read that.
 		e := apiError{msg: contentText(ev.Message.Content), kind: ev.Error, status: ev.APIErrorStatus}
 		parts, text = []transcript.Part{e.part()}, e.summary()
 	} else if ev.Type == "assistant" {
@@ -566,15 +572,15 @@ type InteractionAnswer struct {
 // an is_error tool_result. Matched on content (not is_error alone) because other tools
 // also return is_error for unrelated reasons.
 //
-// TWO wordings, and which one you get depends on HOW the modal was left (実測 2026-08-31):
+// TWO wordings, and which one you get depends on HOW the modal was left (measured 2026-08-31):
 //   - "(No answer provided)" — the "wants to clarify" template, per question. Leaving the
 //     modal itself ("Chat about this").
 //   - "The tool use was rejected" — the generic tool-rejection template, which is what the
-//     Console's キャンセル produces (it interrupts the turn, so claude reports the tool as
+//     Console's Cancel produces (it interrupts the turn, so claude reports the tool as
 //     rejected rather than the question as unanswered).
 //
 // Only the first was matched until now, so a question cancelled from the Console badged
-// 回答済み and printed that English boilerplate where the user's answer goes.
+// Answered (mirror.answered) and printed that English boilerplate where the user's answer goes.
 func isDeclinedAnswer(text string, isErr bool) bool {
 	return isErr && (strings.Contains(text, "(No answer provided)") ||
 		strings.Contains(text, "The tool use was rejected"))
@@ -686,8 +692,8 @@ func CollectInteractionAnswers(lines [][]byte) map[string]InteractionAnswer {
 							t = transcript.CapOutput(t)
 						}
 						if plan[b.ToolUseID] {
-							notePlanVerdict(b.ToolUseID, t) // ドリフトのカナリア（plan_verdict.go）
-							t = planAnswerHead(t)           // 承認結果に丸ごと載る計画本文は落とす
+							notePlanVerdict(b.ToolUseID, t) // drift canary (plan_verdict.go)
+							t = planAnswerHead(t)           // drop the plan body the approval result repeats in full
 						}
 						out[b.ToolUseID] = InteractionAnswer{
 							Text:     t,

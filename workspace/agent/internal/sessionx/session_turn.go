@@ -1,12 +1,12 @@
 package sessionx
 
-// docs/log/27 P1.5/P2: セッション操作の意味論エンドポイント。Console のチャット送信・追撃・
-// 中断を turn/start・turn/steer・turn/interrupt 相当の操作として受け、質問応答を
-// Interaction 応答（§5）として受ける。managed driver のセッションは driverOf →
-// ThreadHandle へ落ち（P2: opencode serve / P3: codex app-server）、tui（従来）の
-// セッションは既存の tmux 経路へ委譲する — Console はドライバの別を知らずに同じ
-// 呼び出しで済む。/input（生 keys/seq 駆動）は CLI ルートの TUI モーダル操作用に
-// 従来どおり残る（両者の役割分担: /turn = 意味論、/input = 生 TUI 駆動）。
+// Semantic endpoints for session operations (docs/log/27 P1.5/P2). The Console's chat
+// send / steer / interrupt arrive as turn/start, turn/steer and turn/interrupt, and answers
+// to questions arrive as Interaction replies (§5). A managed-driver session goes through
+// driverOf → ThreadHandle; a tui (legacy) session is delegated to the existing tmux path —
+// the Console makes the same call without knowing which driver it is talking to. /input
+// (raw keys/seq) stays for driving TUI modals on the CLI route: /turn is the semantic
+// interface, /input the raw one.
 
 import (
 	"encoding/json"
@@ -25,9 +25,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// managedDrivers is the kind → managed Driver registry（docs/log/27 §3）。P2 で opencode
-// が初出、P3 で codex が加わった。tui ドライバはここに載らない（ThreadHandle を実装
-// しない — /turn ハンドラが tmux 経路へ直接委譲する）。
+// managedDrivers is the kind → managed Driver registry (docs/log/27 §3). tui drivers are
+// deliberately absent: they implement no ThreadHandle, and the /turn handler delegates them
+// straight to the tmux path.
 var managedDrivers = map[string]agents.Driver{
 	session.KindOpencode: opencode.NewDriver(),
 	session.KindCodex:    codex.NewDriver(),
@@ -46,19 +46,20 @@ func driverOf(m session.Meta) (agents.Driver, bool) {
 type turnReq struct {
 	Op     string `json:"op"` // "start" | "steer" | "interrupt"
 	Prompt string `json:"prompt"`
-	// Attachments: この turn に添付するファイルの絶対パス（docs/log/27 §10）。managed
-	// driver だけが解釈する（TurnInput.Attachments → API 添付）。tui では Console が
-	// 従来どおりプロンプト本文へパスを織り込むため、ここでは受けるだけで使わない。
+	// Attachments holds absolute paths of files to attach to this turn (docs/log/27 §10).
+	// Only a managed driver interprets them (TurnInput.Attachments → API attachment); for tui
+	// the Console weaves the paths into the prompt body itself, so this is accepted and ignored.
 	Attachments []string `json:"attachments"`
-	// ClientMessageID: AF 採番の冪等キー（docs/log/27 §4）。managed driver の台帳が再送を
-	// 冪等化する。空なら driver が採番する。
+	// ClientMessageID is an AF-assigned idempotency key (docs/log/27 §4) that lets a managed
+	// driver's ledger dedupe resends. Empty means the driver assigns one.
 	ClientMessageID string `json:"clientMessageID"`
 }
 
 // HandleSessionTurn (POST /sessions/{name}/turn) applies a semantic turn operation
-// to a session. start と steer は tui では同じ type+submit に落ちる（実行中 turn への
-// 入力は TUI 自身がキューする）が、managed では ThreadHandle.Send / Steer に接続する
-// （opencode は driver 内キュー — 完走後に次 turn として投入）。
+// to a session. On tui, start and steer both collapse into the same type+submit (the TUI
+// itself queues input aimed at a running turn); on managed they reach ThreadHandle.Send and
+// Steer (opencode queues inside the driver and submits the steer as the next turn once the
+// current one finishes).
 func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -83,8 +84,8 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		handleManagedTurn(w, meta, req)
 		return
 	}
-	// tui ルート: 既存の tmux 経路へ委譲。ガード（not_running / no_pane /
-	// question_pending）は /input の {prompt} パスと同一に保つ。
+	// tui route: delegate to the existing tmux path. The guards (not_running / no_pane /
+	// question_pending) must stay identical to those on /input's {prompt} path.
 	tn := session.TmuxName(name)
 	if !tmuxx.HasSession(tn) {
 		httpx.WriteErr(w, http.StatusConflict, "not_running", "session is not running; start it first")
@@ -96,8 +97,8 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Op == "interrupt" {
-		// チャットの停止ボタン。opencode のサブエージェント詳細ビューでは Escape が
-		// ナビゲーションに化けるので、/input の Escape 特例と同じく Up を前置する。
+		// The chat stop button. In opencode's subagent detail view Escape turns into a
+		// navigation key, so prefix Up as /input's Escape special case does.
 		keys := []string{"Escape"}
 		if opencodeInSubagentView(tn) {
 			keys = []string{"Up", "Escape"}
@@ -106,14 +107,14 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
 		}
-		// Escape は turn を始めないので working は付けない（/input と同じ理由 —
-		// Stop hook が発火せず 進行中 に張り付く）。
+		// Escape starts no turn, so do not mark working (same reason as /input: no Stop
+		// hook fires and the session would stick at "working").
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name, "op": req.Op})
 		return
 	}
-	// start / steer — ガード（question_pending / slash は working を付けない）ごと
-	// /input の {prompt} パスと同じ配送（submitPromptTUI）に落とす。steer もモーダルが
-	// 出ている限り同じ経路で誤答するので、ガードは共通で正しい。
+	// start / steer go through the same delivery as /input's {prompt} path (submitPromptTUI),
+	// guards included (question_pending, and slash commands do not mark working). A steer
+	// misanswers an open modal by the same route, so sharing the guards is correct.
 	if strings.TrimSpace(req.Prompt) == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt is required for start/steer")
 		return
@@ -124,9 +125,9 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name, "op": req.Op})
 }
 
-// handleManagedTurn routes a turn op to the session's ThreadHandle（docs/log/27 P2）。
-// Resume は冪等（生きた handle があればそれを返す）なので毎回呼んでよく、halted →
-// 送信 の流れでも runtime が立ち上がる。
+// handleManagedTurn routes a turn op to the session's ThreadHandle (docs/log/27 P2).
+// Resume is idempotent — it returns the live handle if there is one — so calling it every
+// time is safe, and it also brings the runtime back up on a halted → send sequence.
 func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 	d, ok := driverOf(meta)
 	if !ok {
@@ -158,8 +159,9 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 		}
 		if err != nil {
 			if errors.Is(err, agents.ErrQuestionPending) {
-				// tui の submitPromptTUI と同じワイヤ契約（Console はこの code で
-				// 楽観 echo を取り消し質問カードへ誘導する）— sentinel は driver 共通。
+				// Same wire contract as tui's submitPromptTUI: the Console uses this code
+				// to undo the optimistic echo and steer the user to the question card.
+				// The sentinel is shared across drivers.
 				httpx.WriteErr(w, http.StatusConflict, "question_pending",
 					"a question is awaiting an answer; answer it via the question card, not free text")
 				return
@@ -167,16 +169,18 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 			writeRuntimeErr(w, err)
 			return
 		}
-		// 楽観 working は tui と同じ動機（送信直後のポーリングが古い idle を読まない）。
+		// The optimistic working mark has the same motive as on tui: a poll right after the
+		// send must not read a stale idle.
 		markSessionWorking(meta.Name)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name, "op": req.Op})
 }
 
 // HandleSessionRespond (POST /sessions/{name}/respond) answers a pending
-// Interaction（docs/log/27 §5 — 承認/質問の一般形）by id. managed driver 専用の意味論
-// 経路で、tui セッションの質問応答は従来どおり /input の keys/seq（Console が TUI
-// モーダルをナビゲーションで駆動する）— TUI モーダルには「id で答える」口がない。
+// Interaction by id (docs/log/27 §5 — the general form of approvals and questions). This
+// semantic route is for managed drivers only: a tui session's question is still answered
+// through /input keys/seq, with the Console navigating the TUI modal, because a TUI modal
+// offers no way to answer by id.
 func HandleSessionRespond(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -223,14 +227,15 @@ func HandleSessionRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "respond_failed", err.Error())
 		return
 	}
-	// 回答は turn を続行させる — 楽観 working は tui の keys 送信（Enter）と同じ動機。
+	// An answer resumes the turn, so mark working optimistically for the same reason tui does
+	// after sending Enter.
 	markSessionWorking(name)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"responded": name, "id": reply.ID})
 }
 
-// settingsReq is the wire body of POST /sessions/{name}/settings — ThreadSettings
-// の動的更新（docs/log/27 §9.4-3、managed 専用）。空フィールドは「変更しない」。tui の
-// モード切替は従来どおり /input のキー（planCycleKey）で行う。
+// settingsReq is the wire body of POST /sessions/{name}/settings — a dynamic ThreadSettings
+// update (docs/log/27 §9.4-3, managed only). An empty field means "leave unchanged". Mode
+// switching on tui still goes through an /input key (planCycleKey).
 type settingsReq struct {
 	Model       string `json:"model"`
 	Effort      string `json:"effort"`
@@ -282,8 +287,8 @@ func HandleSessionSettingsGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleSessionSettings (POST /sessions/{name}/settings) updates a managed
-// session's dynamic thread settings（稼働中セッションのモデル/effort/モード変更 —
-// managed で初めて可能になる純粋な改善、§9.4-3）。
+// session's dynamic thread settings: changing model, effort or mode on a running session,
+// which managed drivers make possible for the first time (§9.4-3).
 func HandleSessionSettings(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -313,9 +318,9 @@ func HandleSessionSettings(w http.ResponseWriter, r *http.Request) {
 			"tui セッションの設定はターミナル（/input のキー操作）で切り替えます")
 		return
 	}
-	// 稼働中セッションのモデル変更も起動と同じ扱いで断る（model_deny.go）。既に走って
-	// いるセッションの現行モデルは触らない — 除外設定は「これから選ぶ」を止めるもので、
-	// 進行中の作業を巻き戻すものではない。
+	// A model change on a running session is refused exactly as launch is (model_deny.go).
+	// The session's current model is left alone: the hidden-model setting stops a model from
+	// being chosen from now on, it does not roll back work already under way.
 	if ModelHidden(meta.Kind, req.Model) {
 		httpx.WriteErr(w, http.StatusBadRequest, "model_hidden", hiddenModelError(strings.TrimSpace(req.Model)))
 		return
@@ -362,16 +367,16 @@ func HandleSessionSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// managedThreadSettingsWire — GET /sessions/{name}/settings のレスポンス
-// （Console の `ManagedThreadSettings`、console/src/core/api/client.ts）。
+// managedThreadSettingsWire is the response of GET /sessions/{name}/settings (the Console's
+// `ManagedThreadSettings`, console/src/core/api/client.ts).
 //
 // was: map[string]any{"model":…, "effort":…, "mode":…, "dynamicModel":…,
 //
 //	"dynamicEffort":…, "dynamicMode":…}
 //
-// 6 キーとも無条件なので **omitempty は付けない**。model/effort/mode は空文字を
-// 取りうる（未設定＝CLI の既定に従う）ので、omitempty を付けるとキーごと消えて
-// Console の「未設定」表示が変わる。
+// All six keys are unconditional, so none of them may take omitempty. model, effort and
+// mode can legitimately be empty (unset = follow the CLI default), and omitempty would drop
+// the key entirely, changing how the Console shows "unset".
 type managedThreadSettingsWire struct {
 	Model         string `json:"model"`
 	Effort        string `json:"effort"`

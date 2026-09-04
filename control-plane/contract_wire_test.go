@@ -564,15 +564,16 @@ func splitJSONName(tag string) string {
 // page is of a piece with the check: split off, it is orphaned by a move, and its ownership
 // unit differs from `console/src/types/*`.
 const tsProbeFixture = `
-// ① 1 行 1 フィールド（Session が実際にこの形。ここだけ通っても意味がない）
+// (1) One field per line (the real Session looks like this; passing only here proves nothing)
 export interface OnePerLine {
   a1: string;
   a2?: number;
   a3: boolean;
 }
 
-// ② 一部の行だけ複数キー。🔴 これが最も危ない —— 行単位の走査は b11 を落とすが、
-// 総数は 10 を超えるので「フィールドが少なすぎる」Fatal に落ちず、黙って穴が開く。
+// (2) A few lines carry more than one key. This is the dangerous one: a line-based scan
+// drops b11, yet the total still exceeds 10, so the "too few fields" Fatal never fires and
+// the hole opens silently.
 export interface Mixed {
   b01: string;
   b02: string;
@@ -586,31 +587,33 @@ export interface Mixed {
   b10: string; b11?: number;
 }
 
-// ③ 入れ子の 1 行オブジェクト。🔴 行を「;」で割る直し方をすると、
-// nested の中の name / display をこの型の直下のキーとして数えてしまう（測定器で実際に踏んだ）。
+// (3) A nested one-line object. Splitting lines on ";" to fix (2) makes name / display
+// inside nested count as keys directly under this type (measured: the scanner did exactly
+// that).
 export interface Nested {
   n1: string;
   n2?: { name: string; display?: string }[];
   n3: boolean;
 }
 
-// ④ コメント・文字列リテラルに 「:」「;」「{」「}」が入る形（深さと文頭の判定を狂わせにくる）
+// (4) Comments and string literals containing : ; { } — these throw off both the depth and
+// the start-of-statement decisions
 export interface Tricky {
-  // これはコメント: セミコロン; と波括弧 { } を含む
+  // a comment: it contains a semicolon; and braces { }
   t1: "a;b" | "c:{d}" | string;
-  /* ブロックコメント: t9: string; ← これは拾ってはいけない */
+  /* block comment: t9: string; <- this must NOT be picked up */
   t2?: string;
   t3: string;
 }
 
-// ⑤-a type 別名（interface と同じだけ普通に使われる。UptimePoint が実際にこの形）
+// (5a) A type alias (as common as an interface; the real UptimePoint looks like this)
 export type AliasShape = {
   al1: string;
   al2?: number;
   al3: boolean;
 };
 
-// ⑤ 名前が前方一致する別の型（Session と SessionContextUsage の関係）
+// (5) A different type whose name is a prefix of another (Session vs SessionContextUsage)
 export interface Pre {
   p1: string;
   p2: string;

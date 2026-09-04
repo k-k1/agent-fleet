@@ -1,13 +1,13 @@
 package main
 
-// 利用上限メニュー（claude の /rate-limit-options）に貼り付いたセッションが
-// 「進行中」ではなく blocked として読まれること — 実ペインを隔離 tmux サーバに立てて
-// driveState をそのまま走らせる（docs/log/47 §4-3）。
+// A session stuck on the rate-limit menu (claude's /rate-limit-options) must read as blocked
+// rather than "in progress" — a real pane is raised on an isolated tmux server and driveState
+// runs against it unchanged (docs/log/47 §4-3).
 //
-// 判定そのもの（フレーム → 真偽）は internal/tmuxx のゴールデンコーパスが押さえている。
-// ここで見るのは配線の側: capture → 分類 → 自己修復 → 返す状態、という経路が claude の
-// 実メタに対して繋がっていること。壊れた本番の形は「マーカーが working のまま永久に
-// 残る」だったので、マーカー側も併せて確認する。
+// The decision itself (frame → boolean) is pinned by internal/tmuxx's golden corpus. What is
+// checked here is the wiring: that capture → classify → self-heal → returned state hangs
+// together against claude's real meta. The production breakage was "the marker stays working
+// forever", so the marker is checked alongside.
 
 import (
 	"fmt"
@@ -58,17 +58,18 @@ func paneShowing(t *testing.T, name, frame string) session.Meta {
 	return m
 }
 
-// tmuxSocketSeq は隔離 tmux サーバに**毎回違う名前**を与える連番。
+// tmuxSocketSeq is the serial number that gives each isolated tmux server a different name.
 var tmuxSocketSeq atomic.Int64
 
-// isolatedTmuxSocket は**誰とも共有しない** tmux ソケット名を返す。
+// isolatedTmuxSocket returns a tmux socket name shared with nobody.
 //
-// 🔥 隔離ソケットの名前を固定すると、`kill-server` を撃つテストどうしが競る（理由は
-// isolateAgentState の注記）。名前の作り方をここ 1 箇所に置いているのは、**同じ規則を
-// 2 度書くと片方だけ古くなる**から —— 実際 `shutdown_isolation_test.go` が同じ名前を
-// 独自に組み立てていて、そこだけ直っていなかった（#311 では所有権の外だった）。
+// A fixed name for the isolated socket makes the tests that fire `kill-server` race each other
+// (the reason is in isolateAgentState's note). The rule for building the name lives in this
+// one place because writing the same rule twice leaves one copy stale — and it did:
+// `shutdown_isolation_test.go` assembles the same name itself and was never fixed.
 //
-// この関数がこのファイルに居るのは所有権の都合で、意味の上では tmux 隔離の共有部品である。
+// This function sits in this file for ownership reasons; in meaning it is a shared piece of
+// the tmux isolation.
 func isolatedTmuxSocket() string {
 	return fmt.Sprintf("af-test-%d-%d", os.Getpid(), tmuxSocketSeq.Add(1))
 }
@@ -101,35 +102,35 @@ func isolateAgentState(t *testing.T) {
 	t.Cleanup(func() { _ = tmuxx.Cmd("kill-server").Run() })
 }
 
-// TestDriveStateRateLimitModalBlocks: 上限メニューのペインは blocked を返し、貼り付きの
-// 原因だった working マーカーが解消されること。
+// TestDriveStateRateLimitModalBlocks: a pane on the rate-limit menu returns blocked, and the
+// working marker that caused the stall is cleared.
 func TestDriveStateRateLimitModalBlocks(t *testing.T) {
 	isolateAgentState(t)
 	m := paneShowing(t, "ratelimit1", "internal/tmuxx/testdata/footers/modal_rate_limit.txt")
 	sid := session.UUID(m.Dir, m.Name)
-	// 本番と同じ初期条件: ターンは開始済み（working）で Stop は鳴っていない。
+	// The same starting point as production: the turn has begun (working) and no Stop fired.
 	status.Persist(sid, "working")
 
 	if got := sessionx.DriveState(m, true, true); got != agents.StateBlocked {
-		t.Fatalf("driveState = %q, want %q（上限メニューは 進行中 ではない）", got, agents.StateBlocked)
+		t.Fatalf("driveState = %q, want %q (the rate-limit menu is not in progress)", got, agents.StateBlocked)
 	}
-	// 自己修復が通っていること。ここが効かないのが元のバグで、マーカーが working のまま
-	// 残ると reaper が busy と数え続けコンテナが解放されない。
+	// Self-heal must have run. Its not running was the original bug: a marker left at working
+	// keeps the reaper counting the session as busy and the container is never released.
 	if st, ok := status.Read(sid); ok && st.State == "working" {
-		t.Error("status marker はまだ working — 自己修復が走っていない（元の貼り付きと同じ状態）")
+		t.Error("status marker is still working — self-heal did not run (the original stall, unchanged)")
 	}
-	// メニューが出ている間は何度 poll しても blocked のまま（状態が振動しない）。
+	// While the menu is up, any number of polls stay blocked (the state does not oscillate).
 	if got := sessionx.DriveState(m, true, true); got != agents.StateBlocked {
-		t.Errorf("2 回目の driveState = %q, want %q", got, agents.StateBlocked)
+		t.Errorf("second driveState = %q, want %q", got, agents.StateBlocked)
 	}
 }
 
-// TestDriveStateIdlePaneNotBlocked: 通常の待機ペインを blocked と誤判定しないこと。
-// 誤検知側は「走っているセッションを停止扱いにして注入を弾く」ので、こちらも固定する。
+// TestDriveStateIdlePaneNotBlocked: an ordinary idle pane must not be misread as blocked. A
+// false positive treats a running session as stopped and rejects injection, so it is pinned too.
 func TestDriveStateIdlePaneNotBlocked(t *testing.T) {
 	isolateAgentState(t)
 	m := paneShowing(t, "ratelimit2", "internal/tmuxx/testdata/footers/idle_bypass_hint.txt")
 	if got := sessionx.DriveState(m, true, true); got == agents.StateBlocked {
-		t.Fatalf("driveState = %q — 通常の待機ペインを上限メニューと誤判定している", got)
+		t.Fatalf("driveState = %q — an ordinary idle pane is being read as the rate-limit menu", got)
 	}
 }

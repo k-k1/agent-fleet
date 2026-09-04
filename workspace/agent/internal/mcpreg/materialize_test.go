@@ -1,9 +1,9 @@
 package mcpreg
 
-// docs/log/48 §13「materialize の非破壊性」: 利用者手書きの設定に対して書き→消しを
-// 往復させ、**手書き分が残り af 分だけ消える**ことを固定する。ここが崩れると
-// 「af が MCP を登録したら claude の trust ダイアログが飛んだ / codex の config が
-// 読めなくなった」という、機能そのものより重い壊れ方をする。
+// docs/log/48 §13, "materialize is non-destructive": write then remove, round trip, against a
+// hand-written user config, and pin that the hand-written part survives while only af's part
+// goes. Broken, this produces failures heavier than the feature itself — "af registered an MCP
+// server and claude's trust dialog was gone" / "codex can no longer read its config".
 
 import (
 	"encoding/json"
@@ -61,8 +61,8 @@ func readFile(t *testing.T, path string) string {
 func TestMaterializeClaudeKeepsUserState(t *testing.T) {
 	withTempCLIHomes(t)
 	path := claudeJSONPath()
-	// claude 自身が書く状態（オンボーディング済み・trust 済み）と、利用者が
-	// `claude mcp add` で入れた自前サーバー。
+	// State claude writes itself (onboarding done, trust granted), plus a server the user added
+	// with `claude mcp add`.
 	writeFile(t, path, `{
   "hasCompletedOnboarding": true,
   "projects": {"/home/dev/repos/x": {"hasTrustDialogAccepted": true}},
@@ -88,34 +88,35 @@ func TestMaterializeClaudeKeepsUserState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if v, _ := root["hasCompletedOnboarding"].(bool); !v {
-		t.Fatal("claude 自身の状態が消えた（オンボーディングやり直しになる）")
+		t.Fatal("claude's own state was wiped (onboarding would start over)")
 	}
 	if root["projects"] == nil {
-		t.Fatal("trust 済みプロジェクトが消えた")
+		t.Fatal("the trusted projects were wiped")
 	}
 	srv, _ := root["mcpServers"].(map[string]any)
 	for _, want := range []string{"mine", "wiki", "tickets"} {
 		if srv[want] == nil {
-			t.Fatalf("mcpServers に %q が無い: %v", want, srv)
+			t.Fatalf("mcpServers has no %q: %v", want, srv)
 		}
 	}
 	if got := srv["tickets"].(map[string]any)["headers"].(map[string]any)["Authorization"]; got != "Bearer t" {
-		t.Fatalf("リモートのヘッダが materialize されていない: %v", got)
+		t.Fatalf("the remote server's header was not materialized: %v", got)
 	}
 
-	// 2 回目は何も変わらない（claude が絶えず書き換えるファイルなので、無駄な書き戻しを
-	// させない = 並走する claude の書き込みを踏み潰す窓を広げない）。
+	// The second run changes nothing. claude rewrites this file constantly, so a pointless
+	// write-back is avoided: it would widen the window in which a concurrent claude write is
+	// stamped over.
 	if _, _, changed, err := materializeClaude(defs, written); err != nil || changed {
-		t.Fatalf("2 回目 = changed %v, err %v（冪等でない）", changed, err)
+		t.Fatalf("second run = changed %v, err %v (not idempotent)", changed, err)
 	}
 
-	// レジストリから全部消す: af が書いた 2 件だけが消え、利用者の "mine" は残る。
+	// Remove everything from the registry: only the 2 rows af wrote go, the user's "mine" stays.
 	_, removed, changed, err = materializeClaude(nil, written)
 	if err != nil || !changed {
-		t.Fatalf("削除 materialize = %v, changed=%v", err, changed)
+		t.Fatalf("removing materialize = %v, changed=%v", err, changed)
 	}
 	if len(removed) != 2 {
-		t.Fatalf("removed=%v, want 2 件", removed)
+		t.Fatalf("removed=%v, want 2 rows", removed)
 	}
 	root = map[string]any{}
 	if err := json.Unmarshal([]byte(readFile(t, path)), &root); err != nil {
@@ -123,7 +124,7 @@ func TestMaterializeClaudeKeepsUserState(t *testing.T) {
 	}
 	srv, _ = root["mcpServers"].(map[string]any)
 	if len(srv) != 1 || srv["mine"] == nil {
-		t.Fatalf("利用者の手書き分が巻き添えになった: %v", srv)
+		t.Fatalf("the user's hand-written rows were taken down with it: %v", srv)
 	}
 }
 
@@ -144,7 +145,7 @@ func TestMaterializeClaudeNoKeyWhenEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := root["mcpServers"]; ok {
-		t.Fatalf("空の mcpServers を残してしまった: %v", root)
+		t.Fatalf("an empty mcpServers was left behind: %v", root)
 	}
 }
 
@@ -156,10 +157,10 @@ func TestMaterializeClaudeRefusesUnparseable(t *testing.T) {
 
 	def := sessionDef(ServerDef{Name: "wiki", Origin: OriginUser, Transport: TransportStdio, Command: "x"})
 	if _, _, _, err := materializeClaude([]ServerDef{def}, nil); err == nil {
-		t.Fatal("壊れた .claude.json を黙って上書きした")
+		t.Fatal("a corrupt .claude.json was silently overwritten")
 	}
 	if got := readFile(t, path); got != broken {
-		t.Fatalf("拒否したのにファイルを触った: %q", got)
+		t.Fatalf("the write was refused, yet the file was touched: %q", got)
 	}
 }
 
@@ -174,7 +175,7 @@ func TestMaterializeClaudeCreatesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	if fi.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %v, want 0600（秘密が入るファイル）", fi.Mode().Perm())
+		t.Fatalf("mode = %v, want 0600 (this file holds secrets)", fi.Mode().Perm())
 	}
 }
 
@@ -222,21 +223,21 @@ func TestMaterializeCodexRoundTrip(t *testing.T) {
 		`TOKEN = "s3cret"`,
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("生成に %q が無い:\n%s", want, got)
+			t.Fatalf("the generated config has no %q:\n%s", want, got)
 		}
 	}
 
-	// 冪等: 同じ定義でもう一度書いても内容が動かない。
+	// Idempotent: writing the same definitions again does not move the contents.
 	if _, _, changed, err := materializeCodex(defs, written); err != nil || changed {
-		t.Fatalf("2 回目 = changed %v, err %v（冪等でない）", changed, err)
+		t.Fatalf("second run = changed %v, err %v (not idempotent)", changed, err)
 	}
 
-	// 全部消すと、**元のファイルに 1 バイト残らず戻る**。
+	// Removing everything restores the original file down to the last byte.
 	if _, _, _, err := materializeCodex(nil, written); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, path); got != codexUserConfig {
-		t.Fatalf("往復で元に戻らない:\n--- got\n%s\n--- want\n%s", got, codexUserConfig)
+		t.Fatalf("the round trip did not restore the original:\n--- got\n%s\n--- want\n%s", got, codexUserConfig)
 	}
 }
 
@@ -255,16 +256,16 @@ func TestMaterializeCodexBuiltinAFForwardsAgentAuth(t *testing.T) {
 	}
 	got := readFile(t, codexConfigPath())
 	if want := `env_vars = ["AF_SESSION_NAME","AGENT_ADDR","AGENT_TOKEN"]`; !strings.Contains(got, want) {
-		t.Fatalf("af の Agent 認証環境が Codex MCP 子プロセスへ転送されない:\n%s", got)
+		t.Fatalf("af's Agent auth environment is not forwarded to the Codex MCP child:\n%s", got)
 	}
 	if strings.Contains(got, "AF_SECRET_KEY") {
-		t.Fatalf("af session tools に不要な秘密ストア鍵を転送している:\n%s", got)
+		t.Fatalf("the secret-store key is forwarded although af session tools do not need it:\n%s", got)
 	}
 }
 
-// TestMaterializeCodexReplacesSameName は、同名の既存テーブルを必ず 1 つに畳むこと。
-// TOML は重複テーブルをエラーにするので、ここを外すと config.toml 全体が読めなくなる
-// （MCP が 1 本増えないどころか、codex が起動しなくなる）。
+// TestMaterializeCodexReplacesSameName: an existing table of the same name is always folded
+// into one. TOML makes a duplicate table an error, so missing this leaves the whole config.toml
+// unreadable — not just one MCP server missing, but codex failing to start at all.
 func TestMaterializeCodexReplacesSameName(t *testing.T) {
 	withTempCLIHomes(t)
 	path := codexConfigPath()
@@ -276,10 +277,10 @@ func TestMaterializeCodexReplacesSameName(t *testing.T) {
 	}
 	got := readFile(t, path)
 	if n := strings.Count(got, "[mcp_servers.wiki]"); n != 1 {
-		t.Fatalf("[mcp_servers.wiki] が %d 個（TOML の重複テーブル）:\n%s", n, got)
+		t.Fatalf("%d occurrences of [mcp_servers.wiki] (a duplicate TOML table):\n%s", n, got)
 	}
 	if strings.Contains(got, "/old/wiki") {
-		t.Fatalf("古い定義が残った:\n%s", got)
+		t.Fatalf("the old definition survived:\n%s", got)
 	}
 }
 
@@ -290,9 +291,10 @@ func TestMaterializeCodexQuotesOddHeaderKey(t *testing.T) {
 	if _, _, _, err := materializeCodex([]ServerDef{def}, nil); err != nil {
 		t.Fatal(err)
 	}
-	// クオートしないと `X.Odd` がドット記法で入れ子テーブルになり、別のヘッダになる。
+	// Unquoted, `X.Odd` becomes a nested table through the dot notation and turns into a
+	// different header.
 	if got := readFile(t, codexConfigPath()); !strings.Contains(got, `"X.Odd" = "v"`) {
-		t.Fatalf("ヘッダ名がクオートされていない:\n%s", got)
+		t.Fatalf("the header name was not quoted:\n%s", got)
 	}
 }
 
@@ -300,16 +302,16 @@ func TestStripCodexServersLeavesOtherTables(t *testing.T) {
 	src := "[mcp_servers.a]\ncommand = \"a\"\n\n[[profiles]]\nname = \"p\"\n\n[mcp_servers.b]\ncommand = \"b\"\n"
 	got := stripCodexServers(src, func(n string) bool { return n == "a" })
 	if strings.Contains(got, "[mcp_servers.a]") {
-		t.Fatalf("a が消えていない:\n%s", got)
+		t.Fatalf("a was not removed:\n%s", got)
 	}
 	for _, want := range []string{"[[profiles]]", `name = "p"`, "[mcp_servers.b]"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("%q を巻き添えで消した:\n%s", want, got)
+			t.Fatalf("%q was removed as collateral:\n%s", want, got)
 		}
 	}
 }
 
-// --- ディスパッチと台帳 --------------------------------------------------------
+// --- dispatch and the ledger --------------------------------------------------
 
 func TestMaterializeUsesSessionTargetAndKind(t *testing.T) {
 	withTempCLIHomes(t)
@@ -332,8 +334,8 @@ func TestMaterializeUsesSessionTargetAndKind(t *testing.T) {
 	if res.Err != "" {
 		t.Fatalf("claude: %s", res.Err)
 	}
-	// af は自己申告ファストパスの組み込みサーバー（docs/log/51 Phase 3）で、接続不要・全 kind
-	// 配布なので、どの kind の materialize にも必ず入る。
+	// af is the built-in server on the self-report fast path (docs/log/51 Phase 3): it needs no
+	// connection and is distributed to every kind, so it is in every kind's materialize.
 	if !reflect.DeepEqual(res.Written, []string{"af", "both"}) {
 		t.Fatalf("claude written = %v, want [af both]", res.Written)
 	}
@@ -345,24 +347,24 @@ func TestMaterializeUsesSessionTargetAndKind(t *testing.T) {
 		t.Fatalf("codex written = %v, want [af both codexonly]", res.Written)
 	}
 
-	// 台帳が kind 別に記録されていること（削除を許すのはこの一覧だけ）。
+	// The ledger records per kind (this list is the only thing removal is allowed to touch).
 	m, err := loadManagedNames()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(m.Kinds[session.KindClaude], []string{"af", "both"}) ||
 		!reflect.DeepEqual(m.Kinds[session.KindCodex], []string{"af", "both", "codexonly"}) {
-		t.Fatalf("台帳が不正: %+v", m.Kinds)
+		t.Fatalf("wrong ledger: %+v", m.Kinds)
 	}
 }
 
-// TestMaterializeSkipsKindsWithoutCLI: エージェント CLI を持たない kind（shell / ssm）は
-// 書く先が無い。エラーではなく Skipped で戻ること。
+// TestMaterializeSkipsKindsWithoutCLI: a kind with no agent CLI (shell / ssm) has nowhere to
+// write, and must come back Skipped rather than as an error.
 func TestMaterializeSkipsKindsWithoutCLI(t *testing.T) {
 	withTempCLIHomes(t)
 	for _, k := range []string{"shell", "ssm"} {
 		if res := Materialize(k); !res.Skipped || res.Err != "" {
-			t.Fatalf("%s = %+v, want skipped（書く先が無いのは失敗ではない）", k, res)
+			t.Fatalf("%s = %+v, want skipped (having nowhere to write is not a failure)", k, res)
 		}
 	}
 }
@@ -371,7 +373,7 @@ func TestMaterializeAllCoversImplementedKinds(t *testing.T) {
 	withTempCLIHomes(t)
 	res := MaterializeAll()
 	if len(res) != len(MaterializedKinds) {
-		t.Fatalf("MaterializeAll = %d 件, want %d", len(res), len(MaterializedKinds))
+		t.Fatalf("MaterializeAll = %d results, want %d", len(res), len(MaterializedKinds))
 	}
 	for _, r := range res {
 		if r.Err != "" || r.Skipped {
@@ -380,12 +382,12 @@ func TestMaterializeAllCoversImplementedKinds(t *testing.T) {
 	}
 }
 
-// TestMaterializeRefusesCorruptLedger: 台帳が壊れたら「af は何も所有していない」と
-// 解釈して既存行を孤児化するのではなく、書き込みごと止める。
+// TestMaterializeRefusesCorruptLedger: a corrupt ledger must stop the write entirely, rather
+// than being read as "af owns nothing" and orphaning the existing rows.
 func TestMaterializeRefusesCorruptLedger(t *testing.T) {
 	withTempCLIHomes(t)
 	writeFile(t, managedNamesPath(), "not json")
 	if res := Materialize(session.KindClaude); res.Err == "" {
-		t.Fatalf("壊れた台帳で materialize を続行した: %+v", res)
+		t.Fatalf("materialize carried on with a corrupt ledger: %+v", res)
 	}
 }

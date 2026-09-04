@@ -1,26 +1,28 @@
 //go:build driftlive
 
-// codex CLI ドリフト検知（Tier 2 / **実ターンを消費する**）。build tag `driftlive` で
-// 通常の `go test ./...` からも Tier 1（tag `drift`）からも隔離され、CI では
-// workflow_dispatch の live 入力を立てた時だけ走る（codex-contract.yml の live-drift）。
+// codex CLI drift detection (Tier 2, and it SPENDS REAL TURNS). The `driftlive` build tag
+// keeps this out of a plain `go test ./...` and out of Tier 1 (tag `drift`); in CI it runs
+// only when workflow_dispatch's live input is set (live-drift in codex-contract.yml).
 //
-// Tier 1（drift_test.go）は API 到達前で完結する範囲＝無料・無認証を扱う。ここは
-// 「実際に1ターン回さないと観測できない」4点だけを担当する:
-//  1. Stop hook → status="idle"（TUI/CLI ルートの完了シグナル）
-//  2. rollout の task_started / task_complete（Stop hook 取りこぼし時の自己修復の素）
-//  3. request_user_input の function_call（質問あり状態）— **best-effort**
-//  4. managed の turn/started・turn/completed（status working→idle を駆動）
+// Tier 1 (drift_test.go) covers what can be settled before reaching the API — free and
+// unauthenticated. This file owns only the four things that cannot be observed without
+// actually running a turn:
+//  1. Stop hook -> status="idle" (the completion signal of the TUI/CLI route)
+//  2. rollout task_started / task_complete (what self-healing uses when a Stop hook is lost)
+//  3. the request_user_input function_call (the 質問あり state) — best-effort
+//  4. managed turn/started and turn/completed (they drive status working -> idle)
 //
-// 実測コスト（"reply with exactly: pong" の1ターン）: **約 5k〜15k tokens とブレる**
-// （scratch dir で 5,288 / このテストの隔離 HOME で 15,196 を実測）。差は codex 自身が
-// 積む文脈（AGENTS.md・環境情報等）由来で、我々の制御外。全ケースで概ね 30〜60k
-// tokens を見込む。auth_mode="chatgpt" ならサブスク枠の消費（API 課金ではない）。
-// 各ターンの実コストは `MEASURED COST:` 行としてジョブログに出る。
+// Measured cost of one turn ("reply with exactly: pong"): roughly 5k-15k tokens, and it
+// varies (5,288 in a scratch dir, 15,196 in this test's isolated HOME). The difference comes
+// from the context codex itself accumulates (AGENTS.md, environment info) and is outside our
+// control. Budget around 30-60k tokens for all the cases. With auth_mode="chatgpt" this
+// spends the subscription allowance rather than API billing. Each turn's real cost is written
+// to the job log as a `MEASURED COST:` line.
 //
-// 設計方針は Tier 1 と同じ: **期待値を手で書き写さない**。hook の入れ子・-c フラグ・
-// feature 名は buildProgram() の出力から取り、状態は本番の status ストア／
-// latestRolloutLifecycle／PendingQuestionID／managed driver そのもので確認する。
-// そうしないと「テスト同士が一致するだけ」になり、ドリフト検知にならない。
+// Same design rule as Tier 1: never transcribe an expected value by hand. Hook nesting, -c
+// flags and feature names come from buildProgram()'s output, and state is read through
+// production's own status store, latestRolloutLifecycle, PendingQuestionID and managed
+// driver. Otherwise the tests merely agree with each other and detect no drift at all.
 package codex
 
 import (
@@ -41,25 +43,27 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
-// ---- 認証（失効時に「何が起きたか」が一目で分かることを最優先） -------------------
+// ---- Credentials (above all: when they expire, what happened must be obvious) ----------
 //
-// CI: secrets.E2E_CODEX_AUTH_JSON（`codex login` 後の ~/.codex/auth.json の中身）を
-// 隔離 HOME へ書く。chatgpt モードのトークンは refresh_token 前提なので、CI に置いた
-// コピーはいずれ失効する（サーバ側ローテーションで古い refresh_token が無効化される）。
-// 失効を「謎の 401」で終わらせないよう、(a) ターン前に `codex login status` で
-// トークンフリーに検査し、(b) ターン中の 401 も文面で分類して、対処（再 login →
-// secret 更新）まで書いたメッセージで落とす。
+// CI: secrets.E2E_CODEX_AUTH_JSON (the contents of ~/.codex/auth.json after `codex login`)
+// is written into the isolated HOME. A chatgpt-mode token depends on its refresh_token, so
+// the copy parked in CI eventually goes stale — server-side rotation invalidates the old
+// refresh_token. So that expiry never surfaces as a mystery 401, (a) a token-free
+// `codex login status` check runs before the turn and (b) a 401 during the turn is
+// classified from its text, failing with a message that spells out the fix (log in again,
+// then update the secret).
 //
-// 手元: E2E_CODEX_LOCAL_AUTH=1 で隔離 HOME の .codex を実 ~/.codex へ symlink する。
-// **実 auth.json をコピーしない**のは意図的で、コピー先で refresh が走ると
-// refresh_token がローテートし、**実フリートのログインが巻き添えで無効化されうる**
-// ため（実測: last_refresh は数日前＝次の利用で refresh が走る状態だった）。symlink
-// なら通常のセッションと同じ経路で in-place に更新され、乖離が起きない。
+// Locally: E2E_CODEX_LOCAL_AUTH=1 symlinks the isolated HOME's .codex to the real ~/.codex.
+// Not copying the real auth.json is deliberate: a refresh inside the copy rotates the
+// refresh_token and can invalidate the real fleet's login as collateral damage (measured:
+// last_refresh was days old, i.e. the next use would have refreshed). A symlink is updated
+// in place through the same path an ordinary session uses, so the two never diverge.
 //
-// ただし symlink の副作用として、ensureFolderTrusted が実 ~/.codex/config.toml へ
-// テスト用 temp dir の `[projects."/tmp/TestLiveDrift…"]` を追記する（rollout も実
-// ~/.codex/sessions に残る）。実害は無いが溜まるので、手元で回した後は掃除してよい。
-// CI 経路（E2E_CODEX_AUTH_JSON）は HOME ごと隔離されるのでこの副作用は無い。
+// The symlink has one side effect: ensureFolderTrusted appends the test temp dir's
+// `[projects."/tmp/TestLiveDrift…"]` entry to the real ~/.codex/config.toml, and rollouts
+// stay in the real ~/.codex/sessions. Harmless, but it piles up, so clean it out after a
+// local run if you like. The CI path (E2E_CODEX_AUTH_JSON) isolates the whole HOME and has
+// no such side effect.
 const (
 	authJSONEnv  = "E2E_CODEX_AUTH_JSON"
 	localAuthEnv = "E2E_CODEX_LOCAL_AUTH"
@@ -161,7 +165,7 @@ func failAuthAware(t *testing.T, what string, err error, out string) {
 	t.Fatalf("%s failed: %v\n%s", what, err, out)
 }
 
-// ---- 共通ヘルパ -----------------------------------------------------------------
+// ---- shared helpers -------------------------------------------------------------
 
 // hookExeRe matches the leaf command's exe path in a production hook override so the
 // live tests can point it at a freshly built agent binary while keeping the argv shape
@@ -357,7 +361,7 @@ func TestLiveDriftCodexStopHookAndRollout(t *testing.T) {
 	t.Logf("ok: Stop hook -> idle, rollout task_complete at %s", at.Format(time.RFC3339))
 }
 
-// ---- 3: request_user_input（best-effort） -----------------------------------------
+// ---- 3: request_user_input (best-effort) -----------------------------------------
 
 // TestLiveDriftCodexPendingQuestion checks the question path end to end: the model must
 // actually call request_user_input, which is **not deterministic** — so a model that
@@ -455,7 +459,7 @@ func lastLines(s string, n int) string {
 	return strings.Join(ln, "\n")
 }
 
-// ---- 4: managed turn/started・turn/completed ---------------------------------------
+// ---- 4: managed turn/started, turn/completed ---------------------------------------
 
 // TestLiveDriftCodexManagedTurnNotifications drives the REAL managed driver (supervisor
 // -> app-server -> thread/start -> turn/start) and asserts the status transitions that
@@ -488,10 +492,10 @@ func TestLiveDriftCodexManagedTurnNotifications(t *testing.T) {
 		failAuthAware(t, "managed Resume (thread/start)", err, err.Error())
 	}
 
-	// The docs/log/30 報告 seam: main wires recordSessionNotification here, and a managed
+	// The docs/log/30 report seam: main wires recordSessionNotification here, and a managed
 	// turn's completion is what consumes the arm. Capture it from the real
 	// turn/completed rather than a mock, so a codex rename that stops driving the
-	// transition also surfaces as "報告が飛ばなくなった".
+	// transition also surfaces as "reports stopped arriving".
 	notified := make(chan [2]string, 8)
 	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
 		notified <- [2]string{previous, state}
@@ -552,9 +556,9 @@ func TestLiveDriftCodexManagedTurnNotifications(t *testing.T) {
 		st, _ := status.Read(slot)
 		t.Fatalf("status = %+v after completion, want idle — turn/completed no longer persists idle", st)
 	}
-	// 完了が報告 seam へ届いたか（docs/log/30 — managed は hook を持たないので、ここが
-	// 切れると完了しても【セッション報告】が一切飛ばない）。
-	// 通知は非同期（readLoop を塞がないため）なので待って拾う。
+	// Did the completion reach the report seam? managed has no hooks, so once this breaks a
+	// finished turn sends no session report at all (docs/log/30). The notification is
+	// asynchronous, so that it never blocks readLoop, hence the wait here.
 	var reported bool
 	for wait := time.After(10 * time.Second); !reported; {
 		select {
@@ -566,16 +570,17 @@ func TestLiveDriftCodexManagedTurnNotifications(t *testing.T) {
 	}
 checked:
 	if !reported {
-		t.Error("完了が状態通知 seam に届かなかった: managed セッションの turn/completed が " +
-			"agents.MarkTurnEnd を通っていない — オペレーターへの完了報告(docs/log/30)が飛ばない")
+		t.Error("the completion never reached the state-notification seam: a managed session's " +
+			"turn/completed is not going through agents.MarkTurnEnd — the completion report to the " +
+			"operator (docs/log/30) is never sent")
 	} else {
-		t.Log("ok: turn/completed -> 報告 seam (recordSessionNotification) へ通知")
+		t.Log("ok: turn/completed -> notified the report seam (recordSessionNotification)")
 	}
 	logTurnCost(t, "managed", sids.Read(slot))
 	t.Log("ok: turn/completed -> status idle + TurnCompleted event")
 }
 
-// ---- 5: 発言時点からの分岐（docs/log/55）— lastTurnId が包含であること ------------------
+// ---- 5: forking at a past message (docs/log/55) — lastTurnId is inclusive ---------------
 
 // TestLiveDriftCodexForkAtLastTurn is the one claim about codex that only a real run can
 // settle: `thread/fork`'s lastTurnId is **inclusive**, so branching "before the user's Nth

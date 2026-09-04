@@ -1,22 +1,26 @@
 package chatx
 
-// セッション報告の**表示テキストと指示テキストの分離**（docs/log/28 P6・docs/log/30）。
+// Separating a session report's DISPLAY text from its INSTRUCTION text (docs/log/28 P6,
+// docs/log/30).
 //
-// 報告カードには読み手が 2 人いる。利用者（Console のカードを読む）と、オペレーター
-// アシスタント（同じ本文がプロンプトとして渡る）。従来はこの 2 つが 1 本の日本語文字列で、
-// 「訳すとオペレーターへの指示文まで変わってしまう」ため i18n の対象外に置かれていた
-// （docs/log/28 §4）。ここで両者を分ける:
+// A report card has two readers: the user, who reads the card in the Console, and the operator
+// assistant, which gets the same body as a prompt. The two used to be one Japanese string, and
+// translating it would have rewritten the operator's marching orders as well, so the string was
+// kept out of i18n altogether (docs/log/28 §4). Here they are split:
 //
-//	表示 = 事実だけ（「応答が完了し、入力待ちになりました」）。カタログキー＋引数で保存し、
-//	       Console が表示言語で描画する（notice と同じ ADR 0033 の流儀）。
-//	指示 = 事実＋オペレーターへの行動指示。**保存せず**、プロンプトを組む瞬間に表示言語で
-//	       生成する（reportPromptFor）。保存すると言語が固定され、分離した意味がなくなる。
+//	display = facts only ("the session answered and is now waiting for input"). Stored as a
+//	          catalogue key plus arguments and drawn by the Console in the display language
+//	          (the same style as notice, ADR 0033).
+//	orders  = the facts plus what the operator should do. NOT stored: generated in the display
+//	          language at the moment the prompt is assembled (ReportPromptFor). Storing it would
+//	          freeze the language and there would be nothing left of the split.
 //
-// 分けたことで、カードから「get_session_output で確認して…」というモデル向けの指示が
-// 消える。これは副作用ではなく改善で、利用者はそもそもその文を実行しない。
+// The split also takes the model-facing instructions ("check with get_session_output and …")
+// off the card. That is an improvement rather than a side effect: the user was never going to
+// carry those out.
 //
-// 事実（fact）と指示（orders）を別関数にしてあるのは、表示が事実の**部分集合**である
-// ことをコードの形で保証するため（片方だけ直して食い違うのを防ぐ）。
+// fact and orders are separate functions so that the code itself guarantees the display is a
+// SUBSET of the facts (fixing one and letting the two drift apart is the failure mode).
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -25,7 +29,7 @@ import (
 	"time"
 )
 
-// 報告カードの表示カタログキー（Console の ja/en カタログと 1 対 1）。
+// Display catalogue keys for the report card (one-to-one with the Console's ja/en catalogues).
 const (
 	reportKeyAnswerReady       = "chat.report.answer_ready"
 	reportKeyTurnFailed        = "chat.report.turn_failed"
@@ -40,9 +44,9 @@ const (
 	reportKeyUnknown           = "chat.report.unknown"
 )
 
-// reportView is one report's event plus the arguments both renderers read. 引数を
-// map[string]string にしてあるのは、そのまま NoticeArgs として保存され Console の
-// カタログ描画へ渡るため（表示とプロンプトが同じ材料を見ることが分離の前提）。
+// reportView is one report's event plus the arguments both renderers read. The arguments are a
+// map[string]string because they are stored as NoticeArgs unchanged and handed to the Console's
+// catalogue rendering (display and prompt reading the same material is what the split rests on).
 type reportView struct {
 	kind   string
 	reason string
@@ -55,14 +59,15 @@ func reportViewOf(m ChatMessage) reportView {
 
 func (v reportView) arg(k string) string { return v.args[k] }
 
-// resumeCapped: 自動再開の上限に達したか。attempts は「この報告を配ったあとの値」。
+// resumeCapped reports whether the automatic-resume cap has been reached. attempts is the
+// value as of AFTER this report was delivered.
 func (v reportView) resumeCapped() bool {
 	n, _ := strconv.Atoi(v.arg("attempts"))
 	return n > MaxAutoResumeAttempts
 }
 
-// reportDisplayKey は表示カタログキー。exit の理由ラベルや訂正の対象時刻のような可変部は
-// 引数（NoticeArgs）で渡す。
+// displayKey is the display catalogue key. The variable parts — an exit's reason label, the
+// timestamp a correction targets — travel as arguments (NoticeArgs).
 func (v reportView) displayKey() string {
 	switch v.kind {
 	case ReportKindAnswerReady:
@@ -93,8 +98,8 @@ func (v reportView) displayKey() string {
 	return reportKeyUnknown
 }
 
-// exitLabelFor renders an abnormal exit's reason. 未知の理由は生の値をそのまま出す
-// （新しい理由コードが増えたときに空欄になるより、生でも見えている方がよい）。
+// exitLabelFor renders an abnormal exit's reason. An unknown reason is printed raw: when a new
+// reason code appears, seeing the raw value beats seeing a blank.
 func exitLabelFor(reason, lang string) string {
 	if lang == "en" {
 		switch reason {
@@ -118,9 +123,10 @@ func exitLabelFor(reason, lang string) string {
 	return reason
 }
 
-// reportFact は「何が起きたか」だけの一文。表示カードの本文であり、プロンプトの冒頭でもある。
-// カタログの ja 文言と**同じ文**であること（Content は表示のフォールバックなので、食い違うと
-// 旧レコードだけ別の文が出る）。
+// fact is the one sentence saying only what happened. It is the body of the display card and
+// also the opening of the prompt. It must be the SAME sentence as the catalogue's ja text
+// (Content is the display fallback, so a mismatch makes old records alone show another
+// sentence).
 func (v reportView) fact(lang string) string {
 	en := lang == "en"
 	switch v.displayKey() {
@@ -192,10 +198,12 @@ func (v reportView) fact(lang string) string {
 	return "応答が完了し、入力待ちになりました。"
 }
 
-// reportOrders はオペレーターへの行動指示。**表示には出さない**（利用者が実行する文ではない）
-// ので、保存もしない — プロンプトを組む瞬間に表示言語で生成する。
-// 自動走行・自動再開のトグルは配信時ではなく**この瞬間**に読む: 指示は「今どう動くべきか」で、
-// 保留のまま設定が変わったなら新しい設定に従うのが正しい。
+// orders is what the operator should do. It never reaches the display (it is not a sentence the
+// user carries out) and so is not stored either — it is generated in the display language at the
+// moment the prompt is assembled.
+// The autopilot and auto-resume toggles are read HERE, not at delivery time: orders say how to
+// act now, so if the setting changed while the report was pending, the new setting is the right
+// one to follow.
 func (v reportView) orders(lang string) string {
 	en := lang == "en"
 	switch v.displayKey() {
@@ -215,9 +223,10 @@ func (v reportView) orders(lang string) string {
 		return "これ以上は自動で再開せず、中断が繰り返されている事実と get_session_output で見た直前の出力を利用者に伝えて、" +
 			"対処（モデル変更・接続設定の見直し・作業の分割など）を相談してください。"
 	case reportKeyTurnAborted:
-		// 送信文の言語はセッション側に合わせる（表示言語ではない）。日本語で作業している
-		// セッションへ英語を送ると、以降そのセッションの出力言語まで反転してしまい、
-		// セッション単位の言語フィールドは存在しないので取り返しがつかない。
+		// The message's language follows the SESSION, not the display language. Sending
+		// English to a session that has been working in Japanese flips that session's own
+		// output language from then on, and there is no per-session language field with
+		// which to put it back.
 		if !uiprefs.ChatAutoResume() {
 			if en {
 				return "[Automatic resume on abort is OFF] Tell the user that the turn was cut off and summarize the last output, " +
@@ -247,7 +256,7 @@ func (v reportView) orders(lang string) string {
 			"ただし、破壊的・不可逆な操作（削除・強制 push・外部送信・コスト増等）の途中で落ちたと読み取れる場合は" +
 			"自動で再開せず、利用者に確認してください。"
 	case reportKeyQuestion:
-		// 自動走行 (opt-in): the interim report itself carries the mode's marching
+		// Autopilot (opt-in): the interim report itself carries the mode's marching
 		// orders, so the operator needs no separate state — OFF asks the user first,
 		// ON answers with the SESSION'S recommendation under explicit guardrails.
 		if uiprefs.ChatAutoPilot() {
@@ -276,7 +285,7 @@ func (v reportView) orders(lang string) string {
 			"（利用者が事前に判断を任せている場合のみ自分で選択可。Console からも回答できます）。" +
 			"これは途中経過の報告で、指示の完了報告は別途届きます。"
 	case reportKeyPlanApproval:
-		// 自動走行: drive the plan through review → feedback → approval (the user's
+		// Autopilot: drive the plan through review → feedback → approval (the user's
 		// standing delegation is the mode toggle itself); OFF relays to the user.
 		if uiprefs.ChatAutoPilot() {
 			if en {
@@ -316,8 +325,9 @@ func (v reportView) orders(lang string) string {
 		return "この指示については自動の完了報告を待たず、get_session_status / get_session_output で現在の状態を確認したうえで、" +
 			"判定が安定しない事実とセッションの現況を利用者に伝えてください。"
 	case reportKeyReopened:
-		// 補償（docs/log/51 §補償）。オペレーターは既に「完了した」と利用者へ伝えている
-		// 可能性が高いので、まず取り消しを求め、次の完了報告を待つよう指示する。
+		// Compensation (docs/log/51 §compensation). The operator has most likely already
+		// told the user it was done, so ask for that to be taken back first and to wait
+		// for the next completion report.
 		if en {
 			return "If you already told the user it was done, take that back and tell them it is still in progress. " +
 				"Send no further instruction and wait for this instruction's completion report to arrive again " +
@@ -332,15 +342,17 @@ func (v reportView) orders(lang string) string {
 		}
 		return "必要なら状況を利用者に伝え、再開/再指示を検討してください。"
 	}
-	return "" // answer-ready（正常）と permission-request は事実だけで指示は要らない
+	return "" // answer-ready (the normal case) and permission-request need facts only, no orders
 }
 
-// --- 付記（表示・プロンプトの両方に出る事実） -------------------------------------
+// --- Notes (facts that appear in both the display and the prompt) ----------------
 //
-// 付記は「本文の後ろに足す 1 文」で、出るかどうかは引数の有無で決まる（Console 側も同じ
-// 判定で並べる）。ここに置くのは事実の部分だけで、オペレーターへの指示は prompt 側に足す。
+// A note is one sentence appended after the body, and whether it appears is decided by the
+// presence of its argument (the Console lines them up on the same test). Only the factual half
+// belongs here; the operator's orders are appended on the prompt side.
 
-// rateLimitResumeFact は利用上限で止まり自動再開が予約済みであることの一文（docs/log/47 §4-4）。
+// rateLimitResumeFact is the sentence saying it stopped on the usage limit and an automatic
+// resume is already booked (docs/log/47 §4-4).
 func rateLimitResumeFact(atMs int64, lang string) string {
 	at := time.UnixMilli(atMs).Local()
 	if lang == "en" {
@@ -358,7 +370,8 @@ func rateLimitResumeOrders(lang string) string {
 	return "再開を促す送信はせず、上限で止まったことと再開予定時刻を利用者に伝えてください。"
 }
 
-// foldFact は「この報告が指示 N 件ぶんの完了である」ことの一文（docs/log/51 §畳み込み）。
+// foldFact is the sentence saying this one report is the completion of N instructions
+// (docs/log/51 §folding).
 func foldFact(n int, ats, lang string) string {
 	if lang == "en" {
 		return "(This report is the completion of " + strconv.Itoa(n) + " instructions. Dispatched: " + ats + ")"
@@ -366,7 +379,8 @@ func foldFact(n int, ats, lang string) string {
 	return "（この報告は指示 " + strconv.Itoa(n) + " 件ぶんの完了です。投入: " + ats + "）"
 }
 
-// reopenTargetFact は訂正の対象がどの報告かの一文（docs/log/51 §補償）。
+// reopenTargetFact is the sentence naming which report a correction targets
+// (docs/log/51 §compensation).
 func reopenTargetFact(atMs int64, lang string) string {
 	at := time.UnixMilli(atMs).Local().Format("2006-01-02 15:04")
 	if lang == "en" {
@@ -394,9 +408,9 @@ func argMs(s string) int64 {
 	return n
 }
 
-// --- 2 人の読み手それぞれの本文 ---------------------------------------------------
+// --- The body each of the two readers gets ---------------------------------------
 
-// reportHeadline は「セッション「x」(s7) からの報告: 」の前置き。表示・プロンプト共通。
+// reportHeadline is the "Report from session x (s7): " preamble, common to display and prompt.
 func reportHeadline(display, name, lang string) string {
 	if lang == "en" {
 		return "Report from session \"" + display + "\" (" + name + "): "
@@ -404,15 +418,17 @@ func reportHeadline(display, name, lang string) string {
 	return "セッション「" + display + "」(" + name + ") からの報告: "
 }
 
-// reportDisplayText は報告カードの本文（事実だけ）。保存する Content はこの ja 版で、
-// 表示は Console がカタログキー（displayKey）＋引数から描き直す（ADR 0033）。
+// displayText is the report card's body (facts only). The stored Content is this ja version;
+// what is shown is redrawn by the Console from the catalogue key (displayKey) plus the
+// arguments (ADR 0033).
 func (v reportView) displayText(lang string) string {
 	return reportHeadline(v.arg("display"), v.arg("name"), lang) + v.fact(lang) + v.notesFact(lang)
 }
 
 // reportHeadFor is the event line an operator reads: fact + marching orders, without the
-// 「セッション「x」からの報告:」headline and without the notes. 1 つの kind/reason の文言を
-// まとめて見たいところ（テストと、報告以外から文面を借りたいとき）の入口。
+// "Report from session x:" headline and without the notes. The way in for anywhere that wants
+// one kind/reason's wording as a whole (tests, and callers borrowing the text from outside the
+// report path).
 func reportHeadFor(kind, reason string, resumeAttempts int, lang string) string {
 	v := reportView{kind: kind, reason: reason, args: map[string]string{
 		"attempts": strconv.Itoa(resumeAttempts),
@@ -420,9 +436,9 @@ func reportHeadFor(kind, reason string, resumeAttempts int, lang string) string 
 	return v.fact(lang) + v.orders(lang)
 }
 
-// reportPromptFor は provider へ渡す本文（事実＋オペレーターへの指示）。保存しない。
-// P6 より前に書かれた報告（ReportKind が無い）は Content をそのまま使う — 当時の本文は
-// 指示込みで書かれているので、それが正しい振る舞い。
+// ReportPromptFor is the body handed to the provider (facts plus the operator's orders). Not
+// stored. A report written before P6 (no ReportKind) uses Content as it stands — bodies from
+// that era were written with the orders baked in, so that is the correct behaviour.
 func ReportPromptFor(m ChatMessage, lang string) string {
 	if m.ReportKind == "" {
 		return m.Content

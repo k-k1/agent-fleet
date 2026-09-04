@@ -23,10 +23,10 @@ import (
 // 全角英数記号（（）：　）。英語 prompt にこれらが現れたら混入。
 var japaneseRanges = []*unicode.RangeTable{
 	{R16: []unicode.Range16{
-		{Lo: 0x3000, Hi: 0x303F, Stride: 1}, // 、。「」『』（）〜 など CJK 記号・句読点
-		{Lo: 0x3040, Hi: 0x30FF, Stride: 1}, // ひらがな・カタカナ・ー・・
-		{Lo: 0x4E00, Hi: 0x9FFF, Stride: 1}, // CJK 統合漢字
-		{Lo: 0xFF01, Hi: 0xFF60, Stride: 1}, // 全角英数・記号
+		{Lo: 0x3000, Hi: 0x303F, Stride: 1}, // CJK symbols and punctuation
+		{Lo: 0x3040, Hi: 0x30FF, Stride: 1}, // hiragana and katakana
+		{Lo: 0x4E00, Hi: 0x9FFF, Stride: 1}, // CJK unified ideographs
+		{Lo: 0xFF01, Hi: 0xFF60, Stride: 1}, // fullwidth alphanumerics and symbols
 	}},
 }
 

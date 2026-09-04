@@ -1,18 +1,18 @@
 package cursor
 
-// Claude Code 互換 JSONL → transcript.Turn 正規化（read 正本、docs/log/40）。実測
-// （v2026.07.20）の行形式:
+// Normalization of the Claude Code-compatible JSONL into transcript.Turn (the read path's
+// source of truth, docs/log/40). Measured line shapes (v2026.07.20):
 //
 //	{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>…</timestamp>\n<user_query>\n…\n</user_query>"}]}}
 //	{"role":"assistant","message":{"content":[{"type":"text","text":"…"},{"type":"tool_use","name":"Shell","input":{"command":"…","description":"…"}}]}}
 //	{"type":"turn_ended","status":"success"}
 //
-// claude パーサは流用できない（uuid/timestamp 無し・独自エンベロープ）が専用は容易。
-// tool_result はこの JSONL に載らない（ツール出力は store.db のみ — docs/log/40）ので
-// ミラーはツール名/引数まで、出力は空。1 assistant ターンは複数行に跨り得る
-// （tool_use 行＋最終テキスト行）ので、user 行か turn_ended で flush する。
-// Turn.Idx は行番号由来の単調増加（Console の pendingEcho/MirrorView は idx 単調
-// 前提 — agy 7354916 の教訓）。
+// The claude parser cannot be reused (no uuid/timestamp, own envelope), but a dedicated one
+// is easy. tool_result never appears in this JSONL (tool output lives only in store.db —
+// docs/log/40), so the mirror gets the tool name and arguments but no output. One assistant
+// turn can span several lines (tool_use lines plus a final text line), so flush on a user
+// line or on turn_ended. Turn.Idx increases monotonically from the line number, which the
+// Console's pendingEcho/MirrorView requires (the agy 7354916 lesson).
 
 import (
 	"bufio"
@@ -27,35 +27,37 @@ import (
 )
 
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
-	// managed（ACP）: ローカル転写が無いので driver がメモリ構築したものを返す（driver.go
-	// managedTranscript）。停止中で handle が無ければ空ミラー（resume で session/load
-	// リプレイが再構築する）。
+	// managed (ACP): there is no local transcript, so return the one the driver built in
+	// memory (driver.go managedTranscript). A stopped session has no handle and hence an
+	// empty mirror — resume rebuilds it from the session/load replay.
 	if m.DriverKind() == session.DriverManaged {
 		return managedTranscript(m), true
 	}
 	chatID := ChatID(m)
 	if chatID == "" {
-		return agents.TranscriptData{}, true // まだ会話なし（起動前）— 空ミラー
+		return agents.TranscriptData{}, true // no conversation yet (before launch) — empty mirror
 	}
 	path := transcriptPath(m.Dir, chatID)
 	td := agents.TranscriptData{Path: path, Turns: parseTranscript(path)}
-	// TUI/-p はモデルを転写に書かない（docs/log/40 §モデル表示）ので、起動モデル（セッション
-	// 固定）を各 assistant ターンにスタンプしてミラーのモデルバッジに出す。未選択＝Auto。
+	// TUI/-p write no model into the transcript (docs/log/40 §model display), so stamp the
+	// launch model (fixed per session) onto every assistant turn for the mirror's model
+	// badge. Nothing selected = Auto.
 	stampModel(td.Turns, displayModel(m.Model))
 	return td, true
 }
 
-// displayModel normalizes a cursor model id for the mirror's per-response badge:
-// ACP の bracket パラメータ（`claude-opus-4-8[thinking=true,context=300k,effort=high]`）を
-// 剥がして素の id にし、Auto 系（空文字列 /`auto`/`default[]`）は "Auto" に寄せる。ピッカーの
-// dash 形式（`composer-2.5` 等）はそのまま。cursor は**セッションでモデル固定**（per-session
-// child・DynamicModel:false）なので、全 assistant ターンに同じ値が載る（docs/log/40 §モデル表示）。
-// 注意: これは**設定モデル**であって、Auto が各ターンで実際に解決した具体モデルではない
-// （公式経路に解決先が出ない — docs/log/40）。
+// displayModel normalizes a cursor model id for the mirror's per-response badge: it strips
+// ACP's bracket parameters (`claude-opus-4-8[thinking=true,context=300k,effort=high]`) down
+// to the bare id and folds the Auto family (empty string / `auto` / `default[]`) into
+// "Auto". The picker's dash form (`composer-2.5` and friends) is left alone. cursor pins the
+// model per session (per-session child, DynamicModel:false), so every assistant turn carries
+// the same value (docs/log/40 §model display). Note that this is the CONFIGURED model, not
+// the concrete model Auto resolved to on each turn — no official path exposes that
+// (docs/log/40).
 func displayModel(id string) string {
 	id = strings.TrimSpace(id)
 	if i := strings.IndexByte(id, '['); i >= 0 {
-		id = strings.TrimSpace(id[:i]) // ACP の [params] を剥がす
+		id = strings.TrimSpace(id[:i]) // strip ACP's [params]
 	}
 	switch strings.ToLower(id) {
 	case "", "auto", "default":
@@ -65,8 +67,8 @@ func displayModel(id string) string {
 }
 
 // stampModel labels every assistant turn with the session's (fixed) model so the
-// mirror renders a per-response model badge（MirrorView の turn.model 経路）。既に
-// 値があるターンは尊重する（将来の per-turn 情報源に備えて上書きしない）。
+// mirror renders a per-response model badge (MirrorView's turn.model path). A turn that
+// already carries a value is left alone, in case a per-turn source appears later.
 func stampModel(turns []transcript.Turn, model string) {
 	if model == "" {
 		return
@@ -236,17 +238,18 @@ func parseTranscript(path string) []transcript.Turn {
 	return turns
 }
 
-// ── 編集の抽出（docs/log/68）────────────────────────────────────────────────────────
+// ── Extracting edits (docs/log/68) ─────────────────────────────────────────────────
 //
-// 経路が 2 つあり、手掛かりが違う:
-//   jsonl（TUI / -p）  … tool 名しか無い → toolEdits が名前の allowlist で判定する
-//   ACP（managed）     … プロトコル自身が `kind` で分類している → 名前を見ない
-// 共通なのは入力の形だけなので、before/after の取り出し（editsFromInput）を分けてある。
+// There are two paths, with different clues:
+//   jsonl (TUI / -p)  … only the tool name is available → toolEdits decides by a name allowlist
+//   ACP (managed)     … the protocol itself classifies with `kind` → the name is not consulted
+// Only the input shape is common to both, so pulling out before/after (editsFromInput) is
+// kept separate.
 
 // editInput is the union of the field spellings an edit-family call has been seen to use.
-// 実測（transcript jsonl, 2026-08）: `Write` は {"path","contents"}。他は同じ語彙群だが
-// 実呼び出しを観測できていないので、claude 綴り（old_string/new_string）と copilot 綴り
-// （old_str/new_str）の両方を受ける。
+// Measured (transcript jsonl, 2026-08): `Write` uses {"path","contents"}. The others share
+// the same vocabulary but no real call has been observed, so both the claude spelling
+// (old_string/new_string) and the copilot spelling (old_str/new_str) are accepted.
 type editInput struct {
 	Path       string `json:"path"`
 	FilePath   string `json:"file_path"`
@@ -317,9 +320,10 @@ func editsFromInput(raw json.RawMessage) (string, []transcript.Edit) {
 // toolEdits is the jsonl path's entry point: there is no protocol-level classification
 // there, only the tool's name.
 //
-// ⚠️ 名前は allowlist で、知らないものは無視する。逆（read 以外を編集とみなす）にすると、
-// 名前が変わった版で **Read しただけのファイルが「変更ファイル」に並ぶ** —— 一覧が黙って
-// 嘘をつく側に倒れる。取りこぼしたときに起きるのは「行が出ない」だけで済む。
+// The names are an allowlist and anything unknown is ignored. The opposite rule (treat
+// everything but reads as an edit) would, on a version that renamed a tool, list a file that
+// was merely read as a changed file — the list would silently lie. Missing an edit only
+// costs a row that does not appear.
 func toolEdits(name string, input json.RawMessage) (file, verb string, edits []transcript.Edit) {
 	switch name {
 	case "Write", "Create", "Edit", "MultiEdit":
@@ -329,8 +333,9 @@ func toolEdits(name string, input json.RawMessage) (file, verb string, edits []t
 		}
 		return f, "", es
 	case "Delete":
-		// 消えたファイルには before/after が無い。ここだけ verb を明示する
-		// （「Edits が無い＝削除」という推定は差分本体を運ばない kind を壊すので使えない）。
+		// A deleted file has no before/after, so this is the one case that states the verb
+		// explicitly: inferring "no Edits means a delete" would break every kind that
+		// carries no diff body.
 		f, _ := editsFromInput(input)
 		if f == "" {
 			return "", "", nil

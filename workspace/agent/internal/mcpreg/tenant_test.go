@@ -1,11 +1,12 @@
 package mcpreg
 
-// テナント配布（docs/log/48 P4）の Workspace 側。ここで固定したいのは 3 点:
+// The Workspace side of tenant distribution (docs/log/48 P4). Three things are pinned here:
 //
-//   - **配布された定義でコマンドは動かない**。ADR0031 決定 2 の 3 段目の砦で、
-//     コマンドを実行する当のマシン上で走る唯一の検査。
-//   - **fail-open**。CP が落ちていてもキャッシュは残る。
-//   - **user_secret はメンバー自身の値で埋まる**（テナントは名前だけを配る）。
+//   - A distributed definition can never run a command. This is the third line of defence in
+//     ADR0031 decision 2, and the only check that runs on the very machine the command would
+//     execute on.
+//   - fail-open: the cache survives even while the CP is down.
+//   - a user_secret is filled with the member's own value (the tenant distributes only the name).
 
 import (
 	"encoding/json"
@@ -47,14 +48,14 @@ func TestAcceptTenantDropsStdio(t *testing.T) {
 	stdio := ServerDef{ID: "t1", Name: "evil", Transport: TransportStdio, Command: "/bin/sh"}
 	kept, dropped := acceptTenant([]ServerDef{stdio, tenantDef("wiki")})
 	if dropped != 1 || len(kept) != 1 || kept[0].Name != "wiki" {
-		t.Fatalf("stdio が落ちていない: kept=%+v dropped=%d", kept, dropped)
+		t.Fatalf("stdio was not dropped: kept=%+v dropped=%d", kept, dropped)
 	}
 	// Even a "remote" definition that smuggles a command along is refused — Validate's
 	// CodeHTTPNoCommand rule — so there is no shape that reaches materialize with a command.
 	sneaky := tenantDef("sneaky")
 	sneaky.Command = "/bin/sh"
 	if kept, dropped := acceptTenant([]ServerDef{sneaky}); dropped != 1 || len(kept) != 0 {
-		t.Fatalf("http にコマンドを紛れ込ませた定義が通った: kept=%+v dropped=%d", kept, dropped)
+		t.Fatalf("an http definition smuggling a command was accepted: kept=%+v dropped=%d", kept, dropped)
 	}
 }
 
@@ -65,7 +66,7 @@ func TestAcceptTenantForcesOriginAndEnabled(t *testing.T) {
 	d.Origin, d.Enabled = OriginUser, false
 	kept, _ := acceptTenant([]ServerDef{d})
 	if len(kept) != 1 || kept[0].Origin != OriginTenant || !kept[0].Enabled {
-		t.Fatalf("origin/enabled が正規化されていない: %+v", kept)
+		t.Fatalf("origin/enabled were not normalised: %+v", kept)
 	}
 }
 
@@ -78,44 +79,45 @@ func TestFetchTenantWritesCacheAndDetectsChange(t *testing.T) {
 		t.Fatalf("FetchTenant: %v", err)
 	}
 	if !res.Changed || res.Servers != 1 {
-		t.Fatalf("初回取得が変更として扱われていない: %+v", res)
+		t.Fatalf("the first fetch was not treated as a change: %+v", res)
 	}
 	if reg, err := Load(); err != nil || len(dropAF(reg.Servers)) != 1 || dropAF(reg.Servers)[0].Origin != OriginTenant {
-		t.Fatalf("キャッシュがレジストリに現れない: %+v %v", reg, err)
+		t.Fatalf("the cache does not show up in the registry: %+v %v", reg, err)
 	}
 
-	// 2 回目は中身が同じ → changed=false。ここが true になると 5 分ごとに全 CLI の
-	// 設定を書き直すことになり、claude 自身の .claude.json 書き込みと競合する（§8.2）。
+	// The second fetch has identical contents → changed=false. Were it true, every CLI's config
+	// would be rewritten every 5 minutes, racing claude's own writes to .claude.json (§8.2).
 	res2, err := FetchTenant()
 	if err != nil {
 		t.Fatalf("FetchTenant 2: %v", err)
 	}
 	if res2.Changed {
-		t.Fatal("同一内容の再取得が変更扱いになっている")
+		t.Fatal("re-fetching identical contents was treated as a change")
 	}
-	// 取得時刻は前進する（Console の「最終取得」が古いままだと確認済みなのに stale に見える）。
+	// The fetch time still moves forward (a stale "last fetched" in the Console makes a
+	// just-checked registry look stale).
 	if res2.FetchedAt < res.FetchedAt {
-		t.Fatalf("fetchedAt が巻き戻った: %d -> %d", res.FetchedAt, res2.FetchedAt)
+		t.Fatalf("fetchedAt went backwards: %d -> %d", res.FetchedAt, res2.FetchedAt)
 	}
 	if got := loadTenantCache().FetchedAt; got != res2.FetchedAt {
-		t.Fatalf("無変更でも fetchedAt はキャッシュへ書かれるべき: %d != %d", got, res2.FetchedAt)
+		t.Fatalf("fetchedAt must be written to the cache even with no change: %d != %d", got, res2.FetchedAt)
 	}
 }
 
 func TestFetchTenantKeepsCacheWhenCPFails(t *testing.T) {
-	// fail-open（§6）。ここを fail-closed にすると CP の瞬断で全メンバーのセッションから
-	// MCP が消える。
+	// fail-open (§6). Made fail-closed, a momentary CP outage would strip MCP from every
+	// member's sessions.
 	withTempHome(t)
 	serveTenant(t, map[string]any{"servers": []ServerDef{tenantDef("wiki")}})
 	if _, err := FetchTenant(); err != nil {
 		t.Fatalf("FetchTenant: %v", err)
 	}
-	t.Setenv("AF_CP_BASE_URL", "http://127.0.0.1:1") // 到達不能
+	t.Setenv("AF_CP_BASE_URL", "http://127.0.0.1:1") // unreachable
 	if _, err := FetchTenant(); err == nil {
-		t.Fatal("到達不能な CP がエラーにならない")
+		t.Fatal("an unreachable CP did not produce an error")
 	}
 	if reg, _ := Load(); len(dropAF(reg.Servers)) != 1 {
-		t.Fatalf("失敗した取得がキャッシュを消した: %+v", dropAF(reg.Servers))
+		t.Fatalf("a failed fetch wiped the cache: %+v", dropAF(reg.Servers))
 	}
 }
 
@@ -126,9 +128,9 @@ func TestFetchTenantWithoutBridge(t *testing.T) {
 	if _, err := FetchTenant(); err != ErrTenantBridgeOff {
 		t.Fatalf("err = %v, want ErrTenantBridgeOff", err)
 	}
-	// 未設定は正常な状態なので、キャッシュファイルも作らない。
+	// Unconfigured is a normal state, so no cache file is created either.
 	if _, err := os.Stat(tenantCachePath()); !os.IsNotExist(err) {
-		t.Fatalf("ブリッジ未設定でキャッシュを作ってしまった: %v", err)
+		t.Fatalf("a cache was created with the bridge unconfigured: %v", err)
 	}
 }
 
@@ -137,7 +139,7 @@ func TestFetchTenantRejectsBadToken(t *testing.T) {
 	serveTenant(t, map[string]any{"servers": []ServerDef{}})
 	t.Setenv("AF_MCP_TOKEN", "wrong")
 	if _, err := FetchTenant(); err == nil {
-		t.Fatal("401 がエラーとして返っていない")
+		t.Fatal("a 401 was not returned as an error")
 	}
 }
 
@@ -147,22 +149,23 @@ func TestUserSecretIsHeldBackUntilFilled(t *testing.T) {
 	withTempHome(t)
 	d := tenantDef("tickets")
 	d.UserSecret = true
-	d.Headers = map[string]string{"Authorization": ""} // 名前だけが配られる
+	d.Headers = map[string]string{"Authorization": ""} // only the name is distributed
 	serveTenant(t, map[string]any{"servers": []ServerDef{d}})
 	if _, err := FetchTenant(); err != nil {
 		t.Fatalf("FetchTenant: %v", err)
 	}
 
-	// 値が無いうちは materialize もアシスタント配線もされない（起動して失敗させるより出さない）。
+	// Until the value is filled in, nothing is materialized and nothing is wired into the
+	// assistant (better to leave it out than to start it and let it fail).
 	got, err := Get(d.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	if Ready(got) {
-		t.Fatal("値未入力の user_secret 定義が Ready になっている")
+		t.Fatal("a user_secret definition with no value entered is Ready")
 	}
 	if defs, _ := ForSession("claude"); len(dropAF(defs)) != 0 {
-		t.Fatalf("値未入力なのに materialize 対象になっている: %+v", dropAF(defs))
+		t.Fatalf("no value entered, yet it is a materialize target: %+v", dropAF(defs))
 	}
 
 	if err := SetTenantSecrets(d.ID, map[string]string{"Authorization": "Bearer mine"}); err != nil {
@@ -173,31 +176,31 @@ func TestUserSecretIsHeldBackUntilFilled(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	if got.Headers["Authorization"] != "Bearer mine" || !Ready(got) {
-		t.Fatalf("メンバーの値が合成されていない: %+v", got.Headers)
+		t.Fatalf("the member's value was not merged in: %+v", got.Headers)
 	}
 	if defs, _ := ForSession("claude"); len(dropAF(defs)) != 1 {
-		t.Fatalf("値入力後に materialize 対象にならない: %+v", dropAF(defs))
+		t.Fatalf("still not a materialize target after the value was entered: %+v", dropAF(defs))
 	}
 
-	// マスク往復: Console は保存済みを *** で送り返す。
+	// Masked round trip: the Console sends a stored value back as ***.
 	if err := SetTenantSecrets(d.ID, map[string]string{"Authorization": MaskedValue}); err != nil {
 		t.Fatalf("SetTenantSecrets masked: %v", err)
 	}
 	if got, _ := Get(d.ID); got.Headers["Authorization"] != "Bearer mine" {
-		t.Fatalf("マスク往復で値が失われた: %q", got.Headers["Authorization"])
+		t.Fatalf("the value was lost in the masked round trip: %q", got.Headers["Authorization"])
 	}
-	// 空文字は「消す」。
+	// An empty string means "clear it".
 	if err := SetTenantSecrets(d.ID, map[string]string{"Authorization": ""}); err != nil {
 		t.Fatalf("SetTenantSecrets clear: %v", err)
 	}
 	if got, _ := Get(d.ID); Ready(got) {
-		t.Fatal("値を消したのに Ready のまま")
+		t.Fatal("still Ready after the value was cleared")
 	}
 }
 
 func TestSetTenantSecretsRefusals(t *testing.T) {
 	withTempHome(t)
-	plain := tenantDef("wiki") // user_secret ではない
+	plain := tenantDef("wiki") // not a user_secret
 	us := tenantDef("tickets")
 	us.UserSecret = true
 	us.Headers = map[string]string{"Authorization": ""}
@@ -207,46 +210,48 @@ func TestSetTenantSecretsRefusals(t *testing.T) {
 	}
 
 	if err := SetTenantSecrets("nope", map[string]string{"A": "b"}); err != ErrNotFound {
-		t.Fatalf("未知の id: err = %v, want ErrNotFound", err)
+		t.Fatalf("unknown id: err = %v, want ErrNotFound", err)
 	}
-	// 値込みで配られた定義の値をメンバーが上書きできてしまうと、テナントの意図した資格情報で
-	// 繋がらなくなる。書けるのは user_secret のときだけ。
+	// If a member could overwrite the value of a definition distributed WITH its value, the
+	// connection would no longer use the credentials the tenant intended. Writable only when
+	// the definition is a user_secret.
 	if err := SetTenantSecrets(plain.ID, map[string]string{"Authorization": "mine"}); err != ErrReadOnly {
-		t.Fatalf("user_secret でない定義: err = %v, want ErrReadOnly", err)
+		t.Fatalf("definition that is not a user_secret: err = %v, want ErrReadOnly", err)
 	}
-	// テナントが配っていないヘッダは黙って捨てる（保存しても誰も読まない値になる）。
+	// A header the tenant did not distribute is dropped silently (storing it would keep a value
+	// nobody ever reads).
 	if err := SetTenantSecrets(us.ID, map[string]string{"X-Unasked": "v"}); err != nil {
 		t.Fatalf("SetTenantSecrets: %v", err)
 	}
 	s, _ := secrets.Load()
 	if _, ok := s.MCPSecrets[us.ID]; ok {
-		t.Fatalf("配布外のヘッダを保存してしまった: %+v", s.MCPSecrets)
+		t.Fatalf("a header outside the distribution was stored: %+v", s.MCPSecrets)
 	}
 	if err := SetTenantSecrets(us.ID, map[string]string{"Authorization": "a\nb"}); err == nil {
-		t.Fatal("改行入りのヘッダ値が通った")
+		t.Fatal("a header value containing a newline was accepted")
 	}
 }
 
 func TestWithMemberSecretsIgnoresStaleNames(t *testing.T) {
-	// テナントが要求しなくなったヘッダのローカル値は送らない — どのヘッダを送るかは
-	// あくまでテナントが決める。
+	// A local value for a header the tenant no longer asks for is not sent — which headers go
+	// out is the tenant's decision alone.
 	got := withMemberSecrets(
 		map[string]string{"Authorization": ""},
 		map[string]string{"Authorization": "mine", "X-Old": "stale"},
 	)
 	if got["Authorization"] != "mine" {
-		t.Fatalf("自分の値が入っていない: %+v", got)
+		t.Fatalf("the member's own value is missing: %+v", got)
 	}
 	if _, ok := got["X-Old"]; ok {
-		t.Fatalf("配布外のヘッダが送られる: %+v", got)
+		t.Fatalf("a header outside the distribution is being sent: %+v", got)
 	}
 }
 
 func TestMaskedKeepsUnsetValuesVisible(t *testing.T) {
-	// 未入力（""）は「秘密を隠している」のではなく「誰も入れていない」。ここを *** に
-	// すると、値を入れるべきなのが自分だと Console から分からなくなる。
+	// Not filled in ("") means "nobody has entered one", not "a secret is being hidden". Masking
+	// it as *** would hide from the Console that the member is the one who has to enter it.
 	m := Masked(ServerDef{Headers: map[string]string{"Authorization": "", "X-Team": "sre"}})
 	if m.Headers["Authorization"] != "" || m.Headers["X-Team"] != MaskedValue {
-		t.Fatalf("マスクが不正: %+v", m.Headers)
+		t.Fatalf("wrong masking: %+v", m.Headers)
 	}
 }

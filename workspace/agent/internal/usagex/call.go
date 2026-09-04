@@ -1,16 +1,15 @@
 package usagex
 
-// プロバイダ層 1 点記録（docs/log/46 §3-a / ADR0029 §3）。
+// One recording point in the provider layer (docs/log/46 §3-a, ADR0029 §3).
 //
-// usage を解析しているのはプロバイダ実装の内側（claudeChat.send / parseCodexExecEvents /
-// parseOpencodeRunEvents / cursorChat.send / oneShotHeadless）で、そこは既にモデルも
-// トークンも持っている。足りないのは「何のための呼び出しか」だけなので、それだけを
-// context.Context に載せて運ぶ（Tag / WithTag / TagOf）。消費源の変更は1箇所1行で済み、
-// 記録点は増えない。
+// usage is parsed inside the provider implementations (claudeChat.send /
+// parseCodexExecEvents / parseOpencodeRunEvents / cursorChat.send / oneShotHeadless), which
+// already hold both the model and the tokens. The only thing missing is what the call was
+// FOR, so that alone rides on the context.Context (Tag / WithTag / TagOf). Changing where a
+// consumption comes from is one line in one place, and no new recording point appears.
 //
-// ⚠️ Tokens / Call のメソッドが公開名なのは、main から呼ぶには公開するしかないため
-// （Go はメソッドをエイリアスできない）。移送前は setTotals / add / any / fallbackTotals /
-// measuredOr だった。
+// The methods on Tokens / Call are exported because main has to call them and Go cannot alias
+// a method.
 
 import (
 	"context"
@@ -22,8 +21,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// TagOrUnknown はタグを取り出す。タグの無い呼び出しは feature=unknown として必ず記録する
-// （タグの付け忘れで消費が見えなくなる方が、unknown が混ざるより悪い）。
+// TagOrUnknown pulls the tag out. An untagged call is still recorded, as feature=unknown:
+// consumption disappearing because someone forgot a tag is worse than unknown rows mixed in.
 func TagOrUnknown(ctx context.Context) Tag {
 	if t, ok := TagOf(ctx); ok {
 		return t
@@ -31,7 +30,7 @@ func TagOrUnknown(ctx context.Context) Tag {
 	return Tag{Feature: FeatureUnknown}
 }
 
-// Tokens は1モデル分のトークン内訳。
+// Tokens is one model's token breakdown.
 type Tokens struct {
 	In          int
 	Out         int
@@ -39,35 +38,38 @@ type Tokens struct {
 	CacheCreate int
 }
 
-// ModelRow は「1呼び出しの中で実際に課金された1モデル分」。claude は modelUsage で
-// モデル毎の内訳を返すので、これが複数になりうる（同じ Call で束ねて1呼び出しと数える）。
+// ModelRow is one model actually billed within a single call. claude reports a per-model
+// breakdown in modelUsage, so there can be several (bundled under the same Call and counted
+// as one call).
 type ModelRow struct {
-	Model    string // 正規名（claude の canonicalModel）
-	ModelRaw string // 生 id（版込み）
+	Model    string // canonical name (claude's canonicalModel)
+	ModelRaw string // raw id (version included)
 	Tokens   Tokens
 	CostUSD  float64
 }
 
-// Call は1回の LLM 呼び出しをプロバイダ層が見たまま表したもの。各プロバイダ関数の
-// 先頭でゼロ値を作って defer に積み、分かった分だけ埋めていく — 成功・失敗・早期 return の
-// どの経路でも必ず1回記録されるのがこの形の主目的。
+// Call is one LLM call as the provider layer sees it. Each provider function makes a zero
+// value at the top, defers the recording and fills in whatever it learns — the point of the
+// shape is that success, failure and every early return all record exactly once.
 type Call struct {
-	Kind     string     // 実行したエージェント種別（要求ではなく実行結果）
-	ModelReq string     // 要求した値（"" = CLI の既定に委ねた）
-	Models   []ModelRow // モデル別内訳。空なら Totals から1行を起こす
-	Totals   Tokens     // Models が空のときのトークン
-	CostUSD  float64    // 実測コスト（claude のみ）
+	Kind     string     // the agent kind that ran (the outcome, not the request)
+	ModelReq string     // the requested value ("" = left to the CLI's default)
+	Models   []ModelRow // per-model breakdown; if empty, one row is raised from Totals
+	Totals   Tokens     // the tokens when Models is empty
+	CostUSD  float64    // measured cost (claude only)
 	OK       bool
-	Measured string // 空なら Totals/Models の中身から推定する
+	Measured string // empty = infer it from what Totals/Models hold
 }
 
-// setTotals は「モデル別内訳の無い」プロバイダ（codex/opencode/cursor）用の記録口。
+// SetTotals is the recording entry for providers with no per-model breakdown
+// (codex/opencode/cursor).
 func (c *Call) SetTotals(in, out, cread, ccreate int) {
 	c.Totals = Tokens{In: in, Out: out, CacheRead: cread, CacheCreate: ccreate}
 }
 
-// add は同じ呼び出しの中で二度撃った分を足す（codex 一発呼び出しのモデル外しリトライ）。
-// 別プロセスを2回起動しているので、入力側もスナップショットではなく実消費の合算になる。
+// Add sums what was fired twice within the same call (the codex one-shot retry that drops the
+// model). Two separate processes were started, so the input side is a sum of real consumption
+// too, not a snapshot.
 func (t Tokens) Add(o Tokens) Tokens {
 	return Tokens{
 		In: t.In + o.In, Out: t.Out + o.Out,
@@ -77,14 +79,15 @@ func (t Tokens) Add(o Tokens) Tokens {
 
 func (t Tokens) Any() bool { return t.In+t.Out+t.CacheRead+t.CacheCreate > 0 }
 
-// fallbackTotals は「モデル別内訳が取れなかった時」だけ効く縮退の記録口。claude は通常
-// result の modelUsage でモデル別に割れるが、**利用者の停止操作や result 前の異常終了では
-// modelUsage が来ない**。そこで残っている usage スナップショットを採る — ここで何も採らないと
-// 実際に使ったコンテキストが「トークン 0 / measured=none」として消え、止めた回だけ消費が
-// 見えなくなる（止めるのは重いターンほど多い）。
+// FallbackTotals is the degraded recording entry that only applies when no per-model breakdown
+// could be obtained. claude normally splits per model via the result's modelUsage, but a user's
+// stop and an abnormal exit before the result both arrive with no modelUsage. So whatever usage
+// snapshot is left gets taken: take nothing here and the context actually consumed vanishes as
+// "0 tokens / measured=none", making consumption invisible for exactly the runs that were
+// stopped (and the heavier the turn, the more often it is stopped).
 //
-// measured は呼び出し側が申告する: 完結した result 由来なら空（＝exact 判定に委ねる）、
-// 途中のスナップショット由来なら partial。
+// measured is declared by the caller: empty when it comes from a completed result (i.e. leave
+// the exact/none verdict to MeasuredOr), partial when it comes from a mid-turn snapshot.
 func (c *Call) FallbackTotals(t Tokens, measured string) {
 	if len(c.Models) > 0 || c.Totals.Any() || !t.Any() {
 		return
@@ -95,8 +98,8 @@ func (c *Call) FallbackTotals(t Tokens, measured string) {
 	}
 }
 
-// RecordCall は台帳へ1呼び出し分（＝1行以上）を書く。ctx はタグを読むためだけに
-// 使うので、キャンセル済み ctx（利用者の停止操作・タイムアウト）でも記録は必ず残る。
+// RecordCall writes one call (one row or more) to the ledger. ctx is used only to read the tag,
+// so an already-cancelled ctx (a user's stop, a timeout) still leaves the record behind.
 func RecordCall(ctx context.Context, c *Call, started time.Time) {
 	if !Enabled() {
 		return
@@ -132,7 +135,7 @@ func RecordCall(ctx context.Context, c *Call, started time.Time) {
 		r := base
 		r.Model, r.ModelRaw, r.ModelSrc = m.Model, m.ModelRaw, ModelReported
 		if r.Model == "" {
-			r.Model = m.ModelRaw // canonicalModel の無い報告は生 id をそのまま系列キーに
+			r.Model = m.ModelRaw // no canonicalModel: the raw id becomes the series key
 		}
 		r.In, r.Out = m.Tokens.In, m.Tokens.Out
 		r.CacheRead, r.CacheCreate = m.Tokens.CacheRead, m.Tokens.CacheCreate
@@ -144,8 +147,9 @@ func RecordCall(ctx context.Context, c *Call, started time.Time) {
 	AppendRows(rows)
 }
 
-// measuredOr は自己申告の計測精度。プロバイダが明示していれば従い、していなければ
-// 「トークンが1つでも取れたか」で exact / none を決める（失敗ターンは none）。
+// MeasuredOr is the self-declared measurement accuracy. It follows the provider when the
+// provider is explicit, and otherwise decides exact / none on whether a single token was
+// obtained at all (a failed turn is none).
 func (c *Call) MeasuredOr(t Tokens) string {
 	if c.Measured != "" {
 		return c.Measured
@@ -156,9 +160,10 @@ func (c *Call) MeasuredOr(t Tokens) string {
 	return MeasuredNone
 }
 
-// ModelFallback はモデルを報告しない CLI（codex/cursor/agy）向けの縮退。要求値が
-// あれば requested、無ければ default_unknown — 「CLI の既定（通常フラッグシップ）で
-// 走っている」ことが1列で見えるのが狙い（docs/log/46 §2-b）。
+// ModelFallback is the degraded path for CLIs that do not report a model (codex/cursor/agy).
+// requested when there is a requested value, default_unknown when there is not — the aim is
+// that "it is running on the CLI's default (usually the flagship)" is visible in one column
+// (docs/log/46 §2-b).
 func ModelFallback(req string) (model, src string) {
 	if req == "" {
 		return "", ModelUnknown
@@ -166,9 +171,9 @@ func ModelFallback(req string) (model, src string) {
 	return req, ModelRequest
 }
 
-// originOf は ref からセッションの出自を解決する（ADR0029 §6）。行へ焼き込むので
-// セッションが削除されても集計が壊れない。会話スコープの ref（アシスタント会話 id）は
-// 出自の軸を持たないので空を返す — origin はセッションの軸。
+// originOf resolves a session's origin from its ref (ADR0029 §6). It is burned into the row, so
+// deleting the session does not break the aggregation. A conversation-scoped ref (an assistant
+// conversation id) has no origin axis and returns empty — origin is an axis of sessions.
 func originOf(ref string) (origin, conv string) {
 	if ref == "" || !session.ValidName(ref) {
 		return "", ""
@@ -180,13 +185,12 @@ func originOf(ref string) (origin, conv string) {
 	return session.OriginOf(m), m.OriginConv
 }
 
-// newCallID は台帳の Call 列（1呼び出しが複数モデル行に割れたときに束ねる id）。
-// RFC-4122 v4。移送前は main の randUUID()（chat_store.go）を呼んでいたが、
-// あちらは AG-CHAT 所有＝ウェーブ C まで動かせないので、ここに同じものを持つ。
+// newCallID produces the ledger's Call column, the id that bundles one call whose rows split
+// across several models. RFC-4122 v4.
 //
-// ⚠️ 「写した純関数」の債務: internal/browserx/uuid.go の randUUID と同型で、
-// 回収ウェーブで 1 本化する対象（CP-STORE util.go / testutil、AG-BROWSER randUUID、
-// CP-AUTH env.go に続く）。UUID v4 は標準仕様なので分岐の余地は無いが、置き場が増えた。
+// A copied pure function: identical to randUUID in internal/browserx/uuid.go, and due to be
+// unified into one place in the collection wave. UUID v4 is a standard, so the copies cannot
+// diverge in behaviour — only in how many places hold one.
 func newCallID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])

@@ -1,23 +1,25 @@
 package main
 
-// ユーザー指示の配布器（docs/log/60 / ADR 0042）。
+// Distributor for the user's own instructions (docs/log/60 / ADR 0042).
 //
-// 3 層のうち真ん中 —「その人の働き方」— を 1 本書けば、対応する全 kind のセッションに
-// 効くようにする。正本は internal/userinstr（~/.config/agent-fleet/user-notes.md）で、
-// ここはそれを各 CLI の user スコープへ**配る**役。rtk トグルと同じ型
-// （durable な設定 → 起動時 reconcile ＋ Console から live 適用）を踏襲する。
+// The middle of the three layers — "how this person works" — is written once and takes
+// effect in every supported kind's sessions. The source of truth is internal/userinstr
+// (~/.config/agent-fleet/user-notes.md); this file DISTRIBUTES it into each CLI's user
+// scope, following the same shape as the rtk toggle (durable setting -> reconcile at
+// startup + live apply from the Console).
 //
-// 配り方の原則（docs/log/60 §60.5-6）: **「他人のファイルに書く」より「AF 専用ファイル＋
-// 参照」を優先する。** 実測の結果 claude / opencode / copilot は参照で足り、合成が要る
-// のは追加指示ファイルを指す手段が無い codex だけになった（agy は P1）。
+// The distribution rule (docs/log/60 §60.5-6): prefer "an AF-owned file plus a reference"
+// over "writing into somebody else's file". Measured, a reference is enough for claude /
+// opencode / copilot, and the only kind that still needs composition is codex, which has
+// no way to point at an extra instruction file (agy is P1).
 //
-// フリート方針（イメージの workspace-notes.md）の配置もここへ移した。以前は
-// entrypoint が毎起動 `cp -f` で AGENTS.md を丸ごと上書きしており、利用者がそのファイルへ
-// 書き足した文章は次の起動で黙って消えていた（docs/log/60 実害①）。いまは同じ 1 本の
-// 書き手がマーカー付きで合成するので、マーカー外は残る。
+// Placing the fleet policy (the image's workspace-notes.md) lives here too. The entrypoint
+// used to `cp -f` the whole of AGENTS.md on every start, so anything the user had added to
+// that file silently vanished at the next start (docs/log/60). Now a single writer
+// composes it with markers, and everything outside the markers survives.
 //
-// ⚠️ 順序: ファイル内の並びは適用順そのまま（fleet → user-notes → rtk）。だから
-// reconcile は必ずこの順で呼ぶ。
+// Order matters: the order within the file IS the order it is applied in (fleet ->
+// user-notes -> rtk), so reconcile must always call them in that order.
 
 import (
 	"encoding/json"
@@ -45,41 +47,47 @@ import (
 // independent read-modify-writes would lose one side (docs/log/60 §60.7).
 var instrMu sync.Mutex
 
-// instrErrs holds the last apply error per kind, so the Console can say "書いたが
-// 効いていない" instead of showing a green row for a write that failed.
+// instrErrs holds the last apply error per kind, so the Console can say "written but not
+// in effect" instead of showing a green row for a write that failed.
 var instrErrs = map[string]string{}
 
-// instrDelivery は配り方の種類。Console はこれで文言を出し分ける。
+// The kinds of distribution. The Console picks its wording from this.
 const (
-	deliveryFile    = "file"    // AF が単独所有するファイルを置く
-	deliveryCompose = "compose" // 他人と共有するファイルへマーカー合成する
-	deliveryConfig  = "config"  // AF 専用ファイル＋CLI 設定からの参照
+	deliveryFile    = "file"    // drop a file AF owns outright
+	deliveryCompose = "compose" // compose into a file shared with others, between markers
+	deliveryConfig  = "config"  // an AF-owned file, referenced from the CLI's own config
 )
 
-// instrTarget は 1 kind ぶんの配り先。未対応の kind も**行として出す**（黙って消すと
-// 「対応漏れ」に見え、同じ質問が繰り返される — docs/log/57 §2 の作法）。
+// instrTarget is where one kind's instructions go. Unsupported kinds are LISTED as rows
+// too: dropping them silently reads as an oversight and invites the same question again
+// (the docs/log/57 §2 practice).
 type instrTarget struct {
 	Kind      string `json:"kind"`
 	Supported bool   `json:"supported"`
-	// Reason は未対応の理由コード（Console が err/reason カタログで訳す）。
+	// Reason is the code for why the kind is unsupported (the Console translates it
+	// through its err/reason catalogue).
 	Reason   string `json:"reason,omitempty"`
 	Delivery string `json:"delivery,omitempty"`
 	Path     string `json:"path,omitempty"`
-	// On は利用者の選択（未対応 kind では常に false）。
+	// On is the user's choice (always false for an unsupported kind).
 	On bool `json:"on"`
-	// Applied は「いま実際にそうなっているか」。書いた≠効いている を分けるための実測値。
+	// Applied is whether that is ACTUALLY the state on disk right now — measured, so that
+	// "written" and "in effect" stay separable.
 	Applied bool   `json:"applied"`
 	Error   string `json:"error,omitempty"`
 }
 
-// instrSupportedKinds は本文を配れる kind。順序は Console の表示順。
+// instrSupportedKinds are the kinds the body can be distributed to, in the Console's
+// display order.
 var instrSupportedKinds = []string{"claude", "codex", "opencode", "copilot", "agy", "kiro"}
 
-// instrUnsupported は配れない kind と理由（docs/log/60 §60.3 の実測結論）。
+// instrUnsupported are the kinds it cannot reach, with the reason (measured, docs/log/60
+// §60.3).
 var instrUnsupported = []struct{ kind, reason string }{
-	// ローカルにユーザー層が存在しない。User Rules は Cursor アカウント側
-	// （aiserver.v1.UserRules）で、ローカルの rules 収集は全てプロジェクト基準。
-	// ＝ 配線漏れではなく**構造的に配れない**ので、実装待ちの表示にはしない。
+	// No user layer exists locally: User Rules live on the Cursor account side
+	// (aiserver.v1.UserRules) and every local rules source is project-scoped. That is a
+	// structural impossibility rather than missing wiring, so it is not shown as pending
+	// implementation.
 	{"cursor", "no_user_scope"},
 }
 
@@ -107,17 +115,18 @@ func applyInstructionsLocked() {
 		}
 	}
 
-	// ① フリート方針（順序の都合でユーザー指示より先）。claude は managed policy として
-	// イメージに焼かれている（/etc/claude-code/CLAUDE.md）ので AF は触らない。cursor は
-	// ローカルに user スコープが無いので配れない。それ以外の 5 種はここが唯一の配布経路
-	// — agy / copilot / kiro は docs/log/60 §60.13 P2 まで**運用方針を一切読んでいなかった**。
+	// 1. The fleet policy, before the user instructions because the order matters. claude
+	// is left alone: its copy is baked into the image as managed policy
+	// (/etc/claude-code/CLAUDE.md). cursor cannot be reached at all (no local user scope).
+	// For the other five this is the only distribution path — agy / copilot / kiro read no
+	// operating policy whatsoever until docs/log/60 §60.13 P2.
 	note("codex", codex.ApplyFleetNotes(fleet))
 	note("opencode", opencode.ApplyFleetNotes(fleet))
 	note("agy", agy.ApplyFleetNotes(fleet))
 	note("copilot", copilot.ApplyFleetNotes(fleet))
 	note("kiro", kiro.ApplyFleetNotes(fleet))
 
-	// ② ユーザー指示。
+	// 2. The user's own instructions.
 	note("claude", claude.ApplyUserInstructions(st.Body("claude")))
 	note("codex", codex.ApplyUserInstructions(st.Body("codex")))
 	note("opencode", opencode.ApplyUserInstructions(instrOpencodeFile(), st.Body("opencode")))
@@ -125,7 +134,7 @@ func applyInstructionsLocked() {
 	note("agy", agy.ApplyUserInstructions(st.Body("agy")))
 	note("kiro", kiro.ApplyUserInstructions(st.Body("kiro")))
 
-	// ③ rtk は常に最後（ファイル内でも最後に来る）。
+	// 3. rtk is always last (it comes last within the file too).
 	applyRTKLocked()
 
 	instrErrs = errs
@@ -178,7 +187,8 @@ func instrState() instrStateWire {
 		Enabled:  st.Enabled(),
 		Path:     userinstr.NotesPath(),
 		Targets:  targets,
-		// フリート方針を read-only で覗く導線（なぜ上書きできないかが画面で分かる）。
+		// A read-only way into the fleet policy, so the screen can show why it cannot be
+		// overwritten.
 		FleetBytes: len(userinstr.FleetNotes()),
 	}
 }
@@ -261,8 +271,8 @@ func handleUserNotesPut(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUserNotesPreview shows what a kind will actually read — the composed file for
-// codex, the referenced file for the others. 「書いた」と「効いている」を分けるための
-// 最後の一段で、利用者が自分の目で確かめられるようにする。
+// codex, the referenced file for the others. It is the last step in keeping "written"
+// apart from "in effect", the one that lets the user check with their own eyes.
 func handleUserNotesPreview(w http.ResponseWriter, r *http.Request) {
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	var path string
@@ -295,16 +305,17 @@ func handleUserNotesPreview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// instrStateWire — GET/PUT /instructions のレスポンス（Console の `Payload`、
-// console/src/features/settings/personal/InstructionsTab.tsx）。
+// instrStateWire is the GET/PUT /instructions response (the Console's `Payload`,
+// console/src/features/settings/personal/InstructionsTab.tsx).
 //
 // was: map[string]any{"text":…, "bytes":…, "max_bytes":…, "enabled":…, "path":…,
 //
 //	"targets":…, "fleet_bytes":…}
 //
-// 7 キーとも無条件なので **omitempty は付けない**。text は空文字を取りうる（未記入）ので、
-// 付けるとキーごと消えて Console の初期表示が変わる。
-// 形状関数なので、これ 1 つで 2 サイト（GET と PUT）が型を得る。
+// All seven keys are unconditional, so do NOT add omitempty: text can legitimately be the
+// empty string (nothing written yet), and omitempty would drop the key altogether and
+// change what the Console shows on first render.
+// One shape type, so both sites (GET and PUT) get their type from it.
 type instrStateWire struct {
 	Text       string        `json:"text"`
 	Bytes      int           `json:"bytes"`

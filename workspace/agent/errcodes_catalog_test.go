@@ -1,21 +1,22 @@
 package main
 
-// errcodes.go の値と Console の `err.<code>` カタログを突き合わせる。
+// Cross-checks errcodes.go's values against the Console's `err.<code>` catalogue.
 //
-// 🔴 **この突き合わせはリポジトリに 1 つも無かった**（develop からある穴で、memory 家系に
-// 限らない）。errcodes.go の先頭にも egress_member.go にも「変更は両側同時に」と**コメントでは
-// 書いてある**が、守っているのは注意書きだけだった。**Go 側で綴りを 1 文字変えると、Console は
-// キーを引けずに developer 向けの英語メッセージへ黙ってフォールバックする**——
-// HTTP は 200/4xx のまま、Go のテストも Console のテストも緑。
+// Nothing in the repository did this check. Both errcodes.go's header and egress_member.go say
+// "change both sides together", but only the note said so. Change one letter of a spelling on
+// the Go side and the Console cannot look the key up and silently falls back to the
+// developer-facing English message, with HTTP still 200/4xx and both the Go and the Console
+// tests green.
 //
-// **見るのは「実際に送出されるコード」だけ**にしてある——**宣言しただけで誰も送出しない
-// コードは画面に出ようが無く、カタログを要求しても雑音にしかならない**ため。
-// ⚠️ **現時点では絞り込みは 1 件も落としていない**（実測: errcodes.go の定数 71 本は
-// **全部** package main のどこかから参照されている）。この条件は将来のための保険であって、
-// 「未参照の定数が在るから」ではない。**カタログを持たない 2 本は未参照だからではなく、
-// 下の catalogExempt に理由を書いて意図的に免除しているから**である。
+// Only the codes actually EMITTED are examined: a code that is declared but emitted by nobody
+// cannot reach the screen, so demanding a catalogue entry for it would be pure noise. As
+// measured, that filter drops nothing today (all 71 constants in errcodes.go are referenced
+// from somewhere in package main) — it is insurance for the future, not a response to unused
+// constants. The two codes without a catalogue entry are not unreferenced; they are
+// deliberately exempted with a reason in catalogExempt below.
 //
-// 📌 ja が正本（`../../console/src/lib/i18n/locales/ja`）。en の欠けは i18n 側の検査の担当。
+// ja is the source of truth (`../../console/src/lib/i18n/locales/ja`). A missing en entry is
+// the i18n-side check's job.
 
 import (
 	"go/ast"
@@ -33,7 +34,7 @@ func emittedErrCodes(t *testing.T) map[string]string {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "errcodes.go", nil, 0)
 	if err != nil {
-		t.Fatalf("errcodes.go を読めない: %v", err)
+		t.Fatalf("cannot read errcodes.go: %v", err)
 	}
 	codeOf := map[string]string{} // const name -> code value
 	for _, d := range f.Decls {
@@ -59,10 +60,10 @@ func emittedErrCodes(t *testing.T) map[string]string {
 		}
 	}
 	if len(codeOf) == 0 {
-		t.Fatal("errcodes.go から定数を 1 つも読めなかった＝この検査が無言化している")
+		t.Fatal("read no constants at all from errcodes.go = this check has gone silent")
 	}
 
-	// どの定数が実際に参照されているかを、errcodes.go 以外の package main で数える。
+	// Count which constants are actually referenced, across package main except errcodes.go.
 	ents, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
@@ -91,30 +92,32 @@ func emittedErrCodes(t *testing.T) map[string]string {
 		})
 	}
 	if scanned < 50 {
-		t.Fatalf(".go を %d 本しか読めていない＝この検査が無言化している", scanned)
+		t.Fatalf("only %d .go files were read = this check has gone silent", scanned)
 	}
 	if len(out) == 0 {
-		t.Fatal("送出されているエラーコードを 1 つも見つけられなかった（走査が壊れている）")
+		t.Fatal("found no emitted error codes at all (the scan is broken)")
 	}
 	return out
 }
 
-// catalogExempt はカタログを持たないことが**意図されている**コード。
-// 🔴 増やすときは必ず理由を書くこと。ここは「まだ直していない」を隠す場所ではない。
+// catalogExempt are the codes that are INTENDED to have no catalogue entry. Always write the
+// reason when adding one; this is not a place to hide "not fixed yet".
 var catalogExempt = map[string]string{
-	// errcodes.go の宣言直上に理由が書いてある: クライアントが既に諦めた後にだけ返るので
-	// （タイムアウト / 切断を mutex 取得時に検出）、生きた画面がこれを描くことは無い。
-	"write_cancelled": "生きたクライアントに届かない（errcodes.go の宣言に明記）",
+	// The reason is written right above the declaration in errcodes.go: it is only returned
+	// after the client already gave up (a timeout or disconnect detected while taking the
+	// mutex), so no live screen ever draws it.
+	"write_cancelled": "never reaches a live client (stated at the declaration in errcodes.go)",
 
-	// 🔴 **カタログを足すと、かえって情報が減る**ので意図して免除している 1 件。
-	// `errText` は `localized ?? error.message`（client.ts:159）なので、`err.<code>` が
-	// 在るとサーバの message を**捨てて**カタログ文言を使う。`conn_jira_rejected` は
-	// message に **Jira 側の生の理由**（`err.Error()`）を載せており、一般化した和文を
-	// 足すと**いま出ている具体的な理由が消える**。
-	// いまの実害は「和文にならず英語の message が出る」だけで、落ちはしない。
-	// **恒久対応は `errDetail` 化（カタログ文言＋生 message の併記）だが、呼び出し側の
-	// 変更が要るので別 PR。**（同型の 1 例目 `runtime_failed` が #336 で進行中）
-	"conn_jira_rejected": "message に Jira 側の生の理由が載っており、カタログを足すと errText がそれを隠すため。恒久対応は errDetail 化＝呼び出し側の変更が要るので別 PR",
+	// Exempted on purpose because adding a catalogue entry would REDUCE the information shown.
+	// `errText` is `localized ?? error.message` (client.ts:159), so once `err.<code>` exists
+	// the server's message is discarded in favour of the catalogue wording.
+	// `conn_jira_rejected` carries Jira's own raw reason (`err.Error()`) in message, and a
+	// generalized localized string would erase the specific reason currently displayed.
+	// The harm today is only that an English message shows instead of a localized one; nothing
+	// breaks. The permanent fix is to move to `errDetail` (catalogue wording plus the raw
+	// message), which needs call-site changes and therefore a separate PR (the first case of
+	// the same shape, `runtime_failed`, is in progress).
+	"conn_jira_rejected": "message carries Jira's own raw reason and a catalogue entry would make errText hide it; the permanent fix is errDetail, which needs call-site changes and a separate PR",
 }
 
 func TestEmittedErrCodesHaveConsoleCatalogEntry(t *testing.T) {
@@ -124,17 +127,18 @@ func TestEmittedErrCodesHaveConsoleCatalogEntry(t *testing.T) {
 			continue
 		}
 		if !consoleCatalogHasKey(catalog, "err."+code) {
-			t.Errorf("%s = %q を送出しているのに、Console のカタログに \"err.%s\" が無い。"+
-				"console/src/lib/i18n/locales/{ja,en}/errors.ts へ同時に足すこと"+
-				"（無いと画面は開発者向けメッセージへ黙ってフォールバックする）",
+			t.Errorf("%s = %q is emitted but the Console catalogue has no \"err.%s\". "+
+				"Add it to console/src/lib/i18n/locales/{ja,en}/errors.ts at the same time "+
+				"(without it the screen silently falls back to the developer-facing message)",
 				constName, code, code)
 		}
 	}
-	// 免除表が腐るのを防ぐ: カタログが後から足されたら免除を外させる。
-	// 放置すると「免除だから見ない」が積み上がり、この検査は名前だけになる。
+	// Keep the exemption table from rotting: once a catalogue entry is added, force the
+	// exemption out. Left alone, "exempt, so don't look" piles up and this check becomes a
+	// name only.
 	for code, why := range catalogExempt {
 		if consoleCatalogHasKey(catalog, "err."+code) {
-			t.Errorf("err.%s はカタログに在るのに免除表に残っている（理由: %s）。免除表から外すこと", code, why)
+			t.Errorf("err.%s is in the catalogue yet still listed as exempt (reason: %s). Remove it from the exemption table", code, why)
 		}
 	}
 }

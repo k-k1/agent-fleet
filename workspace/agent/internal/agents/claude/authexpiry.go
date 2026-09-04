@@ -1,35 +1,37 @@
 package claude
 
-// 資格情報の期限切れを**落ちる前に**見つける（docs/log/47 §4-8）。
+// Spot expired credentials BEFORE a turn dies of them (docs/log/47 §4-8).
 //
-// §4-7 の検出は事後のもの: ターンが 401 で死んで転写に合成レコードが残って初めて
-// 「認証切れだった」と分かる。落ちる前にも、落ちた後にも、状態としては何も出ない。
+// The detection in §4-7 is after the fact: only once a turn has died with 401 and a synthetic
+// record is left in the transcript is it clear the login had expired. Neither before nor after
+// does any state surface.
 //
-// CLI 自身の警告も当てにできない。2.1.231 のバイナリを読むと、起動時ヒント
-// （id="oauth-expiry-warning" — スクショの「Your login expires in 1 day · run /login
-// to renew」）はこう決まっている:
+// The CLI's own warning cannot be relied on either. Reading the 2.1.231 binary, the startup
+// hint (id="oauth-expiry-warning" — the "Your login expires in 1 day · run /login to renew"
+// line) is decided like this:
 //
 //	if (apiProvider !== "firstParty" || !oauthLogin) return null
 //	if (typeof refreshTokenExpiresAt !== "number") return null
 //	if (expiresAt > refreshTokenExpiresAt + 3d) return null
 //	const left = refreshTokenExpiresAt - now
-//	if (left > 3d || left <= 0) return null          // ← 期限切れ後は null
-//	return { daysLeft: ceil(left / 1d) }             // 描くのは daysLeft <= 1 のときだけ
+//	if (left > 3d || left <= 0) return null          // ← null once it has expired
+//	return { daysLeft: ceil(left / 1d) }             // drawn only when daysLeft <= 1
 //
-// つまり **切れた後の TUI には何の痕跡も残らない**。残るのは「入力待ちに見えるのに
-// 送ったプロンプトが反映待ちのまま動かないセッション」だけで、Console からは原因が
-// 分からない（実測・利用者報告 2026-08-14）。
+// So once it has expired the TUI carries no trace of it at all. What is left is a session that
+// looks like it is waiting for input while the prompt that was sent never moves off "pending",
+// with no cause visible from the Console (measured; user report 2026-08-14).
 //
-// 材料は claude 自身が見ているのと同じ 2 つの epoch(ms)。トークン本体は読まない
-// （値をログにも DTO にも載せない — 出すのは時刻と真偽だけ）:
+// The material is the same two epochs (ms) claude itself looks at. The token itself is never
+// read (its value goes into neither a log nor a DTO — only timestamps and booleans do):
 //
-//	claudeAiOauth.expiresAt             アクセストークンの期限（実測 約8時間）
-//	claudeAiOauth.refreshTokenExpiresAt リフレッシュトークンの期限（実測 約30日）
+//	claudeAiOauth.expiresAt             access token deadline (measured: about 8 hours)
+//	claudeAiOauth.refreshTokenExpiresAt refresh token deadline (measured: about 30 days)
 //
-// アクセストークンは refresh で伸びるが、refresh が切れたらもう伸ばせない。よって
-// 「確実に死んでいる」と言えるのは**両方**が過ぎたときだけで、refresh だけ切れて
-// いる間はまだ最後のアクセストークンで動く。Console のバッジと送信ガードはこの
-// 厳しい側（両方切れ）を使い、設定カードの予告は refresh の期限を使う。
+// The access token is extended by a refresh, but once the refresh has expired nothing can
+// extend it. So "certainly dead" can only be said when BOTH are past; while only the refresh
+// has expired the last access token still works. The Console badge and the send guard use that
+// stricter side (both expired), while the settings card's advance warning uses the refresh
+// deadline.
 
 import (
 	"encoding/json"
@@ -40,24 +42,26 @@ import (
 	"time"
 )
 
-// warnWindow は「そろそろ切れる」と見なす残り時間。claude が期限を語る気になる窓
-// （上記 expiresAt > refresh + 3d の 3d）に合わせてある。CLI が実際に 1 行出すのは
-// 残り 1 日以下・しかも 15 秒で消える起動ヒントなので、Console 側はもう少し早くから
-// 静かに出す — 消えない場所に出せるのが Console の取り柄で、気づく余裕がその差。
+// warnWindow is the remaining time at which a login counts as "expiring soon". It matches the
+// window in which claude is willing to talk about the deadline at all (the 3d in
+// expiresAt > refresh + 3d above). The CLI only prints its one line at a day or less, and as a
+// startup hint that vanishes after 15 seconds, so the Console shows it quietly a little
+// earlier — the Console can put it somewhere that does not disappear, and that difference is
+// the room the user gets to notice.
 const warnWindow = 3 * 24 * time.Hour
 
 // Expiry is what the credentials file says about how long this login has left.
-// Known=false は「判断材料が無い」で、**期限切れではない**: 未接続・APIキー運転・
-// ファイル形式が変わった、のいずれか。材料が無いときに切れていると名乗るのは、
-// 動いているセッションを止める誤検知になる。
+// Known=false means "nothing to judge on", NOT expired: not connected, running on an API key,
+// or the file format changed. Claiming expiry with no material is a false positive that stops
+// a working session.
 type Expiry struct {
 	Known   bool
 	Access  time.Time // claudeAiOauth.expiresAt
-	Refresh time.Time // claudeAiOauth.refreshTokenExpiresAt（＝サインインし直す期限）
+	Refresh time.Time // claudeAiOauth.refreshTokenExpiresAt (the deadline to sign in again)
 }
 
-// Dead reports that no valid token remains: refresh も access も過ぎている。この
-// ときだけセッションを「認証切れ」と名乗らせ、自由文の送信を断る。
+// Dead reports that no valid token remains: both the refresh and the access deadline are past.
+// Only then is a session allowed to call itself expired and refuse to send free text.
 func (e Expiry) Dead(now time.Time) bool {
 	if !e.Known {
 		return false
@@ -70,7 +74,7 @@ func (e Expiry) Dead(now time.Time) bool {
 }
 
 // Soon reports that the login is inside warnWindow of its renewal deadline (but not
-// dead yet) — 設定カードの「あと N 日で期限切れ」用。
+// dead yet) — for the settings card's "expires in N days".
 func (e Expiry) Soon(now time.Time) bool {
 	if !e.Known || e.Dead(now) {
 		return false
@@ -79,7 +83,7 @@ func (e Expiry) Soon(now time.Time) bool {
 }
 
 // DaysLeft is the whole days left until the renewal deadline, rounded up the way
-// claude rounds its own banner (ceil). 0 = 今日中に切れる / もう切れている。
+// claude rounds its own banner (ceil). 0 = expires today, or has expired already.
 func (e Expiry) DaysLeft(now time.Time) int {
 	if !e.Known {
 		return 0
@@ -103,15 +107,15 @@ type credsFile struct {
 }
 
 // expiryOf is the pure decision over one parsed credentials file — the part the tests
-// pin. env は「環境変数のトークンで走っている」かどうか（下の CredentialExpiry が
-// 実環境から渡す）。
+// pin. envToken says whether a token in the environment is what this is running on
+// (CredentialExpiry below passes in the real environment).
 //
-// 判断しない（Known=false）ケース:
-//   - 環境変数のトークン運転（CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY）— この
-//     ファイルは使われないので、古いまま残っていても意味を持たない。
-//   - refreshTokenExpiresAt が無い（0）— claude 自身も同じ条件で判断を降りている。
-//   - access が refresh + 3d より先 — 通常のサブスク OAuth の形ではない（CLI の
-//     null 条件そのまま）。憶測で切れ扱いにしない。
+// Cases it declines to judge (Known=false):
+//   - running on an environment token (CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY): this file
+//     is not used, so a stale copy of it means nothing.
+//   - refreshTokenExpiresAt absent (0): claude itself declines on the same condition.
+//   - access later than refresh + 3d: not the shape of an ordinary subscription OAuth record
+//     (the CLI's null condition, unchanged). Never call it expired on a guess.
 func expiryOf(c credsFile, envToken bool) Expiry {
 	o := c.ClaudeAiOauth
 	if envToken || o.RefreshTokenExpiresAt <= 0 {
@@ -138,9 +142,10 @@ func envToken() bool {
 	return os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" || os.Getenv("ANTHROPIC_API_KEY") != ""
 }
 
-// 資格情報は「セッション一覧のポーリング × セッション数」で読まれるので、内容は
-// stat（サイズ + mtime）が変わるまで使い回す。TTL ではなく stat にしているのは、
-// 再認証した直後に古い判定が数十秒残ると「直したのに認証切れのまま」に見えるから。
+// The credentials are read once per session per session-list poll, so the parsed contents are
+// reused until the stat (size + mtime) changes. Keyed on the stat rather than a TTL because a
+// stale verdict lingering for tens of seconds right after re-authenticating reads as "I fixed
+// it and it still says expired".
 var (
 	credMu    sync.Mutex
 	credKey   string // size|modtime
@@ -154,8 +159,9 @@ func readCreds() (credsFile, bool) {
 	p := credsPath()
 	key := ""
 	if st, err := os.Stat(p); err == nil {
-		// パスも鍵に含める: CLAUDE_CONFIG_DIR は差し替わりうる（テストの隔離、将来の
-		// 切替）ので、mtime+size だけだと別ファイルが偶然一致したときに前の判定が残る。
+		// The path is part of the key: CLAUDE_CONFIG_DIR can be swapped (test isolation, a
+		// future switch), and on mtime+size alone a different file that happens to match would
+		// keep the previous verdict.
 		key = p + "|" + st.ModTime().UTC().Format(time.RFC3339Nano) + "|" + strconv.FormatInt(st.Size(), 10)
 	}
 	credMu.Lock()
@@ -189,14 +195,14 @@ func CredentialExpiry() Expiry {
 // AuthExpired is the one-call form used by the live-state code and the send guard:
 // this workspace's claude login can no longer run a turn.
 //
-// ワークスペース単位の事実（資格情報はコンテナに 1 つ）なので、claude のセッション
-// 全部が同時にこれを名乗る。セッション毎の状態ではないが、利用者が見るのはセッション
-// の行なので、そこに出さないと気づけない。
+// This is a workspace-wide fact (one credentials file per container), so every claude session
+// reports it at once. It is not per-session state, but the session row is what the user looks
+// at, so not showing it there means they never notice.
 func AuthExpired() bool { return CredentialExpiry().Dead(time.Now()) }
 
-// resetCredCache drops the stat cache. 再認証／切断の直後は同じ stat のまま中身だけ
-// 差し替わる可能性がある（同じ秒に同じサイズで書き戻る）ので、その 2 経路だけは
-// 明示的に捨てる。
+// resetCredCache drops the stat cache. Right after re-authenticating or disconnecting the
+// contents can change while the stat does not (rewritten in the same second at the same size),
+// so those two paths discard it explicitly.
 func resetCredCache() {
 	credMu.Lock()
 	credKey, credCache, credOK = "", credsFile{}, false

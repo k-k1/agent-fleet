@@ -1,23 +1,24 @@
 //go:build drift
 
-// materialize のドリフト検知（docs/log/48 §13）。**実エージェント CLI のバイナリに当てる**
-// テストで、通常の `go test ./...` からは build tag `drift` で除外される。
+// Drift detection for materialize (docs/log/48 §13). These tests run against the REAL agent CLI
+// binaries and are kept out of an ordinary `go test ./...` by the build tag `drift`.
 //
-// なぜ要るか: materialize は「その CLI の設定ファイルはこういう形だ」という、こちらが
-// 一方的に信じている契約の上に立っている。CLI が形を変えても af のユニットテストは
-// 緑のまま（自分の出力を自分で読んでいるだけ）で、壊れたことに気付くのは利用者が
-// 「登録したのにツールが出ない」と言うときになる。claude の TUI 文字列契約が版ごとに
-// 壊れた件（false-idle）と同じ構図なので、CI で先に赤くする層を置く。
+// Why they are needed: materialize stands on a contract we believe unilaterally — "this CLI's
+// config file has this shape". When a CLI changes shape, af's unit tests stay green (they only
+// read back what af itself wrote) and the breakage surfaces when a user says "I registered it
+// but the tool never shows up". That is the same shape as claude's TUI string contract breaking
+// from version to version (false-idle), so this layer exists to go red in CI first.
 //
-// 検証の作り: **期待値を手で書き写さない**。CLI 自身の `mcp add` を隔離 HOME で走らせて
-// 生成させた設定と、af が同じ定義から materialize した設定を**構造比較**する。手写しの
-// 期待値だと「af のテストが af と一致するだけ」の同語反復になる。
+// How the check is built: the expected values are never copied out by hand. The CLI's own
+// `mcp add` runs in an isolated HOME, and the config it generates is compared structurally
+// against the config af materialized from the same definition. A hand-written expectation would
+// be a tautology, af's tests agreeing with af.
 //
-// 例外が 2 つある。**cursor には `mcp add` が無い**ので、参照は逆向き（af が書いた
-// ファイルを cursor に読ませる）。**kiro は `mcp` サブコマンド全部がログインを要求する**
-// ので、未ログイン環境では skip する。それ以外は認証不要 — `mcp add` / `mcp list` は
-// 設定ファイルの読み書きだけで完結する。agy はこのホストで起動できない（RDRAND 非対応）
-// ため、ドリフト検知の層が無い唯一の kind。
+// There are two exceptions. cursor has no `mcp add`, so the reference runs the other way round
+// (cursor reads the file af wrote). Every one of kiro's `mcp` subcommands demands a login, so it
+// is skipped where nobody is logged in. Nothing else needs authentication — `mcp add` /
+// `mcp list` only read and write config files. agy cannot start on this host (no RDRAND), which
+// makes it the one kind with no drift-detection layer.
 
 package mcpreg
 
@@ -76,7 +77,7 @@ func serverEntry(t *testing.T, path, key, name string) map[string]any {
 	m, _ := root[key].(map[string]any)
 	e, ok := m[name].(map[string]any)
 	if !ok {
-		t.Fatalf("%s の %s に %q が無い: %v", path, key, name, m)
+		t.Fatalf("%s: %s has no %q: %v", path, key, name, m)
 	}
 	return e
 }
@@ -91,7 +92,7 @@ func requireSameKeys(t *testing.T, kind string, got, want map[string]any, afExtr
 		if gv, ok := got[k]; !ok || !reflect.DeepEqual(gv, wv) {
 			gj, _ := json.MarshalIndent(got, "", "  ")
 			wj, _ := json.MarshalIndent(want, "", "  ")
-			t.Fatalf("%s の設定形が変わった（docs/log/48 §8.1 の更新が要る）: %q\n--- af\n%s\n--- %s mcp add\n%s",
+			t.Fatalf("%s config shape changed (docs/log/48 §8.1 needs updating): %q\n--- af\n%s\n--- %s mcp add\n%s",
 				kind, k, gj, kind, wj)
 		}
 	}
@@ -101,12 +102,12 @@ func requireSameKeys(t *testing.T, kind string, got, want map[string]any, afExtr
 	}
 	for k := range got {
 		if _, ok := want[k]; !ok && !allowed[k] {
-			t.Fatalf("%s: af だけが書いているキー %q（CLI 側が落としたか、af の書きすぎ）", kind, k)
+			t.Fatalf("%s: key %q is written by af only (either the CLI dropped it, or af writes too much)", kind, k)
 		}
 	}
 }
 
-// --- claude: $CLAUDE_CONFIG_DIR/.claude.json の mcpServers.<name> ----------------
+// --- claude: mcpServers.<name> in $CLAUDE_CONFIG_DIR/.claude.json ----------------
 
 func claudeServerEntry(t *testing.T, dir, name string) any {
 	t.Helper()
@@ -122,7 +123,7 @@ func claudeServerEntry(t *testing.T, dir, name string) any {
 	}
 	e, ok := root.MCPServers[name]
 	if !ok {
-		t.Fatalf("mcpServers に %q が無い: %v", name, root.MCPServers)
+		t.Fatalf("mcpServers has no %q: %v", name, root.MCPServers)
 	}
 	return e
 }
@@ -150,12 +151,12 @@ func TestDriftClaudeMatchesMCPAdd(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// CLI に書かせた側。
+			// The side the CLI was made to write.
 			cliDir := t.TempDir()
 			runCLI(t, []string{"CLAUDE_CONFIG_DIR=" + cliDir}, bin, tc.add...)
 			want := claudeServerEntry(t, cliDir, "afdrift")
 
-			// af が materialize した側。
+			// The side af materialized.
 			afHome := t.TempDir()
 			t.Setenv("HOME", afHome)
 			afDir := filepath.Join(afHome, "claude-cfg")
@@ -168,13 +169,13 @@ func TestDriftClaudeMatchesMCPAdd(t *testing.T) {
 			if !reflect.DeepEqual(got, want) {
 				gj, _ := json.MarshalIndent(got, "", "  ")
 				wj, _ := json.MarshalIndent(want, "", "  ")
-				t.Fatalf("claude の user スコープ設定形が変わった（docs/log/48 §8.1 の更新が要る）\n--- af\n%s\n--- claude mcp add\n%s", gj, wj)
+				t.Fatalf("claude's user-scope config shape changed (docs/log/48 §8.1 needs updating)\n--- af\n%s\n--- claude mcp add\n%s", gj, wj)
 			}
 		})
 	}
 }
 
-// --- codex: $CODEX_HOME/config.toml の [mcp_servers.<name>] ---------------------
+// --- codex: [mcp_servers.<name>] in $CODEX_HOME/config.toml ----------------------
 
 // codexListed returns what `codex mcp list --json` makes of the config in home —
 // i.e. codex's OWN reading of what af wrote, not af's reading of it.
@@ -196,7 +197,7 @@ func codexListed(t *testing.T, bin, home, name string) map[string]any {
 			return s
 		}
 	}
-	t.Fatalf("codex が %q を認識しなかった（af が書いた config.toml を読めていない）:\n%s", name, out)
+	t.Fatalf("codex did not recognise %q (it cannot read the config.toml af wrote):\n%s", name, out)
 	return nil
 }
 
@@ -222,7 +223,7 @@ func TestDriftCodexMatchesMCPAdd(t *testing.T) {
 	if !reflect.DeepEqual(got["transport"], want["transport"]) {
 		gj, _ := json.MarshalIndent(got["transport"], "", "  ")
 		wj, _ := json.MarshalIndent(want["transport"], "", "  ")
-		t.Fatalf("codex の stdio 設定形が変わった（docs/log/48 §8.1 の更新が要る）\n--- af\n%s\n--- codex mcp add\n%s", gj, wj)
+		t.Fatalf("codex's stdio config shape changed (docs/log/48 §8.1 needs updating)\n--- af\n%s\n--- codex mcp add\n%s", gj, wj)
 	}
 }
 
@@ -247,20 +248,20 @@ func TestDriftCodexRemoteKeys(t *testing.T) {
 
 	tr, _ := got["transport"].(map[string]any)
 	if tr["type"] != "streamable_http" || tr["url"] != "https://mcp.example.com/mcp" {
-		t.Fatalf("リモートが streamable_http として読まれていない: %v", tr)
+		t.Fatalf("the remote is not read back as streamable_http: %v", tr)
 	}
 	hdr, _ := tr["http_headers"].(map[string]any)
 	if hdr["Authorization"] != "Bearer t" {
-		t.Fatalf("http_headers が届いていない: %v", tr)
+		t.Fatalf("http_headers did not get through: %v", tr)
 	}
 	if got["startup_timeout_sec"] != 12.0 {
-		t.Fatalf("startup_timeout_sec = %v, want 12（TimeoutMS の ms→s 変換）", got["startup_timeout_sec"])
+		t.Fatalf("startup_timeout_sec = %v, want 12 (TimeoutMS converted ms->s)", got["startup_timeout_sec"])
 	}
 }
 
-// TestDriftCodexAcceptsUserFileWithAFBlocks: 利用者の手書き config に af が追記した
-// あとでも codex が**ファイル全体を**読めること。TOML の重複テーブルや壊れた追記は
-// MCP が 1 本増えない程度では済まず、codex 自体が起動しなくなる。
+// TestDriftCodexAcceptsUserFileWithAFBlocks: codex can still read the WHOLE file after af has
+// appended to a user's hand-written config. A duplicate TOML table or a broken append does not
+// merely cost one MCP server — codex itself stops starting.
 func TestDriftCodexAcceptsUserFileWithAFBlocks(t *testing.T) {
 	bin := cliBin(t, "codex")
 	home := t.TempDir()
@@ -275,18 +276,18 @@ func TestDriftCodexAcceptsUserFileWithAFBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	def := sessionDef(ServerDef{Name: "mine", Origin: OriginUser, Transport: TransportStdio,
-		Command: "/bin/echo"}) // 手書きと同名 = 重複テーブルになりうる組み合わせ
+		Command: "/bin/echo"}) // same name as the hand-written one: the duplicate-table case
 	if _, _, _, err := materializeCodex([]ServerDef{def}, nil); err != nil {
 		t.Fatalf("materializeCodex: %v", err)
 	}
 	got := codexListed(t, bin, codexHome, "mine")
 	tr, _ := got["transport"].(map[string]any)
 	if tr["command"] != "/bin/echo" {
-		t.Fatalf("同名の手書きテーブルが af 定義に置き換わっていない: %v", tr)
+		t.Fatalf("the hand-written table of the same name was not replaced by af's definition: %v", tr)
 	}
 }
 
-// --- opencode: ~/.config/opencode/opencode.jsonc の mcp.<name> --------------------
+// --- opencode: mcp.<name> in ~/.config/opencode/opencode.jsonc -------------------
 
 func TestDriftOpencodeMatchesMCPAdd(t *testing.T) {
 	bin := cliBin(t, "opencode")
@@ -323,13 +324,13 @@ func TestDriftOpencodeMatchesMCPAdd(t *testing.T) {
 			}
 			got := serverEntry(t, opencodeConfigPath(), "mcp", "afdrift")
 
-			// "enabled" は opencode の既定（true）を af が明示しているだけ。
+			// "enabled" is just af spelling out opencode's own default (true).
 			requireSameKeys(t, "opencode", got, want, "enabled")
 		})
 	}
 }
 
-// --- copilot: $COPILOT_HOME/mcp-config.json の mcpServers.<name> ------------------
+// --- copilot: mcpServers.<name> in $COPILOT_HOME/mcp-config.json -----------------
 
 func TestDriftCopilotMatchesMCPAdd(t *testing.T) {
 	bin := cliBin(t, "copilot")
@@ -372,15 +373,15 @@ func TestDriftCopilotMatchesMCPAdd(t *testing.T) {
 	}
 }
 
-// --- kiro: ~/.kiro/settings/mcp.json の mcpServers.<name> -------------------------
+// --- kiro: mcpServers.<name> in ~/.kiro/settings/mcp.json ------------------------
 
-// TestDriftKiroMatchesMCPAdd は kiro の設定形を `kiro-cli mcp add` に当てる。
+// TestDriftKiroMatchesMCPAdd checks kiro's config shape against `kiro-cli mcp add`.
 //
-// kiro だけ他と作りが違う: **`mcp` サブコマンドは全部ログインを要求する**ので、隔離 HOME
-// では CLI 側を走らせられない。そこで CLI には**実 HOME の資格を渡しつつ**、書き込み先は
-// CWD 配下の workspace スコープ（<cwd>/.kiro/settings/mcp.json）へ逃がす — 開発者の
-// グローバル設定を触らずに、生成物だけを手に入れる。af 側は通常どおり隔離 HOME。
-// 未ログイン環境（CI）では skip する。
+// kiro alone is built differently: every `mcp` subcommand demands a login, so the CLI side
+// cannot run in an isolated HOME. The CLI therefore gets the real HOME's credentials while its
+// writes are diverted to the workspace scope under the CWD (<cwd>/.kiro/settings/mcp.json) —
+// the generated file without touching the developer's global config. The af side uses an
+// isolated HOME as usual. Where nobody is logged in (CI) the test skips.
 func TestDriftKiroMatchesMCPAdd(t *testing.T) {
 	bin := cliBin(t, "kiro-cli")
 	realHome, err := os.UserHomeDir()
@@ -389,9 +390,9 @@ func TestDriftKiroMatchesMCPAdd(t *testing.T) {
 	}
 	if out, err := exec.Command(bin, "whoami").CombinedOutput(); err != nil {
 		if os.Getenv("E2E_REQUIRE") == "1" {
-			t.Fatalf("kiro-cli にログインしていない（E2E_REQUIRE=1）:\n%s", out)
+			t.Fatalf("not logged in to kiro-cli (E2E_REQUIRE=1):\n%s", out)
 		}
-		t.Skipf("kiro-cli にログインしていないので設定形を確認できない:\n%s", out)
+		t.Skipf("not logged in to kiro-cli, so the config shape cannot be checked:\n%s", out)
 	}
 
 	cases := []struct {
@@ -433,11 +434,11 @@ func TestDriftKiroMatchesMCPAdd(t *testing.T) {
 	}
 }
 
-// --- cursor: ~/.cursor/mcp.json の mcpServers.<name> ------------------------------
+// --- cursor: mcpServers.<name> in ~/.cursor/mcp.json -----------------------------
 
-// TestDriftCursorReadsAFConfig: cursor-agent には `mcp add` が無い（list / enable /
-// login だけ）ので、参照は「cursor 自身が af の書いたファイルを読めるか」。名前が
-// `mcp list` に出れば、少なくとも mcpServers のキーとエントリの判別子は生きている。
+// TestDriftCursorReadsAFConfig: cursor-agent has no `mcp add` (only list / enable / login), so
+// the reference is whether cursor itself can read the file af wrote. If the names show up in
+// `mcp list`, at least the mcpServers key and the discriminators of an entry are still alive.
 func TestDriftCursorReadsAFConfig(t *testing.T) {
 	bin := cliBin(t, "cursor-agent")
 	afHome := t.TempDir()
@@ -451,14 +452,14 @@ func TestDriftCursorReadsAFConfig(t *testing.T) {
 	if _, _, _, err := materializeCursor(defs, nil); err != nil {
 		t.Fatalf("materializeCursor: %v", err)
 	}
-	// `mcp list` は到達できないサーバーをエラー行として出すので、終了コードは見ない。
+	// `mcp list` prints an unreachable server as an error line, so the exit code is not read.
 	cmd := exec.Command(bin, "mcp", "list")
 	cmd.Dir = afHome
 	cmd.Env = append(os.Environ(), "HOME="+afHome)
 	out, _ := cmd.CombinedOutput()
 	for _, name := range []string{"afdriftlocal", "afdriftremote"} {
 		if !strings.Contains(string(out), name) {
-			t.Fatalf("cursor が af の ~/.cursor/mcp.json を読めていない（%q が出ない）:\n%s", name, out)
+			t.Fatalf("cursor cannot read af's ~/.cursor/mcp.json (%q does not appear):\n%s", name, out)
 		}
 	}
 }

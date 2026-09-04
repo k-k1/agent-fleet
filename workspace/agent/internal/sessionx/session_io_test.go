@@ -20,10 +20,10 @@ import (
 // primitive deliverInitialPrompt uses, so a regression cannot fix launches while leaving
 // the mid-session sends broken (codex eats an Enter bundled into a fast literal stream).
 func TestHandleSessionInputUsesBracketedPasteForCodex(t *testing.T) {
-	// AF_SESSIONS_DIR だけでは足りない: HandleSessionInput は status ストアと資格情報
-	// ストアも触るので、隔離しないと**利用者の実 ~/.config/agent-fleet** に
-	// session-status/<sid>.json と secrets.enc.lock を残す（実測。この家系の他のテストは
-	// もう withTempHome を通している）。
+	// AF_SESSIONS_DIR alone is not enough: HandleSessionInput also touches the status store and
+	// the credential store, so without isolation it leaves session-status/<sid>.json and
+	// secrets.enc.lock in the user's real ~/.config/agent-fleet (measured; the other tests in
+	// this family already go through withTempHome).
 	withTempHome(t)
 	bin := t.TempDir()
 	logPath := filepath.Join(bin, "tmux.log")
@@ -154,9 +154,9 @@ fi
 
 // A {prompt} sent while an interaction is pending would be typed into that modal,
 // which swallows the text and lets the Enter confirm its highlighted row: a wrong
-// AUQ answer (docs/build/92), a SILENT PLAN APPROVAL, or a silent 許可. The gate is a
-// whitelist — only idle (new turn) and working (steering) pass — so a state added
-// upstream blocks by default instead of quietly joining the hole.
+// AUQ answer (docs/build/92), a SILENT PLAN APPROVAL, or a silent permission grant.
+// The gate is a whitelist — only idle (new turn) and working (steering) pass — so a
+// state added upstream blocks by default instead of quietly joining the hole.
 func TestPromptBlockerGatesPrompt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const name = "auq_guard"
@@ -187,8 +187,9 @@ func TestPromptBlockerGatesPrompt(t *testing.T) {
 	// AskUserQuestion / ExitPlanMode fire their OWN permission_prompt between the tool's
 	// PreToolUse and PostToolUse, so the stored state reads "permission" while the
 	// terminal still shows the question menu / the plan dialog. The refusal must name the
-	// modal that is really up — telling the operator 「許可カードから」 for a plan sends
-	// them to a card the Console isn't even showing (it suppresses the permission there).
+	// modal that is really up — telling the operator to answer from the permission card when a
+	// plan is up sends them to a card the Console isn't even showing (it suppresses the
+	// permission there).
 	status.Persist(sid, "permission")
 	status.WritePendingPlan(sid, "# 作業計画")
 	if got := promptBlocker(name); got != "plan" {
@@ -270,12 +271,12 @@ func postInput(t *testing.T, name, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// A scheduled fire with 完了報告 OFF carries no report_to, and the badge origin used to be
-// recorded INSIDE the report_to branch — so every default-settings schedule (the Console
-// checkbox is off by default) and the usage-limit auto-resume (report:false by
-// construction) landed in the mirror as if the user had typed it. The origin must be
-// remembered from `source` alone; the instruction ledger must still stay empty, since
-// there is no conversation to report back to.
+// A scheduled fire with report-on-completion OFF carries no report_to, and the badge
+// origin used to be recorded INSIDE the report_to branch — so every default-settings
+// schedule (the Console checkbox is off by default) and the usage-limit auto-resume
+// (report:false by construction) landed in the mirror as if the user had typed it. The
+// origin must be remembered from `source` alone; the instruction ledger must still stay
+// empty, since there is no conversation to report back to.
 func TestScheduledInputWithoutReportToStillBadges(t *testing.T) {
 	bin := t.TempDir()
 	script := `#!/bin/sh
@@ -307,18 +308,20 @@ esac
 		t.Errorf("Source = %q, want %q (mirror badge)", turns[0].Source, TurnSourceSchedule)
 	}
 	if rows := chatx.ReadInstrRows(name); len(rows) != 0 {
-		t.Errorf("instruction ledger = %d rows, want 0 (report_to が空＝報告先が無い)", len(rows))
+		t.Errorf("instruction ledger = %d rows, want 0 (report_to empty = nowhere to report back to)", len(rows))
 	}
 }
 
-// バッジの由来は**打つ前に**記録されていなければならない（recordInjection のコメント）。
-// タグ付けは要求のたびにストアを読み直すので、記録が転写の user 行より後になると、その
-// 隙間に来たポーリングは同じターンを由来なしで返し、ミラーは持っているターンを取り直さない
-// ので peer バッジが画面から永久に消える。peer は配達確認（＝user 行が現れるまで待つ）を
-// 必ず通るため、記録が後ろにあるとこの隙間は毎回開いた（実測 524ms）。
+// TestPeerInputRecordsBadgeOriginBeforeDelivery pins that the badge origin is recorded BEFORE
+// anything is typed (see the comment on recordInjection). Tagging re-reads the store on every
+// request, so if the record lands after the user line in the transcript, a poll arriving in
+// that window returns the same turn with no origin, and since the mirror never re-fetches a
+// turn it already has, the peer badge disappears from the screen for good. A peer send always
+// goes through delivery confirmation, which waits for the user line to appear, so with the
+// record behind it that window opened every single time (measured: 524ms).
 //
-// 偽 tmux は「打鍵の瞬間」にストアを写し取り、同時に claude が user 行を書いたことにする。
-// 写しに由来が入っていることが、順序そのものの証明になる。
+// The fake tmux copies the store at the moment of typing and, in the same breath, pretends
+// claude wrote the user line. Origin present in that copy is the proof of the ordering.
 func TestPeerInputRecordsBadgeOriginBeforeDelivery(t *testing.T) {
 	home := t.TempDir()
 	bin := t.TempDir()
@@ -327,7 +330,8 @@ func TestPeerInputRecordsBadgeOriginBeforeDelivery(t *testing.T) {
 	const name = "peer_to"
 	const from = "peer_from"
 	dir := t.TempDir()
-	// 配達確認の証拠になる会話 jsonl（claude.jsonlPaths のグロブに合わせた置き場）。
+	// The conversation jsonl that delivery confirmation reads as evidence, placed to match the
+	// glob in claude.jsonlPaths.
 	jsonl := filepath.Join(home, "claude", "projects", "p", session.UUID(dir, name)+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(jsonl), 0o755); err != nil {
 		t.Fatal(err)
@@ -373,32 +377,33 @@ exit 0
 	at, err := os.ReadFile(snapshot)
 	if err != nil {
 		lg, _ := os.ReadFile(snapshot + ".log")
-		t.Fatalf("打鍵の時点で由来ストアが無い（記録が配達より後ろにある）: %v\ntmux=%s\nstore=%s", err, lg, injectionStore.Path(name))
+		t.Fatalf("no origin store at the moment of typing (the record happens after delivery): %v\ntmux=%s\nstore=%s", err, lg, injectionStore.Path(name))
 	}
 	if !strings.Contains(string(at), `"source":"peer"`) {
-		t.Fatalf("打鍵の時点のストア = %s, want peer 由来", at)
+		t.Fatalf("store at the moment of typing = %s, want a peer origin", at)
 	}
 
-	// そして実際にタグが付くこと。照合は**封筒付きの本文**で行われる（転写に残るのは
-	// サーバが前置した後の文字列なので、素の message を覚えると一生一致しない）。
+	// And the tag must actually be applied. Matching happens against the body WITH its
+	// envelope: what stays in the transcript is the string after the server prefixed it, so
+	// remembering the bare message would never match.
 	list, _ := injectionStore.Read(name)
 	if len(list) != 1 {
-		t.Fatalf("記録 = %+v, want 1 件", list)
+		t.Fatalf("records = %+v, want 1", list)
 	}
 	if !strings.HasPrefix(list[0].Text, "[agent-fleet:peer from="+from+" ") {
-		t.Fatalf("記録した本文 = %q, want 封筒付き", list[0].Text)
+		t.Fatalf("recorded body = %q, want it with the envelope", list[0].Text)
 	}
 	turns := []transcript.Turn{{Role: "user", Text: list[0].Text}}
 	tagInjectedTurns(name, turns)
 	if turns[0].Source != turnSourcePeer {
-		t.Errorf("Source = %q, want %q（ミラーのバッジ）", turns[0].Source, turnSourcePeer)
+		t.Errorf("Source = %q, want %q (the mirror badge)", turns[0].Source, turnSourcePeer)
 	}
 	if rows := chatx.ReadInstrRows(name); len(rows) != 0 {
-		t.Errorf("指示台帳 = %d 行, want 0（peer は arm に触らない — ADR 0041 決定4）", len(rows))
+		t.Errorf("instruction ledger = %d rows, want 0 (peer does not touch the arm - ADR 0041 decision 4)", len(rows))
 	}
 }
 
-// Regression for the sx37vu7 引継ぎ bug (assistant chat's send_to_session): a managed
+// Regression for the sx37vu7 handoff bug (assistant chat's send_to_session): a managed
 // session's {prompt} must route to its ThreadHandle, not the tmux not_running check —
 // a live managed session has no tmux pane, so the old code 409'd on every send. claude
 // has no managed driver (ADR 0015) so this exercises the same "no driver registered"
@@ -415,34 +420,35 @@ func TestHandleSessionInputManagedUnavailable(t *testing.T) {
 	}
 }
 
-// opencode's managed driver is registered — /input must reach the ThreadHandle (502
-// runtime_failed when no runtime can start) rather than tmux's not_running.
 func TestClipOutputTail(t *testing.T) {
-	// max<=0 は無効（従来挙動 — クリップしない）。
+	// max<=0 disables it (the old behaviour: no clipping).
 	if out, clipped := clipOutputTail("abc", 0); clipped || out != "abc" {
 		t.Fatalf("max=0: (%q, %v)", out, clipped)
 	}
-	// 上限以内はそのまま。
+	// Within the limit, unchanged.
 	if out, clipped := clipOutputTail("abc", 3); clipped || out != "abc" {
 		t.Fatalf("fits: (%q, %v)", out, clipped)
 	}
-	// 超過は末尾 max バイト＋省略マーカー前置。
+	// Over the limit: the last max bytes, with the elision marker in front.
 	out, clipped := clipOutputTail("0123456789", 4)
 	if !clipped || out != sessionOutputClipNote+"6789" {
 		t.Fatalf("clip: (%q, %v)", out, clipped)
 	}
-	// マルチバイト境界: 「あ」(3バイト) の途中で切れる max はルーン境界まで前進する。
-	out, clipped = clipOutputTail("あいう", 4) // 末尾4バイト = 「う」+「い」の残り1バイト
+	// Multibyte boundary: a max that cuts into the middle of a 3-byte character advances to
+	// the next rune boundary.
+	out, clipped = clipOutputTail("あいう", 4) // the last 4 bytes = the whole う plus 1 byte of い
 	if !clipped || out != sessionOutputClipNote+"う" {
 		t.Fatalf("rune boundary: (%q, %v)", out, clipped)
 	}
-	// 前進の結果すべて落ちても壊れない（マーカーのみ）。
+	// Advancing may drop everything, which must still not break (marker only).
 	out, clipped = clipOutputTail("ああ", 2)
 	if !clipped || out != sessionOutputClipNote {
 		t.Fatalf("all-dropped: (%q, %v)", out, clipped)
 	}
 }
 
+// opencode's managed driver is registered — /input must reach the ThreadHandle (502
+// runtime_failed when no runtime can start) rather than tmux's not_running.
 func TestHandleSessionInputManagedOpencodeNeedsRuntime(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
@@ -456,10 +462,11 @@ func TestHandleSessionInputManagedOpencodeNeedsRuntime(t *testing.T) {
 	}
 }
 
-// 作業を始める（起動モーダル）の最初の指示は when_ready で渡される: ここから同期的に
-// 打つのではなく、CLI が composer を描くのを待ってから打つ配達ループ
-// （deliverInitialPrompt）へ委ねる。Console のミラーが載っていなくても走るのが要点で、
-// tmux がまだ無い瞬間に呼ばれても not_running で落としてはいけない。
+// The first instruction from the launch modal arrives with when_ready: rather than typing it
+// synchronously from here, it is handed to the delivery loop (deliverInitialPrompt), which
+// waits until the CLI has drawn its composer. The point is that this runs even when the
+// Console mirror is not up, so a call arriving before tmux exists must not fail with
+// not_running.
 func TestHandleSessionInputWhenReadyDefersDelivery(t *testing.T) {
 	bin := t.TempDir()
 	logPath := filepath.Join(bin, "tmux.log")
@@ -483,14 +490,16 @@ esac
 	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
 
-	// 知らないセッション名は待たせず落とす（配達ループは黙って 30 秒待つだけなので）。
+	// An unknown session name fails immediately rather than waiting: the delivery loop would
+	// just sit there silently for 30 seconds.
 	if rec := postInput(t, "no_such_session", `{"prompt":"x","when_ready":true}`); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown session: status = %d, body = %s, want 404", rec.Code, rec.Body.String())
 	}
 
-	// 配達の意味論を持つ他の指定とは併用できない（それぞれ自分の配達規約を持つ）。
+	// It cannot be combined with other options that carry delivery semantics, each of which has
+	// its own delivery contract.
 	const name = "launch_when_ready"
-	// codex を使うのは配達確認（claude 専用の転写スナップショット）を回さないため。
+	// codex is used so that delivery confirmation (a claude-only transcript snapshot) does not run.
 	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex})
 	if rec := postInput(t, name, `{"prompt":"x","when_ready":true,"report_to":"conv1"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("report_to: status = %d, body = %s, want 400", rec.Code, rec.Body.String())
@@ -503,7 +512,7 @@ esac
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body = %s, want 202", rec.Code, rec.Body.String())
 	}
-	// 202 は「受け付けた」であって「打った」ではない — 実際の打鍵は配達ループの中で起きる。
+	// 202 means accepted, not typed - the actual typing happens inside the delivery loop.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		b, _ := os.ReadFile(logPath)

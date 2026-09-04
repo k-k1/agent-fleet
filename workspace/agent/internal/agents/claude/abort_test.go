@@ -56,7 +56,7 @@ func userLine(text string) string {
 
 // TestAbortedTurnClassification pins the four error classes actually observed in the
 // fleet's transcripts (docs/log/47 §2). The retryable/blocked split is the safety valve for
-// 自動再開: re-sending a blocked turn reproduces the same error forever.
+// auto-resume: re-sending a blocked turn reproduces the same error forever.
 func TestAbortedTurnClassification(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -67,27 +67,29 @@ func TestAbortedTurnClassification(t *testing.T) {
 		{"connection closed", "API Error: Connection closed mid-response. The response above may be incomplete.", 0, true},
 		{"rate limited", "API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited", 429, true},
 		{"overloaded 5xx", "API Error: 529 Overloaded", 529, true},
-		// 実測 sp2qemx (2026-07-30): apiErrorStatus フィールドごと無いので、文言でしか
-		// 一過性と判定できない。ここが blocked に倒れると自動再開の対象から外れる。
+		// Measured sp2qemx (2026-07-30): the apiErrorStatus field is missing entirely, so
+		// only the text can call it transient. Falling to blocked drops it from auto-resume.
 		{"server error mid-response", "API Error: Server error mid-response. The response above may be incomplete.", 0, true},
 		{"internal server error", "API Error: 500 Internal server error", 0, true},
 		{"usage limit", "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model", 429, false},
-		// 実測 s5jjqv4 (2026-07-31, claude 2.1.220)。"hit your" なので "reached your" に
-		// 当たらず、"session limit" なので "usage limit" にも当たらない — マーカーを足す
-		// までは「判定不能なので blocked」に落ちて偶然だけ正解していた。結論が同じでも
-		// 意図した分類にしておかないと、次に既定側を変えたときに黙って壊れる。
+		// Measured s5jjqv4 (2026-07-31, claude 2.1.220). It says "hit your", so it misses
+		// "reached your", and "session limit", so it misses "usage limit" too — until the
+		// marker was added it fell to "undecidable, therefore blocked" and was right only by
+		// accident. The verdict is the same either way, but unless the classification is the
+		// intended one, changing the default side later breaks it silently.
 		{"session limit", "You've hit your session limit · resets 7:50pm (Asia/Tokyo)", 0, false},
 		{"prompt too long", "Prompt is too long · the request is ~242785 tokens (limit 200000) but this conversation is longer", 400, false},
-		// 実測 2026-08-05（別ワークスペースの g3-manage セッション）。claude 2.1.x の
-		// ストリーム番犬が内部リトライを使い切った形で、コーパスには無かった新しい文言。
-		// 自動再開の対象でなければ、15 分走ったターンがそのまま捨てられる。
+		// Measured 2026-08-05 (a g3-manage session in another workspace): claude 2.1.x's
+		// stream watchdog with its internal retries used up — wording the corpus did not
+		// have. Without auto-resume, a turn that ran for 15 minutes is thrown away.
 		{"stream idle timeout", "API Error: Stream idle timeout - no chunks received", 0, true},
 		{"stream idle timeout (partial)", "API Error: Stream idle timeout - partial response received", 0, true},
-		// 実測 2026-08-06（認証切れ）。本文にあるのは "Re-authenticate" なので、以前の
-		// "authentication" マーカーには当たらず 401 が既定へ落ちて偶然 blocked だった。
-		// 再送しても再ログインするまで同じ失敗なので、意図した分類として固定する。
+		// Measured 2026-08-06 (an expired credential). The text carries "Re-authenticate", so
+		// it missed the old "authentication" marker and the 401 fell to the default, landing
+		// on blocked by accident. Re-sending fails the same way until the user logs in again,
+		// so pin it as the intended classification.
 		{"auth expired", "Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue.", 401, false},
-		{"unknown wording", "API Error: something nobody has seen before", 0, false}, // 判定不能は blocked 側
+		{"unknown wording", "API Error: something nobody has seen before", 0, false}, // undecidable = blocked
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -106,10 +108,10 @@ func TestAbortedTurnClassification(t *testing.T) {
 }
 
 // TestAbortedTurnErrorKind pins the `error` field as the FALLBACK classifier (docs/log/47
-// §4-6): 英文言は版ごとに変わるが、この値は claude 自身の分類なので変わりにくい。
-// 順序が要点 — 文言が主で、`error` はそれが何も言わなかったときだけ効く。文言の方が
-// 「上限ではない」といった否定を表現できるからで、逆順にすると 429 の retryable と
-// blocked が混ざる。
+// §4-6): the English prose is reworded from release to release, while this value is claude's
+// own classification and rarely moves. The ORDER is the point — the text leads and `error`
+// only applies when the text said nothing, because only the text can express a negation such
+// as "not a usage limit". Reversed, the retryable and blocked 429s get mixed up.
 func TestAbortedTurnErrorKind(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -118,17 +120,18 @@ func TestAbortedTurnErrorKind(t *testing.T) {
 		kind      string
 		retryable bool
 	}{
-		// 文言に手掛かりが無い形。ここが `error` の出番。
-		{"未知の文言 + server_error", "API Error: something nobody has seen before", 0, "server_error", true},
-		{"未知の文言 + invalid_request", "API Error: something nobody has seen before", 0, "invalid_request", false},
-		// rate_limit は 429 の両義（利用上限 / 一時的なレート制限）なので何も決めない
-		// → 既定の blocked に倒れる。ここを retryable にすると上限を再送し続ける。
-		{"未知の文言 + rate_limit", "API Error: something nobody has seen before", 429, "rate_limit", false},
-		{"未知の値は決めない", "API Error: something nobody has seen before", 0, "brand_new_kind", false},
-		{"未知の文言 + authentication_failed", "API Error: something nobody has seen before", 0, "authentication_failed", false},
-		// 文言が主: server_error を名乗っていても利用上限の文言なら blocked のまま。
-		{"上限の文言は error より強い", "You've reached your Fable 5 limit.", 429, "server_error", false},
-		{"一過性の文言は error より強い", "API Error: Connection closed mid-response.", 0, "invalid_request", true},
+		// Shapes where the text offers no clue at all — this is where `error` earns its keep.
+		{"unknown wording + server_error", "API Error: something nobody has seen before", 0, "server_error", true},
+		{"unknown wording + invalid_request", "API Error: something nobody has seen before", 0, "invalid_request", false},
+		// rate_limit is the ambiguous side of 429 (usage limit / temporary rate limit), so it
+		// decides nothing and falls to the blocked default. Retryable here would keep
+		// re-sending into a usage limit.
+		{"unknown wording + rate_limit", "API Error: something nobody has seen before", 429, "rate_limit", false},
+		{"an unknown value decides nothing", "API Error: something nobody has seen before", 0, "brand_new_kind", false},
+		{"unknown wording + authentication_failed", "API Error: something nobody has seen before", 0, "authentication_failed", false},
+		// The text leads: usage-limit wording stays blocked even when it calls itself a server_error.
+		{"limit wording outranks error", "You've reached your Fable 5 limit.", 429, "server_error", false},
+		{"transient wording outranks error", "API Error: Connection closed mid-response.", 0, "invalid_request", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -154,7 +157,7 @@ func TestAbortedTurnTailShape(t *testing.T) {
 		want  bool
 	}{
 		{"error is last", toLines(userLine("go"), err429), true},
-		// 実測の並び: エラーの直後に turn_duration と file-history-snapshot が続く
+		// The measured ordering: turn_duration and file-history-snapshot follow the error
 		{"bookkeeping after error", toLines(userLine("go"), err429,
 			`{"type":"system","subtype":"turn_duration","durationMs":257395}`,
 			`{"type":"file-history-snapshot"}`,
@@ -163,7 +166,7 @@ func TestAbortedTurnTailShape(t *testing.T) {
 		{"resumed by user", toLines(userLine("go"), err429, userLine("続けてください"), asstLine("はい")), false},
 		{"normal completion", toLines(userLine("go"), asstLine("done")), false},
 		{"empty transcript", nil, false},
-		// サブエージェントのエラーは本体ターンの終端ではない
+		// A subagent's error is not the end of the main turn
 		{"sidechain error ignored", toLines(userLine("go"), asstLine("spawning"),
 			`{"type":"assistant","isSidechain":true,"isApiErrorMessage":true,"message":{"content":[{"type":"text","text":"API Error: Connection closed"}]}}`), false},
 	}
@@ -193,8 +196,9 @@ func TestAbortedTurnLiveCorpus(t *testing.T) {
 	if len(paths) == 0 {
 		t.Skip("no local claude transcript corpus")
 	}
-	// 端末の転写は数百ファイル・数 MB になる。ドリフト検知が目的なので、新しい方から
-	// 一定数だけ見れば十分（古い版の形は既にここまでの版で検証済み）。
+	// A machine's transcripts run to hundreds of files and several MB. The point is drift
+	// detection, so a fixed number of the newest ones is enough (older releases' shapes were
+	// verified by the runs of the day).
 	sort.Slice(paths, func(i, j int) bool {
 		fi, _ := os.Stat(paths[i])
 		fj, _ := os.Stat(paths[j])
@@ -225,7 +229,7 @@ func TestAbortedTurnLiveCorpus(t *testing.T) {
 				}
 			}
 		}
-		// 末尾がエラーなら検知されること（逆に、そうでなければ検知されないこと）
+		// An error at the tail must be detected — and anything else must not be.
 		msg, _, ok := abortedTurnFrom(lines)
 		if ok && msg == "" {
 			t.Errorf("%s: detected an abort with an empty message", filepath.Base(p))
@@ -317,12 +321,13 @@ func TestHealIdleRoutesAbortToNotifier(t *testing.T) {
 	})
 }
 
-// TestUsageLimitAbortIsTheLimitSubset: 上限エピソードの入口は blockedMarkers 全体では
-// なく「利用上限」だけ、という切り分けと、その中の**種別**（待てば解ける窓か、待っても
-// 解けない支出・残高か）を固定する。プロンプト超過や認証エラーで「利用上限に達しました」と
-// 通知したら利用者は来ないリセットを待つことになるし、支出の上限を窓と読み違えると
-// 「制限解除待ち」と表示したまま永久に解けない（docs/log/47 §4-10）。
-// retryable 側（"(not your usage limit)" と自称する 429）も落ちることが要点。
+// TestUsageLimitAbortIsTheLimitSubset pins two things: a limit episode is entered from the
+// USAGE-LIMIT subset only, not from blockedMarkers as a whole, and which KIND of limit it is
+// (a window that waiting clears, or a spend/balance cap that it never does). Notifying "usage
+// limit reached" for an over-long prompt or an authentication error leaves the user waiting
+// for a reset that never comes; reading a spend cap as a window shows "waiting for the limit
+// to lift" forever (docs/log/47 §4-10). Dropping the retryable side — the 429 that calls
+// itself "(not your usage limit)" — is part of the point.
 func TestUsageLimitAbortIsTheLimitSubset(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -337,19 +342,19 @@ func TestUsageLimitAbortIsTheLimitSubset(t *testing.T) {
 		want bool
 		kind LimitKind
 	}{
-		{"モデル別上限", apiErr("You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.", 429), true, LimitWindow},
-		{"アカウントの窓", apiErr("You've hit your session limit · resets 7:50pm (Asia/Tokyo)", 0), true, LimitWindow},
-		// 実測コーパス（2026-08-20）。既存 3 語のどれにも当たらず、週次だけがエピソードを
-		// 開けていなかった。
-		{"週次の窓", apiErr("You've hit your weekly limit · resets 9am (Asia/Tokyo)", 429), true, LimitWindow},
-		// 利用者報告（2026-08-20）。同じ 429 / rate_limit だが待っても解けない側。
-		{"組織の月次支出上限", apiErr("You've hit your org's monthly spend limit · run /usage-credits to raise it, or visit claude.ai/admin-settings/usage", 429), true, LimitSpend},
-		{"残高不足", apiErr("Your credit balance is too low to access the API", 429), true, LimitSpend},
-		{"一時的なレート制限は上限ではない", apiErr("API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited", 429), false, ""},
-		{"プロンプト超過は待っても解けない", apiErr("Prompt is too long · the request is ~242785 tokens (limit 200000)", 400), false, ""},
-		{"認証エラーは待っても解けない", apiErr("API Error (HTTP 401): authentication failed", 401), false, ""},
-		{"接続断", apiErr("API Error: Connection closed mid-response.", 0), false, ""},
-		{"通常の完了", asstLine("done"), false, ""},
+		{"per-model limit", apiErr("You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.", 429), true, LimitWindow},
+		{"account window", apiErr("You've hit your session limit · resets 7:50pm (Asia/Tokyo)", 0), true, LimitWindow},
+		// Measured corpus (2026-08-20): it matches none of the three existing words, so the
+		// weekly one alone opened no episode.
+		{"weekly window", apiErr("You've hit your weekly limit · resets 9am (Asia/Tokyo)", 429), true, LimitWindow},
+		// User-reported (2026-08-20). The same 429 / rate_limit, but the side waiting never clears.
+		{"org monthly spend limit", apiErr("You've hit your org's monthly spend limit · run /usage-credits to raise it, or visit claude.ai/admin-settings/usage", 429), true, LimitSpend},
+		{"credit balance too low", apiErr("Your credit balance is too low to access the API", 429), true, LimitSpend},
+		{"a temporary rate limit is not a usage limit", apiErr("API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited", 429), false, ""},
+		{"an over-long prompt does not clear by waiting", apiErr("Prompt is too long · the request is ~242785 tokens (limit 200000)", 400), false, ""},
+		{"an authentication error does not clear by waiting", apiErr("API Error (HTTP 401): authentication failed", 401), false, ""},
+		{"connection dropped", apiErr("API Error: Connection closed mid-response.", 0), false, ""},
+		{"normal completion", asstLine("done"), false, ""},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -363,10 +368,10 @@ func TestUsageLimitAbortIsTheLimitSubset(t *testing.T) {
 				t.Fatalf("UsageLimitAbort = %v, want %v", ok, tc.want)
 			}
 			if kind != tc.kind {
-				t.Errorf("種別 = %q, want %q（窓と支出で利用者の次の一手が正反対）", kind, tc.kind)
+				t.Errorf("kind = %q, want %q (a window and a spend cap call for opposite next moves)", kind, tc.kind)
 			}
 			if ok && a.Msg == "" {
-				t.Error("上限と判定したのに理由の文言が空")
+				t.Error("classified as a usage limit, yet the reason text is empty")
 			}
 		})
 	}

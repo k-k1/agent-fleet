@@ -1,12 +1,12 @@
 package chatx
 
-// chatx 単体テストでの配線（本番は main の chat_wiring.go が持つ）。
-// internal/mcpx/deps_test.go と同じ形。
+// The wiring chatx's own unit tests run on (production wiring lives in main's
+// chat_wiring.go). Same shape as internal/mcpx/deps_test.go.
 //
-// 🔥 **凍結ワイヤの値（errCode*）は本物の文字列を書く。** Console の
-// `err.<code>` カタログと対になっていて、テストがその値を突くものがあるため。
-// 関数側は「本物と同じ形の最小実装」で、**無害な既定値は置かない**（未配線は
-// Configure が panic で落とす）。
+// The frozen wire values (errCode*) are the real strings: they pair with the Console's
+// `err.<code>` catalogue and some tests assert on them. The functions are minimal
+// implementations with the same shape as the real ones; no harmless defaults, because an
+// unwired field is meant to make Configure panic.
 
 import (
 	"go/ast"
@@ -41,11 +41,12 @@ func testDeps() Deps {
 		ErrCodeTitleFeatureDisabled:   "title_feature_disabled",
 		ErrCodeTitleNoContent:         "title_no_content",
 
-		// 🔥 ここは**本物と同じ読み方**にする。空を返す偽物にすると
-		// 「設定が効く」ことを見ている検査（TestResolveChatModelUsesAssistantPreference /
-		// TestChatModelForResolvesPerActualBackend / TestChatAutoTurnLimit）が
-		// **アサーションはそのままなのに通らなくなる／弱くなる**。ui-prefs の読み出しは
-		// internal/uiprefs が持っているので、main を介さずに同じ経路を通せる。
+		// These read the preference exactly the way production does. A fake that returns
+		// empty would leave the assertions untouched while the tests that check "the
+		// setting takes effect" (TestResolveChatModelUsesAssistantPreference /
+		// TestChatModelForResolvesPerActualBackend / TestChatAutoTurnLimit) stop passing
+		// or stop measuring. internal/uiprefs owns the ui-prefs read, so the same path is
+		// reachable without going through main.
 		AssistantAgentOrderPref: func() []string { return DefaultHeadlessOrder },
 		AssistantChatModelPref: func(kind string) (string, bool) {
 			return modelPrefForTest("assistantModels", kind)
@@ -57,7 +58,8 @@ func testDeps() Deps {
 		AiProseModelPref: func(kind string) (string, bool) {
 			return modelPrefForTest("aiProseModels", kind)
 		},
-		// main の chatAutoTurnLimit と同じ丸め: 未設定なら既定、常に [1, 上限] に収める。
+		// Same clamping as main's chatAutoTurnLimit: the default when unset, always
+		// within [1, the maximum].
 		ChatAutoTurnLimit: func() int {
 			v, ok := uiprefs.Read()["assistantAutoTurnLimit"].(float64)
 			if !ok {
@@ -84,9 +86,9 @@ func testDeps() Deps {
 		AssistantDeps: func() assistants.Deps {
 			return assistants.NewDeps(func() string { return "" }, func() string { return session.KindClaude })
 		},
-		// main の ensureBuiltinKnowledge と同じ置き場を作る（会話が Knowledge に
-		// このパスを持つことを chat_verb_test.go が見ている）。埋め込み本文の実体化は
-		// main 側の責務なのでディレクトリだけ用意する。
+		// Create the same location main's ensureBuiltinKnowledge does
+		// (chat_verb_test.go checks that a conversation carries this path in Knowledge).
+		// Materializing the embedded body is main's job, so only the directory is made.
 		EnsureBuiltinKnowledge: func() string {
 			dir := filepath.Join(paths.HomeDir(), ".config", "agent-fleet", "knowledge", "af")
 			_ = os.MkdirAll(dir, 0o700)
@@ -122,17 +124,18 @@ func testDeps() Deps {
 			s = strings.TrimSpace(s)
 			return s, s != ""
 		},
-		// 本物（agent.go）と同じ形: 知らない種別は claude に丸める。
+		// Same shape as the real one (agent.go): an unknown kind folds to claude.
 		NormalizeKind: func(kind string) string {
 			if _, ok := ChatProviders[kind]; ok {
 				return kind
 			}
 			return session.KindClaude
 		},
-		// main の safeBrowsePath と同じ形（ブラウズ根の下へ収まる相対パスだけ通す）。
-		// 素通しの偽物にすると、添付ファイルの置き場が Knowledge に入る検査
-		// （chat_verb_test.go）が**根の下に解決されない**ので落ちる＝弱い偽物は
-		// アサーションを変えずに検査を壊す。除外リスト（isDenied）は fs.go の責務。
+		// Same shape as main's safeBrowsePath: only relative paths that stay under the
+		// browse root get through. A pass-through fake would fail the test that an
+		// attachment's location lands in Knowledge (chat_verb_test.go), because it never
+		// resolves under the root — a weak fake breaks the check without touching a single
+		// assertion. The deny list (isDenied) is fs.go's job.
 		SafeBrowsePath: func(p string) (string, string, bool) {
 			root := os.Getenv("AF_BROWSE_ROOT")
 			if root == "" {
@@ -171,8 +174,8 @@ func testDeps() Deps {
 	}
 }
 
-// modelPrefForTest は main の assistantModelPref と同じ読み方（除外リストの判定は
-// model_deny.go の責務なので、ここでは設定の読み出しだけを写す）。
+// modelPrefForTest reads the preference the way main's assistantModelPref does. Only the
+// read is copied here; deciding the deny list is model_deny.go's job.
 func modelPrefForTest(key, kind string) (string, bool) {
 	raw, ok := uiprefs.Read()[key].(map[string]any)
 	if !ok {
@@ -184,9 +187,10 @@ func modelPrefForTest(key, kind string) (string, bool) {
 
 func init() { Configure(testDeps()) }
 
-// TestConfigureRejectsEveryMissingField は **フィールドを 1 つずつ落として panic することを
-// 全フィールドについて**確かめる。手書きの検査だと**フィールドを足したときに検査へ足し忘れて
-// 穴が開く**ので、reflect で回す（ADR 決定 5 の但し書き・#317）。
+// TestConfigureRejectsEveryMissingField drops one field at a time and checks that Configure
+// panics, for every field. A hand-written check grows a hole the moment a field is added
+// and nobody remembers to extend it, so this walks the struct with reflect (the proviso to
+// ADR decision 5, #317).
 func TestConfigureRejectsEveryMissingField(t *testing.T) {
 	full := testDeps()
 	rt := reflect.TypeOf(full)
@@ -199,10 +203,10 @@ func TestConfigureRejectsEveryMissingField(t *testing.T) {
 			defer func() {
 				r := recover()
 				if r == nil {
-					t.Fatalf("%s を落としても panic しなかった（配線漏れが緑になる）", name)
+					t.Fatalf("dropping %s did not panic (an unwired field would go green)", name)
 				}
 				if msg, _ := r.(string); !strings.Contains(msg, name) {
-					t.Fatalf("panic の文言に %s が出ていない: %v", name, r)
+					t.Fatalf("the panic message does not mention %s: %v", name, r)
 				}
 			}()
 			Configure(d)
@@ -210,26 +214,26 @@ func TestConfigureRejectsEveryMissingField(t *testing.T) {
 	}
 }
 
-// TestInstallReconcilerForTestHasNoProductionCaller は、**テスト専用に公開した据え付け口が
-// 本番コードから呼ばれていない**ことを固定する（レビュー参考 3）。
+// TestInstallReconcilerForTestHasNoProductionCaller pins that the seam exported for tests
+// only is never called from production code (review note 3).
 //
-// `InstallReconcilerForTest` は `TestSessionReport*` 3 本の end-to-end が「本物の
-// reconciler が回っていること」を前提にしているために公開している（`reportRec` は var で、
-// 別名で受けると写しになり据え替えが届かない）。**本番から呼べる形なのは事実**なので、
-// 呼ばれ始めたら赤で気付けるようにしておく。
+// `InstallReconcilerForTest` is exported because the three `TestSessionReport*`
+// end-to-end tests rely on the real reconciler running (`reportRec` is a var, and taking
+// it under another name yields a copy the swap never reaches). It IS callable from
+// production, so a first caller has to show up as a red test.
 //
-// 🔥 **テキスト検索ではなく AST で「呼び出し」だけを見る。** 素の文字列一致だと
-// **宣言している当のファイルと doc コメント**を拾って常に赤になる（最初にそう書いた）。
-// 🔥 **走査した本数を必ず確かめる**（#320 の「1 件も見つからなければ何も検査しない」対策）。
-// パスの前提が崩れて 0 ファイルしか読まなければ、この検査は「呼び出し 0 件」を無条件に
-// 報告する＝存在しないのと同じになる。
+// It looks at CALLS through the AST rather than searching text: a plain string match also
+// hits the declaring file and the doc comment, and would be red forever.
+// It also checks how many files it scanned (the #320 "finds nothing, so checks nothing"
+// failure): if a path assumption breaks and it reads zero files, the check reports "no
+// callers" unconditionally, which is the same as not existing.
 func TestInstallReconcilerForTestHasNoProductionCaller(t *testing.T) {
-	roots := []string{".", "../.."} // internal/chatx と workspace/agent（package main）
+	roots := []string{".", "../.."} // internal/chatx and workspace/agent (package main)
 	scanned := 0
 	for _, root := range roots {
 		ents, err := os.ReadDir(root)
 		if err != nil {
-			t.Fatalf("走査できない %s: %v", root, err)
+			t.Fatalf("cannot scan %s: %v", root, err)
 		}
 		for _, e := range ents {
 			n := e.Name()
@@ -255,15 +259,15 @@ func TestInstallReconcilerForTestHasNoProductionCaller(t *testing.T) {
 					name = fn.Sel.Name
 				}
 				if name == "InstallReconcilerForTest" {
-					t.Errorf("%s が InstallReconcilerForTest を呼んでいる"+
-						"（テスト専用の据え付け口。本番から回すなら設計を見直すこと）", path)
+					t.Errorf("%s calls InstallReconcilerForTest"+
+						" (a test-only seam; if production must drive it, revisit the design)", path)
 				}
 				return true
 			})
 		}
 	}
 	if scanned < 50 {
-		t.Fatalf("非テストの .go を %d 本しか読めていない＝この検査が無言化している"+
-			"（置き場が変わった？ roots=%v）", scanned, roots)
+		t.Fatalf("only %d non-test .go files were read = this check has gone silent"+
+			" (did the layout move? roots=%v)", scanned, roots)
 	}
 }

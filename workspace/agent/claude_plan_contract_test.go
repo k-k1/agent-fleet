@@ -1,23 +1,25 @@
 //go:build tui_contract
 
-// プラン承認の実 TUI 契約プローブ — Tier 2（claude-tui-contract.yml から走る）。
+// Live TUI contract probe for plan approval - Tier 2 (run from claude-tui-contract.yml).
 //
-// 守る対象は「Console のプランカードのバッジが実際の決着と一致すること」。ここは
-// 2 回壊れており、どちらも**単体テストが緑のまま**だった:
-//   - 2026-07-22: 却下が位置固定キー（Down×3）で、短いメニューでは Yes に回り込み
-//     **却下が承認になった**。
-//   - 2026-08-31: 承認結果に計画本文が丸ごと付くようになり、キーワード判定が本文の
-//     「却下」を拾って**承認に 却下 バッジ**が付いた。
+// What it protects: the badge on the Console's plan card agrees with the real outcome. This
+// has broken twice, and both times the unit tests stayed green:
+//   - reject was bound to a fixed key position (Down x3) and wrapped around to Yes on a short
+//     menu, so a reject became an approval;
+//   - the approval result grew to carry the whole plan body, and the keyword check picked up
+//     the word "reject" out of that body, badging an approval as rejected.
 //
-// 内訳（どちらもロックでは検知できない層）:
+// Two parts, neither of which a fixed capture can detect:
 //
-//	A. 承認キーの前提 — ExitPlanMode メニューの既定行（❯）が必ず "Yes" である。
-//	   production の承認は「Enter＝既定を選ぶ」なので、既定が Yes でなくなった日に
-//	   承認ボタンが承認でなくなる。testdata の固定キャプチャではなく**実物**で見る。
-//	B. 決着テキストの読み方 — 実際に承認まで通し、production の転写読み出しが返す
-//	   Answer が「承認」と読め、かつ計画本文を巻き込んでいないこと。
+//	A. The premise behind the approve key - the default row (❯) of the ExitPlanMode menu is
+//	   always "Yes". Production approves by pressing Enter, i.e. by choosing the default, so
+//	   the day the default stops being Yes the approve button stops approving. Checked
+//	   against the live TUI, not a fixed capture under testdata.
+//	B. How the outcome text is read - approve for real and confirm the Answer that
+//	   production's transcript read returns reads as approved and has not swallowed the plan
+//	   body.
 //
-// 課金: 実ターン 1 回（短いプラン 1 本＋承認後の一手）。
+// Cost: one real turn (one short plan plus one move after approval).
 package main
 
 import (
@@ -42,13 +44,13 @@ const (
 	planOutcomeWait = 3 * time.Minute
 )
 
-// 計画を出させるだけの小さな依頼。plan モードなので claude は ExitPlanMode で決着を
-// 求めて止まる（承認後の実作業も 1 ファイル作るだけで終わる）。
+// A tiny request that only makes claude produce a plan. In plan mode it stops at
+// ExitPlanMode asking for a decision, and the work after approval is a single file.
 const planContractPrompt = "Plan only: propose creating a file notes.txt whose single line is the word tmux. " +
 	"Keep the plan to two short bullets and present it for approval now."
 
-// planMenuLineRe は ExitPlanMode の選択肢行。tmuxx/plan_approval_test.go（固定キャプチャ
-// のロック）と同じ形で、こちらは実物のフレームに当てる。
+// planMenuLineRe matches an ExitPlanMode option row. Same shape as in
+// tmuxx/plan_approval_test.go, which locks fixed captures; this one runs against live frames.
 var planMenuLineRe = regexp.MustCompile(`^(❯\s+)?([0-9]+)\.\s+(.*\S)\s*$`)
 
 type planMenuOption struct {
@@ -74,7 +76,7 @@ func parseLivePlanMenu(capture string) []planMenuOption {
 func TestClaudePlanApprovalContractLive(t *testing.T) {
 	for _, bin := range []string{"tmux", "claude"} {
 		if _, err := exec.LookPath(bin); err != nil {
-			requireTUIContract(t, false, fmt.Sprintf("%s が PATH にありません: %v", bin, err))
+			requireTUIContract(t, false, fmt.Sprintf("%s is not on PATH: %v", bin, err))
 		}
 	}
 	if v, err := exec.Command("claude", "--version").Output(); err == nil {
@@ -89,7 +91,8 @@ func TestClaudePlanApprovalContractLive(t *testing.T) {
 		time.Sleep(750 * time.Millisecond)
 	}()
 
-	// production の起動計画をそのまま使う（plan モードのフラグもフォルダ信頼も本番経路）。
+	// Use production's launch plan unchanged: the plan-mode flags and the folder trust both
+	// go through the production path.
 	meta := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude, Mode: "plan"}
 	agent := claude.New()
 	launch, err := agent.BuildLaunch(meta, agents.LaunchOpts{})
@@ -101,16 +104,17 @@ func TestClaudePlanApprovalContractLive(t *testing.T) {
 		t.Fatalf("tmux new-session: %v: %s", err, out)
 	}
 
-	// composer readiness は Console の起動シードと同じ判定。plan モードで起動したので
-	// モードチップも Plan のはず（ここが違えば --permission-mode の扱いが変わっている）。
+	// Composer readiness uses the same check as the Console's launch seed. We started in plan
+	// mode, so the mode chip should read Plan; if it does not, --permission-mode is being
+	// treated differently.
 	deadline := time.Now().Add(tuiContractReadyWait)
 	mode := ""
 	for time.Now().Before(deadline) {
-		// 起動時ダイアログは**必ず行を選んでから** Enter する。既定は上流の都合で
-		// 入れ替わり、実際 2.1.248 で信頼ダイアログの既定が「No, exit」になった
-		// （盲打ちの Enter がセッションを終了させる）。production の起動は
-		// --allow-dangerously-skip-permissions を渡すので、ack が保存されていない
-		// 環境ではこの確認が出るのが正常。
+		// Always select the row before pressing Enter on a startup dialog. Upstream swaps the
+		// default around at will, and on 2.1.248 the trust dialog defaulted to "No, exit", so
+		// a blind Enter ends the session. Production launches with
+		// --allow-dangerously-skip-permissions, so seeing this confirmation is normal in an
+		// environment where no ack has been stored.
 		frame := tmuxx.CapturePane(tn)
 		switch {
 		case strings.Contains(frame, "Bypass Permissions mode") && strings.Contains(frame, "Yes, I accept"):
@@ -128,10 +132,10 @@ func TestClaudePlanApprovalContractLive(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if mode == "" {
-		t.Fatalf("%s 以内に composer を認識できませんでした\npane:\n%s", tuiContractReadyWait, tmuxx.CapturePane(tn))
+		t.Fatalf("composer was not recognized within %s\npane:\n%s", tuiContractReadyWait, tmuxx.CapturePane(tn))
 	}
 	if !strings.EqualFold(mode, "Plan") {
-		t.Errorf("mode chip = %q, want Plan — plan モードでの起動フラグが変わった可能性", mode)
+		t.Errorf("mode chip = %q, want Plan - the plan-mode launch flags may have changed", mode)
 	}
 
 	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "-l", planContractPrompt).CombinedOutput(); err != nil {
@@ -142,21 +146,21 @@ func TestClaudePlanApprovalContractLive(t *testing.T) {
 		t.Fatalf("submit prompt: %v: %s", err, out)
 	}
 
-	// --- A: 実物のメニューで「既定は必ず Yes」を確かめる ---------------------------
+	// --- A: confirm on the live menu that the default is always Yes ----------------
 	var opts []planMenuOption
 	deadline = time.Now().Add(planModalWait)
 	for time.Now().Before(deadline) {
 		frame := tmuxx.CapturePane(tn)
 		if o := parseLivePlanMenu(frame); len(o) >= 2 && hasYesRow(o) {
 			opts = o
-			t.Logf("ExitPlanMode モーダル:\n%s", frame)
+			t.Logf("ExitPlanMode modal:\n%s", frame)
 			break
 		}
 		time.Sleep(time.Second)
 	}
 	if opts == nil {
-		t.Fatalf("%s 以内にプラン承認モーダルが出ませんでした（モデルが ExitPlanMode を呼ばなかった／"+
-			"モーダルの形が変わった）\npane:\n%s", planModalWait, tmuxx.CapturePane(tn))
+		t.Fatalf("no plan approval modal appeared within %s (the model never called ExitPlanMode, "+
+			"or the modal changed shape)\npane:\n%s", planModalWait, tmuxx.CapturePane(tn))
 	}
 	def := -1
 	for i, o := range opts {
@@ -165,25 +169,26 @@ func TestClaudePlanApprovalContractLive(t *testing.T) {
 		}
 	}
 	if def < 0 {
-		t.Fatalf("既定行（❯）が見つかりません — production の承認は Enter＝既定選択なので、"+
-			"何が選ばれるか分からない状態です:\n%+v", opts)
+		t.Fatalf("no default row (❯) found - production approves by Enter, i.e. by taking the "+
+			"default, so there is no telling what would be chosen:\n%+v", opts)
 	}
 	if !isYesLabel(opts[def].label) {
-		t.Fatalf("既定行が Yes ではありません: %q。**Console の承認ボタン（Enter）が承認以外を"+
-			"選ぶ状態** — planDecision.ts の PLAN_APPROVE_KEYS を見直すこと\n%+v", opts[def].label, opts)
+		t.Fatalf("the default row is not Yes: %q. The Console's approve button (Enter) now "+
+			"picks something other than approve - revisit PLAN_APPROVE_KEYS in planDecision.ts\n%+v", opts[def].label, opts)
 	}
-	t.Logf("承認キーの前提 OK: 既定 = %q（選択肢 %d 件）", opts[def].label, len(opts))
+	t.Logf("approve-key premise OK: default = %q (%d options)", opts[def].label, len(opts))
 
-	// production の承認と同じ打鍵（planDecision.ts の PLAN_APPROVE_KEYS = ["Enter"]）。
+	// The same keystroke production approves with (PLAN_APPROVE_KEYS = ["Enter"] in planDecision.ts).
 	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "Enter").CombinedOutput(); err != nil {
 		t.Fatalf("approve: %v: %s", err, out)
 	}
 
-	// --- B: 決着テキストを production の読み出しで分類する -------------------------
-	// /messages と同じ読み方をする: CollectTurns（窓内解決）で拾い、空なら Console と
-	// 同じく CollectInteractionAnswers（全転写の qid→決着マップ）で埋める。claude は
-	// generic な Agent.Transcript を持たない（package main の /messages が直接この
-	// 2 つを呼ぶ）ので、ここもその 2 つを呼ぶのが本番経路。
+	// --- B: classify the outcome text through production's read path ---------------
+	// Read exactly as /messages does: pick it up with CollectTurns (resolution within the
+	// window) and, when that is empty, fill in from CollectInteractionAnswers (the qid →
+	// outcome map over the whole transcript), as the Console does. claude has no generic
+	// Agent.Transcript - package main's /messages calls these two directly - so calling the
+	// same two here is the production path.
 	sid := session.UUID(meta.Dir, meta.Name)
 	var part *transcript.Part
 	outcome := ""
@@ -209,24 +214,26 @@ func TestClaudePlanApprovalContractLive(t *testing.T) {
 		}
 	}
 	if part == nil {
-		t.Fatalf("%s 以内にプランが転写に出ませんでした（ExitPlanMode の記録形式が変わった可能性）"+
-			"\nsid=%s\npane:\n%s", planOutcomeWait, sid, tmuxx.CapturePane(tn))
+		t.Fatalf("the plan never appeared in the transcript within %s (ExitPlanMode's record format "+
+			"may have changed)\nsid=%s\npane:\n%s", planOutcomeWait, sid, tmuxx.CapturePane(tn))
 	}
 	if outcome == "" {
-		t.Fatalf("%s 以内にプランの決着が転写に出ませんでした（承認は通っているのに tool_result を"+
-			"読めていない = カードが決着しないまま残る）\nsid=%s\npane:\n%s", planOutcomeWait, sid, tmuxx.CapturePane(tn))
+		t.Fatalf("the plan's outcome never appeared in the transcript within %s (approval went "+
+			"through, yet the tool_result is not being read = the card stays undecided)\nsid=%s\npane:\n%s", planOutcomeWait, sid, tmuxx.CapturePane(tn))
 	}
-	t.Logf("ExitPlanMode の決着（planAnswerHead 後）: %q", outcome)
+	t.Logf("ExitPlanMode outcome (after planAnswerHead): %q", outcome)
 	if v := claude.PlanVerdict(outcome); v != claude.PlanApproved {
-		t.Errorf("承認したのに判定が %q — この文言では Console のバッジが 承認 になりません。"+
-			"planDecision.ts / plan_verdict.go の語彙を実物に合わせ直すこと（2026-08-31 の再発）:\n  %q",
+		t.Errorf("approved, yet the verdict is %q - with this wording the Console badge will not "+
+			"read approved. Realign the vocabulary in planDecision.ts / plan_verdict.go with the "+
+			"live text (this is the 2026-08-31 regression again):\n  %q",
 			v, outcome)
 	}
-	// 承認結果に計画本文が付く形（`## Approved Plan:`）が別の目印に変わると、本文が
-	// 判定に流れ込んでバッジが化ける。切り落とし後に計画が残っていないことで見張る。
+	// If the form that appends the plan body to the approval result (`## Approved Plan:`)
+	// switches to a different marker, the body flows into the verdict and the badge goes
+	// wrong. Watch for it by requiring no plan to remain after the head is cut off.
 	if body := strings.TrimSpace(part.Plan); body != "" && strings.Contains(outcome, body) {
-		t.Errorf("決着テキストに計画本文が丸ごと残っています = 埋め込みの目印が変わった。"+
-			"planAnswerHead / PLAN_BODY_MARKER を実物に合わせること:\n  %q", outcome)
+		t.Errorf("the outcome text still carries the whole plan body = the embedded marker changed. "+
+			"Realign planAnswerHead / PLAN_BODY_MARKER with the live text:\n  %q", outcome)
 	}
 }
 
@@ -253,7 +260,7 @@ func chooseDialogRow(t *testing.T, tn, want string) {
 		_ = tmuxx.Cmd("send-keys", "-t", tn, "Down").Run()
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("起動時ダイアログで %q の行を選べませんでした（選択肢の形が変わった可能性）\npane:\n%s",
+	t.Fatalf("could not select the %q row in the startup dialog (the options may have changed shape)\npane:\n%s",
 		want, tmuxx.CapturePane(tn))
 }
 

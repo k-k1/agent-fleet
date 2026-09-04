@@ -1,26 +1,27 @@
 package memoryx
 
-// エージェントメモリの版管理（docs/log/39 / ADR 0022）— 自動 snapshot の契機。
+// Agent memory version control (docs/log/39 / ADR 0022) — the trigger for automatic snapshots.
 //
-// docs/log/39 は契機を「claude 全セッションの idle 遷移 + debounce」と書いているが、その遷移は
-// `workspace-agent session-status` という**フックの別プロセス**で観測される（session_status.go）
-// ため、常駐プロセス側に debounce タイマーを置けない。マーカーファイルで渡す手もあるが、
-// フックの取りこぼしが即「snapshot が積まれない」に直結する。そこで同じ意味論を
-// **常駐側のポーリング**で表現する:
+// docs/log/39 defines the trigger as "every claude session goes idle + debounce", but that
+// transition is observed by `workspace-agent session-status`, a separate hook process
+// (session_status.go), so the debounce timer cannot live in the resident process. Handing it
+// over through a marker file is possible, but then a dropped hook translates directly into
+// "no snapshot is ever stacked". The same semantics are therefore expressed as polling on the
+// resident side:
 //
-//	毎 tick（既定 1 分）: ルート配下の最新 mtime を見る
-//	  → 前回 snapshot 以降に変更があり
-//	  → その変更が debounce（既定 5 分）以上静穏で
-//	  → 対象 kind のセッションが誰も working でない
-//	なら snapshot する。
+//	every tick (1 minute by default): look at the newest mtime under the roots
+//	  → something changed since the last snapshot
+//	  → that change has been quiet for at least the debounce (5 minutes by default)
+//	  → no session of the target kind is working
+//	then snapshot.
 //
-// 走査は projects/*/memory に glob で限定するので、同じマウントにある 883MB の transcript は
-// 一切 stat しない。ポーリングなのでフックの取りこぼしで履歴が欠けることがなく、docs/log/39 の
-// 「15 分 tick の保険」も兼ねる。
+// The walk is limited by glob to projects/*/memory, so the 883MB of transcripts on the same
+// mount are never stat'ed. Being a poll, a dropped hook cannot leave a hole in the history,
+// and it doubles as docs/log/39's "15-minute tick as insurance".
 //
-// busy による先送りには上限（MaxDefer・既定 30 分）を置く。false-idle 対策で分かっている
-// とおり状態マーカーは壊れ得る（停止済みセッションに working が残る等）ので、busy 判定の
-// 誤りが「履歴が永久に積まれない」という最悪の壊れ方に化けないようにする。
+// Deferring on busy has a cap (MaxDefer, 30 minutes by default). As the false-idle work
+// showed, state markers can be wrong (a stopped session still marked working), so a mistaken
+// busy verdict must not turn into the worst failure mode, "history is never stacked again".
 
 import (
 	"encoding/json"
@@ -41,17 +42,19 @@ const (
 	memoryDefaultMaxDefer = 30 * time.Minute
 )
 
-// memoryAutoLocked は環境変数による強制 OFF（AF_MEMORY_SNAPSHOT=off）。運用側の指定が
-// UI トグルより強い、という関係を明示するために分けてある。
+// memoryAutoLocked is the operator's forced OFF through the environment
+// (AF_MEMORY_SNAPSHOT=off). Kept as its own function to make explicit that the operator's
+// setting beats the UI toggle.
 func memoryAutoLocked() bool {
 	v := strings.TrimSpace(os.Getenv("AF_MEMORY_SNAPSHOT"))
 	return v == "0" || strings.EqualFold(v, "off") || strings.EqualFold(v, "false")
 }
 
-// memoryPrefs は Console の UI トグルで切り替わる設定（docs/log/39 決着 #1「全体 OFF は
-// UI トグル（P2）」）。repo と同じマウントに置くので、recreate / clean-home を生き残る。
+// memoryPrefs is the setting the Console's UI toggle flips (docs/log/39 resolution #1: the
+// global OFF is a UI toggle, P2). It sits on the same mount as the repo, so it survives
+// recreate / clean-home.
 type memoryPrefs struct {
-	Auto *bool `json:"auto,omitempty"` // nil = 未設定（= 既定 ON）
+	Auto *bool `json:"auto,omitempty"` // nil = unset (= ON by default)
 }
 
 func memoryPrefsPath() string { return filepath.Join(claude.ConfigDir(), "af-memory.json") }
@@ -62,11 +65,12 @@ func memoryLoadPrefs() memoryPrefs {
 	if err != nil {
 		return p
 	}
-	_ = json.Unmarshal(b, &p) // 壊れていたら既定（自動 ON）に戻す — 履歴が止まる方が困る
+	_ = json.Unmarshal(b, &p) // corrupt ⇒ the default (auto ON): a stalled history is worse
 	return p
 }
 
-// memorySetAuto は UI トグルの保存。環境変数の強制 OFF は上書きしない（読み出し側で勝つ）。
+// memorySetAuto persists the UI toggle. It does not overwrite the environment's forced OFF,
+// which wins on the read side.
 func memorySetAuto(on bool) error {
 	if err := os.MkdirAll(claude.ConfigDir(), 0o700); err != nil {
 		return err
@@ -78,8 +82,9 @@ func memorySetAuto(on bool) error {
 	return os.WriteFile(memoryPrefsPath(), b, 0o600)
 }
 
-// memoryAutoEnabled は自動 snapshot の既定 ON（docs/log/39 決着 #1）。環境変数で強制 OFF に
-// できるほか、Console のトグルでも止められる。毎 tick 読み直すので、トグルは即座に効く。
+// memoryAutoEnabled reports whether automatic snapshots run; they are ON by default
+// (docs/log/39 resolution #1). The environment can force them off, and the Console toggle can
+// stop them too. Re-read every tick, so the toggle takes effect immediately.
 func memoryAutoEnabled() bool {
 	if memoryAutoLocked() {
 		return false
@@ -90,7 +95,8 @@ func memoryAutoEnabled() bool {
 	return true
 }
 
-// memoryEnvDuration は AF_MEMORY_* の duration 上書きを読む（不正値は既定へフォールバック）。
+// memoryEnvDuration reads an AF_MEMORY_* duration override (an invalid value falls back to
+// the default).
 func memoryEnvDuration(key string, def, min time.Duration) time.Duration {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
@@ -116,37 +122,37 @@ func memorySnapshotMaxDefer() time.Duration {
 	return memoryEnvDuration("AF_MEMORY_SNAPSHOT_MAX_DEFER", memoryDefaultMaxDefer, time.Minute)
 }
 
-// memoryTriggerInput は契機判定に要る事実だけを束ねたもの。判定を純関数に切り出して
-// おくことで、実時間を待たずにテストできる。
+// memoryTriggerInput bundles only the facts the trigger decision needs. Splitting the
+// decision out as a pure function makes it testable without waiting on real time.
 type memoryTriggerInput struct {
 	Now          time.Time
-	NewestChange time.Time     // ルート配下の最新 mtime（ゼロ = 対象ファイルなし）
-	LastSnapshot time.Time     // 直近 snapshot の時刻（ゼロ = まだ 1 件も無い）
-	Busy         bool          // 対象 kind のセッションが 1 つでも working
-	Debounce     time.Duration // 静穏を要求する時間
-	MaxDefer     time.Duration // busy による先送りの上限
+	NewestChange time.Time     // newest mtime under the roots (zero = no target file)
+	LastSnapshot time.Time     // time of the most recent snapshot (zero = none yet)
+	Busy         bool          // at least one session of a target kind is working
+	Debounce     time.Duration // how long the change must stay quiet
+	MaxDefer     time.Duration // cap on deferring because of busy
 }
 
-// memoryShouldSnapshot は今 snapshot を積むべきかを返す。
+// memoryShouldSnapshot reports whether a snapshot should be stacked now.
 func memoryShouldSnapshot(in memoryTriggerInput) bool {
 	if in.NewestChange.IsZero() {
-		return false // 対象ファイルが 1 つも無い
+		return false // not a single target file
 	}
 	if !in.LastSnapshot.IsZero() && !in.NewestChange.After(in.LastSnapshot) {
-		return false // 前回 snapshot 以降に変更なし（git 側の無変更 skip より手前で弾く）
+		return false // unchanged since the last snapshot (rejected ahead of git's no-change skip)
 	}
 	if in.Now.Before(in.NewestChange.Add(in.Debounce)) {
-		return false // まだ書き終わっていないかもしれない
+		return false // the write may not have finished yet
 	}
 	if in.Busy {
-		// 実行中セッションがあるうちは待つ。ただし待ち続けて履歴が永久に欠けるのは
-		// 避けたいので、変更から MaxDefer 経つと busy を押し切って積む。
+		// Wait while a session is running. But waiting forever would leave a permanent hole
+		// in the history, so once MaxDefer has passed since the change, push through busy.
 		return in.MaxDefer > 0 && !in.Now.Before(in.NewestChange.Add(in.MaxDefer))
 	}
 	return true
 }
 
-// memoryNewestChange は全ルートの allowlist 対象ファイルの最新 mtime を返す。
+// memoryNewestChange returns the newest mtime among the allowlisted files of every root.
 func memoryNewestChange() time.Time {
 	var newest time.Time
 	for _, r := range memoryRoots() {
@@ -159,9 +165,9 @@ func memoryNewestChange() time.Time {
 	return newest
 }
 
-// memoryBusyKinds は版管理対象 kind のうち working のセッションを持つものを返す。
-// 状態は既存の状態検知（status ストア）から読む — snapshot のために新しい観測経路を
-// 増やさない。restore は kind 単位で警告を出すため、真偽値ではなく集合で返す。
+// memoryBusyKinds returns the version-controlled kinds that have a working session. State
+// comes from the existing state detection (the status store) — snapshots do not add a new
+// observation path. restore warns per kind, so this returns a set rather than a bool.
 func memoryBusyKinds() map[string]bool {
 	target := map[string]bool{}
 	for _, r := range memoryRoots() {
@@ -179,12 +185,13 @@ func memoryBusyKinds() map[string]bool {
 	return busy
 }
 
-// memoryKindsBusy は「対象 kind に 1 つでも working がいるか」（自動 snapshot の先送り判定）。
+// memoryKindsBusy reports whether any target kind has a working session (the deferral test
+// for automatic snapshots).
 func memoryKindsBusy() bool { return len(memoryBusyKinds()) > 0 }
 
-// StartMemorySnapshotLoop は自動 snapshot のポーリングループを起こす。
-// 環境変数で強制 OFF のときだけループ自体を建てない — UI トグルは実行中に切り替わる
-// ので、そちらは毎 tick 読み直す（再起動を要求しない）。
+// StartMemorySnapshotLoop starts the automatic snapshot polling loop. Only the environment's
+// forced OFF skips building the loop at all — the UI toggle flips while the process runs, so
+// it is re-read every tick (no restart required).
 func StartMemorySnapshotLoop() {
 	if memoryAutoLocked() {
 		log.Printf("memory-snapshot: auto snapshot disabled (AF_MEMORY_SNAPSHOT)")
@@ -192,7 +199,7 @@ func StartMemorySnapshotLoop() {
 	}
 	interval, debounce, maxDefer := memorySnapshotInterval(), memorySnapshotDebounce(), memorySnapshotMaxDefer()
 	go func() {
-		time.Sleep(45 * time.Second) // 起動直後の混雑（reconcile / cred seeding）を避ける
+		time.Sleep(45 * time.Second) // stay out of the boot-time rush (reconcile / cred seeding)
 		for {
 			if memoryAutoEnabled() {
 				memorySnapshotTick(time.Now(), debounce, maxDefer)
@@ -202,10 +209,12 @@ func StartMemorySnapshotLoop() {
 	}()
 }
 
-// lastMemorySnapshotErr は同じ失敗の連投ログを抑える（1 分周期でログを埋めない）。
+// lastMemorySnapshotErr suppresses repeated logging of the same failure (a 1-minute loop must
+// not fill the log).
 var lastMemorySnapshotErr string
 
-// memorySnapshotTick は 1 周期分の判定と実行。ループ本体から切り出してテスト可能にしてある。
+// memorySnapshotTick is one period's decision and execution, split out of the loop body so it
+// can be tested.
 func memorySnapshotTick(now time.Time, debounce, maxDefer time.Duration) bool {
 	if len(memoryRoots()) == 0 {
 		return false

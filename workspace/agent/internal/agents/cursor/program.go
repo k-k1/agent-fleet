@@ -1,13 +1,14 @@
 package cursor
 
-// cursor の起動コマンド組み立てと、状態・転写パスの解決（docs/log/40 Track A）。
+// Launch-command assembly for cursor, plus resolution of its state and transcript paths
+// (docs/log/40 Track A).
 //
-// セッション同一性は AF 側で採番した v4 UUID を `--resume <uuid>` に渡す方式。
-// 実測（v2026.07.20）: 未知の valid v4 UUID を --resume に渡すとその ID で新規
-// チャットを作成し、既存 ID なら resume する（copilot の --session-id と同型）——
-// docs/log/40 は `create-chat` 事前採番を想定していたが、自己採番 UUID なら起動時の
-// 追加 exec が要らず速い。転写は Claude Code 互換 JSONL（`<chatId>.jsonl`）で、
-// cwd スラグ配下に置かれる（実測パスは transcriptPath 参照）。
+// Session identity is a v4 UUID minted on the AF side and passed as `--resume <uuid>`.
+// Measured (v2026.07.20): an unknown but valid v4 UUID makes cursor create a new chat under
+// that ID, and an existing ID resumes — the same shape as copilot's --session-id. Minting
+// it ourselves avoids the extra launch-time exec that docs/log/40's `create-chat`
+// pre-allocation would have needed. Transcripts are Claude Code-compatible JSONL
+// (`<chatId>.jsonl`) under the cwd slug (see transcriptPath for the measured path).
 
 import (
 	"os"
@@ -18,7 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// envOr は極小ヘルパ（copilot/program.go と同様、共有せず重複を許容）。
+// envOr is a tiny helper, duplicated rather than shared (copilot/program.go keeps its own).
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -26,19 +27,20 @@ func envOr(key, def string) string {
 	return def
 }
 
-// Home is cursor's state root (~/.cursor): chats/<ws-hash>/<chatId>/store.db
-// （非公開 SQLite・読まない）、projects/<slug>/agent-transcripts/（読む JSONL）、
-// hooks.json・cli-config.json など。資格情報は別ツリー（~/.config/cursor/auth.json）
-// にあり、両方とも fs.go の denylist 対象（平文トークン保護 — docs/log/40 契約）。
+// Home is cursor's state root (~/.cursor): chats/<ws-hash>/<chatId>/store.db (a private
+// SQLite we never read), projects/<slug>/agent-transcripts/ (the JSONL we do read),
+// hooks.json, cli-config.json. Credentials live in a separate tree
+// (~/.config/cursor/auth.json); both trees are on fs.go's denylist so plaintext tokens
+// stay unreadable (docs/log/40 contract).
 func Home() string { return paths.CursorHome() }
 
 // projectsDir is ~/.cursor/projects — the per-cwd transcript tree root.
 func projectsDir() string { return filepath.Join(Home(), "projects") }
 
-// cwdSlug は cwd を cursor の projects スラグへ写像する（実測: 先頭/末尾の "/" を
-// 除いて残りの "/" を "-" に。例 /tmp/curprobe → tmp-curprobe）。スラグ規則が版で
-// ドリフトしても transcriptPath は glob フォールバックで chatId から一意に引ける
-// ので、これは第一候補にすぎない。
+// cwdSlug maps a cwd to cursor's projects slug. Measured: drop the leading and trailing
+// "/" and turn the remaining ones into "-" (/tmp/curprobe -> tmp-curprobe). Only a first
+// guess — if the slug rule drifts between versions, transcriptPath still resolves the file
+// by globbing on the unique chatId.
 func cwdSlug(dir string) string {
 	return strings.ReplaceAll(strings.Trim(filepath.Clean(dir), "/"), "/", "-")
 }
@@ -54,33 +56,34 @@ func transcriptPath(dir, chatID string) string {
 	if _, err := os.Stat(guess); err == nil {
 		return guess
 	}
-	// スラグ規則ドリフト時: chatId でグロブして拾う（一意）。
+	// Slug rule drifted: glob on the chatId instead, which is unique.
 	if hits, _ := filepath.Glob(filepath.Join(projectsDir(), "*", "agent-transcripts", chatID, chatID+".jsonl")); len(hits) > 0 {
 		return hits[0]
 	}
-	return guess // 未生成（起動直後）— 呼び出し側は Stat 失敗を空扱いにする。
+	return guess // Not written yet (just launched); callers treat a failed Stat as empty.
 }
 
-// disableAutoUpdateFlag はイメージ再ビルドで版管理する fleet 方針に合わせ、CLI の
-// 背景自己更新を封じる root オプション（`--disable-auto-update`。実測 help で hideHelp
-// だが受理・既定 false）。ACP/サブコマンドの前に置く必要がある（root option のため。
-// 実測: `cursor-agent --disable-auto-update acp` は通り、`acp --disable-auto-update` は
-// 拒否）。バンドル解析でも背景更新は `disableAutoUpdate || channel==="static"` で
-// スキップされる（起動2秒後 setTimeout(...).unref()）ことを確認済み — docs/log/40 Track B。
-// entrypoint の cli-config.json `channel:"static"` 再固定と二重の封殺（片方が
-// ユーザ設定で崩れても他方が効く）。
+// disableAutoUpdateFlag suppresses the CLI's background self-update, keeping versions
+// managed by image rebuild. It is a root option, so it must precede the ACP subcommand:
+// measured, `cursor-agent --disable-auto-update acp` is accepted while
+// `acp --disable-auto-update` is rejected (help hides the flag but the CLI takes it;
+// default false). The bundle skips its background update — a setTimeout(...).unref() two
+// seconds after launch — when `disableAutoUpdate || channel==="static"` (docs/log/40
+// Track B). The entrypoint re-pins cli-config.json `channel:"static"` as well, so either
+// half still holds when user settings break the other.
 const disableAutoUpdateFlag = "--disable-auto-update"
 
 // defaultFlags is the fleet-standard posture:
-//   - --disable-auto-update: 背景自己更新を封じる（版はイメージ再ビルドで管理）。
-//   - --force: fleet 既定の bypass 相当（"unless explicitly denied" — deny リストは
-//     引き続き有効。実測 help）。claude の skip-permissions と同格。
-//   - --trust: 未信頼ワークスペースの trust プロンプトをスキップ（実測 help。
-//     copilot の config.json 事前追記に相当する起動時スキップ）。
+//   - --disable-auto-update: suppress the background self-update (versions come from
+//     image rebuilds).
+//   - --force: the fleet-default bypass equivalent ("unless explicitly denied" — the deny
+//     list still applies; measured from help). On a par with claude's skip-permissions.
+//   - --trust: skip the trust prompt for an untrusted workspace (measured from help); the
+//     launch-time counterpart of copilot's pre-write into config.json.
 const defaultFlags = disableAutoUpdateFlag + " --force --trust"
 
-// bin returns the cursor CLI binary（symlink `cursor-agent`。`agent` は短すぎて
-// PATH 衝突しやすいので使わない）。AGENT_CURSOR_BIN で差し替え可。
+// bin returns the cursor CLI binary: the `cursor-agent` symlink, not `agent`, which is
+// short enough to collide on PATH. AGENT_CURSOR_BIN overrides it.
 func bin() string { return envOr("AGENT_CURSOR_BIN", "cursor-agent") }
 
 // Bin exposes the resolved cursor CLI binary for the assistant-chat headless
@@ -88,12 +91,13 @@ func bin() string { return envOr("AGENT_CURSOR_BIN", "cursor-agent") }
 // from the main package and must honor the same AGENT_CURSOR_BIN override.
 func Bin() string { return bin() }
 
-// buildProgram returns the tmux pane program for a cursor TUI session. Auth is
-// ambient（~/.config/cursor/auth.json を CLI 自身が拾う — 実測）なのでトークンは
-// 注入しない。--resume は新規作成と resume の両方を同じ形でまかなう。
-// bypass=false は「権限確認をスキップしない」（docs/log/76 の利用者選択、または plan 起動）。
-// 外すのは --force だけで、--trust（ワークスペース信頼）は必ず残す — 信頼プロンプトは
-// 権限確認ではなく、外すと ACP でも TUI でも起動が固まる（実測）。
+// buildProgram returns the tmux pane program for a cursor TUI session. Auth is ambient —
+// the CLI picks up ~/.config/cursor/auth.json itself (measured) — so no token is injected.
+// --resume covers creating a new chat and resuming one in the same shape.
+// bypass=false means permission prompts are not skipped (the user's choice per docs/log/76,
+// or a plan start). Only --force is dropped; --trust (workspace trust) must always stay:
+// the trust prompt is not a permission prompt, and without it both ACP and TUI launches
+// hang (measured).
 func buildProgram(model, mode, chatID string, bypass bool) string {
 	if override := os.Getenv("AGENT_CURSOR_CMD"); override != "" {
 		return override
@@ -103,21 +107,21 @@ func buildProgram(model, mode, chatID string, bypass bool) string {
 		flags = strings.TrimSpace(strings.ReplaceAll(flags, "--force", ""))
 	}
 	if mode == "plan" {
-		// Plan は bypass 無しが前提（auto-approving every tool would defeat a plan start
-		// — copilot/agy と同じ判断）。
+		// Plan assumes no bypass: auto-approving every tool would defeat a plan start
+		// (the same call as copilot/agy).
 		flags = strings.TrimSpace(flags + " --plan")
 	}
-	// cursor のモデル ID は effort 込み（例 claude-opus-4-8-thinking-high）——
-	// 別 --effort フラグは無い（実測 help）ので effort は渡さない。"auto" は既定＝
-	// フラグ無し。
+	// cursor model IDs already carry the effort (claude-opus-4-8-thinking-high) and there
+	// is no separate --effort flag (measured from help), so effort is never passed. "auto"
+	// is the default and means no flag at all.
 	if model != "" && model != "auto" {
 		flags += " --model " + session.ShellQuote(model)
 	}
 	if chatID != "" {
 		flags += " --resume " + session.ShellQuote(chatID)
 	}
-	// CI が生きていると対話 UI ごと消える（ci_env.go）。AGENT_CURSOR_CMD の上書きには
-	// 付けない — あちらは「このコマンドをそのまま実行する」逃がし口で、組み立てには
-	// 関与しないため（上で早期 return 済み）。
+	// With CI still set the interactive UI disappears entirely (ci_env.go). Not applied to
+	// an AGENT_CURSOR_CMD override: that escape hatch runs the given command verbatim and
+	// never reaches this assembly (early return above).
 	return unsetCIPrefix + strings.TrimSpace(bin()+" "+flags)
 }

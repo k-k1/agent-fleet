@@ -1,8 +1,7 @@
-// Package tmuxx は tmux プロービングの純粋プリミティブ（存在確認・pane 解決・
-// pane キャプチャ・生存一覧・pane 種別推定）。package main の session_tmux.go /
-// session_io.go からの抽出（docs/log/23 残① Wave A）。tmux コマンド実行だけを持ち、
-// オーケストレーション（起動・メタ・ツールチェーン）は main に残す。依存は
-// tmuxx→session の一方向のみ。
+// Package tmuxx holds the pure tmux probing primitives: existence checks, pane resolution,
+// pane capture, the live-session list and pane-kind sniffing (docs/log/23 remaining item 1
+// Wave A). It runs tmux commands and nothing else — orchestration (launching, metas,
+// toolchains) stays in main. The dependency runs one way only, tmuxx → session.
 package tmuxx
 
 import (
@@ -158,9 +157,10 @@ func spinnerActive(s string) bool {
 var modeFooterRe = regexp.MustCompile(`(?m)^\s*(?:\x{23F5}\x{23F5}|\x{23F8}) .*\bon\b`)
 
 // ClaudeModeFooter reports whether s carries claude's permission-mode footer strip,
-// regardless of WHICH mode is named. paneMode（session_io.go）の最後の砦で、モード名が
-// 増えた／改名されたときに「未描画」と読み違えないためにある — paneMode の空文字は
-// launch-seed の readiness ゲートでもあるので、読み違えると初回プロンプトが 30 秒待たされる。
+// regardless of WHICH mode is named. It is paneMode's (session_io.go) last line of defence
+// against reading an added or renamed mode name as "footer not drawn" — paneMode's empty
+// string is also the launch-seed readiness gate, so a misread costs the first prompt a
+// 30-second wait.
 func ClaudeModeFooter(s string) bool { return modeFooterRe.MatchString(s) }
 
 // atPromptFooter reports whether the capture shows claude's input-box footer — the
@@ -291,10 +291,11 @@ func AtIdlePrompt(name string) bool {
 //   - agents home screen (opened with ←) — the composer reads "describe a task for a new
 //     session" and submitting there CREATES A NEW SESSION.
 //
-// 実測（制御プローブ・claude 2.1.220 / 2026-07-30, testdata/footers/agents_*）: レールで
-// エージェントを選んだ状態でプロンプトを打つと、レール行に "1 queued" が付き、本文は
-// エージェントの転写にだけ入って本体の会話には現れなかった。フリートで起きた誤配達
-// （sannme2）と同じ形。ペイン上は自分の文字が見えるので、送信側からは成功に見える。
+// Measured (control probe, claude 2.1.220 / 2026-07-30, testdata/footers/agents_*): typing a
+// prompt with an agent selected in the rail marked that rail row "1 queued", and the text
+// landed only in the agent's transcript, never in the session's own conversation — the same
+// shape as the misdelivery seen in the fleet (sannme2). The characters do appear in the pane,
+// so the sender sees it as a success.
 func AgentsViewActive(name string) bool {
 	pane := SessionPaneID(session.TmuxName(name))
 	if pane == "" {
@@ -332,7 +333,7 @@ var composerBorderRe = regexp.MustCompile(`(?m)^\s*\x{2500}{8,}\s*$`)
 func agentsViewActive(s string) bool {
 	tail := afterLastComposerBorder(s)
 	if tail == "" {
-		return false // 入力欄が描かれていない（ダイアログ・起動中）— ここでの判断対象外
+		return false // no input box drawn (a dialog, or still starting) — nothing to judge here
 	}
 	// The agents home screen's footer offers "enter to return" (to the conversation);
 	// its composer creates a NEW session, so it is just as wrong a place to type into.
@@ -353,17 +354,19 @@ func afterLastComposerBorder(s string) string {
 }
 
 // LeaveAgentsView tries to put a claude pane's input box back on the session's own
-// conversation, and reports whether it ended up there. Both routes are 実測（制御プローブ・
-// claude 2.1.220 / 2026-07-30）:
+// conversation, and reports whether it ended up there. Both routes are measured (control
+// probe, claude 2.1.220 / 2026-07-30):
 //
-//   - rail に紐づいている: ↓ でレール選択が開き、カーソルは常に先頭行 (main) に立つ →
-//     Enter で main の表示へ戻り → ↑ でレール選択を閉じる（先頭行での ↑ が抜ける操作）。
-//   - agents ホーム画面: Esc で会話へ戻る（画面自身が "esc returns to it" と案内する）。
+//   - bound to the rail: ↓ opens the rail selection with the cursor always on the first row
+//     (main) → Enter returns to main's view → ↑ closes the rail selection (↑ on the first row
+//     is the key that leaves it).
+//   - agents home screen: Esc returns to the conversation (the screen itself says "esc
+//     returns to it").
 //
-// 下書きが残っているときは何もしない: レール選択中の Enter は「選択を開く」であって
-// 送信ではないと確認しているが、表示がドリフトしていた場合に人の書きかけを送信して
-// しまう事故は取り返しがつかない。呼び出し側は false を「戻せなかった」として扱い、
-// 送信を諦めればよい（黙って誤配達するよりは失敗する方がよい）。
+// Does nothing while a draft is present: Enter during rail selection has been confirmed to
+// open the selection rather than send, but if the view had drifted, sending someone's
+// half-written text would be unrecoverable. Callers should treat false as "could not get
+// back" and give up on sending — failing beats silently misdelivering.
 func LeaveAgentsView(name string) bool {
 	pane := SessionPaneID(session.TmuxName(name))
 	if pane == "" {
@@ -375,7 +378,7 @@ func LeaveAgentsView(name string) bool {
 	}
 	keys := []string{"Down", "Enter", "Up"}
 	if strings.Contains(afterLastComposerBorder(frame), "enter to return") {
-		keys = []string{"Escape"} // agents ホーム画面
+		keys = []string{"Escape"} // agents home screen
 	} else if !composerEmpty(frame) {
 		return false
 	}
@@ -464,7 +467,7 @@ func atIdlePrompt(s string) bool {
 	return atPromptFooter(s)
 }
 
-// rateLimitOptionRe matches the 利用上限メニュー's numbered option lines. claude draws it
+// rateLimitOptionRe matches the usage-limit menu's numbered option lines. claude draws it
 // when a turn is cut off by a usage limit:
 //
 //	  What do you want to do?
@@ -479,21 +482,22 @@ func atIdlePrompt(s string) bool {
 // does not lose the whole detection, and each is truncated well short of the full sentence
 // because the menu wraps in a narrow pane.
 //
-// 幅依存の脆さは modalMarkers と同じで、行頭アンカーにしているのは repo 自身の散文
-// （このコメントを含む）が一致しないようにするため。
+// It is as width-fragile as modalMarkers; the line-start anchor is there so the repo's own
+// prose (this comment included) cannot match.
 var rateLimitOptionRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?\d+\.\s+(?:Stop and wait for limit|Ask your admin for more usage)`)
 
 // AtRateLimitModal reports whether a claude pane is parked on that menu.
 //
-// なぜ専用の検出が要るか: 上限でターンが切れると claude は Stop hook を鳴らさないので
-// status は "working" のまま残る（docs/log/47）。それを直す唯一の経路は「ペインが待機プロンプト
-// に戻っていたら HealIdle」だが、このメニューは "Esc to cancel"（modalMarkers）を必ず含み、
-// 入力欄のモード表示フッタごと置き換わるので AtIdlePrompt は恒久的に false を返す。結果、
-// セッションが永久に 進行中 に貼り付く（実測 2026-07-31・約16時間・claude 2.1.220）。
+// Why a dedicated detection is needed: when a turn is cut off by the usage limit claude does
+// not fire the Stop hook, so status stays "working" (docs/log/47). The one route that repairs
+// that is "HealIdle once the pane is back at the ready prompt", but this menu always contains
+// "Esc to cancel" (modalMarkers) and replaces the input box's mode footer wholesale, so
+// AtIdlePrompt returns false forever. The session then sticks on 進行中 permanently (measured
+// 2026-07-31: about 16 hours, claude 2.1.220).
 //
-// Best-effort な TUI 読みなのは他の検出と同じ。取りこぼしたときの損害は「元の貼り付きに
-// 戻る」だけで、誤検知しても HealIdle は転写末尾を見てから判断するので、実際には終わって
-// いないターンを完了扱いにはしない。
+// A best-effort TUI read like the other detections. Missing it only costs the original
+// sticking behaviour, and a false positive is bounded because HealIdle still decides from the
+// transcript's tail, so a turn that has not actually finished is never treated as complete.
 func AtRateLimitModal(name string) bool {
 	pane := SessionPaneID(session.TmuxName(name))
 	if pane == "" {
@@ -518,21 +522,22 @@ func atRateLimitModal(s string) bool {
 // ("❯ 1. Stop and wait for limit to reset"). DismissRateLimitModal requires it: Enter
 // confirms whatever the cursor stands on, so pressing it blind would pick option 2
 // ("Ask your admin for more usage" — a billing request) if a human had already moved
-// down. 既定の位置に立っているときだけ押す。
+// down. Press only while the cursor stands on the default option.
 var rateLimitDefaultRe = regexp.MustCompile(`(?m)^\s*\x{276F} 1\.\s+Stop and wait for limit`)
 
 // DismissRateLimitModal confirms the usage-limit menu's DEFAULT option ("1. Stop and
 // wait for limit to reset") and reports whether the menu is gone afterwards.
 //
-// なぜ自動で押してよいか: 選択肢は「リセットを待つ」か「管理者に上限引き上げを依頼する」
-// で、課金判断を伴うのは後者だけ。前者は待つ＝何も買わない側で、しかもメニューを人が
-// 消すまでセッションは何もできない（実測 約16時間の貼り付き・docs/log/47 §4-3）。よって
-// 既定の 1 を選ぶ操作は「回復」であって「判断の代行」ではない。2 を選ばせたい利用者は
-// メニューが出ている間に自分で選べる（この自動解除は 1 が選択された状態のときだけ動く）。
+// Why pressing it automatically is acceptable: the choices are "wait for the reset" and "ask
+// your admin for more usage", and only the latter carries a billing decision. The former
+// waits, i.e. buys nothing, and until a human clears the menu the session can do nothing at
+// all (measured: stuck for about 16 hours, docs/log/47 §4-3). Picking the default 1 is
+// therefore recovery, not deciding in the user's stead. A user who wants option 2 can choose
+// it while the menu is up (this auto-dismiss only acts while 1 is the selected option).
 //
-// LeaveAgentsView と同じ形: ペインを読んで前提を確かめ、キーを送り、結果をもう一度
-// ペインから確かめる。送っただけで成功と見なさないのは、send-keys が 0 を返しても TUI が
-// 受け取ったとは限らないため。
+// Same shape as LeaveAgentsView: read the pane to confirm the premise, send the keys, then
+// confirm the outcome from the pane again. Sending is not taken for success on its own,
+// because send-keys returning 0 does not mean the TUI received anything.
 func DismissRateLimitModal(name string) bool {
 	tn := session.TmuxName(name)
 	pane := SessionPaneID(tn)
@@ -541,15 +546,15 @@ func DismissRateLimitModal(name string) bool {
 	}
 	frame := CapturePane(tn)
 	if !atRateLimitModal(frame) {
-		return true // もうメニューは出ていない
+		return true // the menu is already gone
 	}
 	if !rateLimitDefaultRe.MatchString(frame) {
-		return false // 選択が 1 から動いている — 人が選びかけているので触らない
+		return false // the selection has moved off 1 — a human is mid-choice, so leave it alone
 	}
 	if err := Cmd("send-keys", "-t", pane, "Enter").Run(); err != nil {
 		return false
 	}
-	time.Sleep(400 * time.Millisecond) // 再描画を待つ（LeaveAgentsView と同じ間合い）
+	time.Sleep(400 * time.Millisecond) // wait for the repaint (same interval as LeaveAgentsView)
 	return !atRateLimitModal(CapturePane(tn))
 }
 

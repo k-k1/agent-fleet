@@ -1,18 +1,20 @@
-// wire_golden_test.go — Console（と CP 中継）が読む代表的なレスポンス DTO の
-// **キー集合**をゴールデン化する。
+// wire_golden_test.go — a golden of the KEY SET of the representative response DTOs the
+// Console (and the CP relay) read.
 //
-// なぜ要るか（ADR 0067 決定 6）。ルート表（routes_golden_test.go）が守るのは「窓口が
-// 在るか」だけで、窓口から出てくる JSON の形は守らない。移送で struct を internal/ へ
-// 動かすとき、json タグの打ち直し・field の載せ忘れ・型の取り違えは **Go のコンパイラを
-// 一切鳴らさずに** Console 側だけを壊す。Agent の session.Session は CP の sessionWire が
-// decode→再 emit する上流なので、ここの 1 キーが消えると Console まで丸ごと届かなくなる
-// （Title / driver / color 系で 3 回踏んでいる）。
+// Why it exists (ADR 0067 decision 6): the route table (routes_golden_test.go) only guards
+// that an endpoint is there, not the shape of the JSON coming out of it. When a struct is
+// moved into internal/, a retyped json tag, a field left behind or a mistaken type breaks the
+// Console alone without the Go compiler making a sound. The Agent's session.Session is the
+// upstream that CP's sessionWire decodes and re-emits, so one key lost here never reaches the
+// Console at all (hit three times: Title / driver / color).
 //
-// ★ 目的は「json タグが変わったら赤くなる」ことであって、値の網羅ではない。
-// ★ Go の型名は書かない。移送で型が main から internal/x へ移ると型名は必ず変わるのに
-// ワイヤは何も変わっていない——型名を撮ると全移送が偽の赤になる。
+// The point is to go red when a json tag changes, not to cover values.
 //
-// 更新の仕方（ワイヤを意図して変えたとき）:
+// Go type names are deliberately not captured: moving a type from main to internal/x always
+// changes the name while the wire is unchanged, so recording names would turn every such move
+// into a false red.
+//
+// To update it after an intentional wire change:
 //
 //	cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .
 package main
@@ -35,12 +37,13 @@ import (
 )
 
 var updateWireGolden = flag.Bool("update-wire-golden", false,
-	"testdata/wire.golden を実際の DTO 形状で書き換える（ワイヤを意図して変えたときだけ）")
+	"rewrite testdata/wire.golden from the actual DTO shapes (only when the wire was changed on purpose)")
 
 const wireGoldenPath = "testdata/wire.golden"
 
-// wireGoldenTypes は「Console / CP が実際に読む」もののうち代表を選んだもの。全 DTO を
-// 並べるのが目的ではない（それは維持されない）——**壊れると画面が壊れる**ものを置く。
+// wireGoldenTypes picks representatives of what the Console and CP actually read. Listing
+// every DTO is not the goal — such a list is not maintained — so what belongs here is what
+// breaks the screen when it breaks.
 func wireGoldenTypes() []struct {
 	name string
 	typ  reflect.Type
@@ -49,15 +52,15 @@ func wireGoldenTypes() []struct {
 		name string
 		typ  reflect.Type
 	}{
-		// GET /sessions —— CP の sessionWire がそのまま decode する上流。
+		// GET /sessions — the upstream CP's sessionWire decodes as is.
 		{"session.Session", reflect.TypeOf(session.Session{})},
-		// GET /repos, GET /repos/{name}/status —— CP は素通しプロキシなので
-		// リポジトリのワイヤを持っているのはここだけ。
+		// GET /repos, GET /repos/{name}/status — CP is a pass-through proxy, so this is the
+		// only place that holds the repository wire.
 		{"Repo", reflect.TypeOf(gitx.Repo{})},
 		{"RepoStatus", reflect.TypeOf(gitx.RepoStatus{})},
-		// GET /workspace/stats —— WS バーのリソースチップ（ECS ではここが唯一の出どころ）。
+		// GET /workspace/stats — the WS bar's resource chip (on ECS this is its only source).
 		{"resources.Stats", reflect.TypeOf(resources.Stats{})},
-		// GET /notifications —— 通知センターの 1 件。
+		// GET /notifications — one entry of the notification centre.
 		{"notice.Event", reflect.TypeOf(notice.Event{})},
 	}
 }
@@ -77,18 +80,19 @@ func TestWireShapeGolden(t *testing.T) {
 	assertGoldenLines(t, wireGoldenPath, "-update-wire-golden", got)
 }
 
-// TestWireShapeGoldenCoversSession は「撮れているつもりで 0 件」を防ぐ。
-// wireShape が黙って空を返す壊れ方をすると、ゴールデンは緑のまま何も守らなくなる。
+// TestWireShapeGoldenCoversSession guards against capturing nothing while looking as if it
+// captured something: if wireShape breaks by silently returning empty, the golden stays green
+// and protects nothing.
 func TestWireShapeGoldenCoversSession(t *testing.T) {
 	lines := wireShape(t, "session.Session", reflect.TypeOf(session.Session{}))
 	for _, want := range []string{
-		"session.Session.name string",             // 一意キー
-		"session.Session.kind string",             // 種別（UI の分岐すべての元）
-		"session.Session.driver string,omitempty", // managed 判定
+		"session.Session.name string",             // the unique key
+		"session.Session.kind string",             // the agent kind (source of every UI branch)
+		"session.Session.driver string,omitempty", // managed-or-not
 		"session.Session.workingCopyId string,omitempty",
 	} {
 		if !containsLine(lines, want) {
-			t.Errorf("wireShape が %q を返さない（CP 中継の上流 field）", want)
+			t.Errorf("wireShape does not return %q (a field upstream of the CP relay)", want)
 		}
 	}
 }
@@ -102,18 +106,18 @@ func containsLine(lines []string, want string) bool {
 	return false
 }
 
-// --- 形状の抽出 ---
+// --- shape extraction ---
 
 var jsonMarshalerType = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
 
-// wireShape は 1 つの型を "<prefix>.<jsonキー> <JSON上の型>[,omitempty]" の行へ畳む。
-// 入れ子は "a.b.c"、struct の配列は "a[].b" と書く。
+// wireShape folds one type into lines of "<prefix>.<json key> <JSON type>[,omitempty]".
+// Nesting is written "a.b.c" and a slice of structs "a[].b".
 func wireShape(t *testing.T, name string, typ reflect.Type) []string {
 	t.Helper()
 	var out []string
 	shapeInto(t, name, typ, map[reflect.Type]bool{}, &out)
 	if len(out) == 0 {
-		t.Fatalf("%s: キーが 1 つも取れなかった（wireShape が壊れている）", name)
+		t.Fatalf("%s: not a single key was picked up (wireShape is broken)", name)
 	}
 	sort.Strings(out)
 	return out
@@ -123,7 +127,7 @@ func shapeInto(t *testing.T, prefix string, typ reflect.Type, seen map[reflect.T
 	t.Helper()
 	typ = deref(typ)
 	if typ.Kind() != reflect.Struct {
-		t.Fatalf("%s: struct でない型は撮れない: %s", prefix, typ.Kind())
+		t.Fatalf("%s: a non-struct type cannot be captured: %s", prefix, typ.Kind())
 	}
 	if seen[typ] {
 		*out = append(*out, prefix+" <recursive>")
@@ -135,7 +139,7 @@ func shapeInto(t *testing.T, prefix string, typ reflect.Type, seen map[reflect.T
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
 		if !f.IsExported() {
-			continue // json は出さない
+			continue // never marshalled
 		}
 		tag := f.Tag.Get("json")
 		if tag == "-" {
@@ -145,7 +149,7 @@ func shapeInto(t *testing.T, prefix string, typ reflect.Type, seen map[reflect.T
 		if key == "" {
 			key = f.Name
 		}
-		// 埋め込み（匿名）で json タグが無いものは field が親へ持ち上がる。
+		// An embedded (anonymous) field with no json tag lifts its fields into the parent.
 		if f.Anonymous && f.Tag.Get("json") == "" && deref(f.Type).Kind() == reflect.Struct {
 			shapeInto(t, prefix, f.Type, seen, out)
 			continue
@@ -161,8 +165,8 @@ func shapeInto(t *testing.T, prefix string, typ reflect.Type, seen map[reflect.T
 func emitField(t *testing.T, path string, typ reflect.Type, suffix string, seen map[reflect.Type]bool, out *[]string) {
 	t.Helper()
 	typ = deref(typ)
-	// 自前 MarshalJSON を持つ型は field 構成と出力が無関係なので、そこで止める
-	// （time.Time / json.RawMessage / 独自エンコーダ）。
+	// A type with its own MarshalJSON emits something unrelated to its fields, so stop
+	// there (time.Time, json.RawMessage, custom encoders).
 	if typ != reflect.TypeOf(json.RawMessage{}) &&
 		(typ.Implements(jsonMarshalerType) || reflect.PointerTo(typ).Implements(jsonMarshalerType)) {
 		*out = append(*out, path+" custom"+suffix)
@@ -175,7 +179,8 @@ func emitField(t *testing.T, path string, typ reflect.Type, suffix string, seen 
 		elem := deref(typ.Elem())
 		switch {
 		case elem.Kind() == reflect.Uint8:
-			// []byte は base64、json.RawMessage は生 JSON。どちらも「中身は撮らない」。
+			// []byte is base64 and json.RawMessage is raw JSON; neither has its contents
+			// captured.
 			if typ == reflect.TypeOf(json.RawMessage{}) {
 				*out = append(*out, path+" raw"+suffix)
 			} else {
@@ -193,8 +198,8 @@ func emitField(t *testing.T, path string, typ reflect.Type, suffix string, seen 
 	}
 }
 
-// jsonKind は Go の型名ではなく **JSON 上の型**を返す。型名を書くと移送
-// （main → internal/x）で必ず変わり、ワイヤが同じでも赤くなる。
+// jsonKind returns the JSON-level type rather than the Go type name. A name always changes
+// when a type moves (main → internal/x), which would go red with an unchanged wire.
 func jsonKind(typ reflect.Type) string {
 	switch typ.Kind() {
 	case reflect.Bool:

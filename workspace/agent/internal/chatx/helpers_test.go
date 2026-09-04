@@ -1,12 +1,9 @@
 package chatx
 
-// 移送に伴い、main のテストヘルパのうち**この家系だけが使っていて、かつ純粋なもの**を
-// こちら側に作り直したもの。作り直しは「テストの駆動を変える」行為なので、
-// README §4 の規律どおり**前後の両方に同じ変異を当てて等価を確かめる**（PR 本文に結果）。
-//
-// 作り直さなかったもの（main に残したテストが使う）: consoleCatalog / useTempUsageDir /
-// stubChatProvider —— それぞれ Console のカタログを読む・main の折り込み状態を戻す・
-// main の型を取る、で**純粋ではない**ため。
+// The test helpers this package owns: copies of main's helpers that only this family uses and
+// that are pure. Rebuilding a helper changes how a test is DRIVEN, so README §4 applies — the
+// same mutation goes on both the old and the new form to show they are equivalent (results in
+// the PR body). Helpers that are not pure stay in main and are not copied here.
 
 import (
 	"os"
@@ -20,7 +17,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
-// writeUIPrefs は ui-prefs.json を隔離した HOME に書く（main の ui_prefs_test.go と同じ形）。
+// writeUIPrefs writes ui-prefs.json into an isolated HOME (the same shape as main's
+// ui_prefs_test.go).
 func writeUIPrefs(t *testing.T, body string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
@@ -33,17 +31,18 @@ func writeUIPrefs(t *testing.T, body string) {
 	}
 }
 
-// japaneseRanges / firstJapaneseRune / hasJapanese は main の prompt_lang_test.go の
-// **範囲表ごとの写し**（4 レンジ全部）。`unicode.Hiragana/Katakana/Han` で書き直すと
-// **CJK 記号・句読点 (0x3000-0x303F) と全角英数記号 (0xFF01-0xFF60) が判定から落ちて
-// 検査が弱くなる**。作り直しは「同じことをしている」ように見えて範囲が変わるので、
-// 表はそのまま持ってくる（最初に書き直して 2 レンジ落とし、変異試験の前に気付いた）。
+// japaneseRanges / firstJapaneseRune / hasJapanese are a copy of main's prompt_lang_test.go,
+// range table and all (all four ranges). Rewriting it with `unicode.Hiragana/Katakana/Han` drops
+// CJK symbols and punctuation (0x3000-0x303F) and fullwidth alphanumerics and symbols
+// (0xFF01-0xFF60) out of the decision, weakening the check. A rewrite looks like it does the same
+// thing while covering a different set, so the table is carried over as is (the first attempt
+// rewrote it, lost two ranges, and was caught before the mutation run).
 var japaneseRanges = []*unicode.RangeTable{
 	{R16: []unicode.Range16{
-		{Lo: 0x3000, Hi: 0x303F, Stride: 1}, // 、。「」『』（）〜 など CJK 記号・句読点
-		{Lo: 0x3040, Hi: 0x30FF, Stride: 1}, // ひらがな・カタカナ・ー・・
-		{Lo: 0x4E00, Hi: 0x9FFF, Stride: 1}, // CJK 統合漢字
-		{Lo: 0xFF01, Hi: 0xFF60, Stride: 1}, // 全角英数・記号
+		{Lo: 0x3000, Hi: 0x303F, Stride: 1}, // CJK symbols and punctuation
+		{Lo: 0x3040, Hi: 0x30FF, Stride: 1}, // hiragana and katakana
+		{Lo: 0x4E00, Hi: 0x9FFF, Stride: 1}, // CJK unified ideographs
+		{Lo: 0xFF01, Hi: 0xFF60, Stride: 1}, // fullwidth alphanumerics and symbols
 	}},
 }
 
@@ -58,7 +57,8 @@ func firstJapaneseRune(s string) rune {
 
 func hasJapanese(s string) bool { return firstJapaneseRune(s) != 0 }
 
-// stubChatProvider は 1 種別のプロバイダを差し替える（main の bridge_operator_test.go と同じ形）。
+// stubChatProvider swaps the provider for one kind (the same shape as main's
+// bridge_operator_test.go).
 func stubChatProvider(t *testing.T, kind string, p ChatProvider) {
 	t.Helper()
 	old, had := ChatProviders[kind]
@@ -72,16 +72,16 @@ func stubChatProvider(t *testing.T, kind string, p ChatProvider) {
 	})
 }
 
-// consoleCatalog は Console の i18n カタログを **ドメイン別ファイルの束**として読む
-// （main の console_catalog_test.go の写し）。
+// consoleLocalesDir is the ONE path expression both consoleCatalog and
+// TestConsoleCatalogIsReachable look through, so that when the depth is wrong "there is no
+// catalogue" can be told apart from "we are looking in the wrong place".
 //
-// 🔥 **相対パスの深さだけが違う。** 原本は workspace/agent から `../../console/...`、
-// こちらは workspace/agent/internal/chatx から `../../../../console/...`。
-// 深さを直し忘れると `os.ReadDir` が外れて **t.Skipf で黙って飛ぶ＝検査が消える**
-// （移送で検査が無言化する典型）。TestConsoleCatalogIsReachable がそれを踏ませない。
-// consoleLocalesDir は**この 2 本が見るのと同じ 1 つのパス式**。
-// 深さを直し忘れたときに「カタログが無い」と「見る場所が違う」を切り分けられるよう、
-// 経路を 1 本にしてある。
+// Only the depth of the relative path differs from the original (main's console_catalog_test.go,
+// which reads the Console i18n catalogue as the bundle of per-domain files it is): there it is
+// `../../console/...` from workspace/agent, here `../../../../console/...` from
+// workspace/agent/internal/chatx. Forget to fix the depth and `os.ReadDir` misses, consoleCatalog
+// skips through t.Skipf and the check disappears without a word — the classic way a move
+// silences a test. TestConsoleCatalogIsReachable is what stops that.
 func consoleLocalesDir(locale string) string {
 	return filepath.Join("..", "..", "..", "..", "console", "src", "lib", "i18n", "locales", locale)
 }
@@ -108,7 +108,7 @@ func consoleCatalog(t *testing.T, locale string) string {
 		n++
 	}
 	if n == 0 {
-		t.Fatalf("%s に .ts が 1 つも無い（カタログの置き場所が変わった？）", dir)
+		t.Fatalf("no .ts file at all under %s (did the catalogue move?)", dir)
 	}
 	return b.String()
 }
@@ -117,20 +117,20 @@ func consoleCatalogHasKey(catalog, key string) bool {
 	return strings.Contains(catalog, `"`+key+`"`)
 }
 
-// TestConsoleCatalogIsReachable は **consoleCatalog が Skip に落ちていない**ことを見る。
-// 相対パスの深さを間違えると、カタログのキー検査 2 本が「カタログが無い」で飛んで
-// 静かに消える —— それを赤で捕まえるための 1 本。
+// TestConsoleCatalogIsReachable checks that consoleCatalog has NOT fallen through to Skip. Get
+// the relative-path depth wrong and the two catalogue-key checks skip with "there is no
+// catalogue" and vanish quietly; this is the one test that turns that red.
 //
-// 🔥 **`consoleCatalog` を経由してはいけない。** 経由すると、深さが違うときに
-// `t.Skipf` が**この検査ごと飛ばす**ので、守ろうとした穴がそのまま開く
-// （最初にそう書いてレビューで指摘された。SKIP は 5 本→8 本に増えるのに `go test` は緑）。
-// ここは `os.ReadDir` の結果を自分で見て `t.Fatalf` する。
+// It must not go through `consoleCatalog`. Doing so lets `t.Skipf` skip THIS check as well when
+// the depth is wrong, leaving open exactly the gap it guards (it was written that way at first
+// and caught in review: SKIP went from 5 to 8 while `go test` stayed green). So it reads
+// `os.ReadDir` itself and calls `t.Fatalf`.
 func TestConsoleCatalogIsReachable(t *testing.T) {
 	dir := consoleLocalesDir("ja")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("カタログの置き場が読めない: %s: %v（相対パスの深さを疑う。"+
-			"ここが読めないと NoticeKeys / ReportKeys の 2 本が黙って skip される）", dir, err)
+		t.Fatalf("cannot read the catalogue directory: %s: %v (suspect the relative-path depth; "+
+			"with this unreadable the NoticeKeys / ReportKeys checks skip silently)", dir, err)
 	}
 	n := 0
 	for _, e := range entries {
@@ -139,17 +139,17 @@ func TestConsoleCatalogIsReachable(t *testing.T) {
 		}
 	}
 	if n == 0 {
-		t.Fatalf("%s に .ts が 1 つも無い（カタログの置き場所が変わった？）", dir)
+		t.Fatalf("no .ts file at all under %s (did the catalogue move?)", dir)
 	}
 }
 
-// stubAbortResumeHolds は「このセッションは自動再開の最中か」の継ぎ目だけを差し替える。
+// stubAbortResumeHolds replaces only the seam that answers "is this session mid auto-resume".
 //
-// 🔥 移送前は main の `abortResumeStates` に状態を直接書いて**本物の判定**を通していた。
-// chatx から main の var には届かないので、**判定への入力を注入する**形に変えている
-// （判定そのものの検査は main の abort_resume_test.go が持つ）。
-// 駆動を変えているので、README §4 のとおり**移送前後の両方に同じ変異を当てて等価を確認**した
-// （結果は PR 本文。当てた場所も併記）。
+// The earlier form wrote state straight into main's `abortResumeStates` and exercised the REAL
+// decision. chatx cannot reach a var in main, so this injects the INPUT to that decision instead;
+// the decision itself is covered by main's abort_resume_test.go. That changes how the test is
+// driven, so per README §4 the same mutation was applied to both forms to confirm they are
+// equivalent (results, and where it was applied, in the PR body).
 func stubAbortResumeHolds(t *testing.T, name string, hold bool) {
 	t.Helper()
 	old := deps.AbortResumeHolds
@@ -162,38 +162,40 @@ func stubAbortResumeHolds(t *testing.T, name string, hold bool) {
 	t.Cleanup(func() { deps.AbortResumeHolds = old })
 }
 
-// TestJapaneseRangesMatchesTheOriginal は、**この写しが原本と byte 一致であり続けること**を
-// 固定する（RECLAIM-C の債務 2）。
+// TestJapaneseRangesMatchesTheOriginal pins that this copy stays byte-identical to the original
+// (RECLAIM-C, debt 2).
 //
-// 原本は main の `prompt_lang_test.go`。**1 本化しなかった理由**: どちらもテスト専用で、
-// production に和文判定はあるが**別の範囲表**（`session_title.go` の件名整形・CP の `tts.go`）
-// であり、共有の家が無い。テスト専用の表のために production パッケージを新設すると、
-// **呼び出し 0 件の production コード**が生まれる。写しを許すかわりに、**割れたら赤くする**。
+// The original is main's `prompt_lang_test.go`. Why they were not unified into one: both are
+// test-only, and while production does detect Japanese it does so with DIFFERENT range tables
+// (`session_title.go`'s subject formatting, the CP's `tts.go`), so there is no shared home to put
+// this in. Adding a production package for a test-only table would create production code with
+// zero callers. The copy is allowed; in exchange, a divergence goes red.
 //
-// 🔥 なぜ表を写すのか（書き直してはいけない理由）: `unicode.Hiragana/Katakana/Han` で
-// 書き直すと **CJK 記号・句読点 (0x3000-0x303F) と全角英数 (0xFF01-0xFF60) が落ちて
-// 検査が黙って弱くなる**（AG-CHAT2 が実際に踏んだ）。**アサーションも通る枝も同じで
-// 入力の被覆だけが縮むので、両側変異試験でも捕まらない型**である。
+// Why the table is copied rather than rewritten: rewriting it with
+// `unicode.Hiragana/Katakana/Han` drops CJK symbols and punctuation (0x3000-0x303F) and fullwidth
+// alphanumerics (0xFF01-0xFF60), silently weakening the check (AG-CHAT2 actually hit this). The
+// assertions and the branches taken stay identical and only the input coverage shrinks, which is
+// the class of defect a two-sided mutation run cannot catch either.
 func TestJapaneseRangesMatchesTheOriginal(t *testing.T) {
 	const origin = "../../prompt_lang_test.go"
 	extract := func(path string) string {
 		b, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("read %s: %v（置き場が変わった？）", path, err)
+			t.Fatalf("read %s: %v (did it move?)", path, err)
 		}
 		s := string(b)
 		i := strings.Index(s, "var japaneseRanges = ")
 		if i < 0 {
-			t.Fatalf("%s に japaneseRanges の宣言が見つからない＝この検査が無言化している", path)
+			t.Fatalf("no japaneseRanges declaration found in %s: this check has gone silent", path)
 		}
 		j := strings.Index(s[i:], "\n}\n")
 		if j < 0 {
-			t.Fatalf("%s の japaneseRanges の終端が見つからない", path)
+			t.Fatalf("no end of the japaneseRanges declaration found in %s", path)
 		}
 		return s[i : i+j]
 	}
 	a, b := extract(origin), extract("helpers_test.go")
 	if a != b {
-		t.Fatalf("japaneseRanges の写しが原本と割れた。\n原本(%s):\n%s\n写し:\n%s", origin, a, b)
+		t.Fatalf("the japaneseRanges copy diverged from the original.\noriginal(%s):\n%s\ncopy:\n%s", origin, a, b)
 	}
 }

@@ -1,32 +1,34 @@
 package main
 
-// session_wiring.go の配線が**生きているか**を通しで見る 1 本。
+// One end-to-end check that session_wiring.go's wiring is live.
 //
-// 🔥 `sessionx.Configure` が捕まえるのは**未配線**（nil / 零値）だけで、**間違った配線**は
-// 捕まえられない。しかも session 家系の Deps は**同じ型のフィールドが固まっている**:
+// `sessionx.Configure` catches only unwired fields (nil / zero value), never wrong wiring,
+// and the session family's Deps is dense with same-typed fields:
 //
-//   - `string` が 12 本（エラーコード）
-//   - `func() string` が 2 本（BrowseRoot / ToolchainShellPrefix）
+//   - 12 of `string` (the error codes)
+//   - 2 of `func() string` (BrowseRoot / ToolchainShellPrefix)
 //
-// **同じ型どうしを入れ替えても、型検査も `Configure` の reflect 網羅検査も鳴らない。**
-// 2026-09-03 に独立 3 例（#312→#319 / #333 / #332）が出て報告様式に格上げされた形で、
-// 実測ではどれも**全テスト緑**だった。踏める形を具体的に書くと:
+// Swapping two fields of the same type sets off neither the type checker nor `Configure`'s
+// reflect coverage check. Three independent instances have been hit (#312→#319, #333, #332),
+// and every one of them was measured with the whole suite green. Concretely:
 //
-//   - `ErrCodePasteTooLarge` と `ErrCodePasteUnsupportedKind` を入れ替える
-//     → 画像を貼ると **「大きすぎます」の代わりに「この種別では貼れません」** が出る。
-//       どちらも実在するコードなので Console の i18n も引けてしまい、**画面は自然なまま嘘をつく**。
-//   - `BrowseRoot` と `ToolchainShellPrefix` を入れ替える
-//     → 添付の保存先が**シェルのプレフィクス文字列**になり、貼り付け画像が行方不明になる。
-//   - `MaxUploadBytes` を別の `func() int64` にすり替える
-//     → 上限が黙って変わる（0 なら全部拒否、巨大なら防波堤が消える）。
+//   - swap `ErrCodePasteTooLarge` with `ErrCodePasteUnsupportedKind`
+//     → pasting an image reports "this kind cannot be pasted" instead of "too large". Both
+//     are real codes, so the Console's i18n resolves them and the screen lies while looking
+//     entirely natural.
+//   - swap `BrowseRoot` with `ToolchainShellPrefix`
+//     → attachments are saved under the shell prefix string, and pasted images go missing.
+//   - substitute another `func() int64` for `MaxUploadBytes`
+//     → the limit changes silently (0 rejects everything; a huge value removes the guard).
 //
-// 検査の形は 2 つ:
+// Two shapes of check:
 //
-//   - 関数は**関数ポインタの同一性**（別の関数や閉包にすり替わっていれば落ちる）
-//   - 値は本物の定数と同じであること
+//   - functions are compared by function-pointer identity, so another function or a closure
+//     fails
+//   - values must equal the real constant
 //
-// そして **Deps のフィールド集合と検査の集合を突き合わせる**ので、フィールドが増えたのに
-// 検査を足さなければここが落ちる。
+// The set of checks is then reconciled against Deps' set of fields, so adding a field
+// without adding a check fails here.
 
 import (
 	"reflect"
@@ -58,23 +60,23 @@ func TestSessionWiringIsLive(t *testing.T) {
 
 		"RunOperatorTurn": func(t *testing.T) { sameSessionFunc(t, w.RunOperatorTurn, runOperatorTurn) },
 
-		// MCPConvID だけは本物そのものではない —— var を読む閉包なので、
-		// ポインタ同一性では意味が無い。**「今の値が読めること」を振る舞いで見る。**
-		// 値で写す配線に戻すと（`MCPConvID: func() string { return "" }` のような固定や、
-		// Deps に string を持たせる形）ここが落ちる。
+		// MCPConvID alone is not the real function: it is a closure reading a var, so
+		// pointer identity means nothing. Check the behaviour instead - that it reads the
+		// current value. Going back to wiring by copied value (a fixed
+		// `MCPConvID: func() string { return "" }`, or holding a string in Deps) fails here.
 		"MCPConvID": func(t *testing.T) {
 			old := mcpConvID
 			t.Cleanup(func() { mcpConvID = old })
 			mcpConvID = "conv-wiring-probe"
 			if got := w.MCPConvID(); got != "conv-wiring-probe" {
-				t.Fatalf("MCPConvID() = %q, want %q（配線が値の写しになっていると "+
-					"承認プロンプトが配線した瞬間の会話 ID で固まる）", got, "conv-wiring-probe")
+				t.Fatalf("MCPConvID() = %q, want %q (if the wiring copies the value, the "+
+					"approval prompt freezes on the conversation ID present at wiring time)", got, "conv-wiring-probe")
 			}
 		},
 
-		// エラーコードは errcodes.go の**本物と同一の綴り**であること。
-		// ここが違うと Console の i18n が引けず、生のコードが画面に出る。
-		// **12 本とも同じ型なので、入れ替えを止められるのはこの 12 行だけである。**
+		// An error code must be spelled exactly as in errcodes.go; otherwise the Console's
+		// i18n cannot resolve it and the raw code reaches the screen. All 12 share one type,
+		// so these 12 lines are the only thing standing between them and a swap.
 		"ErrCodeAgentNotConnected": func(t *testing.T) {
 			sameSessionCode(t, w.ErrCodeAgentNotConnected, errCodeAgentNotConnected)
 		},
@@ -113,20 +115,20 @@ func TestSessionWiringIsLive(t *testing.T) {
 		},
 	}
 
-	// 検査の集合と Deps のフィールド集合を突き合わせる。**フィールドが増えたら必ずここが
-	// 落ちる**ので、「配線は足したが検査は足さなかった」が起きない。
+	// Reconcile the set of checks against Deps' set of fields. A new field always fails here,
+	// so "wiring added, check not added" cannot happen.
 	typ := reflect.TypeOf(w)
 	seen := map[string]bool{}
 	for i := 0; i < typ.NumField(); i++ {
 		name := typ.Field(i).Name
 		seen[name] = true
 		if _, ok := checks[name]; !ok {
-			t.Errorf("sessionx.Deps.%s の配線を検査していない（フィールドを足したら検査も足すこと）", name)
+			t.Errorf("the wiring of sessionx.Deps.%s is unchecked (add a check when you add a field)", name)
 		}
 	}
 	for name := range checks {
 		if !seen[name] {
-			t.Errorf("sessionx.Deps に %s は無い（検査だけが古い）", name)
+			t.Errorf("sessionx.Deps has no %s (only the check is stale)", name)
 		}
 	}
 	for name, run := range checks {
@@ -134,14 +136,14 @@ func TestSessionWiringIsLive(t *testing.T) {
 	}
 }
 
-// TestSessionWiringErrorCodesAreDistinct は、12 本のエラーコードが**互いに違う綴り**で
-// あることを見る。
+// TestSessionWiringErrorCodesAreDistinct checks that the 12 error codes are all spelled
+// differently.
 //
-// 🔥 これが要る理由: 上の 1 本ずつの突き合わせは「本物と同じか」しか見ないので、
-// **errcodes.go 側で 2 つの定数が同じ文字列になっていたら素通りする**。そうなると
-// 入れ替えの検査そのものが無力になる（どちらに配線しても一致してしまう）。
-// 実際、貼り付け系 3 本とフォーク系 4 本は綴りが似ており、コピー&ペーストで
-// 同じ値になる事故が起こりやすい。
+// Why it is needed: the per-field comparison above only asks "is it the same as the real
+// one", so two constants in errcodes.go holding the same string pass straight through - and
+// that renders the swap check itself powerless, because either wiring then matches. The
+// three paste codes and the four fork codes are spelled alike, which makes a copy-paste that
+// leaves two of them equal an easy accident.
 func TestSessionWiringErrorCodesAreDistinct(t *testing.T) {
 	w := sessionx.Wired()
 	seen := map[string]string{}
@@ -156,28 +158,28 @@ func TestSessionWiringErrorCodesAreDistinct(t *testing.T) {
 		n++
 		code := val.Field(i).String()
 		if code == "" {
-			t.Errorf("%s が空（Console へ空のコードが届き i18n が引けない）", f.Name)
+			t.Errorf("%s is empty (an empty code reaches the Console and i18n cannot resolve it)", f.Name)
 			continue
 		}
 		if prev, dup := seen[code]; dup {
-			t.Errorf("%s と %s が同じコード %q を持つ＝入れ替えの検査が効かなくなる",
+			t.Errorf("%s and %s hold the same code %q, which disables the swap check",
 				prev, f.Name, code)
 		}
 		seen[code] = f.Name
 	}
-	// 🔥 走査本数の下限（#320 の「1 件も見つからなければ何も検査しない」対策）。
+	// Lower bound on how much was scanned (#320: "finding nothing checks nothing").
 	if n != 12 {
-		t.Fatalf("string のフィールドを %d 本しか見ていない（want 12）＝この検査が無言化している", n)
+		t.Fatalf("only %d string fields were scanned (want 12) = this check has gone silent", n)
 	}
 }
 
-// sameSessionFunc は「その関数そのものが配線されている」ことを見る。閉包や別の関数に
-// すり替わっていれば、コードポインタが違うので落ちる。
+// sameSessionFunc checks that the function itself is what got wired. A closure or another
+// function has a different code pointer and fails.
 func sameSessionFunc(t *testing.T, got, want any) {
 	t.Helper()
 	g, w := reflect.ValueOf(got).Pointer(), reflect.ValueOf(want).Pointer()
 	if g != w {
-		t.Fatalf("配線先が違う: got %s, want %s", sessionFuncName(g), sessionFuncName(w))
+		t.Fatalf("wired to the wrong target: got %s, want %s", sessionFuncName(g), sessionFuncName(w))
 	}
 }
 
@@ -191,6 +193,6 @@ func sessionFuncName(pc uintptr) string {
 func sameSessionCode(t *testing.T, got, want string) {
 	t.Helper()
 	if got != want {
-		t.Fatalf("エラーコード = %q, want %q", got, want)
+		t.Fatalf("error code = %q, want %q", got, want)
 	}
 }

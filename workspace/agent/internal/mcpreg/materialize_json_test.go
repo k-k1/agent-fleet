@@ -1,14 +1,15 @@
 package mcpreg
 
-// P5 で足した JSON 設定型 kind（opencode / copilot / cursor / kiro / agy）の materialize。
+// materialize for the P5 JSON-config kinds (opencode / copilot / cursor / kiro / agy).
 //
-// 1 本目は claude と同じ「非破壊性」の固定（docs/log/48 §13）を全 kind に横断で当てる。
-// 共通エンジン（materialize_json.go）を通っているので中身は同じ検証だが、**書く先の
-// ファイルと map のキーが kind ごとに違う**のがこのフェーズの実体であり、そこを取り違えると
-// 「登録したのに何も起きない」（別ファイルへ書いた）か「利用者の設定を壊した」になる。
+// The first test pins the same non-destructiveness contract as claude (docs/log/48 §13) across
+// every kind. They all run through the common engine (materialize_json.go), so the assertions
+// are the same, but what differs per kind is the file written and the map key inside it — and
+// getting that wrong means either "registered, yet nothing happens" (written to the wrong file)
+// or a wrecked user config.
 //
-// 2 本目以降は kind ごとの**エントリの形**。実測した契約（各 materialize_<kind>.go の
-// 冒頭コメント）のうち、取りこぼすと機能が黙って無効になるキーを名指しで押さえる。
+// The remaining tests pin the shape of an entry per kind: of the measured contract (the header
+// comment of each materialize_<kind>.go), the keys whose loss silently disables the feature.
 
 import (
 	"encoding/json"
@@ -60,8 +61,8 @@ func TestMaterializeJSONKindsKeepUserState(t *testing.T) {
 		t.Run(tc.kind, func(t *testing.T) {
 			withTempCLIHomes(t)
 			path := tc.path()
-			// 利用者が手で書いた（あるいは `<cli> mcp add` で入れた）自前サーバーと、
-			// af が知らない他のキー。
+			// A server the user added by hand (or via `<cli> mcp add`), plus another key
+			// af knows nothing about.
 			writeFile(t, path, `{
   "someOtherSetting": {"keep": true},
   "`+tc.key+`": {"mine": {"command": "/usr/bin/mine"}}
@@ -78,7 +79,7 @@ func TestMaterializeJSONKindsKeepUserState(t *testing.T) {
 			srv := serverMap(t, path, tc.key)
 			for _, want := range []string{"mine", "wiki", "tickets"} {
 				if srv[want] == nil {
-					t.Fatalf("%s に %q が無い: %v", tc.key, want, srv)
+					t.Fatalf("%s is missing %q: %v", tc.key, want, srv)
 				}
 			}
 			root := map[string]any{}
@@ -86,33 +87,34 @@ func TestMaterializeJSONKindsKeepUserState(t *testing.T) {
 				t.Fatal(err)
 			}
 			if root["someOtherSetting"] == nil {
-				t.Fatal("af が知らない設定キーを巻き添えで消した")
+				t.Fatal("dropped an unrelated setting key af does not own")
 			}
 
-			// 冪等: 2 回目は書かない（CLI 自身も書くファイルなので、無変更の起動で
-			// 書き戻すと相手の書き込みを踏み潰す窓が広がる）。
+			// Idempotent: the second run writes nothing. The CLI writes this file too, so
+			// rewriting it on an unchanged start widens the window for clobbering its write.
 			if _, _, changed, err := tc.fn(defs, written); err != nil || changed {
-				t.Fatalf("2 回目 = changed %v, err %v（冪等でない）", changed, err)
+				t.Fatalf("second run = changed %v, err %v (not idempotent)", changed, err)
 			}
 
-			// レジストリから全部消す: af が書いた 2 件だけが消え、利用者の "mine" は残る。
+			// Clear the registry: only the 2 entries af wrote go, the user's "mine" stays.
 			_, removed, changed, err = tc.fn(nil, written)
 			if err != nil || !changed {
-				t.Fatalf("削除 = %v, changed=%v", err, changed)
+				t.Fatalf("removal = %v, changed=%v", err, changed)
 			}
 			if len(removed) != 2 {
-				t.Fatalf("removed=%v, want 2 件", removed)
+				t.Fatalf("removed=%v, want 2 entries", removed)
 			}
 			srv = serverMap(t, path, tc.key)
 			if len(srv) != 1 || srv["mine"] == nil {
-				t.Fatalf("利用者の手書き分が巻き添えになった: %v", srv)
+				t.Fatalf("the user's hand-written entry was removed too: %v", srv)
 			}
 		})
 	}
 }
 
-// TestMaterializeJSONKindsRefuseUnparseable: 読めない設定は触らない。claude の
-// オンボーディングフラグと同じ理由で、opencode.jsonc のコメントもここで守られる。
+// TestMaterializeJSONKindsRefuseUnparseable: a config that cannot be read is left untouched.
+// For the same reason as claude's onboarding flags, this is also what protects the comments
+// in opencode.jsonc.
 func TestMaterializeJSONKindsRefuseUnparseable(t *testing.T) {
 	for _, tc := range jsonKindCases {
 		t.Run(tc.kind, func(t *testing.T) {
@@ -120,10 +122,10 @@ func TestMaterializeJSONKindsRefuseUnparseable(t *testing.T) {
 			broken := "// 利用者のコメント\n{\"mcp\": {}}\n"
 			writeFile(t, tc.path(), broken)
 			if _, _, _, err := tc.fn(p5Defs(), nil); err == nil {
-				t.Fatal("素の JSON として読めない設定を黙って上書きした")
+				t.Fatal("silently overwrote a config that is not plain JSON")
 			}
 			if got := readFile(t, tc.path()); got != broken {
-				t.Fatalf("拒否したのにファイルを触った: %q", got)
+				t.Fatalf("refused, yet the file was modified: %q", got)
 			}
 		})
 	}
@@ -141,14 +143,14 @@ func TestMaterializeJSONKindsCreateFile0600(t *testing.T) {
 				t.Fatal(err)
 			}
 			if fi.Mode().Perm() != 0o600 {
-				t.Fatalf("mode = %v, want 0600（秘密が入るファイル）", fi.Mode().Perm())
+				t.Fatalf("mode = %v, want 0600 (the file holds secrets)", fi.Mode().Perm())
 			}
 		})
 	}
 }
 
-// TestMaterializeJSONKindsLeaveMissingFileMissing: 書くものが無い kind は設定ファイルを
-// 作らない。空の設定を置くと、利用者が触っていない CLI にも af の痕跡が増える。
+// TestMaterializeJSONKindsLeaveMissingFileMissing: a kind with nothing to write creates no
+// config file. Dropping an empty config leaves af's traces in CLIs the user never touched.
 func TestMaterializeJSONKindsLeaveMissingFileMissing(t *testing.T) {
 	for _, tc := range jsonKindCases {
 		t.Run(tc.kind, func(t *testing.T) {
@@ -157,7 +159,7 @@ func TestMaterializeJSONKindsLeaveMissingFileMissing(t *testing.T) {
 				t.Fatalf("= %v, changed=%v", err, changed)
 			}
 			if _, err := os.Stat(tc.path()); !os.IsNotExist(err) {
-				t.Fatalf("空のまま設定ファイルを作った: %v", tc.path())
+				t.Fatalf("created an empty config file: %v", tc.path())
 			}
 		})
 	}
@@ -165,21 +167,21 @@ func TestMaterializeJSONKindsLeaveMissingFileMissing(t *testing.T) {
 
 // --- opencode --------------------------------------------------------------------
 
-// TestOpencodeConfigPathPrefersExisting: opencode は opencode.jsonc と opencode.json の
-// **両方を読んでマージする**（実測 1.18.7）。af が「もう一方」へ書くと、同じサーバーが
-// 二重に載る。実在する方を編集し、どちらも無ければ .jsonc を作ること。
+// TestOpencodeConfigPathPrefersExisting: opencode reads and merges both opencode.jsonc and
+// opencode.json (measured on 1.18.7), so writing to the other one lists the same server
+// twice. Edit whichever exists, and create .jsonc when neither does.
 func TestOpencodeConfigPathPrefersExisting(t *testing.T) {
 	t.Run("neither", func(t *testing.T) {
 		withTempCLIHomes(t)
 		if got := filepath.Base(opencodeConfigPath()); got != "opencode.jsonc" {
-			t.Fatalf("新規作成先 = %s, want opencode.jsonc", got)
+			t.Fatalf("create target = %s, want opencode.jsonc", got)
 		}
 	})
 	t.Run("json only", func(t *testing.T) {
 		home := withTempCLIHomes(t)
 		writeFile(t, filepath.Join(home, ".config", "opencode", "opencode.json"), "{}")
 		if got := filepath.Base(opencodeConfigPath()); got != "opencode.json" {
-			t.Fatalf("既存の opencode.json ではなく %s を選んだ（設定が二重になる）", got)
+			t.Fatalf("chose %s instead of the existing opencode.json (config ends up duplicated)", got)
 		}
 	})
 	t.Run("both", func(t *testing.T) {
@@ -188,7 +190,7 @@ func TestOpencodeConfigPathPrefersExisting(t *testing.T) {
 		writeFile(t, filepath.Join(dir, "opencode.json"), "{}")
 		writeFile(t, filepath.Join(dir, "opencode.jsonc"), "{}")
 		if got := filepath.Base(opencodeConfigPath()); got != "opencode.jsonc" {
-			t.Fatalf("両方ある場合 = %s, want opencode.jsonc（CLI 自身と entrypoint が作る方）", got)
+			t.Fatalf("with both present = %s, want opencode.jsonc (the one the CLI itself and the entrypoint create)", got)
 		}
 	})
 }
@@ -203,13 +205,13 @@ func TestMaterializeOpencodeSeedsSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	if root["$schema"] != "https://opencode.ai/config.json" {
-		t.Fatalf("新規作成した設定に $schema が無い: %v", root)
+		t.Fatalf("the newly created config has no $schema: %v", root)
 	}
 }
 
 func TestOpencodeServersShape(t *testing.T) {
 	got := OpencodeServers(p5Defs())
-	// local は command と args を **1 本の配列** に畳む（実測）。分けて書くと起動しない。
+	// local folds command and args into a single array (measured); split apart it will not start.
 	want := map[string]any{
 		"type":        "local",
 		"command":     []any{"npx", "-y", "wiki-mcp"},
@@ -224,7 +226,7 @@ func TestOpencodeServersShape(t *testing.T) {
 		t.Fatalf("remote = %#v", rem)
 	}
 	if _, ok := rem["timeout"]; ok {
-		t.Fatal("opencode には per-server の timeout キーが無い（実測）— 効かない場所へ書いている")
+		t.Fatal("opencode has no per-server timeout key (measured) - this is written where it has no effect")
 	}
 }
 
@@ -236,17 +238,17 @@ func TestCopilotServersShape(t *testing.T) {
 	if loc["type"] != "local" || loc["command"] != "npx" {
 		t.Fatalf("local = %#v", loc)
 	}
-	// tools を落とすと、`copilot mcp add` の既定（"*" = 全ツール）から外れる。
+	// Dropping tools departs from `copilot mcp add`'s default ("*" = every tool).
 	if !reflect.DeepEqual(loc["tools"], []any{"*"}) {
-		t.Fatalf("tools = %#v, want [\"*\"]（省略するとツールが出ない可能性）", loc["tools"])
+		t.Fatalf("tools = %#v, want [\"*\"] (omitting it may leave no tools exposed)", loc["tools"])
 	}
 	rem, _ := got["tickets"].(map[string]any)
 	if rem["type"] != "http" || rem["url"] != "https://mcp.example.com/mcp" {
 		t.Fatalf("remote = %#v", rem)
 	}
-	// copilot の timeout は **ミリ秒**（codex の startup_timeout_sec と違い変換しない）。
+	// copilot's timeout is in milliseconds - unlike codex's startup_timeout_sec, do not convert.
 	if rem["timeout"] != 12000 {
-		t.Fatalf("timeout = %#v, want 12000（ms のまま）", rem["timeout"])
+		t.Fatalf("timeout = %#v, want 12000 (kept in ms)", rem["timeout"])
 	}
 	if rem["headers"].(map[string]any)["Authorization"] != "Bearer t" {
 		t.Fatalf("headers = %#v", rem["headers"])
@@ -258,9 +260,10 @@ func TestCopilotServersShape(t *testing.T) {
 func TestKiroServersShape(t *testing.T) {
 	got := kiroServers(p5Defs())
 	loc, _ := got["wiki"].(map[string]any)
-	// kiro には type の判別子が無い。command / url の有無で決まる（実測 2.14.2）。
+	// kiro has no type discriminator; it decides on the presence of command / url
+	// (measured on 2.14.2).
 	if _, ok := loc["type"]; ok {
-		t.Fatalf("kiro に type を書いている: %#v", loc)
+		t.Fatalf("wrote a type for kiro: %#v", loc)
 	}
 	if loc["command"] != "npx" || !reflect.DeepEqual(loc["args"], []any{"-y", "wiki-mcp"}) {
 		t.Fatalf("local = %#v", loc)
@@ -269,8 +272,9 @@ func TestKiroServersShape(t *testing.T) {
 	if rem["url"] != "https://mcp.example.com/mcp" || rem["timeout"] != 12000 {
 		t.Fatalf("remote = %#v", rem)
 	}
-	// ヘッダはテナント配布サーバーの認証手段そのもの（配布はリモート専用・ADR0031 決定 2）。
-	// ここを落とすと「管理者が配ったサーバーだけ 401 になる」形で壊れる。
+	// Headers are the whole authentication mechanism of a tenant-distributed server
+	// (distribution is remote-only, ADR0031 decision 2). Drop them and the breakage takes the
+	// shape of "only the servers the administrator handed out return 401".
 	if rem["headers"].(map[string]any)["Authorization"] != "Bearer t" {
 		t.Fatalf("headers = %#v", rem["headers"])
 	}
@@ -281,7 +285,7 @@ func TestKiroServersShape(t *testing.T) {
 func TestCursorServersShape(t *testing.T) {
 	got := cursorServers(p5Defs())
 	loc, _ := got["wiki"].(map[string]any)
-	// cursor のパーサは `"command" in o` で stdio を判定する（バンドル実測）。
+	// cursor's parser decides stdio by `"command" in o` (measured from the bundle).
 	if loc["command"] != "npx" || !reflect.DeepEqual(loc["env"], map[string]any{"TOKEN": "s3cret"}) {
 		t.Fatalf("local = %#v", loc)
 	}
@@ -290,7 +294,7 @@ func TestCursorServersShape(t *testing.T) {
 		t.Fatalf("remote = %#v", rem)
 	}
 	if _, ok := rem["timeout"]; ok {
-		t.Fatal("cursor のエントリパーサに timeout は無い（実測）— 効かない場所へ書いている")
+		t.Fatal("cursor's entry parser has no timeout (measured) - this is written where it has no effect")
 	}
 }
 
@@ -301,9 +305,9 @@ func TestMaterializeAgyWritesGeminiConfig(t *testing.T) {
 	}
 	want := filepath.Join(home, ".gemini", "config", "mcp_config.json")
 	if agyMCPConfigPath() != want {
-		t.Fatalf("path = %s, want %s（agy は ~/.gemini をハードコードする）", agyMCPConfigPath(), want)
+		t.Fatalf("path = %s, want %s (agy hard-codes ~/.gemini)", agyMCPConfigPath(), want)
 	}
 	if got := readFile(t, want); !strings.Contains(got, `"mcpServers"`) {
-		t.Fatalf("mcpServers が無い:\n%s", got)
+		t.Fatalf("no mcpServers:\n%s", got)
 	}
 }

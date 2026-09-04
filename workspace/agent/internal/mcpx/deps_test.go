@@ -1,8 +1,8 @@
 package mcpx
 
-// mcpx 単体のテストは package main を持たないので、外向きの依存を**作り物で**配線する。
-// 数字も文言も本物ではない（本物は main の mcp_wiring.go が配線する）——ここで本物の値を
-// 書き写すと、それ自体が二つ目の出所になる。
+// The mcpx unit tests have no package main, so the outward dependencies are wired to fakes
+// here. Neither the numbers nor the wording are the real ones (main's mcp_wiring.go wires
+// those) — copying the real values in would make this a second source for them.
 
 import (
 	"fmt"
@@ -17,7 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// mcpx 単体テストでの保管場所（本番は main の mcp_wiring.go が持つ）。
+// Where the mcpx unit tests keep this state (in production main's mcp_wiring.go holds it).
 var (
 	testWrite, testSelfReport, testChromium bool
 	testConvID                              string
@@ -25,8 +25,8 @@ var (
 
 func init() { Configure(testDeps()) }
 
-// testDeps は mcpx 単体テスト用の作り物一式。**網羅性の検査（下）が同じものを使う**ので、
-// 1 箇所に置く。
+// testDeps is the whole set of fakes for the mcpx unit tests. It sits in one place because
+// the completeness check below uses the same set.
 func testDeps() Deps {
 	return Deps{
 		WriteEnabled:              func() bool { return testWrite },
@@ -47,8 +47,8 @@ func testDeps() Deps {
 		PeerReachableSessions: func(string) []session.Meta { return nil },
 		ReportKindSelfReport:  "self-report",
 
-		// 承認は既定で通す（作り物）。**承認そのものを検査するテストは main 側にある**
-		// ——ゲートの本体が main にあるので、ここで偽物を検査しても意味が無い。
+		// The fake gate approves by default. The tests that examine approval itself live in
+		// main, where the real gate is — checking a fake one here would measure nothing.
 		ApprovalGate:      func(string, string) error { return nil },
 		ApprovalLabel:     func(op string) string { return op },
 		ShellCreateTarget: func(dir, prompt string) string { return dir + " " + prompt },
@@ -75,22 +75,24 @@ func testDeps() Deps {
 	}
 }
 
-// 🔥 Deps の**どのフィールドを 1 つ落としても** Configure が落ちること。
+// TestConfigureRejectsEveryUnwiredField checks that Configure panics when ANY single field
+// of Deps is left unwired.
 //
-// 網羅の検査そのものを reflect で回すので、**フィールドが増えたら自動で対象になる**。
-// 手で並べた一覧（実装側もテスト側も）は、増えたときに漏れて、しかも漏れても何も起きない
-// ——落ちるのは「件名の上限が黙って 0 になる」ような、誰も気付かない側である。
+// The completeness check itself runs through reflect, so a new field is covered
+// automatically. A hand-written list (on either the implementation or the test side) is
+// forgotten when a field is added, and forgetting it raises nothing — what breaks is the
+// silent side, e.g. a title limit that quietly becomes 0.
 func TestConfigureRejectsEveryUnwiredField(t *testing.T) {
 	good := testDeps()
 	v := reflect.ValueOf(good)
 	typ := v.Type()
 	if typ.NumField() < 20 {
-		t.Fatalf("Deps のフィールドが %d 個しか無い（構造体を取り違えている）", typ.NumField())
+		t.Fatalf("Deps has only %d fields (the wrong struct is being measured)", typ.NumField())
 	}
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
 		t.Run(f.Name, func(t *testing.T) {
-			// 正しい配線へ必ず戻す（deps はパッケージ全体で共有する）。
+			// Always restore the correct wiring (deps is shared by the whole package).
 			defer Configure(good)
 			broken := reflect.New(typ).Elem()
 			broken.Set(v)
@@ -98,10 +100,10 @@ func TestConfigureRejectsEveryUnwiredField(t *testing.T) {
 			defer func() {
 				r := recover()
 				if r == nil {
-					t.Fatalf("%s を未配線にしても Configure が通った（配線漏れが静かに素通りする）", f.Name)
+					t.Fatalf("Configure accepted %s left unwired (a missing wiring passes silently)", f.Name)
 				}
 				if !strings.Contains(fmt.Sprint(r), f.Name) {
-					t.Fatalf("panic に %s の名前が出ていない: %v", f.Name, r)
+					t.Fatalf("the panic does not name %s: %v", f.Name, r)
 				}
 			}()
 			Configure(broken.Interface().(Deps))
@@ -109,15 +111,16 @@ func TestConfigureRejectsEveryUnwiredField(t *testing.T) {
 	}
 }
 
-// 零値ではないが中身の無い配線も拒むこと（`unwired` の枝を 1 つずつ踏む）。
-// 零値だけを見ていると、**`[]string{}` や負の上限**が「配線済み」として通る。
+// TestConfigureRejectsHollowValues checks that a wiring which is non-zero but empty is
+// refused too (walking the `unwired` branches one by one). Looking at the zero value alone
+// lets `[]string{}` or a negative limit pass as "wired".
 func TestConfigureRejectsHollowValues(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		bend func(*Deps)
 	}{
-		{"SessionTitleMaxRunes が負", func(d *Deps) { d.SessionTitleMaxRunes = -1 }},
-		{"PeerIntentNames が空スライス", func(d *Deps) { d.PeerIntentNames = []string{} }},
+		{"SessionTitleMaxRunes is negative", func(d *Deps) { d.SessionTitleMaxRunes = -1 }},
+		{"PeerIntentNames is an empty slice", func(d *Deps) { d.PeerIntentNames = []string{} }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer Configure(testDeps())
@@ -125,7 +128,7 @@ func TestConfigureRejectsHollowValues(t *testing.T) {
 			tc.bend(&d)
 			defer func() {
 				if recover() == nil {
-					t.Fatalf("%s でも Configure が通った", tc.name)
+					t.Fatalf("Configure accepted it even with %s", tc.name)
 				}
 			}()
 			Configure(d)
@@ -133,34 +136,36 @@ func TestConfigureRejectsHollowValues(t *testing.T) {
 	}
 }
 
-// mcpToolWait は「道具が Agent を叩く」のを待つ上限。**素の `<-ch` にしない**ための値で、
-// 正常系ではここまで待たない（叩いた瞬間に返る）。
+// mcpToolWait bounds the wait for a tool to hit the Agent. It exists so the wait is never a
+// bare `<-ch`; on the happy path nothing waits this long (it returns the instant the tool
+// hits).
 const mcpToolWait = 5 * time.Second
 
-// awaitHit は道具が Agent を叩いたことを**上限つき**で待つ。
+// awaitHit waits, with an upper bound, for a tool to hit the Agent.
 //
-// 🔥 素の `<-ch` だと、道具がそもそも出ていないとき（`--write` の配線事故・広告漏れ・
-// 名前の変更）に**テストが落ちずに固まる**。CI では「赤」ではなく**ジョブのタイムアウト**
-// になり、どの検査が何を待っていたのかが残らない。実測 2026-09-02:
-// `withWriteEnabled` が値を設定しない変異を当てると、
-// `TestMCPCreateSessionForwardsWorktreeOptions` は `panic: test timed out after 45s`
-// で初めて止まった（同じ変異で兄弟のテストは普通に FAIL する）。
+// A bare `<-ch` hangs instead of failing when the tool is not advertised at all (a broken
+// `--write` wiring, a missing advertisement, a renamed tool). In CI that is not a red test
+// but a job timeout, and nothing records which check was waiting for what. Measured
+// 2026-09-02: with a mutation where `withWriteEnabled` sets no value,
+// `TestMCPCreateSessionForwardsWorktreeOptions` only stopped at `panic: test timed out after
+// 45s`, while its sibling tests FAILed normally on the same mutation.
 //
-// **上限を入れて、理由の見える赤にする**のがここの仕事である。
+// The job here is to bound the wait and turn it into a red with a visible reason.
 func awaitHit[T any](t *testing.T, ch <-chan T, tool string) T {
 	t.Helper()
 	select {
 	case v := <-ch:
 		return v
 	case <-time.After(mcpToolWait):
-		t.Fatalf("%s が Agent を叩かないまま %s 経った（道具が出ていない: --write の配線 / 広告漏れ / 名前の変更を疑う）", tool, mcpToolWait)
+		t.Fatalf("%s did not hit the Agent within %s (the tool is not being advertised: suspect the --write wiring / a missing advertisement / a rename)", tool, mcpToolWait)
 		var zero T
 		return zero
 	}
 }
 
 // withTempHome points HOME at a temp dir so the fstore stores write under the test's
-// own tree（main 側の同名ヘルパと同じ 4 行。パッケージを跨げないので持つ）。
+// own tree (the same four lines as the identically named helper in main; test helpers cannot
+// cross packages, so this package keeps its own).
 func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -168,7 +173,7 @@ func withTempHome(t *testing.T) string {
 	return dir
 }
 
-// withMCPFlags は道具集合のフラグを一時的に据える（後片付けまで面倒を見る）。
+// withMCPFlags sets the tool-set flags temporarily, cleanup included.
 func withMCPFlags(t *testing.T, write, selfReport, chromium bool) {
 	t.Helper()
 	ow, os, oc := writeEnabled(), selfReportOnly(), sessionChromiumEnabled()
@@ -176,12 +181,13 @@ func withMCPFlags(t *testing.T, write, selfReport, chromium bool) {
 	t.Cleanup(func() { setFlags(ow, os, oc) })
 }
 
-// withWriteEnabled は `--write` 相当のフラグを一時的に据える。
+// withWriteEnabled sets the `--write` flag temporarily.
 //
-// ⚠️ **後始末まで含めて 1 つの部品にしてある。** 移送のとき、元の
-// `old := mcpWriteEnabled / … / t.Cleanup(復元)` を `setWriteEnabled(true)` だけに
-// 置き換えてしまい、**復元が落ちていた**（無害だったのは、たまたま既定 false に依存する
-// テストが 1 本も無かったから）。1 本入った瞬間に順序依存になり、しかも何も警告しない。
+// Restoring the old value is part of this one helper on purpose: when the code was moved, the
+// original `old := mcpWriteEnabled / … / t.Cleanup(restore)` was replaced by a bare
+// `setWriteEnabled(true)` and the restore was lost. It was harmless only because no test
+// happened to depend on the default false; the moment one does, the suite becomes
+// order-dependent and nothing warns about it.
 func withWriteEnabled(t *testing.T, v bool) {
 	t.Helper()
 	old := writeEnabled()

@@ -1,13 +1,14 @@
 package main
 
-// エディタの AI 変更提案（docs/log/44 Phase 4）。Console のファイルペインが選択範囲と
-// 指示文を送り、置換文と要約を JSON で返す。生成はタイトル/返信サジェストと同じ
-// backend-agnostic な一発ヘッドレス（oneShotHeadless）＝ read-only 提案生成チャネル
-// （docs/log/44 §1.3: claude --tools "" / codex tool 無付与 / opencode OPENCODE_CONFIG deny /
-// cursor --mode ask）。このハンドラはディスクを一切読まない — 本文は編集バッファの
-// スナップショットとしてリクエストに載って来る（dirty な本文への提案を可能にするため。
-// docs/log/44 §1.3「dirtyな本文から提案を作る場合」）。range・revision・identity の検証は
-// すべて Console 側の適用境界（suggestion_stale）が持ち、サーバーは置換文の生成だけを行う。
+// AI edit suggestions for the editor (docs/log/44 Phase 4). The Console's file pane sends a
+// selection and an instruction; this returns the replacement text and a summary as JSON.
+// Generation goes through the same backend-agnostic one-shot headless channel as title and
+// reply suggestions (oneShotHeadless), which is read-only by construction (docs/log/44 §1.3:
+// claude --tools "" / codex with no tools / opencode OPENCODE_CONFIG deny / cursor
+// --mode ask). This handler never reads disk: the text arrives in the request as a snapshot
+// of the edit buffer, so a suggestion can be made against dirty content (docs/log/44 §1.3).
+// Range, revision and identity checks all live at the Console's apply boundary
+// (suggestion_stale); the server only generates the replacement.
 
 import (
 	"context"
@@ -26,28 +27,30 @@ import (
 )
 
 const (
-	// editSuggestTimeout: 置換文の生成はタイトル1行より長い出力になり得るので、
-	// 既存の 60 秒勢（title/reply）よりだけ広く取る。Console 側のタイムアウトは
-	// これより広い（editor/api.ts SUGGEST_EDIT_TIMEOUT_MS）。
+	// editSuggestTimeout: a replacement can be a much longer output than a one-line title,
+	// so this is a little wider than the existing 60-second pair (title/reply). The Console
+	// timeout is wider still (editor/api.ts SUGGEST_EDIT_TIMEOUT_MS).
 	editSuggestTimeout = 90 * time.Second
-	// editSuggestMaxBody: wire body の上限。選択・前後文脈の各上限より十分広く、
-	// PUT /fs/file の 16 MiB とは独立した提案専用の上限。
+	// editSuggestMaxBody: wire body limit, comfortably above the selection and context
+	// limits below and deliberately independent of PUT /fs/file's 16 MiB.
 	editSuggestMaxBody = 2 * 1024 * 1024
-	// editSuggestMaxSelection: 置換対象としてプロンプトへ渡す選択の上限（UTF-8 bytes）。
-	// LLM に全文リライトさせる用途は Phase 4 の範囲外なので、コンテキスト費用を抑える。
+	// editSuggestMaxSelection: limit on the selection handed to the prompt (UTF-8 bytes).
+	// Rewriting a whole file through the LLM is out of scope for Phase 4, and this keeps
+	// the context cost down.
 	editSuggestMaxSelection = 256 * 1024
-	// editSuggestMaxContext: 選択の前後に付ける文脈の各上限（UTF-8 bytes）。
-	// Console 側も同じ値で切り出す（editor/suggest.ts）。
+	// editSuggestMaxContext: limit on each side of the context around the selection (UTF-8
+	// bytes). The Console slices with the same value (editor/suggest.ts).
 	editSuggestMaxContext = 16 * 1024
-	// editSuggestMaxInstruction: 指示文の上限（UTF-8 bytes）。
+	// editSuggestMaxInstruction: limit on the instruction (UTF-8 bytes).
 	editSuggestMaxInstruction = 4 * 1024
-	// editSuggestMaxSummary: EditSuggestion.summary の上限（UTF-8 bytes、docs/log/44 §4.2）。
+	// editSuggestMaxSummary: limit on EditSuggestion.summary (UTF-8 bytes, docs/log/44 §4.2).
 	editSuggestMaxSummary = 240
 )
 
-// editSuggestPersona: 出力は JSON 1 オブジェクトのみ。置換文は「選択範囲をそのまま
-// 差し替える」契約（docs/log/44 §4.2 — 自動変換・trim・全体再生成をしない）なので、
-// 前後文脈は参考であり出力に含めないことを明示する。
+// editSuggestPersona constrains the output to a single JSON object. The replacement
+// replaces the selection verbatim (docs/log/44 §4.2 — no automatic conversion, no trim, no
+// whole-file regeneration), so the persona states that the surrounding context is reference
+// material and must not appear in the output.
 const editSuggestPersona = "あなたはコード/文書エディタの変更提案を作る専用ツールです。" +
 	"ファイルの抜粋（選択範囲とその前後の文脈）と指示を受け取り、選択範囲を置き換える新しいテキストを作ります。" +
 	"出力は必ず {\"summary\":\"…\",\"replacement\":\"…\"} の JSON オブジェクト1個だけ。" +
@@ -57,14 +60,15 @@ const editSuggestPersona = "あなたはコード/文書エディタの変更提
 	"選択範囲が空の場合はその位置に挿入する本文を作る。" +
 	"summary は変更内容の短い要約（40文字以内）で、指示と同じ言語で書く。"
 
-// editSuggestModel: 置換文の生成は分類系（タイトル/返信候補）より品質感度が高いので、
-// 既定は haiku ではなく sonnet。deployment 単位で上書き可。claude backend のみに効き、
-// 他 backend は 設定 > AI補助 の「文章生成のモデル」に従う（OneShotProse・docs/log/84）。
+// editSuggestModel: generating a replacement is more quality-sensitive than the
+// classification-shaped features (title, reply candidates), so the default is sonnet rather
+// than haiku, overridable per deployment. It applies to the claude backend only; the others
+// follow the prose-generation model in Settings > AI assistance (OneShotProse, docs/log/84).
 func editSuggestModel() string { return envOr("AF_EDIT_SUGGEST_MODEL", "sonnet") }
 
-// editSuggestRequest は Console が送る提案リクエスト。before/selection/after は
-// 編集バッファ（LF-only）からの切り出しで、path は表示・文脈用のメタデータ。
-// このハンドラは fs を触らないため path の解決・denylist 判定は行わない。
+// editSuggestRequest is the suggestion request the Console sends. before/selection/after are
+// slices of the edit buffer (LF-only) and path is metadata for display and context. This
+// handler never touches the fs, so path is neither resolved nor checked against the denylist.
 type editSuggestRequest struct {
 	Path        string `json:"path"`
 	Instruction string `json:"instruction"`
@@ -73,8 +77,8 @@ type editSuggestRequest struct {
 	After       string `json:"after"`
 }
 
-// validate は入力の形だけを確認する（fs 解決なし）。バッファ由来のフィールドに
-// CR/NUL が混じるのはクライアント実装バグなので bad_request に丸める。
+// validate checks the shape of the input only, with no fs resolution. CR or NUL in a
+// buffer-derived field is a client bug, so it collapses to bad_request.
 func (req *editSuggestRequest) validate() error {
 	if strings.TrimSpace(req.Path) == "" || len(req.Path) > 4096 {
 		return errors.New("path is required")
@@ -125,15 +129,16 @@ func editSuggestPrompt(req *editSuggestRequest) string {
 	return b.String()
 }
 
-// editSuggestResult は LLM 応答から取り出す提案本体。
+// editSuggestResult is the suggestion body extracted from the LLM reply.
 type editSuggestResult struct {
 	Summary     string  `json:"summary"`
 	Replacement *string `json:"replacement"`
 }
 
-// extractEditSuggestJSON は LLM の応答テキストから提案 JSON を取り出す。指示に反して
-// コードフェンスや前置きが付くことがある（parseCursorResult と同じ現実）ので、
-// (1) 全体、(2) フェンス内、(3) 最初の '{' から最後の '}' まで、の順に試す。
+// extractEditSuggestJSON pulls the suggestion JSON out of the LLM reply text. Despite the
+// instruction, replies sometimes arrive wrapped in a code fence or behind a preamble (the
+// same reality parseCursorResult deals with), so try in order: (1) the whole reply, (2) each
+// fenced block, (3) the span from the first '{' to the last '}'.
 func extractEditSuggestJSON(reply string) (editSuggestResult, error) {
 	try := func(s string) (editSuggestResult, bool) {
 		var r editSuggestResult
@@ -159,11 +164,11 @@ func extractEditSuggestJSON(reply string) (editSuggestResult, error) {
 	return editSuggestResult{}, errors.New("no suggestion JSON in reply")
 }
 
-// fencedBlocks は ``` で囲まれた各ブロックの中身を返す（言語タグは無視）。
+// fencedBlocks returns the body of every ```-delimited block, ignoring the language tag.
 func fencedBlocks(s string) []string {
 	var out []string
 	parts := strings.Split(s, "```")
-	// parts[1], parts[3], … がフェンス内。先頭行の言語タグを剥がす。
+	// parts[1], parts[3], … are the fenced bodies; strip the language tag on the first line.
 	for i := 1; i < len(parts); i += 2 {
 		body := parts[i]
 		if nl := strings.IndexByte(body, '\n'); nl >= 0 {
@@ -173,7 +178,8 @@ func fencedBlocks(s string) []string {
 	return out
 }
 
-// clampUTF8Bytes は s を UTF-8 のまま最大 n bytes に切り詰める（rune 境界で切る）。
+// clampUTF8Bytes truncates s to at most n bytes, cutting on a rune boundary so the result
+// stays valid UTF-8.
 func clampUTF8Bytes(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -184,10 +190,10 @@ func clampUTF8Bytes(s string, n int) string {
 	return s[:n]
 }
 
-// cleanEditSuggestion は LLM 出力を docs/log/44 §4.2 の契約へ整える。replacement は
-// 一切変換しない（CR 混入は変換ではなく生成失敗として拒否）。summary は表示用
-// メタデータなので、改行の除去と 240 bytes への切り詰め、空時の指示文フォールバック
-// だけを行う。
+// cleanEditSuggestion brings the LLM output into the docs/log/44 §4.2 contract. replacement
+// is never transformed: a CR in it is rejected as a failed generation rather than converted.
+// summary is display metadata, so it only gets newlines collapsed, a 240-byte clamp, and a
+// fallback to the instruction when empty.
 func cleanEditSuggestion(r editSuggestResult, instruction string) (summary, replacement string, err error) {
 	replacement = *r.Replacement
 	if strings.ContainsAny(replacement, "\x00\r") {
@@ -204,17 +210,17 @@ func cleanEditSuggestion(r editSuggestResult, instruction string) (summary, repl
 	return summary, replacement, nil
 }
 
-// editSuggestLLM はテストで差し替える生成シーム。
+// editSuggestLLM is the generation seam tests replace.
 var editSuggestLLM = func(ctx context.Context, req *editSuggestRequest) (string, error) {
 	return chatx.OneShotHeadless(ctx, chatx.OneShotProse, editSuggestPersona, editSuggestPrompt(req), editSuggestModel())
 }
 
-// handleFSSuggestEdit — POST /fs/suggest-edit（docs/log/44 Phase 4）。
-// 応答は {"summary":…,"replacement":…} のみ。envelope（paneId/requestId/sourceRevision）
-// は Console がリクエスト時に控えて応答へ合成するため、wire には載せない。
+// handleFSSuggestEdit — POST /fs/suggest-edit (docs/log/44 Phase 4). The response carries
+// only {"summary":…,"replacement":…}: the envelope (paneId/requestId/sourceRevision) stays
+// off the wire because the Console holds it from request time and merges it into the reply.
 func handleFSSuggestEdit(w http.ResponseWriter, r *http.Request) {
-	// 設定 > AI補助「ファイル編集の提案」。この機能だけを止められるようにした
-	// （docs/log/84）。以前はトグルが無く常時有効だった。
+	// Settings > AI assistance > file edit suggestions: this feature can be turned off on
+	// its own (docs/log/84).
 	if !uiprefs.EditSuggest() {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "edit suggestion is turned off")
 		return

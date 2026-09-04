@@ -1,19 +1,21 @@
 package main
 
-// contract_wire_test.go — 「契約の型化」の横展開（案 A のゴールデン中継）・agent 側。
+// contract_wire_test.go — typing the wire contracts (plan A, the golden relay), agent side.
 //
-// control-plane/contract_wire_test.go と**同じ仕組みの写し**。
-// 🔴 **写しである理由**: control-plane と workspace/agent は**別の Go モジュール**なので、
-// テストヘルパを共有できない（`wire_golden_test.go` / `routes_golden_test.go` が両側に在るのと同じ）。
-// **片方を直したらもう片方も直すこと。**仕組みの説明は control-plane 側の冒頭コメントにある。
+// A copy of the same machinery as control-plane/contract_wire_test.go, because control-plane
+// and workspace/agent are separate Go modules and cannot share a test helper (the same reason
+// `wire_golden_test.go` / `routes_golden_test.go` exist on both sides). Fix one side and you
+// must fix the other. The machinery itself is explained in the control-plane file's header.
 //
-// 3 本立て: ①bind（Go フィールド名 ↔ json キー・同型の取り違えを捕まえる）
-//           ②scan（TS 側のキー集合を表に固定する・**ドリフトと、実ファイルで結果が変わる走査の壊れ**）
-//           ③match（TS ↔ Go・免除つき・**免除の寿命は 4 方向**）
-// 🔴 **走査の壊れ全般を捕まえるのは②ではなく合成標本の対照**（TestTSInterfaceFieldsParser）。
-// 実測: 走査を壊す変異を当てても実 TS が 1 行 1 フィールドだと②は緑のまま。詳細は CP 側の冒頭に。
+// Three parts: (1) bind (Go field name <-> json key; catches two same-shaped types swapped)
+//              (2) scan (pins the TS key set in a table: drift, and a scanner whose result
+//                  depends on how the real file happens to be written)
+//              (3) match (TS <-> Go, with exemptions whose lifetime is checked 4 ways)
+// A broken scanner is caught by the synthetic-fixture control (TestTSInterfaceFieldsParser),
+// not by (2): measured, a mutation that breaks the scanner leaves (2) green as long as the
+// real TS writes one field per line. Details in the CP header.
 //
-// ⚠️ モジュールの外（Console の TS）を読むので、**手元で変異を当てるときは `go test -count=1`**。
+// This reads outside the module (the Console's TS), so mutate locally with `go test -count=1`.
 
 import (
 	"encoding/json"
@@ -35,10 +37,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// agentContractFamilies は workspace/agent 側の家系。
+// agentContractFamilies lists the families on the workspace/agent side.
 func agentContractFamilies() []contractFamily {
 	return []contractFamily{
-		// チャットの 1 メッセージ。Console のチャット面が読む中心の型。
+		// One chat message: the central type the Console's chat surface reads.
 		{
 			name:    "chatx.ChatMessage",
 			goType:  reflect.TypeOf(chatx.ChatMessage{}),
@@ -49,14 +51,14 @@ func agentContractFamilies() []contractFamily {
 				"delivered", "notice_key", "notice_args", "report_kind", "report_reason"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{
-				"instr": "【穴】chatx.ChatMessage が出しているが Console の ChatMessage に宣言が無い。",
+				"instr": "[gap] chatx.ChatMessage emits it but the Console's ChatMessage does not declare it.",
 			},
 		},
 
-		// ブランチ一覧の 1 行。
-		// 🔴 **この家系だけ TS 1 型 ↔ Go 2 型**——Console の `Branch` は
-		// ローカル（gitx.BranchInfo）とリモート（gitx.remoteBranch）の**両方の窓口**が返す形を
-		// 1 つの型で受けている。`default` はリモート側にしか無い。
+		// One row of the branch list.
+		// The only family where one TS type faces two Go types: the Console's `Branch` takes
+		// the shape returned by both endpoints — local (gitx.BranchInfo) and remote
+		// (gitx.remoteBranch) — in a single type. `default` exists only on the remote side.
 		{
 			name:    "gitx.BranchInfo",
 			goType:  reflect.TypeOf(gitx.BranchInfo{}),
@@ -65,16 +67,16 @@ func agentContractFamilies() []contractFamily {
 			tsName:  "Branch",
 			tsKeys:  keySet("name", "unix", "date", "subject", "default", "remote", "current", "worktree_path"),
 			tsOnly: map[string]string{
-				// **穴ではない。**兄弟の `remoteBranch`（internal/gitx/git_remote.go:42）が
-				// `json:"default"` を出しており、BranchList はローカルとリモートの両方を同じ型で描く。
-				// ⚠️ **remoteBranch は非公開**なので、この家系からは reflect で触れない。
-				// 12 本目以降で internal/gitx に検査を置くなら、そちらで固定すること。
-				"default": "穴ではない: 兄弟の remoteBranch(internal/gitx/git_remote.go:42) が json:\"default\" を出す。BranchList はローカルとリモートを同じ TS 型で描いている",
+				// Not a gap: the sibling `remoteBranch` (internal/gitx/git_remote.go:42)
+				// emits `json:"default"`, and BranchList draws local and remote with the same
+				// type. remoteBranch is unexported, so this family cannot reach it through
+				// reflection; if a later check lands in internal/gitx, pin it there instead.
+				"default": "not a gap: the sibling remoteBranch(internal/gitx/git_remote.go:42) emits json:\"default\". BranchList draws local and remote with the same TS type",
 			},
 			goOnly: map[string]string{},
 		},
 
-		// 掃除の控え（アーカイブ）。
+		// The cleanup safety net (archive).
 		{
 			name:    "cleanupManifest",
 			goType:  reflect.TypeOf(cleanupManifest{}),
@@ -84,11 +86,11 @@ func agentContractFamilies() []contractFamily {
 			tsKeys:  keySet("id", "at", "reason", "sessions", "branches"),
 			tsOnly:  map[string]string{},
 			goOnly: map[string]string{
-				"worktrees": "【穴】cleanupManifest が出しているが Console の CleanupArchive に宣言が無い（掃除で消したワークツリーの一覧が画面に出ない）。",
+				"worktrees": "[gap] cleanupManifest emits it but the Console's CleanupArchive does not declare it (the list of worktrees a cleanup deleted never reaches the screen).",
 			},
 		},
 
-		// ブラウザ添付の状態。
+		// Browser attachment state.
 		{
 			name:    "browserx.BrowserAttachmentResponse",
 			goType:  reflect.TypeOf(browserx.BrowserAttachmentResponse{}),
@@ -98,13 +100,13 @@ func agentContractFamilies() []contractFamily {
 			tsKeys:  keySet("id", "state", "title", "url", "expiresAt", "controlMode", "handoff"),
 			tsOnly:  map[string]string{},
 			goOnly: map[string]string{
-				"openUrl": "【穴】添付を開く URL。Console の BrowserAttachmentStatus に宣言が無い。",
-				"viewer":  "【穴】同上。",
+				"openUrl": "[gap] the URL that opens the attachment. Not declared in the Console's BrowserAttachmentStatus.",
+				"viewer":  "[gap] likewise.",
 			},
 		},
 
-		// メモリ取り込みの下見。
-		// 🔴 **AST 経路**——`memoryImportPreview` は internal/memoryx の**非公開**型。
+		// The preview of a memory import.
+		// AST route: `memoryImportPreview` is an unexported type in internal/memoryx.
 		{
 			name:    "memoryImportPreview",
 			goPath:  "internal/memoryx/memory_import.go",
@@ -116,15 +118,15 @@ func agentContractFamilies() []contractFamily {
 				"projects", "unavailable", "rejected", "secrets", "secretScanFailed"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{
-				"ref": "【穴】取り込み元の ref。Console の ImportPreview に宣言が無い。",
-				// 🔴 `secretScanFailed` の免除は**この PR で外した**。#339 で入れた
-				// 「免除の寿命の逆検査」が実際に「もう要らない」を検出したのが直す動機で、
-				// この家系がその仕組みの最初の実例になる（穴を塞いだ瞬間に免除表が縮む）。
+				"ref": "[gap] the ref the import came from. Not declared in the Console's ImportPreview.",
+				// `secretScanFailed` needs no exemption any more: the reverse check on
+				// exemption lifetime reports one that is no longer needed, so the table
+				// shrinks the moment a gap is closed.
 			},
 		},
 
-		// ブラウザのページ 1 枚。
-		// 🔴 **AST 経路**——`browserPageResponse` は internal/browserx の**非公開**型。
+		// One browser page.
+		// AST route: `browserPageResponse` is an unexported type in internal/browserx.
 		{
 			name:    "browserPageResponse",
 			goPath:  "internal/browserx/browser_types.go",
@@ -135,11 +137,11 @@ func agentContractFamilies() []contractFamily {
 			tsKeys:  keySet("id", "port", "url", "state"),
 			tsOnly:  map[string]string{},
 			goOnly: map[string]string{
-				"title": "【穴】ページのタイトルを返しているが、Console の BrowserPageResult に宣言が無い。",
+				"title": "[gap] the page title is returned but the Console's BrowserPageResult does not declare it.",
 			},
 		},
 
-		// 転写の 1 断片（mirror が描く最小単位）。
+		// One transcript part: the smallest unit the mirror draws.
 		{
 			name:    "transcript.Part",
 			goType:  reflect.TypeOf(transcript.Part{}),
@@ -150,12 +152,12 @@ func agentContractFamilies() []contractFamily {
 				"agentType", "status", "model", "file", "edits", "verb", "questions",
 				"answer", "declined", "plan", "qid", "files", "caption", "stderr"),
 			tsOnly: map[string]string{
-				"stderr": "【穴】Console の Part が宣言しているが transcript.Part は出さない。Console 側の実読みの有無は未調査。",
+				"stderr": "[gap] the Console's Part declares it but transcript.Part never emits it. Whether the Console actually reads it has not been investigated.",
 			},
 			goOnly: map[string]string{},
 		},
 
-		// 転写の 1 ターン。
+		// One transcript turn.
 		{
 			name:    "transcript.Turn",
 			goType:  reflect.TypeOf(transcript.Turn{}),
@@ -167,13 +169,14 @@ func agentContractFamilies() []contractFamily {
 				"cmd", "model", "effort", "ctxWindow", "branch", "cwd", "inTok", "outTok",
 				"cacheRead", "cacheCreate"),
 			tsOnly: map[string]string{
-				// 🔴 4 件とも**穴ではない**可能性が高い——Console 側で組み立てる描画用の値に見える
-				// （bash/cmd は「! シェルコマンドのブロック」、pending/queued は送信状態）。
-				// **ただし実読みまでは追っていない**ので、そう書いてある以上の主張はしない。
-				"bash":    "Console 側で組み立てる描画用の値に見える（! シェルコマンドのブロック）。transcript.Turn は出さない。実読みは未調査",
-				"cmd":     "同上。",
-				"pending": "送信状態（未送信）を Console 側が持つ値に見える。transcript.Turn は出さない。実読みは未調査",
-				"queued":  "同上（送信待ち）。",
+				// None of the four is likely to be a gap: they look like values the Console
+				// builds for rendering (bash/cmd is the "! shell command" block,
+				// pending/queued are send states). The actual reads have not been traced, so
+				// this claims no more than that.
+				"bash":    "looks like a value the Console builds for rendering (the ! shell-command block). transcript.Turn does not emit it. Actual reads not investigated",
+				"cmd":     "likewise.",
+				"pending": "looks like a send state (not yet sent) the Console holds itself. transcript.Turn does not emit it. Actual reads not investigated",
+				"queued":  "likewise (waiting to be sent).",
 			},
 			goOnly: map[string]string{},
 		},
@@ -231,9 +234,10 @@ var browserAttachmentBinding = map[string]string{
 
 func TestContractFamilies(t *testing.T) {
 	fams := agentContractFamilies()
-	// 🔴 走査の母数を見張る（#320 型）。家系が黙って消えたらここで気付く。
+	// Guard the population being scanned (the #320 shape): a family that silently
+	// disappears is caught here.
 	if len(fams) != 8 {
-		t.Fatalf("家系が %d 件しかない＝表から落ちている（足したなら本数も直すこと）", len(fams))
+		t.Fatalf("only %d families - one has dropped out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {
 		t.Run(f.name, func(t *testing.T) { checkContractFamily(t, f) })
@@ -588,15 +592,16 @@ func splitJSONName(tag string) string {
 // page is of a piece with the check: split off, it is orphaned by a move, and its ownership
 // unit differs from `console/src/types/*`.
 const tsProbeFixture = `
-// ① 1 行 1 フィールド（Session が実際にこの形。ここだけ通っても意味がない）
+// (1) One field per line (the real Session looks like this; passing only here proves nothing)
 export interface OnePerLine {
   a1: string;
   a2?: number;
   a3: boolean;
 }
 
-// ② 一部の行だけ複数キー。🔴 これが最も危ない —— 行単位の走査は b11 を落とすが、
-// 総数は 10 を超えるので「フィールドが少なすぎる」Fatal に落ちず、黙って穴が開く。
+// (2) A few lines carry more than one key. This is the dangerous one: a line-based scan
+// drops b11, yet the total still exceeds 10, so the "too few fields" Fatal never fires and
+// the hole opens silently.
 export interface Mixed {
   b01: string;
   b02: string;
@@ -610,31 +615,33 @@ export interface Mixed {
   b10: string; b11?: number;
 }
 
-// ③ 入れ子の 1 行オブジェクト。🔴 行を「;」で割る直し方をすると、
-// nested の中の name / display をこの型の直下のキーとして数えてしまう（測定器で実際に踏んだ）。
+// (3) A nested one-line object. Splitting lines on ";" to fix (2) makes name / display
+// inside nested count as keys directly under this type (measured: the scanner did exactly
+// that).
 export interface Nested {
   n1: string;
   n2?: { name: string; display?: string }[];
   n3: boolean;
 }
 
-// ④ コメント・文字列リテラルに 「:」「;」「{」「}」が入る形（深さと文頭の判定を狂わせにくる）
+// (4) Comments and string literals containing : ; { } — these throw off both the depth and
+// the start-of-statement decisions
 export interface Tricky {
-  // これはコメント: セミコロン; と波括弧 { } を含む
+  // a comment: it contains a semicolon; and braces { }
   t1: "a;b" | "c:{d}" | string;
-  /* ブロックコメント: t9: string; ← これは拾ってはいけない */
+  /* block comment: t9: string; <- this must NOT be picked up */
   t2?: string;
   t3: string;
 }
 
-// ⑤-a type 別名（interface と同じだけ普通に使われる。UptimePoint が実際にこの形）
+// (5a) A type alias (as common as an interface; the real UptimePoint looks like this)
 export type AliasShape = {
   al1: string;
   al2?: number;
   al3: boolean;
 };
 
-// ⑤ 名前が前方一致する別の型（Session と SessionContextUsage の関係）
+// (5) A different type whose name is a prefix of another (Session vs SessionContextUsage)
 export interface Pre {
   p1: string;
   p2: string;

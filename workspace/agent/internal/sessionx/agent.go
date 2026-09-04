@@ -17,9 +17,10 @@ import (
 )
 
 // The Agent interface and its input/output types live in internal/agents
-// (docs/log/23 残① Wave C); opencode の実装は internal/agents/opencode（Wave D）、
-// codex は internal/agents/codex（Wave E）、claude は internal/agents/claude
-// （Wave F）。This file keeps the registry and the shared live-state helpers.
+// (docs/log/23 remaining item 1 Wave C); the opencode implementation is in
+// internal/agents/opencode (Wave D), codex in internal/agents/codex (Wave E) and claude in
+// internal/agents/claude (Wave F). This file keeps the registry and the shared live-state
+// helpers.
 
 // agentRegistry is the kind → agents.Agent registry. AgentOf falls back to claude
 // for an unknown or empty kind, matching the historical default (a session with no
@@ -55,9 +56,9 @@ func NormalizeKind(kind string) string {
 // --- shared live-state helpers -------------------------------------------------
 
 // SessionAlive is the driver-aware liveness test: tui = the tmux session exists,
-// managed = a live runtime handle exists（docs/log/27 P2）。wireSession の alive 引数を
-// 埋める全ハンドラはこれを使う（tmuxx.HasSession 直叩きは managed を常に停止扱い
-// にしてしまう）。
+// managed = a live runtime handle exists (docs/log/27 P2). Every handler that fills
+// wireSession's alive argument goes through this — calling tmuxx.HasSession directly would
+// report every managed session as stopped.
 func SessionAlive(m session.Meta) bool {
 	if m.DriverKind() == session.DriverManaged {
 		return ManagedAlive(m)
@@ -101,11 +102,11 @@ func DriveState(m session.Meta, alive, heal bool) string {
 			return st
 		}
 	}
-	// copilot: no hooks either — events.jsonl 由来の分類が唯一の状態ソース
-	// （state.go。managed でも子プロセスが同じファイルを書くので整合する）。
-	// agy と同じく、この poll が turn 完了の唯一の観測点（TUI ルート）なので
-	// working→idle の遷移で MarkTurnEnd を発火する（docs/log/30 ②）。managed は
-	// driver の runTurn が MarkTurnEnd 済みで status も idle — 二重発火しない。
+	// copilot: no hooks either — the classification derived from events.jsonl is the only
+	// state source (state.go; under managed the child process writes the same file, so the
+	// two agree). Like agy, this poll is the only place a turn's completion can be observed
+	// (the TUI route), so a working→idle transition fires MarkTurnEnd (docs/log/30 ②). Under
+	// managed the driver's runTurn already fired it and status is idle — no double fire.
 	if m.Kind == session.KindCopilot {
 		if st := copilot.LiveState(m); st != "" {
 			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
@@ -114,10 +115,11 @@ func DriveState(m session.Meta, alive, heal bool) string {
 			return st
 		}
 	}
-	// cursor: no hooks either — JSONL 転写末尾の分類が状態ソース（state.go）。
-	// copilot と同型で、この poll が turn 完了の唯一の観測点（TUI ルート）なので
-	// working→idle の遷移で MarkTurnEnd を発火する（docs/log/30 ②）。managed（Track A2）
-	// は driver の runTurn が MarkTurnEnd 済みで status も idle — 二重発火しない。
+	// cursor: no hooks either — the state source is the classification of the JSONL
+	// transcript's tail (state.go). Same shape as copilot: this poll is the only place a
+	// turn's completion can be observed (the TUI route), so a working→idle transition fires
+	// MarkTurnEnd (docs/log/30 ②). Under managed (Track A2) the driver's runTurn already fired
+	// it and status is idle — no double fire.
 	if m.Kind == session.KindCursor {
 		if st := cursor.LiveState(m); st != "" {
 			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
@@ -126,13 +128,14 @@ func DriveState(m session.Meta, alive, heal bool) string {
 			return st
 		}
 	}
-	// kiro: no hooks — 2.14.1 は Stop hook を持たない（hook トリガは AgentSpawn/
-	// PrePrompt/PreToolUse/PostToolUse のみ・実測 docs/log/43 §5-1）ので、状態源は TUI
-	// 文字列契約（state.go）。cursor/copilot と同型で、この poll が turn 完了の唯一の
-	// 観測点（TUI ルート）なので working→idle の遷移で MarkTurnEnd を発火する（docs/log/30
-	// ②）。承認待ち（"question"）は idle でないので発火せず素通し。managed（Track A2）は
-	// driver の runTurn が MarkTurnEnd 済みで status も idle — 二重発火しない。空（フッタ
-	// 未描画）のときは generic 経路（/input の楽観 working）へフォールバックする。
+	// kiro: no hooks — 2.14.1 has no Stop hook (the hook triggers are only AgentSpawn/
+	// PrePrompt/PreToolUse/PostToolUse; measured, docs/log/43 §5-1), so the state source is the
+	// TUI string contract (state.go). Same shape as cursor/copilot: this poll is the only place
+	// a turn's completion can be observed (the TUI route), so a working→idle transition fires
+	// MarkTurnEnd (docs/log/30 ②). A pending approval ("question") is not idle, so it passes
+	// through without firing. Under managed (Track A2) the driver's runTurn already fired it
+	// and status is idle — no double fire. When empty (the footer is not drawn yet) it falls
+	// back to the generic route (/input's optimistic working).
 	if m.Kind == session.KindKiro {
 		if st := kiro.LiveState(m); st != "" {
 			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
@@ -142,25 +145,27 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		}
 	}
 	sid := session.UUID(m.Dir, m.Name)
-	// WireLive と同じ解決（status.EffectiveModal）: 質問/プランのペイロードが捕捉されて
-	// いる permission は、TUI が実際に出しているモーダル（question / plan）で名乗る。
-	// 一覧のバッジ（WireLive）とチャットのチップ（ここ）は同じ状態を見せる必要がある。
+	// Same resolution as WireLive (status.EffectiveModal): a permission whose question/plan
+	// payload has been captured reports itself as the modal the TUI is actually showing
+	// (question / plan). The list badge (WireLive) and the chat chip (here) have to show the
+	// same state.
 	state := status.EffectiveModal(sid, status.LiveState(sid))
 	isClaude := NormalizeKind(m.Kind) == session.KindClaude
-	// ペインを読むのは 1 回だけ（tmuxx.ReadPane）。heal=false（/output）は従来どおり
-	// ペインを見ないが、claude の上限モーダルだけは heal に関係なく報告する必要がある
-	// ので、その 2 つのどちらかが要るときにキャプチャする。
+	// The pane is read exactly once (tmuxx.ReadPane). heal=false (/output) still does not look
+	// at the pane, but claude's usage-limit modal has to be reported regardless of heal, so
+	// capture whenever either of those two needs it.
 	var pane tmuxx.PaneRead
 	if heal || isClaude {
 		pane = tmuxx.ReadPane(m.Name)
 	}
-	// claude が利用上限メニューでペインを人間待ちに固定している状態（agents.StateBlocked
-	// のコメント参照）。WireLive と同じ判定をここでも行うのは、チャット/ミラーが見るのは
-	// この関数だからで、片側だけ直すと一覧と本文でチップが食い違う。状態の書き換え
-	// （HealIdle）は heal 側にだけ寄せる。
-	// 認証切れ（docs/log/47 §4-8）。WireLive と同じ判定を同じ順（上限メニューより先）でここでも
-	// 行う — ミラー／チャットのチップと一覧のバッジが食い違うと、どちらが本当か利用者には
-	// 分からない。順序の理由は WireLive 側のコメント参照（待っても直らない方を先に出す）。
+	// claude pins the pane on the usage-limit menu, waiting for a human (see the comment on
+	// agents.StateBlocked). The same verdict as WireLive is repeated here because chat and the
+	// mirror read this function, and fixing only one side makes the chip in the body disagree
+	// with the badge in the list. Rewriting the state (HealIdle) stays on the heal side alone.
+	// Expired credentials (docs/log/47 §4-8): the same verdict as WireLive, in the same order
+	// (ahead of the usage-limit menu), for the same reason — when the mirror/chat chip and the
+	// list badge disagree, the user cannot tell which one is true. For the reason behind the
+	// order see the comment in WireLive (report the one waiting will not fix first).
 	if isClaude && claude.AuthExpired() {
 		if heal && state != "idle" {
 			claude.HealIdle(sid)
@@ -175,20 +180,22 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	}
 	// codex managed: a turn rejected/failed with usageLimitExceeded leaves the
 	// session sitting at idle, but re-sending will hit the same limit. Surface it as
-	// 制限解除待ち — 消すべきメニューが無く、待てば窓が開く側（WireLive と同じ判定）。
+	// 制限解除待ち — there is no menu to dismiss and the window opens by waiting (the same
+	// verdict as WireLive).
 	if m.DriverKind() == session.DriverManaged && NormalizeKind(m.Kind) == session.KindCodex && state == "idle" && codex.IsRateLimited(m.Name) {
 		return agents.StateLimited
 	}
-	// pane.IdleSettled（生の pane.Idle ではない）で畳む理由は WireLive 側と同じ: 本文を
-	// 描いている最中の claude は待機プロンプトと同じ絵を出すので、1 フレームでは区別が
-	// 付かない（tmuxx/idlesettle.go の実測）。ここを Idle のままにすると、一覧は 進行中 の
-	// ままなのにミラー／チャットのチップだけ 入力待ち になる。
+	// Folding on pane.IdleSettled (not the raw pane.Idle) for the same reason as WireLive:
+	// while claude renders an answer it draws the same picture as the ready prompt, so a single
+	// frame cannot tell them apart (measured, tmuxx/idlesettle.go). Leaving Idle here would put
+	// the mirror/chat chip on 入力待ち while the list still reads 進行中.
 	if heal && state != "idle" && pane.IdleSettled {
 		state = "idle"
-		// claude は「API エラーでターンが落ちた」を transcript 末尾から見分けられるので、
-		// その 1 ケースだけ黙って消さず終端イベントとして通知する（docs/log/47）。判別材料が
-		// claude の jsonl 形式に固有なので、他 kind は従来どおりマーカー削除のみ。
-		// NormalizeKind: 空 kind の旧セッションも claude なので、生の比較では取り逃がす。
+		// claude can tell "the turn died on an API error" from the transcript's tail, so that
+		// one case is reported as a terminating event instead of being cleared silently
+		// (docs/log/47). The evidence is specific to claude's jsonl format, so every other kind
+		// only removes the marker. NormalizeKind: an old session with an empty kind is claude
+		// too, and a raw comparison would miss it.
 		if isClaude {
 			claude.HealIdle(sid)
 		} else {
@@ -203,10 +210,11 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		state = "working"
 		status.Persist(sid, "working")
 	}
-	// 上限で切れたターンの後（メニューは自動解除済み／モデル別上限はメニューを出さない）
-	// ペインは待機プロンプトへ戻るので、ここまでの状態は idle になる。一覧（wireSession）と
-	// 同じ読み替えをここでも行う — チップが一覧と本文で食い違うと、どちらが本当か利用者には
-	// 分からない（docs/log/47 §4-9）。送信は塞がない（agents.StateLimited のコメント）。
+	// After a turn cut off by a usage limit (the menu has already been dismissed, and a
+	// per-model limit shows no menu at all) the pane returns to the ready prompt, so the state
+	// so far reads idle. The same reinterpretation as the list (wireSession) is applied here —
+	// when the chip in the body disagrees with the list, the user cannot tell which one is true
+	// (docs/log/47 §4-9). Sending is not blocked (see the comment on agents.StateLimited).
 	if isClaude && alive && state == "idle" {
 		if limited, _, waiting := rateLimitWaiting(m, time.Now()); waiting {
 			return limited

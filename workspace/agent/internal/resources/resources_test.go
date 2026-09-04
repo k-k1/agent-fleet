@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// fakeCgroup writes a cgroup v2 scope的 な最小セットを一時ディレクトリに置き、
-// AF_CGROUP_DIR でそこを見させる。
+// fakeCgroup writes a minimal cgroup v2 scope into a temp directory and points
+// AF_CGROUP_DIR at it.
 func fakeCgroup(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -36,8 +36,8 @@ func TestReadsMemoryFromItsOwnCgroup(t *testing.T) {
 	}
 }
 
-// 上限なしの cgroup は memory.max に "max" と書く。それを数値として載せると
-// 画面は 16 EiB のような桁を「上限」として描いてしまうので、キーごと落とす。
+// An unlimited cgroup writes "max" into memory.max. Carrying that as a number would make
+// the screen draw a figure like 16 EiB as the limit, so the key is dropped entirely.
 func TestUnlimitedMemoryMaxIsOmittedRatherThanHuge(t *testing.T) {
 	fakeCgroup(t, map[string]string{
 		"memory.current": "1000\n",
@@ -48,10 +48,10 @@ func TestUnlimitedMemoryMaxIsOmittedRatherThanHuge(t *testing.T) {
 	}
 }
 
-// 読めない軸は 0 ではなく「無い」。0% と「測れない」が同じ値になると、Console は
-// 測れないものを 0 として描く（タイルの「–」が出せなくなる）。
+// An axis that cannot be read is absent, not 0. If "0%" and "not measurable" share a value,
+// the Console draws the unmeasurable as 0 (and the tile can no longer show "–").
 func TestUnreadableAxesAreOmittedNotZero(t *testing.T) {
-	fakeCgroup(t, nil) // 空のディレクトリ = どのファイルも無い
+	fakeCgroup(t, nil) // empty directory = none of the files exist
 	s := Read()
 	if s.MemUsed != nil || s.MemMax != nil || s.CPUPct != nil || s.OOMKillTotal != nil {
 		t.Fatalf("want every cgroup axis omitted, got %+v", s)
@@ -81,7 +81,8 @@ func TestOOMKillCountReadsTheCumulativeCounter(t *testing.T) {
 	}
 }
 
-// CPU は累積カウンタの差分。初回のサンプルは差分が取れないので必ず「測れない」。
+// CPU is a delta of a cumulative counter. The first sample has nothing to diff against, so
+// it is always "not measurable".
 func TestCPUNeedsTwoSamples(t *testing.T) {
 	dir := fakeCgroup(t, map[string]string{"cpu.stat": "usage_usec 1000000\n"})
 	m := &cpuMeter{}
@@ -89,7 +90,7 @@ func TestCPUNeedsTwoSamples(t *testing.T) {
 	if _, ok := m.pct(base); ok {
 		t.Fatal("first sample reported a percentage; it has nothing to diff against")
 	}
-	// 2 秒の壁時計で 1 秒ぶんの CPU を消費 = 50%。
+	// 1 second of CPU over 2 seconds of wall clock = 50%.
 	if err := os.WriteFile(filepath.Join(dir, "cpu.stat"), []byte("usage_usec 2000000\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -102,9 +103,9 @@ func TestCPUNeedsTwoSamples(t *testing.T) {
 	}
 }
 
-// minInterval より短い再訪では前回の答えをそのまま返す。stats は SSE tick と
-// 管理画面ポーリングの 2 系統から叩かれるので、毎回差分を取り直すと互いの前回値を
-// 踏み合って数字が跳ねる。
+// A revisit sooner than minInterval returns the previous answer unchanged. stats is hit by
+// two streams (the SSE tick and the admin screen's polling), so taking a fresh delta on every
+// call has them trampling each other's previous value and the numbers jump.
 func TestCPUShortRevisitReusesTheLastAnswer(t *testing.T) {
 	dir := fakeCgroup(t, map[string]string{"cpu.stat": "usage_usec 0\n"})
 	m := &cpuMeter{}
@@ -117,7 +118,7 @@ func TestCPUShortRevisitReusesTheLastAnswer(t *testing.T) {
 	if !ok {
 		t.Fatal("want a percentage from the second sample")
 	}
-	// カウンタが動いても、100ms しか経っていないなら同じ答えを返す。
+	// Even when the counter moved, only 100ms elapsed, so the same answer comes back.
 	if err := os.WriteFile(filepath.Join(dir, "cpu.stat"), []byte("usage_usec 9000000\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -127,8 +128,8 @@ func TestCPUShortRevisitReusesTheLastAnswer(t *testing.T) {
 	}
 }
 
-// カウンタが巻き戻ったら（コンテナ再作成 = cgroup が作り直された）測れないと言う。
-// 古い前回値との差分は意味を持たない。
+// A counter that went backwards (container recreate = the cgroup was rebuilt) reports as not
+// measurable. A delta against the old previous value means nothing.
 func TestCPUCounterResetReportsUnmeasurable(t *testing.T) {
 	dir := fakeCgroup(t, map[string]string{"cpu.stat": "usage_usec 5000000\n"})
 	m := &cpuMeter{}
@@ -142,8 +143,9 @@ func TestCPUCounterResetReportsUnmeasurable(t *testing.T) {
 	}
 }
 
-// ディスクは du の木歩きではなく home が載る FS の statfs。テスト環境でも home は
-// 必ずどこかの FS 上にあるので、値が取れて used <= total であることを確かめる。
+// Disk is a statfs of the filesystem home sits on, not a du tree walk. Even in a test
+// environment home is always on some filesystem, so check that values come back and
+// used <= total.
 func TestHomeUsageReportsUsedWithinTotal(t *testing.T) {
 	used, total, ok := homeUsage()
 	if !ok {
@@ -154,15 +156,15 @@ func TestHomeUsageReportsUsedWithinTotal(t *testing.T) {
 	}
 }
 
-// --- cgroup v1 のフォールバック ---
+// --- cgroup v1 fallback ---
 //
-// fleet 自身のホストは v2（EC2 スロットは AL2023 固定）だが、Fargate は
-// プラットフォーム版を指定していないので下回りを我々が選べない。v1 に当たったとき
-// 黙って「メモリと CPU だけ –」に戻らないことをフィクスチャで固定する。
-// ⚠️ ここで確かめられるのはファイル名と単位の対応だけで、実際の v1 ホストで
-// 測ったわけではない。
+// The hosts the fleet provisions itself are v2 (the EC2 slot is pinned to AL2023), but
+// Fargate's platform version is not specified, so we cannot choose what runs underneath.
+// These fixtures pin down that hitting v1 does not silently fall back to "memory and CPU
+// only –". Note that this can only confirm the file names and the units; no real v1 host was
+// measured.
 
-// fakeV1Cgroup は v1 のサブシステム別レイアウト（memory/ と cpuacct/）を作る。
+// fakeV1Cgroup builds v1's per-subsystem layout (memory/ and cpuacct/).
 func fakeV1Cgroup(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -197,8 +199,8 @@ func TestFallsBackToCgroupV1(t *testing.T) {
 	}
 }
 
-// v1 の「上限なし」は "max" ではなく巨大な数値。数値として読めてしまうので、
-// 閾値で弾かないと「上限 8 EiB」を分母にした使用率 0% を描いてしまう。
+// v1 expresses "no limit" as a huge number rather than "max". It parses as a number, so
+// without a threshold to reject it we would draw 0% usage over an "8 EiB limit".
 func TestV1UnlimitedSentinelIsNotALimit(t *testing.T) {
 	fakeV1Cgroup(t, map[string]string{
 		"memory/memory.usage_in_bytes": "1000\n",
@@ -209,16 +211,18 @@ func TestV1UnlimitedSentinelIsNotALimit(t *testing.T) {
 	}
 }
 
-// ⚠️ v1 の cpuacct.usage は **ナノ秒**、v2 の usage_usec は **マイクロ秒**。
-// 揃え忘れると使用率が 1000 倍になり、静止中の Workspace が数万 % に見える。
+// v1's cpuacct.usage is in NANOSECONDS, v2's usage_usec in MICROSECONDS. Forgetting to
+// normalise makes the percentage 1000x too high and an idle Workspace look like tens of
+// thousands of percent.
 func TestV1CPUIsNanosecondsNotMicroseconds(t *testing.T) {
-	dir := fakeV1Cgroup(t, map[string]string{"cpuacct/cpuacct.usage": "1000000000\n"}) // 1 秒
+	dir := fakeV1Cgroup(t, map[string]string{"cpuacct/cpuacct.usage": "1000000000\n"}) // 1 second
 	m := &cpuMeter{}
 	base := time.Unix(1700000000, 0)
 	if _, ok := m.pct(base); ok {
 		t.Fatal("first sample reported a percentage")
 	}
-	// 壁時計 2 秒で CPU を +1 秒 = 50%。ns を µs と読み違えていればここが 50000% になる。
+	// +1 second of CPU over 2 seconds of wall clock = 50%. Misreading ns as µs makes this
+	// 50000%.
 	if err := os.WriteFile(filepath.Join(dir, "cpuacct/cpuacct.usage"), []byte("2000000000\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -227,12 +231,12 @@ func TestV1CPUIsNanosecondsNotMicroseconds(t *testing.T) {
 		t.Fatal("second sample reported no percentage")
 	}
 	if pct < 49.9 || pct > 50.1 {
-		t.Errorf("cpu_pct = %v, want ~50 (単位換算が抜けていると ~50000)", pct)
+		t.Errorf("cpu_pct = %v, want ~50 (~50000 when the unit conversion is missing)", pct)
 	}
 }
 
-// v2 が読めるホストでは v1 を見に行かない（両方あるハイブリッド構成で二重に
-// 読まない・v2 の値が勝つ）。
+// On a host where v2 is readable, v1 is never consulted (a hybrid layout with both present
+// must not be read twice, and the v2 value wins).
 func TestV2WinsWhenBothLayoutsExist(t *testing.T) {
 	fakeV1Cgroup(t, map[string]string{
 		"memory.current":               "111\n",
@@ -240,6 +244,6 @@ func TestV2WinsWhenBothLayoutsExist(t *testing.T) {
 	})
 	s := Read()
 	if s.MemUsed == nil || *s.MemUsed != 111 {
-		t.Errorf("mem_used = %v, want 111 (v2 の値)", s.MemUsed)
+		t.Errorf("mem_used = %v, want 111 (the v2 value)", s.MemUsed)
 	}
 }
