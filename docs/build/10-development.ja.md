@@ -54,9 +54,11 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
    キャッシュを破るので `--no-cache` は不要。
 3. **commit & push**: 1 行 diff・日本語メッセージ
    （例 `build(workspace): 焼き込み CLI を bump（claude X.Y.Z）`）。
-4. **CI green を確認**: push で `.github/workflows/e2e.yml` が発火し、イメージ build →
-   L1（**実版 = ピンの一致**・versions.json）→ L2（フリート疎通）→ L3（Console UI）を
-   自動検証する。`gh run watch $(gh run list --workflow e2e --limit 1 --json databaseId --jq '.[0].databaseId')`
+4. **CI green を確認**: `.github/workflows/e2e.yml` は **push では走らない**（main への PR /
+   毎日 cron / 手動 dispatch のみ ＝ 課金分散）。作業ブランチでは自分で起こす:
+   `gh workflow run e2e.yml --ref <ブランチ>`。イメージ build → L1（**実版 = ピンの一致**・
+   versions.json）→ L2（フリート疎通）→ L3（Console UI）が回る。
+   `gh run watch $(gh run list --workflow e2e.yml --limit 1 --json databaseId --jq '.[0].databaseId')`
    で完走を見届ける。red のまま先へ進まない。
 5. **（大きめの版上げのみ）実クレデンシャルを使うジョブ**: 枠の消費先が違うので
    ワークフローも入力も**エージェント毎に別**。回したい物だけ立てる（既定は全て false）。
@@ -69,7 +71,7 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
    - codex の版上げで状態検出（Stop hook / rollout / turn 通知）が疑わしいとき（Tier2
      ドリフト検知）: `gh workflow run codex-contract -f live=true`。secret
      `E2E_CODEX_AUTH_JSON` 使用・ChatGPT サブスク枠を実測 ~45k tokens/回 消費する。
-     （Tier1＝無料・無認証の方は codex 関連の push で自動的に走る。）
+     （Tier1＝無料・無認証の方は main への PR（codex 関連パス）と週次 cron で自動的に走る。）
 6. **ホスト反映**: ホストで `deploy/local/run-dev.sh`。イメージ再ビルド直後に
    `e2e-smoke.sh`（L1）が自動で走り、版一致を再検証する（rtk 同梱もここで確認される）。
    ⚠️ ホストはメモリ制約 — 重いビルドを並走させない（[HANDOFF §2](../HANDOFF.md)）。
@@ -80,8 +82,8 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
    設定 → 環境「ツールのバージョン」（実効 / イメージ / ピン差分が見える）。
 
 補足:
-- **週次 cron**（e2e.yml、月曜 6:00 JST）がコード無変更でも上流 CLI / base image の破壊を
-  検出する。cron が red になったら上流変更起因を疑い、この runbook の 4〜5 で切り分ける。
+- **毎日 cron**（e2e.yml、04:00 JST・develop 対象）がコード無変更でも上流 CLI / base image の
+  破壊を検出する。cron が red になったら上流変更起因を疑い、この runbook の 4〜5 で切り分ける。
 - 再ビルドせず特定メンバーだけ最新化したい場合は自己更新 opt-in
   （AdminTab の `allow_agent_self_update` ＋ 設定 → 環境のトグル。Stop→Start で焼き込み版に戻る）。
 
@@ -190,12 +192,16 @@ cd console-e2e && npm ci && npx playwright test                                 
 - 実フリートが動く dev ホストでも安全: テスト毎に DEV_USER を分離（e2e / e2e-ui / e2e-live）・
   ポートは動的確保・teardown 内蔵（コンテナ / ネットワーク / 一時データ）。
   ただしメモリ制約ホストなので同時 1 実行。
-- CI は `.github/workflows/e2e.yml`: workspace/CP/console/e2e の変更時 + **週次 cron**（コード
-  無変更でも上流 CLI・base image の破壊を検出）+ 手動。`e2e` ジョブ（L1→L2）と `ui-e2e` ジョブ
+- CI は `.github/workflows/e2e.yml`: **main への PR**（workspace/CP/console/e2e の関連パス）+
+  **毎日 cron**（04:00 JST・develop 対象。コード無変更でも上流 CLI・base image の破壊を検出）+
+  手動 dispatch。**develop への push では走らない**（課金分散。作業ブランチで回すなら
+  `gh workflow run e2e.yml --ref <ブランチ>`）。`e2e` ジョブ（L1→L2）と `ui-e2e` ジョブ
   （L3、失敗時は trace/CP ログを artifact 保存）が並列、`live-smoke`（L4）は workflow_dispatch の
   `live` 入力 + secret（`E2E_ANTHROPIC_API_KEY` または `E2E_CLAUDE_OAUTH_TOKEN`）で明示 opt-in。
-  rtk は git-ignored のホスト vendor 品のため CI は「rtk なし」パスの検証になる（rtk 込みは
-  ホストで run-dev.sh / 本テストを回して確認）。
+  rtk は常時焼き込み（`BAKE_RTK=1` 既定・ARG ピン）なので CI のイメージにも入り、L1 が同梱を
+  検証する（旧ホスト vendoring 経路は廃止）。イメージ build は platform 指定なし ＝ **ランナーの
+  amd64 のみ**なので、arm64 側のアセット（agy / cursor / kiro の arch 別 sha256）はここでは
+  実ビルド検証されない。
 
 ### 上流 CLI の破壊検知（版ドリフト監視 + contract テスト）
 
@@ -213,7 +219,7 @@ L4 は headless の `claude -p` で TUI もフッタも描画されない。こ�
 | 見る物 | 版**番号**のズレ（ピン vs 公開 latest） | **挙動**（実 CLI に当てて壊れたか） |
 | 答える問い | 「見に行くべき時か？」 | 「実際に壊れたか？」 |
 | 費用 | 無料（`npm view` だけ） | 無料〜サブスク枠（Tier で違う） |
-| 頻度 | 毎日 cron | 関連パスの push + 週次 cron |
+| 頻度 | 毎日 cron | main への PR（関連パス）+ 週次 cron + dispatch（claude / copilot / agy / cursor / kiro は dispatch 専用）|
 | 赤くなる時 | 検査自体の失敗のみ（ドリフトは issue upsert） | 契約が破れた時 |
 
 ドリフトは**常態**（claude は数日で版が進む）なので `cli-drift.yml` は赤くせず追跡 issue を

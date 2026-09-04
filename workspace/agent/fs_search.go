@@ -39,7 +39,7 @@ func handleFSSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	qPath := r.URL.Query().Get("path")
 	full, rel, ok := safeBrowsePath(qPath)
-	if !ok || !fsQueryResolvedOK(qPath, full) {
+	if !ok || isCodexGeneratedImagesPath(full) || !fsQueryResolvedOK(qPath, full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
