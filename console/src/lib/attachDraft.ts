@@ -287,7 +287,17 @@ export interface AttachDraft {
   add: (items: Attachment[]) => void;
   remove: (i: number) => void;
   clear: () => void;
+  revive: (items: Attachment[]) => void;
 }
+
+// reviveAttachment re-stages an attachment that was cleared for a send that then failed.
+// It needs a NEW object URL: leaving the list revoked the old one, and a chip pointing at
+// a revoked URL is a broken image where the thumbnail was.
+const reviveAttachment = (a: Attachment): Attachment => ({
+  ...a,
+  id: nextId(),
+  url: a.image && a.file ? URL.createObjectURL(a.file) : "",
+});
 
 // useAttachDraft is the composer's attachment list, backed by the store above: hydrated
 // from `key` on mount and on every key change (session switch / another repo picked in
@@ -348,5 +358,18 @@ export function useAttachDraft(key: string | null): AttachDraft {
     setItems((prev) => (prev.length ? [] : prev));
     void clearAttachDraft(key);
   };
-  return { items, add, remove, clear };
+  // revive puts back what clear() took for a send the session then refused. The composer
+  // empties itself the moment the user hits send (the turn is shown as an optimistic echo,
+  // not as chips), so without this the files are gone on a failure the text survives —
+  // and the user re-sends words that no longer have their screenshot. Anything staged
+  // meanwhile is kept: the revived ones go in front, minus paths already back on screen.
+  const revive = (gone: Attachment[]) => {
+    if (!gone.length) return;
+    setItems((prev) => {
+      const have = new Set(prev.map((a) => a.path).filter(Boolean));
+      const back = gone.filter((a) => !a.path || !have.has(a.path)).map(reviveAttachment);
+      return back.length ? [...back, ...prev] : prev;
+    });
+  };
+  return { items, add, remove, clear, revive };
 }

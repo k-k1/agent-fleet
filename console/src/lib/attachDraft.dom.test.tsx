@@ -26,6 +26,15 @@ function Composer({ dkey }: { dkey: string | null }) {
       <button className="add-uploaded" onClick={() => attach.add([makeAttachment(new File(["LOG"], "server.log", { type: "text/plain" }), { name: "paste-2-server.log", path: "/p/paste-2-server.log" })])} />
       <button className="rm" onClick={() => attach.remove(0)} />
       <button className="clear" onClick={() => attach.clear()} />
+      {/* 送信の型: 押した瞬間に手放し、セッションに断られたら戻す（MirrorView.send）。 */}
+      <button
+        className="fail-send"
+        onClick={() => {
+          const staged = attach.items;
+          attach.clear();
+          setTimeout(() => attach.revive(staged), 0);
+        }}
+      />
     </div>
   );
 }
@@ -170,6 +179,33 @@ describe("useAttachDraft", () => {
     await act(async () => root?.unmount());
     root = null;
     expect(revoke).toHaveBeenCalledWith(kept);
+  });
+
+  it("puts the files back when the session refused the turn", async () => {
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    await mount();
+    await click(".add");
+    const before = chips()[0].getAttribute("data-url");
+    await click(".fail-send");
+    expect(names()).toEqual(["shot.png"]);
+    // 戻すときは URL を作り直す — 手放した時点で revoke 済みで、そのままでは画像が割れる。
+    expect(revoke).toHaveBeenCalledWith(before);
+    expect(chips()[0].getAttribute("data-url")).not.toBe(before);
+    expect(chips()[0].getAttribute("data-has-file")).toBe("1");
+    await reopen(); // 戻したぶんも下書きに書かれている
+    expect(names()).toEqual(["shot.png"]);
+  });
+
+  it("does not duplicate one the user staged again while the send was failing", async () => {
+    await mount();
+    await click(".add-uploaded");
+    const el = document.querySelector(".fail-send")!;
+    await act(async () => {
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      document.querySelector(".add-uploaded")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    expect(names()).toEqual(["paste-2-server.log"]);
   });
 
   it("stays usable with no key at all (a repo-less launch): staged, but not persisted", async () => {

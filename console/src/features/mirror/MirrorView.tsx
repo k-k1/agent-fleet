@@ -723,7 +723,11 @@ export function MirrorView({
   // プランコメントの送信済みマークだけはこれを見る必要がある — 失敗をトーストするだけで
   // void を返していたころ、届かなかったコメントまで畳まれて打ち直せなくなっていた
   // （permission_pending で弾かれた直後に「送信済み」になる、2026-08-10 報告の症状）。
-  const sendPrompt = async (text: string, attachments?: string[]): Promise<boolean> => {
+  // restoreText: 失敗したときに入力欄へ書き戻す文面。既定は送った文面そのものだが、tui では
+  // それに添付パスの指示文が織り込まれている（buildImagePrompt）ので、コンポーサーからの
+  // 送信だけは「ユーザーが打った文」を渡す — 添付チップも一緒に戻るため、パス入りの文面を
+  // 書き戻すと、押し直したときにパスが二重に載る。
+  const sendPrompt = async (text: string, attachments?: string[], restoreText?: string): Promise<boolean> => {
     const t = (text || "").trim();
     // sendingRef (not the `sending` state alone) guards re-entrancy: two invocations
     // arriving in the same task both read `sending` before either commit lands, but the
@@ -756,7 +760,7 @@ export function MirrorView({
       // 始めていたらそれを潰さない。
       applyEchoes((p) => p.filter((e) => e.id !== echoId));
       toast(res.message || tr("mirror.send_failed"));
-      setDraft((d) => d || t);
+      setDraft((d) => d || restoreText || t);
     }
     sendingRef.current = false;
     setSending(false);
@@ -1031,6 +1035,7 @@ export function MirrorView({
     // 混乱するだけ。sessionName で判定し、他セッション由来の再生（不一致）はそのまま流す。
     const ts = useTtsStore.getState();
     if (ts.active && ts.sessionName === session) ts.stop();
+    const staged = attachments; // 失敗したら戻す（下の revive）
     const paths = attachments.map((a) => a.path);
     // managed はワイヤの attachments で渡し（driver が API 添付へ変換、docs/log/27
     // §10.2-3）、tui は従来どおりプロンプト本文へパスを織り込む。
@@ -1042,7 +1047,9 @@ export function MirrorView({
     // turn is sent — the reply is what the user wants to read, not keep typing. Desktop
     // keeps focus (and refocuses below) so typing the next turn needs no extra click.
     if (coarsePointer()) inputRef.current?.blur();
-    await sendPrompt(prompt, managed ? paths : undefined);
+    // 受理されなかったら添付も戻す。文章だけ戻して添付が消えるのが一番たちが悪い —
+    // 打ち直しの文面は残るので「送り直した」と思い込んだまま、画像の無い turn を送る。
+    if (!(await sendPrompt(prompt, managed ? paths : undefined, text))) attach.revive(staged);
     if (!coarsePointer()) inputRef.current?.focus();
   };
 
