@@ -161,6 +161,24 @@ authority for real images.
   **`rtk grep` spawned a child and its output came back**, and the compaction was real —
   **345,786 bytes → 2,754 bytes, `total_saved` +107,758 tokens**, byte-for-byte the same
   numbers as on amd64. `rtk hook claude` rewrote `grep …` to `rtk grep …` on the machine.
+- **⑥ through the product's own path: a real claude session on the arm slot.** A member was
+  moved to the `arm` class from the Console and started a workspace; it landed on the
+  `m8g.large` slot (the x86_64 one stayed stopped), and the container's
+  `/var/lib/af/claude/settings.json` carried the `PreToolUse` / `matcher: "Bash"` hook
+  `rtk hook claude`. The same probe run inside **that live container** passed all six. Then,
+  driven only by prompts in the session, `rtk gain` moved: **4 → 5 commands, `total_saved`
+  107,758 → 230,356 — the one claude-originated command compacted 122,798 tokens of input
+  to 200 (99.8%)** — and rtk wrote the full output to
+  `~/.local/share/rtk/tee/1788534491_ls-hidden.log`, which is the file claude then offered
+  the user. So the hook fires, rtk spawns, and the saving is real, on Graviton, end to end.
+- ⚠️ **The hook's matcher is `Bash`, and that is easy to mis-measure.** The first attempt
+  asked the session to grep something; claude answered correctly and **the counters did not
+  move at all**, because it used its own Grep tool rather than a Bash command — nothing was
+  wrong with rtk. **A null result here says as much about which tool claude picked as about
+  rtk**, so force the Bash path explicitly and read the counter, rather than concluding from
+  a correct-looking answer. The second attempt (a plain `grep …`) incremented the command
+  count but saved 0 tokens — the output was 52 lines, with nothing to compact — which is why
+  the third used output big enough to measure.
 - ⚠️ **`rtk` is not in the image on this path.** `dev-deploy.sh` bakes with
   `BAKE_AGENT_CLIS=0`, so `rtk` is not at `/usr/local/bin/rtk`; the entrypoint
   boot-installs the pinned `rtk-aarch64-unknown-linux-gnu` into `~/.local/bin`. **A probe
