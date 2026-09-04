@@ -100,13 +100,28 @@ func resolveFDReadPath(input string) (fdReadPath, *fsAPIError) {
 	if err != nil {
 		return fdReadPath{}, fsErr(500, errCodeFSReadFailed, "cannot resolve browse root")
 	}
-	if !strings.HasPrefix(input, "/") {
-		return fdReadPath{
-			root: browse, relative: input, display: input, browseRoot: true,
-		}, nil
-	}
 	generatedRoot, err := absoluteTrustedRoot(codexGeneratedImagesRoot())
 	if err == nil {
+		// Transcript userfile paths below the browse root are deliberately
+		// rendered relative to it. Re-identify the generated-images exception
+		// before treating that spelling as an ordinary .codex path, otherwise
+		// the browse-root denylist rejects the image after it was shared.
+		if !strings.HasPrefix(input, "/") {
+			if generatedRelative, relErr := filepath.Rel(browse, generatedRoot); relErr == nil {
+				generatedRelative = filepath.ToSlash(generatedRelative)
+				if relative, ok := pathUnderRoot(input, generatedRelative); ok {
+					switch strings.ToLower(filepath.Ext(relative)) {
+					case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+						return fdReadPath{root: generatedRoot, relative: relative, display: input, readOnly: true}, nil
+					default:
+						return fdReadPath{}, fsErr(403, errCodeFSDenied, "only generated image files may be read from CODEX_HOME")
+					}
+				}
+			}
+			return fdReadPath{
+				root: browse, relative: input, display: input, browseRoot: true,
+			}, nil
+		}
 		if relative, ok := pathUnderRoot(input, generatedRoot); ok {
 			// image_gen announces only these raster outputs. Do not serve SVG
 			// or arbitrary files from Codex's otherwise-private state tree.

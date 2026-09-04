@@ -109,3 +109,37 @@ func TestHandleFSFileScratchpad(t *testing.T) {
 		t.Errorf("path = %q, want %q (absolute, so the viewer round-trips the same key)", resp.Path, abs)
 	}
 }
+
+func TestHandleFSFileCodexGeneratedImageSharedRelativeToBrowseRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AF_BROWSE_ROOT", root)
+	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
+
+	dir := filepath.Join(codexGeneratedImagesRoot(), "job")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir generated images: %v", err)
+	}
+	image := filepath.Join(dir, "image.png")
+	if err := os.WriteFile(image, []byte("PNG"), 0o600); err != nil {
+		t.Fatalf("write generated image: %v", err)
+	}
+
+	rel := ".codex/generated_images/job/image.png"
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/fs/file?path="+url.QueryEscape(rel), nil)
+	handleFSFile(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rr.Body.String())
+	}
+	if resp.Path != rel || resp.Content != "PNG" {
+		t.Errorf("response = (%q, %q), want (%q, %q)", resp.Path, resp.Content, rel, "PNG")
+	}
+}

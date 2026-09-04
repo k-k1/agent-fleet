@@ -243,7 +243,6 @@ export const sessions = {
   "srow.resume": "再開する",
   "srow.relogin_resume": "再ログインして再開",
   "srow.stop": "停止する（あとで再開できる）",
-  "srow.changed_files": "変更ファイル",
   "srow.open_remote": "リモートセッションを開く",
   "srow.copy_id": "ID（{name}）をコピー",
   "srow.rename": "タイトルを変更",

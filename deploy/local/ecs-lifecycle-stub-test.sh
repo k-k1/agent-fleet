@@ -266,9 +266,30 @@ if grep -q "deploy --stack-name t-network .*--s3-bucket" "$LOG"; then
   fail "even small templates are being routed through S3"
 fi
 
+echo "== case 3b-2: the shipped templates stay inside 51,200 bytes =="
+#
+# case 3b covers the fallback -- hand it over through S3 once it is too big. This checks the
+# step before that: not going over in the first place. The S3 route needs 20-platform's
+# bucket, depends on the teardown order, and the CLI's error leaves nothing in CFN's events.
+# Stay inside the wall and none of that applies.
+#
+# It fails rather than warns. 30-ingress grew silently to 54,681 bytes and nobody noticed
+# until a stand-up three months later. The job here is to make the change that fattens it
+# fail on the spot, so moving the limit has to be deliberate and shows up in the diff.
+# Long prose belongs in cfn/PARAMETERS.md: a YAML comment counts toward the body exactly
+# like a Description, so "move it to a #" saves nothing.
+CFN_MAX=51200
+for t in "$ECS"/cfn/*.yaml; do
+  sz="$(wc -c < "$t" | tr -d ' ')"
+  if [ "$sz" -gt "$CFN_MAX" ]; then
+    echo "NG: $(basename "$t") is $sz bytes > $CFN_MAX -- move the prose into cfn/PARAMETERS.md"
+    exit 1
+  fi
+done
+
 echo "== case 3c: teardown empties the bucket before deleting 20-platform =="
 # CFN cannot delete a bucket that still has contents. Skip this and 20-platform stops at
-# DELETE_FAILED, so the teardown dies half way — and the next stand-up again goes unproven.
+# DELETE_FAILED, so the teardown dies half way -- and the next stand-up again goes unproven.
 : > "$LOG"
 "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3c" </dev/null
 order "s3 rm s3://t-cfn-bucket --recursive" "cloudformation delete-stack --stack-name t-platform"

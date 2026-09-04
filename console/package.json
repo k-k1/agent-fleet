@@ -16,6 +16,7 @@
     "panes:heads": "node scripts/pane-heads/check.mjs",
     "mirror:scroll": "node scripts/mirror-scroll/check.mjs",
     "mirror:handoff": "node scripts/mirror-handoff/check.mjs",
+    "viewer:scroll": "node scripts/viewer-scroll/check.mjs",
     "drawio:check": "node scripts/drawio/check.mjs",
     "pdf:check": "node scripts/pdf/check.mjs",
     "doc:check": "node scripts/doc/check.mjs"
@@ -68,6 +69,7 @@
     "@types/react-dom": "^19.2.0",
     "@types/react-test-renderer": "^19.1.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.0.0",
     "react-test-renderer": "^19.2.7",
     "typescript": "^5.7.0",

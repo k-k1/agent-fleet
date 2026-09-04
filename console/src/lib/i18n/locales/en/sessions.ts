@@ -235,7 +235,6 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.resume": "Resume",
   "srow.relogin_resume": "Re-login and resume",
   "srow.stop": "Stop (resumable later)",
-  "srow.changed_files": "Changed files",
   "srow.open_remote": "Open the remote session",
   "srow.copy_id": "Copy the ID ({name})",
   "srow.rename": "Rename",

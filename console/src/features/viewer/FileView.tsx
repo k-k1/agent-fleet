@@ -21,6 +21,8 @@ import { DrawioView, type DrawioState } from "./DrawioView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
 import { dismissSoftKeyboard, escapeHtml } from "./parts/fileDom.ts";
 import { useFileContent, type FileData } from "./parts/useFileContent.ts";
+import { useScrollMemory } from "./parts/useScrollMemory.ts";
+import { scrollMemoryKey } from "./scrollMemory.ts";
 import { useSelectionPill } from "./parts/useSelectionPill.ts";
 import {
   editorStatusText,
@@ -113,6 +115,10 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     setPdfPages,
     marks,
   } = useFileContent(filePath);
+  // 表示位置の記憶（scrollMemory）。タブを切り替えて戻ってくると、この面は
+  // 丸ごと unmount されて中身も取り直しになる（PaneHost は選ばれた 1 枚しか
+  // 描かない）ので、読んでいた位置はコンポーネントの外に置く。面ごとに別の記憶。
+  const scrollMemory = useScrollMemory(scrollMemoryKey(paneId, filePath));
   // 図の面が返す状態（ページ数・倍率）。ヘッダの表示にだけ使う。
   const [diagramState, setDiagramState] = useState<DrawioState | null>(null);
   // 図の面は **一度出したら畳んでも外さない**（hidden にするだけ）。作り直すと 4MB の
@@ -774,6 +780,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
           marks={marks}
           targetLine={targetLine}
           targetColumn={targetColumn}
+          scrollMemory={scrollMemory}
         />
       </div>
 

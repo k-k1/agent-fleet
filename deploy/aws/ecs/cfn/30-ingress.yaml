@@ -9,6 +9,9 @@ Description: >-
   its MetadataStore is RDS Postgres (stage 3a) so state survives task replacement.
 
 Parameters:
+  # ★ 一行では収まらない説明は隣の PARAMETERS.md にある（計測値・トレードオフ・罠）。
+  # ここが短いのは手抜きではなく上限 51,200 バイトのため —— YAML のコメントも Description と
+  # 同じだけ本文に数えられるので、長い説明は「# に移す」では減らず、ファイルの外へ出すしかない。
   NetworkStackName:
     Type: String
     Default: af-ecs-network
@@ -23,307 +26,155 @@ Parameters:
     Type: String
     Default: dev
     Description: >-
-      Tag of BOTH the af-control-plane and af-workspace images in ECR (=VERSION;
-      release-ecr.sh pushes the pair under one version). Upgrade = push a new tag,
-      then re-deploy with only this parameter overridden: the CP service rolls to
-      the new image; workspaces pick it up on their next Start (running ones are
-      untouched — the adapter builds task definitions statelessly).
+      Tag of BOTH the af-control-plane and af-workspace images in ECR (=VERSION).
+      Upgrade = push a new tag and re-deploy with only this overridden; running
+      workspaces are untouched and pick it up on their next Start.
   WsTaskCpu:
     Type: String
     Default: "1024"
     Description: >-
-      Default Fargate CPU units for a workspace task (1024 = 1 vCPU). Valid values are
-      256/512/1024/2048/4096/8192/16384 — Fargate accepts only specific (cpu, memory)
-      pairs (docs/log/63 §63.2). Per-user overrides are set in the Console and are snapped
-      onto a valid pair, so this is only the floor everyone starts from.
+      Default Fargate CPU units for a workspace task (1024 = 1 vCPU). Only
+      256/512/1024/2048/4096/8192/16384 are valid, and only in Fargate's (cpu, memory) pairs.
   WsTaskMemory:
     Type: String
     Default: "2048"
     Description: >-
-      Default workspace task memory in MiB. Must be valid for WsTaskCpu: 1 vCPU allows
-      2048-8192 in 1024 steps, 2 vCPU 4096-16384, 4 vCPU 8192-30720; 8 vCPU steps by
-      4096 and 16 vCPU by 8192. A development workspace measured 1.12 GiB anonymous and
-      5.30 GiB peak including page cache, so 2048 is tight for real use.
+      Default workspace task memory in MiB. Must be a valid pair with WsTaskCpu (1 vCPU
+      allows 2048-8192 in 1024 steps). 2048 is tight for real use — see PARAMETERS.md.
   WsDiskGiB:
     Type: String
     Default: "50"
     Description: >-
-      Default per-workspace WORKING disk in GiB. 0 keeps Fargate's free 20 GiB; 21-200
-      sets the task's ephemeral storage (billed only above 20 GiB). This disk is wiped
-      when the workspace stops — only the EFS home persists. It is also the switch for
-      moving the small-file caches (go build cache, uv, go modules) and build artifacts
-      (node_modules, target, .venv) off EFS onto the task-local disk: the entrypoint
-      does that only when this is 30 or more, because the measured caches do not fit
-      alongside the image in 20 GiB (ADR 0044 decision 3). The default is 50 so that
-      relocation is ON — at 0 it can never arm, which is what shipped before and meant
-      every deployment ran builds on EFS at ~9x the cost. Roughly $2.9/month per
-      workspace at 24/7, and only while the task runs. Set 0 to opt out.
+      Default per-workspace WORKING disk in GiB (wiped on stop; only the EFS home persists).
+      0 keeps Fargate's free 20 GiB; 21-200 sets ephemeral storage. ⚠️ Also the switch that
+      moves caches and build artifacts off EFS — it arms only at 30 or more. PARAMETERS.md.
   WsRuntime:
     Type: String
     Default: ecs
     AllowedValues: [ ecs, ecs-ec2 ]
     Description: >-
-      Which Runtime adapter the Control Plane uses. `ecs` = Fargate (the shipped
-      default: two resources per workspace, ~105s to start, home on EFS). `ecs-ec2` =
-      a pool of EC2 slots with a persistent per-user EBS home (docs/log/64 §64.12/§64.17,
-      ADR 0045 decision 10/12). Switch for I/O and persistence (small-file writes 8-30x faster
-      than EFS, a home that survives) and for sizes above Fargate's ceilings — NOT for
-      start latency: measured 43-110s against Fargate's ~105s. The price is six resource
-      kinds per workspace on a substrate with no production mileage. Requires the
-      40-ec2-pool stack and Ec2SlotLaunchTemplate below. Falling back is this one value.
+      Which Runtime adapter the CP uses. ecs = Fargate (shipped default). ecs-ec2 = a pool of
+      EC2 slots with a persistent per-user EBS home; requires the 40-ec2-pool stack and
+      Ec2SlotLaunchTemplate. Choose it for I/O and persistence, NOT for start latency.
   Ec2SlotLaunchTemplate:
     Type: String
     Default: ""
     Description: >-
       SlotLaunchTemplateId output of the 40-ec2-pool stack (lt-…). Required when
-      WsRuntime=ecs-ec2 — the CP refuses to boot on that profile without it, rather
-      than silently running no workspaces.
+      WsRuntime=ecs-ec2 — the CP refuses to boot on that profile without it.
   Ec2SlotTypes:
     Type: String
     Default: "standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,m6i.xlarge:16384:4,m6i.2xlarge:32768:8"
     Description: >-
-      The slot sizes the pool may run. A workspace lands on the smallest slot that
-      holds its memory REQUEST and gets the WHOLE box (the task reserves neither cpu
-      nor memory — on EC2 those are reservations against the instance). EC2 on-demand
-      pricing is perfectly linear in vCPU, so bigger slots are not more expensive per
-      user (ADR 0045 decision 8). The vCPU field is optional and display-only: the Console
-      prints it so a tenant admin can see which box a memory number lands on, and
-      omitting it just omits the label (ADR 0045 decision 21 — asking EC2 instead would
-      mean an extra IAM action for a label).
-
-      Two shapes, and the old one is not deprecated (docs/log/70 §70.4.2):
-
-        instanceType:memoryMiB[:vcpu],…                one unnamed class, x86_64
-        id|label|arch|<ladder>[;id|label|arch|<ladder>] one class per entry
-
-      With more than one class, a tenant admin chooses WHICH KIND of machine per
-      tenant and per member, and the memory number still picks the rung within it.
-      arch is x86_64 or arm64 and is DECLARED, never guessed from the family name.
-
-      The default above offers two x86_64 classes, because m6i needs NOTHING to work:
-      same architecture, so the same workspace image, the same AMI, the same golden
-      snapshot, and a member's home stays valid when they move (measured
-      ap-northeast-1 2026-08-22: m6i is 4.8% cheaper than m7i). It is the "cost over
-      speed" choice that is available today.
-
-      ⚠️ Changing this parameter moves nobody by itself — Ec2DefaultSlotClass decides
-      where members with no choice of their own land, and it defaults to the FIRST
-      class. An existing stack also keeps its own value on a redeploy unless you pass
-      this parameter, so upgrading does not add a picker to a running deployment.
-
-      Adding Graviton is a matter of appending a class. Measured in ap-northeast-1 on
-      2026-08-22 (price, and this repository's own build times on each family):
-
-        m8g  -11.0% per hour and 29% FASTER than m7i  <- strictly better than m7i
-        m7g  -19.0% per hour and 10% faster           <- no reason to pick over m8g
-        m6g  -24.0% per hour but 32% SLOWER           <- cheapest per HOUR, not per unit of work
-
-        …;arm|Faster and cheaper (Arm)|arm64|m8g.large:8192:2,m8g.xlarge:16384:4,m8g.2xlarge:32768:8
-
-      ⚠️ m6g is the cheapest per hour and the most expensive per build. Which one is
-      right depends on the member: a slot bills for the wall-clock time it is RUNNING,
-      and a workspace spends most of that idle, so the hourly price is what a
-      mostly-reading member pays — while a member who builds all day pays in time. If
-      you offer m6g, put the trade-off in its LABEL; "24% cheaper" on its own will be
-      read as free money.
-
-      ⚠️ Unlike m6i, an arm64 class has TWO prerequisites, in this order:
-
-        1. a workspace image with an arm64 manifest. Without it the slot launches and
-           the task cannot pull anything that runs on it.
-        2. Ec2SlotAmiArm64 below. The CP refuses to boot when an arm64 class is
-           declared and that is empty, rather than showing a class in the admin UI
-           that cannot launch.
-
-      ⚠️ Adding a class moves nobody: Ec2DefaultSlotClass still decides where a member
-      with no choice of their own lands. Changing the class of a member who already has
-      a home makes their next start reinstall its architecture-dependent tools
-      (docs/log/70 §70.5) — that is expected, and it costs them one slow start.
+      The slot sizes the pool may run; a workspace lands on the smallest rung that holds its
+      memory request and gets the whole box. Either `instanceType:memoryMiB[:vcpu],…` (one
+      unnamed x86_64 class) or `id|label|arch|<ladder>[;…]` (one class per entry). arch is
+      declared, never guessed. ⚠️ Changing it moves nobody — see Ec2DefaultSlotClass. Adding
+      an arm64 class needs an arm64 workspace image AND Ec2SlotAmiArm64. PARAMETERS.md.
   Ec2SlotAmiArm64:
     Type: String
     Default: ""
     Description: >-
       SlotAmiIdArm64 output of the 40-ec2-pool stack. Required only when Ec2SlotTypes
-      declares an arm64 class — the CP refuses to boot otherwise, rather than showing
-      a class in the admin UI that cannot launch.
+      declares an arm64 class — the CP refuses to boot otherwise.
   Ec2DefaultSlotClass:
     Type: String
     Default: ""
     Description: >-
-      The class id a member lands on with no per-user and no per-tenant value. Empty =
-      the first class declared in Ec2SlotTypes. ⚠️ Moving this on a running deployment
-      moves EVERY member who has not chosen for themselves, and each of their homes
-      then reinstalls its architecture-dependent tools on the next start.
+      The class id a member lands on with no per-user and no per-tenant value. Empty = the
+      first class in Ec2SlotTypes. ⚠️ Moving it moves EVERY member who has not chosen.
   Ec2MaxSlots:
     Type: String
     Default: "8"
     Description: >-
-      Hard cap on instances in the pool. A slot is one concurrently RUNNING workspace,
-      so size this like "how many people work at once", not "how many accounts exist".
-      Start fails with a clear error at the cap instead of growing the bill.
+      Hard cap on instances in the pool. A slot is one concurrently RUNNING workspace, so
+      size it like "how many people work at once". Start fails at the cap, clearly.
   Ec2HostReserveMb:
     Type: String
     Default: auto
     Description: >-
-      How much of a slot is held back from the WORKSPACE so the box's own daemons
-      (dockerd, containerd, the ECS agent, SSM, the EFS stunnel) cannot be starved by
-      it. "auto" = a fifth of the rung, clamped to 1-2 GiB: an 8 GiB slot's workspace is
-      capped at 6.4 GiB, and the Console prints that number with the box beside it.
-      "off" = uncapped, which is what every deployment did before this existed — and what
-      melted a live slot on 2026-08-27 (docs/log/64 section 64.40): one workspace took enough
-      anonymous memory that the kernel evicted all page cache, every daemon spent hours
-      re-reading its own executable off disk, and the box stopped answering the cluster
-      while still looking healthy to EC2. A plain number is that many MiB.
-      NOTE: this is part of the task definition, so changing it replaces the running task
-      at the owner's next start, exactly as an image change does.
+      How much of a slot is held back from the workspace so the box's own daemons cannot be
+      starved. auto = a fifth of the rung, clamped to 1-2 GiB; off = uncapped (what melted a
+      live slot on 2026-08-27); a number = that many MiB. PARAMETERS.md.
   Ec2SlotSleepSec:
     Type: String
     Default: "900"
     Description: >-
-      How long a slot may sit with no running task before the instance is STOPPED (not
-      terminated — the image cache lives on its root volume). NOT the same thing as the
-      idle-stop the product already has: AF_WS_IDLE_TIMEOUT / the per-tenant
-      ws_idle_timeout watches the PERSON and stops their WORKSPACE on every runtime,
-      while this one starts counting after that has happened and puts the BOX to sleep.
-      They run in series (person leaves -> workspace stops -> slot sleeps). A sleeping
-      slot costs only its root volume (~$9.6/month at 100 GiB) instead of ~$95 running,
-      and its owner wakes it in ~110s.
-      It governs BOTH kinds of dormant slot, from this one value: a slot still holding
-      its owner's home (which stays ATTACHED while the slot sleeps — that is what keeps
-      "the same user gets the same slot"), and a slot holding NO home at all, freed by an
-      eviction, a size/class change, a Destroy, or the golden bake. No warm spare is kept:
-      an empty RUNNING slot saves the next arrival ~67s and costs a full instance-hour,
-      and this deployment keeps the box STOPPED instead (docs/log/64 §64.31).
-      Set 0 to keep every slot running forever (fastest returns, highest bill).
+      How long a slot may sit with no running task before the instance is STOPPED (the image
+      cache lives on its root volume). Not the per-person idle-stop — this starts counting
+      after that. Sleeping ~$9.6/month vs ~$95 running; the owner wakes it in ~110s.
+      0 = keep every slot running forever. PARAMETERS.md.
   Ec2SlotTerminateAfterSec:
     Type: String
     Default: "0"
     Description: >-
-      The step AFTER Ec2SlotSleepSec on the same clock, and the only one that gives the
-      ROOT VOLUME back: past this the box is TERMINATED rather than left stopped.
-      Why you want it: nothing else ever removes a box, so the number of retained roots
-      only grows and its ceiling is Ec2MaxSlots. Raising Ec2MaxSlots to serve more people
-      therefore also signs you up for Ec2MaxSlots x SlotRootVolumeGiB of gp3, permanently
-      and whether or not anybody is working -- 30 x 40 GiB x $0.096/GB-month is ~$115 a
-      month of stopped boxes. Measured on a live deployment; the only cure was terminating
-      them by hand (docs/log/64 section 64.32).
-      What it costs your users: 25 seconds, once, and only for the first arrival after the
-      box is gone. Waking a dormant box that still holds its owner's home is 110s; building
-      a new one from scratch is 135s. The image cache on the root volume saves the 32s cold
-      pull, and instance boot plus ECS re-registration spends it again.
-      There is deliberately NO warm floor ("keep N stopped boxes"). A dormant box is only
-      reusable BY ITS OWNER -- for anybody else the wake, the attach and the mount SSM
-      round trip come to 123-143s against 135s for a fresh box -- so a shared warm box is
-      worth about nothing, and a floor would hold specific people's boxes through weekends
-      and shutdowns. The 92 seconds that IS worth buying belongs to a RUNNING free slot,
-      which costs ~$95/month, not $3.84.
-      0 (the default) = never terminate, which is what every deployment did before this
-      existed. 14400 (4h) is the recommended value: come back the same day and you get the
-      110s path, come back tomorrow and you pay 135s.
-      Must be >= Ec2SlotSleepSec to mean "sleep, then terminate"; a smaller value simply
-      skips the sleeping stage.
+      The step after Ec2SlotSleepSec on the same clock, and the only one that gives the ROOT
+      VOLUME back. 0 (default) = never terminate, so retained roots only grow to Ec2MaxSlots
+      × SlotRootVolumeGiB of gp3. 14400 (4h) is the recommended value; it costs the next
+      arrival 25s. Must be >= Ec2SlotSleepSec. PARAMETERS.md.
   Ec2HibernateAfterSec:
     Type: String
     Default: "0"
     Description: >-
-      The DEPLOYMENT DEFAULT for how long a home may sit unopened before it is
-      snapshotted and its volume deleted; the next start restores it (ADR 0045 decision 4
-      and 13-2). A tenant overrides it from the Console (Tenants > the tenant >
-      "Hibernate unused homes"), so this is only what a tenant that has not chosen gets.
-      ⚠️ This is the only automatic path in the product that moves a user's HOME, which
-      is why 0 (off) is the default and why it is reversible: hibernation snapshots
-      first and deletes only once the snapshot completes, so nothing is destroyed. What
-      the user pays is the restore on their next start (about 122s) and a slower first
-      day (restored blocks hydrate from S3 lazily, ~2.3x on first touch).
-      What it saves: a home is billed on PROVISIONED size ($0.096/GB-month) and a
-      snapshot on USED blocks ($0.05/GB-month), so a 50 GiB volume holding 20 GiB goes
-      from $4.80 to about $1.00 a month. Judge it by last-opened date, not by size.
-      Until this parameter existed the value could not be set on an ECS deployment at
-      all -- there was no CFN parameter and a hand-edited task definition is overwritten
-      by the next deploy. 2160h (90 days) is a reasonable starting point; leave it 0 and
-      set it per tenant if the retention is theirs to choose.
+      Deployment default for how long a home may sit unopened before it is snapshotted and
+      its volume deleted; the next start restores it (~122s). A tenant overrides it from the
+      Console. ⚠️ The only automatic path that moves a user's HOME — hence 0 (off) by
+      default, and it snapshots before deleting. 2160h (90d) is a sane start. PARAMETERS.md.
   Ec2HomeGiB:
     Type: String
     Default: "50"
     Description: >-
-      Default size of a user's persistent home volume (gp3). Unlike EFS this is billed
-      as PROVISIONED ($0.096/GB-month vs EFS $0.36 for what you use), so the break-even
-      fill rate is 26.7% — do not hand out volumes far larger than people fill.
+      Default size of a user's persistent home volume (gp3). Billed on PROVISIONED size, so
+      the break-even fill rate against EFS is 26.7% — do not over-provision.
   # --- Scheduled execution (docs/log/38) ------------------------------------
-  # ⚠️ EMPTY means "keep the product default" for all four. The defaults live in the CP
-  # (control-plane/main.go); copying them here would freeze this deployment on whatever
-  # they were the day the stack was written. Until these existed the values could not be
-  # set on an ECS deployment at all (a hand-edited task definition is overwritten by the
-  # next deploy) -- the same gap Ec2HibernateAfterSec closed.
+  # ⚠️ EMPTY means "keep the product default" for all four; the defaults live in the CP
+  # (control-plane/main.go). Copying them here would freeze this deployment on whatever they
+  # were the day the stack was written.
   SchedulerInterval:
     Type: String
     Default: ""
     Description: >-
       Tick cadence of the scheduled-execution loop (Go duration, default 1m). "0"
-      hard-disables timed execution: nothing is ever woken by the clock, the Console
-      hides the Schedules section and the operator warns that a schedule will never
-      fire. Set it only if unattended wakes are unwanted for cost or policy reasons; the
-      tick is one indexed due-query and is a no-op while no schedule exists.
+      hard-disables timed execution and the Console hides the Schedules section.
   ScheduleWakeTimeout:
     Type: String
     Default: ""
     Description: >-
       How long one fire waits for the woken workspace's Agent to answer (Go duration,
-      default 300s = the window the platform already grants a boot to call itself
-      "starting").
-      ⚠️ Do not lower this on ecs-ec2 without measuring. The clock starts at the WAKE,
-      ~20s before the adapter's own "Agent healthy Ns after Start" clock (the slot's
-      StartInstances, ECS registration and mount run in the background convergence), so
-      the budget is tighter than that log line reads. Measured: the SAME workspace took
-      65-131s on consecutive mornings, so a budget inside that spread makes a stopped
-      workspace's morning fire land or drop at random (docs/log/38, docs/log/64). A miss
-      is retried for 15 minutes, but each retry re-wakes the workspace.
+      default 300s). ⚠️ Do not lower this on ecs-ec2 without measuring — the clock starts
+      ~20s before the adapter's own, and the same workspace measured 65-131s. PARAMETERS.md.
   ScheduleSettle:
     Type: String
     Default: ""
     Description: >-
-      How long a workspace woken by a schedule is held up afterwards so the reaper
-      cannot stop it out from under the session it just started (Go duration, default
-      5m). Also covers auto-turn follow-ups and a user opening the Console right after.
+      How long a schedule-woken workspace is held up so the reaper cannot stop it out from
+      under the session it just started (Go duration, default 5m).
   ScheduleJitter:
     Type: String
     Default: ""
     Description: >-
-      Maximum deterministic spread applied to CRON fires so that everyone whose schedule
-      says 09:00 does not wake at once (Go duration, default 2m; "0" = fire on the exact
-      slot). Derived from the schedule id, so it is stable across restarts and next_run,
-      the read-back confirmation and {{time}} keep showing the requested time. On
-      ecs-ec2 every wake is also a slot, so keep some spread if many people share one
-      morning hour.
+      Deterministic spread applied to CRON fires so 09:00 does not wake everyone at once (Go
+      duration, default 2m; "0" = the exact slot). Derived from the schedule id, so next_run
+      and {{time}} still show the requested time.
 
   # --- WAF (optional, OFF by default) ---------------------------------------
-  # ⚠️ ONLY rate limiting and IP reputation. The signature rule sets (Core rule
-  # set, SQLi, XSS, LFI) are deliberately NOT offered here: this product carries
-  # SOURCE CODE AND SHELL COMMANDS in ordinary request bodies — chat messages,
-  # file writes, terminal input — so strings like `'; DROP TABLE`, `../../etc/passwd`
-  # and `<script>` are legitimate traffic. Those rules would 403 real work at
-  # random, and it would look like a product bug rather than a WAF decision (the
-  # expensive part is the hours spent before anyone suspects the WAF). WAF also
-  # inspects only the first 8 KB of a body by default, so a signature set here
-  # buys less than it appears to.
-  #
-  # The cheaper, stronger control for a private deployment is upstream of this:
-  # 00-network's AlbIngressCidr, which stops the traffic at the security group.
+  # ⚠️ ONLY rate limiting and IP reputation. The signature rule sets (Core rule set, SQLi,
+  # XSS, LFI) are deliberately NOT offered: this product carries source code and shell
+  # commands in ordinary request bodies, so they would 403 real work at random and look like
+  # a product bug. The stronger control is upstream — 00-network's AlbIngressCidr.
   WafRateLimitPer5Min:
     Type: Number
     Default: 0
     Description: >-
-      Requests per 5 minutes from one IP before WAF blocks it (0 = no WAF at all).
-      Counts every request including Console polling, so keep it well above what a
-      whole office behind one NAT produces — 3000 is a sane starting point.
+      Requests per 5 minutes from one IP before WAF blocks it (0 = no WAF at all). Counts
+      Console polling too, so keep it well above one office behind one NAT — 3000 to start.
   WafIpReputation:
     Type: String
     Default: "off"
     AllowedValues: [ "off", "on" ]
     Description: >-
-      Add AWS's managed IP reputation list (known scanners/botnets). Matches on the
-      SOURCE, not on the body, so it cannot mangle legitimate agent traffic.
-      Requires WafRateLimitPer5Min > 0 (that is what creates the web ACL).
+      Add AWS's managed IP reputation list (known scanners/botnets). Matches on the SOURCE,
+      not the body. Requires WafRateLimitPer5Min > 0 (that is what creates the web ACL).
   Fqdn:
     Type: String
     Description: >-
@@ -338,42 +189,19 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      Parent domain for the per-start preview subdomains (docs/81), e.g.
-      pv.example.com. A workspace start mints a random slug and its services become
-      reachable at https://{slug}-{port}.{PreviewDomain}, so a two-port setup such as
-      3000 and 8080 opens at each service's own root rather than under a sub-path.
-
-      Empty (the default) = the feature is OFF and nothing below is created; only
-      the existing path-mode /preview/{port} exists.
-
-      Only one label deep: an ACM wildcard certificate covers a single label, so the
-      port is folded into the label as `{slug}-{port}`. `{port}.{slug}....` would need
-      `*.*....`, which cannot be issued (ADR 0062 decision 2).
-
-      Make this a SIBLING of the Console's FQDN, not a child: pv.example.com next to
-      af.example.com. As a child (*.af.example.com), an app running in a preview could
-      set a domain cookie on .af.example.com and so overwrite or fixate the Console's
-      own cookie (ADR 0062 decision 13).
-
-      If the zone containing this name is neither HostedZoneId nor PreviewHostedZoneId,
-      ACM's DNS validation never completes and the stack stalls - it does not fail, it
-      simply stops making progress.
+      Parent domain for the per-start preview subdomains (docs/81), e.g. pv.example.com;
+      services become reachable at https://{slug}-{port}.{PreviewDomain}. Empty (default) =
+      the feature is off and only path-mode /preview/{port} exists. ⚠️ Use a SIBLING of the
+      Console FQDN, not a child (cookie scope — ADR 0062 決定 13), and make sure a zone you
+      pass here or in PreviewHostedZoneId contains it, or ACM validation never finishes and
+      the stack stalls rather than fails. PARAMETERS.md.
   PreviewHostedZoneId:
     Type: String
     Default: ""
     Description: >-
-      Route53 hosted zone id that contains PreviewDomain, when that is NOT the zone
-      the Console lives in. Empty (the default) = use HostedZoneId, which is right
-      whenever PreviewDomain sits inside the Console's own zone.
-
-      The sibling layout recommended above (ADR 0062 decision 13) falls outside the
-      Console's zone when that zone is itself a delegated subdomain (af.example.com is
-      one whole zone): pv.example.com then needs its own zone plus an NS delegation from
-      the parent, and that zone's id goes here. Without this parameter the recommended
-      layout cannot be expressed in this template at all.
-
-      The Console side (Cert / DnsRecord) always stays on HostedZoneId; this parameter
-      only affects the preview certificate's validation and its wildcard A record.
+      Route53 hosted zone id containing PreviewDomain, when that is NOT the Console's zone
+      (a delegated sibling zone). Empty = use HostedZoneId. Affects only the preview
+      certificate validation and the wildcard A record. PARAMETERS.md.
   CpPort:
     Type: Number
     Default: 8099
@@ -388,31 +216,11 @@ Parameters:
     Default: x86_64
     AllowedValues: [ x86_64, arm64 ]
     Description: >-
-      Which CPU architecture the Control Plane's own Fargate task runs on (docs/log/72).
-      arm64 = AWS Graviton: same task sizes, ~20% cheaper per vCPU-hour, and Service
-      Connect works on it (AWS added Fargate/Graviton support to Service Connect in
-      December 2022). Fargate platform version 1.4.0 or later is required, which
-      LATEST already is.
-
-      ⚠️ The prerequisite is the IMAGE, and there is exactly one: the tag in ImageTag
-      must carry an arm64 manifest. Releases publish one only when publish-dist is
-      run with control_plane_arm64 — it is off by default, so an ordinary release is
-      amd64-only and setting this to arm64 against it leaves the service unable to
-      place its task at all. Check before switching:
-
-        crane manifest <repo>/af-control-plane:<tag> | jq -r '.manifests[].platform'
-        (or: docker buildx imagetools inspect <repo>/af-control-plane:<tag>)
-
-      ⚠️ ImageTag is shared by the CP and the workspace image, and their architectures
-      are decided separately — this parameter for the CP, Ec2SlotTypes for the slots.
-      A deployment can perfectly well run an arm64 CP over x86_64 slots or the reverse;
-      neither reads the other's architecture.
-
-      This defaults to x86_64 rather than to "unset" on purpose. Fargate assigns X86_64
-      when runtimePlatform is omitted, so the default changes nothing about a running
-      deployment — but it is now WRITTEN DOWN. Left implicit, the day the image gains
-      an arm64 manifest is the day the architecture becomes a property of whatever
-      Fargate happened to pick, and nobody would see it in the template.
+      CPU architecture of the Control Plane's own Fargate task (docs/log/72). arm64 =
+      Graviton, ~20% cheaper per vCPU-hour. ⚠️ The one prerequisite is the IMAGE: the tag in
+      ImageTag must carry an arm64 manifest, and an ordinary release is amd64-only, so check
+      first or the service cannot place its task at all. Independent of the slots'
+      architecture (Ec2SlotTypes). PARAMETERS.md.
   SsmPrefix:
     Type: String
     Default: /af-cp
@@ -471,12 +279,11 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      AF_GITHUB_ALLOWED_ORGS — comma-separated GitHub orgs whose ACTIVE members may
-      sign in. Setting this is what enables the GitHub button; its OAuth App secret
-      must exist at <SsmPrefix>/github-client-secret, and the app needs the
-      redirect URI https://<Fqdn>/oauth2/callback. ★ If the org restricts
-      third-party OAuth apps, an org owner must approve the app or everyone is
-      rejected. docs/log/61 §61.7.
+      AF_GITHUB_ALLOWED_ORGS — comma-separated GitHub orgs whose ACTIVE members may sign in.
+      Setting this is what enables the GitHub button; its OAuth App secret must exist at
+      <SsmPrefix>/github-client-secret and the app needs the redirect URI
+      https://<Fqdn>/oauth2/callback. ★ An org that restricts third-party OAuth apps must
+      approve it or everyone is rejected. docs/log/61 §61.7.
   GithubClientId:
     Type: String
     Default: ""
@@ -487,10 +294,9 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      AF_GITHUB_ALLOWED_DOMAINS — strongly recommended. GitHub hands us the
-      account's PRIMARY VERIFIED address, which is a personal one for most people,
-      and a personal address is a different person here: they get a new empty
-      workspace rather than their own. Empty = the deployment-wide allowlist.
+      AF_GITHUB_ALLOWED_DOMAINS — strongly recommended. GitHub hands us the account's PRIMARY
+      VERIFIED address, personal for most people, and a personal address is a DIFFERENT
+      person here: they get a new empty workspace. Empty = the deployment-wide allowlist.
   AllowedEmails:
     Type: String
     Default: ""
@@ -508,22 +314,17 @@ Parameters:
     Default: ""
     Description: SUPER_ADMIN_EMAILS (comma-separated). Read once at task start and
       treated as the only source of truth - an account removed from this list also
-      loses the role in the database on the next start, so a handover completes for
-      somebody who never signs in again. Changing it needs a service redeploy.
+      loses the role in the database on the next start. Changing it needs a redeploy.
   AfProvision:
     Type: String
     Default: invite
     AllowedValues: [ invite, auto ]
     Description: >-
-      AF_PROVISION - what happens to somebody who signs in with no tenant membership
-      yet. invite (the default here) = they land on a "you haven't been invited yet"
-      page until an admin adds them; auto = they are given a membership of the default
-      tenant on the spot, so AF_OAUTH_ALLOWED_* is the only thing between a stranger
-      and a workspace. A tenant's own auto_join_domains is checked BEFORE either.
-      ★ Switching an existing stack to invite does NOT affect anyone already working:
-      an existing membership is consulted first, so this only stops NEW auto-admissions.
-      (The CP's built-in default is still auto - it is this template that starts closed,
-      so a deployment that never set it keeps its behaviour until you redeploy.)
+      AF_PROVISION - what happens to somebody who signs in with no tenant membership yet.
+      invite (the default here) = they wait for an admin; auto = they are given the default
+      tenant on the spot, so AF_OAUTH_ALLOWED_* is the only gate. A tenant's own
+      auto_join_domains is checked BEFORE either. Switching to invite does not evict anyone
+      already working. PARAMETERS.md.
   AuthMode:
     Type: String
     Default: oauth
@@ -537,12 +338,9 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      Where to send "the Control Plane cannot reach its database". Empty (the default)
-      = no topic and no alarm, and the only trace is the CP log. ⚠️ On 2026-09-01 that
-      was the whole problem: the database went away, /healthz kept answering 200, the
-      ALB target stayed healthy, ECS stayed at steady state, and nobody found out until
-      a person tried to use the product. The metric below is always collected; this
-      parameter is what makes it reach someone. Set it.
+      Where to send "the Control Plane cannot reach its database". Empty (the default) = no
+      topic and no alarm, and the only trace is the CP log. ⚠️ That is exactly how the
+      2026-09-01 outage stayed silent — /healthz kept answering 200. Set it.
 
 Conditions:
   # Each IdP's client secret is pulled from SSM, and a Secrets entry pointing at a
@@ -557,8 +355,8 @@ Conditions:
   HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
   # The rate limit is what creates the web ACL; reputation is an extra rule on it.
   HasPreviewDomain: !Not [ !Equals [ !Ref PreviewDomain, "" ] ]
-  # For putting the preview in another zone (a sibling needs a delegated zone of its own).
-  # Empty = the same zone as the Console, i.e. unchanged.
+  # プレビューを別ゾーンに置くとき（兄弟にするには委任した別ゾーンが要る）。空なら
+  # Console と同じゾーン ＝ 今までどおり。
   HasPreviewZone: !Not [ !Equals [ !Ref PreviewHostedZoneId, "" ] ]
   # Scheduled execution: each knob is passed ONLY when the operator set it, so an unset
   # parameter means "whatever the CP's own default is" rather than a copy frozen here.
@@ -674,10 +472,9 @@ Resources:
           TargetGroupArn: !Ref TargetGroup
 
   # --- preview subdomains (docs/81), only when PreviewDomain is set -----------
-  # Never touch the existing Cert: adding a SAN replaces the certificate, rebuilding the
-  # TLS the Console is serving today for the sake of adding previews. A listener can pick an
-  # extra certificate by SNI, so attach it as a second one — removing it is then just a
-  # detach (decision 4).
+  # ★ 既存の Cert には触らない。SAN を足す形は **証明書の置換**になり、Console が今
+  # 出せている TLS を「プレビューを足す」という理由で作り直すことになる。リスナーは
+  # SNI で追加証明書を選べるので、2 枚目として貼る（やめるときは外すだけ・決定 4）。
   PreviewCert:
     Type: AWS::CertificateManager::Certificate
     Condition: HasPreviewDomain
@@ -686,9 +483,8 @@ Resources:
       ValidationMethod: DNS
       DomainValidationOptions:
         - DomainName: !Sub "*.${PreviewDomain}"
-          # The zone the validation record `_xxx.{PreviewDomain}` is written into. The `*.`
-          # is stripped, so what is needed is the zone containing PreviewDomain itself, not
-          # the Console's zone.
+          # ★ 検証レコード `_xxx.{PreviewDomain}` を書くゾーン。`*.` は取れるので、
+          # 要るのは **PreviewDomain 自身を含むゾーン**であって Console のゾーンではない。
           HostedZoneId: !If [ HasPreviewZone, !Ref PreviewHostedZoneId, !Ref HostedZoneId ]
 
   PreviewListenerCert:
@@ -699,11 +495,10 @@ Resources:
       Certificates:
         - CertificateArn: !Ref PreviewCert
 
-  # One wildcard covers every Workspace and every port. Do not write a record per Workspace:
-  # that adds an API round trip and a propagation wait to every start, and runs into the
-  # record-count quota. Zero issuing cost and zero propagation wait are one of the few plain
-  # wins of the host-based scheme, and giving that up leaves only the complexity
-  # (decision 5).
+  # ワイルドカード 1 本で全 Workspace・全ポートを受け持つ。★ Workspace ごとに
+  # レコードを書く設計にはしない —— 起動のたびに API 往復と伝播待ちが乗り、レコード数の
+  # クォータにも当たる。発行コスト 0・伝播待ち 0 がホスト方式の数少ない「ただの得」で、
+  # そこを崩すと残るのは複雑さだけになる（決定 5）。
   PreviewDnsRecord:
     Type: AWS::Route53::RecordSet
     Condition: HasPreviewDomain
@@ -870,14 +665,14 @@ Resources:
             # to be TOLD, because it cannot tell — without this, r.RemoteAddr is the load
             # balancer and every request looks like it comes from the same private
             # address. That is what a tenant's source-network restriction is matched
-            # against (docs/log/66, ADR 0047 decision 2), so a wrong value here is either "the
+            # against (docs/log/66, ADR 0047 決定 2), so a wrong value here is either "the
             # rule never matches anyone" or "the rule matches everyone".
             - { Name: AF_TRUSTED_PROXY_HOPS, Value: "1" }
             - { Name: AUTH, Value: !Ref AuthMode }
             - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
             - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
-            # docs/81: the parent of the preview subdomains. Empty means the CP registers no
-            # host-based routing at all and only the path-based scheme remains.
+            # docs/81: プレビュー用サブドメインの親。空なら CP はホスト方式の振り分けを
+            # 一切登録しない（従来のパス方式だけが残る）。
             - { Name: AF_PREVIEW_DOMAIN, Value: !Ref PreviewDomain }
             - { Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId }
             - { Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails }
@@ -903,7 +698,7 @@ Resources:
             # still owns the Bitbucket callback and derives it from PUBLIC_BASE_URL above.
             # AF_RUNTIME=ecs = the P3-7 stage-2 adapter (Fargate). AF_RUNTIME=ecs-ec2
             # keeps the same substrate but puts workspaces on a pool of EC2 slots with a
-            # persistent per-user EBS home (docs/log/64, ADR 0045 decision 10) — deploy the
+            # persistent per-user EBS home (docs/log/64, ADR 0045 決定 10) — deploy the
             # 40-ec2-pool stack and set WsRuntime=ecs-ec2 + Ec2SlotLaunchTemplate.
             # Rolling back is this one parameter. The AF_ECS_* below are shared by both.
             - { Name: AF_RUNTIME, Value: !Ref WsRuntime }

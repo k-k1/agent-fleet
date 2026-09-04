@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, TouchEvent as RTouchEvent, SyntheticEvent } from "react";
+import type { ScrollMemoryRef } from "./parts/useScrollMemory.ts";
 
 // CodeView renders highlighted code with an optional line-number gutter and a
 // VSCode-style minimap on the right edge: a scaled-down PLAIN-TEXT mirror of the file
@@ -68,6 +69,9 @@ interface CodeViewProps {
   marks?: LineMarks | null;
   targetLine?: number;
   targetColumn?: number;
+  /** 表示位置の記憶（parts/useScrollMemory）。スクロールするのは .codeview なので、
+   *  内側の ref と束ねてここへ渡す。面ごとに同一性が固定された関数が来る前提。 */
+  scrollMemory?: ScrollMemoryRef;
 }
 
 // Memoised: FileView re-renders on every text-selection change (to position the 送る/
@@ -75,7 +79,7 @@ interface CodeViewProps {
 // across those renders. Without memo, each Shift+↓ rebuilt all N line rows and forced the
 // browser to re-evaluate the live selection inside the contentEditable — so holding the
 // key got progressively slower. memo skips the grid entirely when only `sel` changed.
-export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap, minimap, marks, targetLine }: CodeViewProps) {
+export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap, minimap, marks, targetLine, scrollMemory }: CodeViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const miniInnerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -276,9 +280,23 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
   // island so the caret never lands on a number.
   const preventEdit = useCallback((e: SyntheticEvent) => e.preventDefault(), []);
 
+  // 内側の ref（ミニマップの計算）と外から来た表示位置の記憶を 1 つの ref に束ねる。
+  // 記憶側は React 19 の ref クリーンアップを返すので、それも畳んで返す。
+  const attachScroll = useCallback(
+    (el: HTMLDivElement) => {
+      scrollRef.current = el;
+      const detach = scrollMemory?.(el);
+      return () => {
+        scrollRef.current = null;
+        detach?.();
+      };
+    },
+    [scrollMemory],
+  );
+
   return (
     <div className="codeview-wrap">
-      <div className={"codeview" + (wrap ? " wrap" : "")} ref={scrollRef}>
+      <div className={"codeview" + (wrap ? " wrap" : "")} ref={attachScroll}>
         <div
           className={"codegrid" + (showGutter ? "" : " no-gutter")}
           contentEditable

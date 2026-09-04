@@ -35,6 +35,17 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   } as unknown as typeof ResizeObserver;
 }
 
+// jsdom は Blob の URL を作れない（URL.createObjectURL が未実装）。添付を抱える
+// コンポーサーは貼り付けた瞬間にこれを呼ぶので、無いと mount そのものが落ちる。
+// 割り当てた URL を数え上げるだけの器を置く — 中身は解決されないので、実際に画像が
+// 出るかはここでは測れない（それは本物のブラウザの仕事）。取り違え・解放漏れは
+// 「どの URL が作られ、どれが revoke されたか」で検証できる。
+if (typeof URL !== "undefined" && typeof URL.createObjectURL !== "function") {
+  let n = 0;
+  URL.createObjectURL = () => `blob:af-test/${++n}`;
+  URL.revokeObjectURL = () => {};
+}
+
 // matchMedia も無い。device.ts はガード無しで呼ぶし、xterm も open() の中で
 // devicePixelRatio を取るために叩く（無いと Terminal.open が例外で死ぬ）。常に
 // matches:false = デスクトップ／細ポインタ相当を返すだけの器を置く — jsdom には
