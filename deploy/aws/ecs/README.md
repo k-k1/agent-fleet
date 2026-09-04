@@ -416,7 +416,7 @@ It does the three things the hand-typed sequence gets wrong:
   when to take that is their call.
 - **Points out a golden snapshot left behind** (`ecs-ec2` only). A golden baked from
   the previous image is not used at all — the CP builds new users' homes empty
-  instead (ADR 0045 決定 9), which is not a failure, just a slow first start that
+  instead (ADR 0045 decision 9), which is not a failure, just a slow first start that
   nothing but the CP log mentions. With auto-bake on (the default) the CP replaces it
   within a few minutes of the deploy, as long as two slots are free; the pool panel
   says so while it is happening. Otherwise re-bake with `bake-golden.sh`.
@@ -541,7 +541,7 @@ Teardown → stand-up had never been done end to end. It has now, on the dev dep
 | `standup.sh` 00 → 10 → 20 → images → 40 → 30 | `30-ingress` went through S3, `CREATE_COMPLETE` |
 | CP boot | `metadata store: postgres`, `/readyz` 200 |
 | Agent, both architectures | golden bake booted real workspaces: `Agent healthy` 99 s (arm64) / 101 s (x86_64) |
-| CP → Agent | the Cloud Map fallback fired and succeeded: `Service Connect の別名で引けなかった → Cloud Map の 10.20.x.x:7700 を使う` |
+| CP → Agent | the Cloud Map fallback fired and succeeded: `did not resolve through the Service Connect alias -> using 10.20.x.x:7700 from Cloud Map` |
 | `teardown.sh` | 5 stacks gone; sweep and an independent count both show 0 stacks / 0 NAT / 0 RDS / 0 ALB / 0 EC2 / 0 EFS / 0 ECR |
 
 ⚠️ **Check `/readyz`, not `/healthz`.** `/healthz` answers 200 with a dead database — that is
@@ -567,7 +567,7 @@ A deployment egresses from **exactly one address**: the Elastic IP on `00-networ
 NAT gateway. Everything outbound goes through it — every workspace's git, model API
 and package traffic, and the CP's own calls — because the slots and the CP task sit
 in private subnets with **no public IPv4** (`AssignPublicIp: DISABLED`; the slot
-launch template deliberately assigns none, ADR 0045 決定 3-3) and the only VPC
+launch template deliberately assigns none, ADR 0045 decision 3-3) and the only VPC
 endpoint is the free S3 gateway. So this is the value to hand to a corporate
 firewall or a SaaS IP allow-list.
 
@@ -752,11 +752,11 @@ starts a slot in the AZ that user's home is already in.
 1. **Every AZ you list in `AF_ECS_SUBNETS` needs its own EFS mount target**, or a task
    landing there cannot mount the credentials filesystem and never comes up.
 2. **New homes are spread across the AZs you list**, fewest-homes-first, so losing one AZ
-   does not take out everybody (ADR 0045 決定 16). It costs slots: a home in one AZ can only
+   does not take out everybody (ADR 0045 decision 16). It costs slots: a home in one AZ can only
    use a slot in that AZ, so free slots elsewhere are no use to it and the pool grows
    instead of reusing. Reusing a free slot still wins over balancing. If an AZ runs out of
    the slot type, a **new** home falls back to another; an **existing** one fails, because
-   it cannot move (決定 15).
+   it cannot move (decision 15).
 3. **To move someone to another AZ there is no "move".** Hibernate their home and start it
    again with free capacity only where you want them — the snapshot has no AZ. docs/log/64
    §64.20.7 has the runbook, including the AWS CLI form for moving one person to a
@@ -780,7 +780,7 @@ EFS, and a home that really survives) and **sizes above Fargate's 16 vCPU / 120 
 Slots are not owned by anyone: on Start the CP picks a free one, attaches that user's
 volume at `/dev/sdf`, mounts it over SSM and pins the task there with an
 `ec2InstanceId ==` placement constraint; on Stop it unmounts, detaches and hands the slot
-back. **One slot serves one user at a time** (`ADR 0045` 決定 8).
+back. **One slot serves one user at a time** (`ADR 0045` decision 8).
 
 | | Fargate (`ecs`) | EC2 pool (`ecs-ec2`) |
 |---|---|---|
@@ -815,7 +815,7 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `Ec2HibernateAfterSec` | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant overrides it from the Console. Nothing is destroyed — the snapshot completes before the volume goes, and the next start restores it. See below |
 | `Ec2HostReserveMb` | `AF_ECS_EC2_HOST_RESERVE_MB` | `auto` | How much of a slot is held back from the workspace so the box's own daemons cannot be starved by it. `auto` = a fifth of the rung, clamped to 1–2 GiB, which puts an 8 GiB slot's workspace at 6.4 GiB. `off` = uncapped (what every deployment did before 0.12.5, and what melted one). See below |
 | — | `AF_ECS_EC2_SLOT_LOST_AFTER_SEC` | `300` | How long a slot may be EC2-`running` while the cluster cannot reach its agent before the CP gives up on it and rebuilds the workspace elsewhere. `0` = wait as long as the caller allows |
-| — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 決定 9-1). Set `0` and it becomes your job on every release |
+| — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 decision 9-1). Set `0` and it becomes your job on every release |
 | — | `AF_ECS_EC2_GOLDEN_BAKE_SEC` | `60` | How often the baker looks. It advances one step per look, so this is also how fast a bake progresses |
 
 **What a workspace actually gets (`Ec2HostReserveMb`).** A slot's memory is not all the
@@ -908,13 +908,13 @@ at, whether or not anyone opens it. With this enabled, a home that nobody has op
 that long is captured as a snapshot and its volume deleted; the owner's next Start rebuilds
 it from the snapshot. For a 20 GiB-used / 50 GiB-provisioned home that is
 **$4.80 → $1.00 a month**, against ~122s on the return and a slightly slower first day
-(ADR 0045 決定 4).
+(ADR 0045 decision 4).
 
 - **It hibernates; it never destroys.** This is the only automatic path in the product that
   moves someone's home, so it stays reversible — and off by default.
 - It is a **third** timer after the two above: the person goes idle → the workspace stops →
   the slot sleeps → (days later) the home becomes a snapshot. Set it in days, not minutes.
-- **Per tenant, with this env as the deployment default** (ADR 0045 決定 14).
+- **Per tenant, with this env as the deployment default** (ADR 0045 decision 14).
   Settings → Admin → a tenant → *Hibernate unused homes* takes a duration string
   (`720h`); empty follows this env and `0` means never for that tenant. The trigger lives
   in the idle-stop reaper, so **`AF_IDLE_SWEEP_INTERVAL=0` disables hibernation too**.
@@ -953,11 +953,11 @@ measured) — and makes the slot **slower overall**, because a private AMI's roo
 loaded from a fresh snapshot: the box took ~56s longer to join the cluster and a new user's
 first start measured **179–192s against 144s** on the stock ECS-optimized AMI. The script
 and the CP-side reporting were removed rather than left as a not-recommended option; the
-measurement and the reasoning are in docs/log/64 §64.24 / ADR 0045 決定 19. **`SlotAmiId` stays
+measurement and the reasoning are in docs/log/64 §64.24 / ADR 0045 decision 19. **`SlotAmiId` stays
 at its default** (the ECS-optimized AMI's SSM parameter — re-deploying this stack is how
-slots get patched, 決定 7).
+slots get patched, decision 7).
 
-**A slot that cannot mount a home is quarantined** (`af-role=quarantined`, ADR 0045 決定 20):
+**A slot that cannot mount a home is quarantined** (`af-role=quarantined`, ADR 0045 decision 20):
 it leaves the pool so nobody else lands on it, its home is detached and freed for another
 slot, and the box is stopped. It stays on the Slots tab with the reason, because it still
 holds its root volume — **terminate it yourself** once you have taken what you need from
@@ -966,9 +966,9 @@ wedged kernel holding a deleted volume's NVMe namespace, which no amount of retr
 
 **Golden snapshot: skip boot-install for new users.** A brand-new home pays boot-install
 (4 CLIs 41s + rtk 1s + agy 6s = 48s) and a cold npm cache. Bake one home that has already
-paid it and every later user starts from that copy (ADR 0045 決定 9).
+paid it and every later user starts from that copy (ADR 0045 decision 9).
 
-**The CP does this by itself** (決定 9-1, `AF_ECS_EC2_GOLDEN_AUTOBAKE=0` to switch off).
+**The CP does this by itself** (decision 9-1, `AF_ECS_EC2_GOLDEN_AUTOBAKE=0` to switch off).
 When the image it runs has no golden, it boots a reserved seed through the ordinary Start
 path, captures its home as a *candidate*, boots a second reserved member from that
 candidate, and only publishes it once that one comes up. It will not start while the pool

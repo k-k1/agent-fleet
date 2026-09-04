@@ -9,9 +9,10 @@ Description: >-
   its MetadataStore is RDS Postgres (stage 3a) so state survives task replacement.
 
 Parameters:
-  # ★ 一行では収まらない説明は隣の PARAMETERS.md にある（計測値・トレードオフ・罠）。
-  # ここが短いのは手抜きではなく上限 51,200 バイトのため —— YAML のコメントも Description と
-  # 同じだけ本文に数えられるので、長い説明は「# に移す」では減らず、ファイルの外へ出すしかない。
+  # Anything too long for one line is in PARAMETERS.md next door (measurements, trade-offs,
+  # traps). These are terse because of the 51,200-byte template limit: a YAML comment counts
+  # toward the body exactly like a Description, so moving prose into a `#` does not shrink
+  # the template — only moving it out of the file does.
   NetworkStackName:
     Type: String
     Default: af-ecs-network
@@ -192,7 +193,7 @@ Parameters:
       Parent domain for the per-start preview subdomains (docs/81), e.g. pv.example.com;
       services become reachable at https://{slug}-{port}.{PreviewDomain}. Empty (default) =
       the feature is off and only path-mode /preview/{port} exists. ⚠️ Use a SIBLING of the
-      Console FQDN, not a child (cookie scope — ADR 0062 決定 13), and make sure a zone you
+      Console FQDN, not a child (cookie scope — ADR 0062 decision 13), and make sure a zone you
       pass here or in PreviewHostedZoneId contains it, or ACM validation never finishes and
       the stack stalls rather than fails. PARAMETERS.md.
   PreviewHostedZoneId:
@@ -355,8 +356,8 @@ Conditions:
   HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
   # The rate limit is what creates the web ACL; reputation is an extra rule on it.
   HasPreviewDomain: !Not [ !Equals [ !Ref PreviewDomain, "" ] ]
-  # プレビューを別ゾーンに置くとき（兄弟にするには委任した別ゾーンが要る）。空なら
-  # Console と同じゾーン ＝ 今までどおり。
+  # Set when the preview name lives in another zone (a sibling needs its own delegated
+  # zone). Empty = the Console's zone, as before.
   HasPreviewZone: !Not [ !Equals [ !Ref PreviewHostedZoneId, "" ] ]
   # Scheduled execution: each knob is passed ONLY when the operator set it, so an unset
   # parameter means "whatever the CP's own default is" rather than a copy frozen here.
@@ -472,9 +473,10 @@ Resources:
           TargetGroupArn: !Ref TargetGroup
 
   # --- preview subdomains (docs/81), only when PreviewDomain is set -----------
-  # ★ 既存の Cert には触らない。SAN を足す形は **証明書の置換**になり、Console が今
-  # 出せている TLS を「プレビューを足す」という理由で作り直すことになる。リスナーは
-  # SNI で追加証明書を選べるので、2 枚目として貼る（やめるときは外すだけ・決定 4）。
+  # Never touch the existing Cert: adding a SAN replaces the certificate, rebuilding the TLS
+  # the Console already serves just to add previews. A listener can pick extra certificates
+  # by SNI, so attach this as a second one — turning previews off is then only a removal
+  # (decision 4).
   PreviewCert:
     Type: AWS::CertificateManager::Certificate
     Condition: HasPreviewDomain
@@ -483,8 +485,9 @@ Resources:
       ValidationMethod: DNS
       DomainValidationOptions:
         - DomainName: !Sub "*.${PreviewDomain}"
-          # ★ 検証レコード `_xxx.{PreviewDomain}` を書くゾーン。`*.` は取れるので、
-          # 要るのは **PreviewDomain 自身を含むゾーン**であって Console のゾーンではない。
+          # The zone the validation record `_xxx.{PreviewDomain}` is written into. The
+          # `*.` is stripped, so what is needed is the zone containing PreviewDomain
+          # itself, not the Console's zone.
           HostedZoneId: !If [ HasPreviewZone, !Ref PreviewHostedZoneId, !Ref HostedZoneId ]
 
   PreviewListenerCert:
@@ -495,10 +498,10 @@ Resources:
       Certificates:
         - CertificateArn: !Ref PreviewCert
 
-  # ワイルドカード 1 本で全 Workspace・全ポートを受け持つ。★ Workspace ごとに
-  # レコードを書く設計にはしない —— 起動のたびに API 往復と伝播待ちが乗り、レコード数の
-  # クォータにも当たる。発行コスト 0・伝播待ち 0 がホスト方式の数少ない「ただの得」で、
-  # そこを崩すと残るのは複雑さだけになる（決定 5）。
+  # One wildcard covers every workspace and every port. Never write a record per workspace:
+  # that puts an API round trip and a propagation wait on every start and runs into the
+  # record-count quota. Zero issuance cost and zero propagation wait are the one plain win
+  # host mode has, and giving it up leaves only the complexity (decision 5).
   PreviewDnsRecord:
     Type: AWS::Route53::RecordSet
     Condition: HasPreviewDomain
@@ -665,14 +668,14 @@ Resources:
             # to be TOLD, because it cannot tell — without this, r.RemoteAddr is the load
             # balancer and every request looks like it comes from the same private
             # address. That is what a tenant's source-network restriction is matched
-            # against (docs/log/66, ADR 0047 決定 2), so a wrong value here is either "the
+            # against (docs/log/66, ADR 0047 decision 2), so a wrong value here is either "the
             # rule never matches anyone" or "the rule matches everyone".
             - { Name: AF_TRUSTED_PROXY_HOPS, Value: "1" }
             - { Name: AUTH, Value: !Ref AuthMode }
             - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
             - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
-            # docs/81: プレビュー用サブドメインの親。空なら CP はホスト方式の振り分けを
-            # 一切登録しない（従来のパス方式だけが残る）。
+            # docs/81: parent domain for the preview subdomains. Empty and the CP registers
+            # no host-mode routing at all (only the existing path mode remains).
             - { Name: AF_PREVIEW_DOMAIN, Value: !Ref PreviewDomain }
             - { Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId }
             - { Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails }
@@ -698,7 +701,7 @@ Resources:
             # still owns the Bitbucket callback and derives it from PUBLIC_BASE_URL above.
             # AF_RUNTIME=ecs = the P3-7 stage-2 adapter (Fargate). AF_RUNTIME=ecs-ec2
             # keeps the same substrate but puts workspaces on a pool of EC2 slots with a
-            # persistent per-user EBS home (docs/log/64, ADR 0045 決定 10) — deploy the
+            # persistent per-user EBS home (docs/log/64, ADR 0045 decision 10) — deploy the
             # 40-ec2-pool stack and set WsRuntime=ecs-ec2 + Ec2SlotLaunchTemplate.
             # Rolling back is this one parameter. The AF_ECS_* below are shared by both.
             - { Name: AF_RUNTIME, Value: !Ref WsRuntime }
