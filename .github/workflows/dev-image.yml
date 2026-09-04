@@ -53,6 +53,10 @@ on:
         description: 'workspace only: bake the agent CLIs into the image (internal, fat) instead of pin-installing them at start'
         type: boolean
         default: false
+      bake_optional_tools:
+        description: 'workspace only: bake chromium / CJK fonts / Go / awscli / ops MCP servers. UNCHECK to build the lean branch the native rootfs uses — nothing else in CI ever builds it (docs/decisions/0068)'
+        type: boolean
+        default: true
 
 concurrency:
   group: dev-image-${{ inputs.tag }}
@@ -103,6 +107,13 @@ jobs:
           CP_PLATFORMS: ${{ (inputs.image != 'workspace') && inputs.platforms || '' }}
           WS_PLATFORMS: ${{ (inputs.image != 'control-plane') && inputs.platforms || '' }}
           BAKE_AGENT_CLIS: ${{ inputs.bake_agent_clis && '1' || '0' }}
+          # ⚠️ The lean branch (0) is the one nothing else in CI builds: e2e.yml always
+          # bakes with the default 1, and the only other caller is a real release
+          # (deploy/release/build.sh, for the native rootfs). A change that breaks only
+          # that branch therefore ships with every check green — which is exactly what
+          # the Debian 13 move would have done via the t64 package renames
+          # (docs/decisions/0068 決定 7). Uncheck the input to exercise it here.
+          BAKE_OPTIONAL_TOOLS: ${{ inputs.bake_optional_tools && '1' || '0' }}
         run: |
           set -euo pipefail
           case "${{ inputs.image }}" in
