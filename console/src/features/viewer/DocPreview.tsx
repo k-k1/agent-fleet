@@ -12,6 +12,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { MarkdownView } from "./MarkdownView.tsx";
 import { anydocFailure, toMarkdown, type AnydocFailure, type AnydocFormat } from "./anydoc.ts";
+import type { ScrollMemoryRef } from "./parts/useScrollMemory.ts";
 
 /** これより大きいファイルは変換に回さない。WASM は全体をメモリに載せるので、
  *  巨大な添付でタブごと落とすより、ダウンロードへ誘導する方が正直。 */
@@ -28,6 +29,8 @@ interface DocPreviewProps {
   basePath?: string;
   onOpenFile?: (path: string, line?: number, column?: number, openInNew?: boolean) => void;
   onOpenDir?: (path: string) => void;
+  /** 表示位置の記憶（parts/useScrollMemory）。スクロールするのは .md-scroll。 */
+  scrollMemory?: ScrollMemoryRef;
 }
 
 type State =
@@ -35,7 +38,7 @@ type State =
   | { phase: "ready"; markdown: string }
   | { phase: "failed"; reason: AnydocFailure | "too_large" };
 
-export function DocPreview({ src, format, size, basePath, onOpenFile, onOpenDir }: DocPreviewProps) {
+export function DocPreview({ src, format, size, basePath, onOpenFile, onOpenDir, scrollMemory }: DocPreviewProps) {
   const tr = useT();
   const [state, setState] = useState<State>({ phase: "loading" });
   const boxRef = useRef<HTMLDivElement>(null);
@@ -97,7 +100,7 @@ export function DocPreview({ src, format, size, basePath, onOpenFile, onOpenDir 
       <p className="docpreview-note">
         <Icon name="info" /> {tr("view.doc.simple_preview_note")}
       </p>
-      <div className="md-scroll">
+      <div className="md-scroll" ref={scrollMemory}>
         <MarkdownView source={state.markdown} basePath={basePath} onOpenFile={onOpenFile} onOpenDir={onOpenDir} />
       </div>
     </div>
