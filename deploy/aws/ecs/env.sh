@@ -172,6 +172,57 @@ af_stack_output() {
   echo "$v"
 }
 
+# --- 復旧点（控えの AF_IMAGE_TAG）が実在するか --------------------------------
+#
+# 🔥 **控えは「引数が揃っていること」しか保証しない。指しているイメージが在ることは
+# 保証しない。** 3 つが揃って初めて成立する形で、単独ではどれも罠に見えない:
+#
+#   1. `dev-deploy.sh` は workspace を焼き直さない回、**ECR の中で再タグするだけ**
+#      （crane copy <ecr>:旧 <ecr>:新）。その新タグの workspace は **GHCR に無い**。
+#   2. `capture-env.sh` は控えに `AF_IMAGE_TAG` を書くが、`OUT` が既にあると
+#      `--force` なしでは**黙って古いまま**（ImageTag は dev-deploy のたびに動く）。
+#   3. `cfn/20-platform.yaml` の ECR は **EmptyOnDelete: true** ＝撤収でイメージごと消える。
+#
+# ⇒ **控えのファイルは何事もなく存在し続けるのに、指しているタグの実体はどこにも無い。**
+# 立て直しの `standup.sh` は preflight で止まるので無言ではない（それは救い）が、
+# 止まった時点では**もう戻す材料が無い**。だから「控えを腐らせない」側に置く。
+AF_GHCR_DEFAULT="${AF_DEV_GHCR:-ghcr.io/k-k1/agent-fleet}"
+
+# af_ghcr_has <repo> <tag> — GHCR にそのタグが在るか。
+#   0=在る / 1=無い / 2=**判定できなかった**（crane が無い等）。
+# ⚠️ 2 を 1（無い）に丸めないこと —— 「道具が無くて測れなかった」と「測ったら無かった」は
+# 別の事実で、前者を後者として扱うと**在るものを「消える」と言って撤収を止める**。
+af_ghcr_has() {
+  command -v crane >/dev/null 2>&1 || return 2
+  crane manifest "$AF_GHCR_DEFAULT/$1:$2" >/dev/null 2>&1 && return 0
+  return 1
+}
+
+# af_image_recoverable <tag> — 撤収で ECR が空になっても、そのタグを**もう一度
+# 引ける**か。control-plane と workspace の**両方**が要る（片方だけでは立たない）。
+#   yes / no / unknown を印字する。
+af_image_recoverable() {
+  local tag="$1" cp ws
+  af_ghcr_has control-plane "$tag"; cp=$?
+  af_ghcr_has workspace "$tag";     ws=$?
+  if [ "$cp" = 2 ] || [ "$ws" = 2 ]; then echo unknown; return 0; fi
+  if [ "$cp" = 0 ] && [ "$ws" = 0 ]; then echo yes; else echo no; fi
+}
+
+# af_env_set <key> <value> — 控えの env の 1 行だけを差し替える（無ければ足す）。
+# ★ 書き直すのは 1 行だけ。**全部を書き直すと AF_DEV_DEPLOY の印のような
+# 「AWS 側に無い情報」を落とす**（capture-env.sh が --force のときに保存しているのと同じ理由）。
+af_env_set() {
+  local key="$1" val="$2" f="$AF_ENV_DIR/env"
+  [ -w "$f" ] || return 0
+  if grep -q "^$key=" "$f"; then
+    local tmp="$f.tmp.$$"
+    sed "s|^$key=.*|$key=$val|" "$f" > "$tmp" && cat "$tmp" > "$f" && rm -f "$tmp"
+  else
+    echo "$key=$val" >> "$f"
+  fi
+}
+
 # --- CFN テンプレートの受け渡し（51,200 バイトの壁） -------------------------------
 #
 # 🔥 CloudFormation はテンプレート本文が **51,200 バイト**を超えると受け取らない。超える分は

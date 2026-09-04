@@ -20,16 +20,41 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { checker, serveDir, sleep, startBrowser, until } from "../lib/headless.mjs";
+import { checker, resolveChromium, serveDir, sleep, startBrowser, until } from "../lib/headless.mjs";
 
 const REPO = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const CONSOLE = path.join(REPO, "console");
 const PDFJS = path.join(CONSOLE, "node_modules/pdfjs-dist");
-const CHROMIUM = process.env.CHROMIUM || "/usr/bin/chromium";
+const CHROMIUM = resolveChromium();
+const PDFJS_VERSION = JSON.parse(fs.readFileSync(path.join(PDFJS, "package.json"), "utf8")).version;
+const ASSET_PREFIX = `/assets/pdfjs/${PDFJS_VERSION}/`;
 const shotArg = process.argv.indexOf("--screenshot");
 const SHOT = shotArg > 0 ? process.argv[shotArg + 1] : "";
 
 const { check, report } = checker();
+
+// 「描かれた画素」の数え方。**判定 2 と 7 で同じ式を使う**（片方だけ直すと、もう片方が
+// 同じ形で嘘をつく —— 実際、下の欠陥は develop から在って両方に当たっていた）。
+//
+// 🔴 **α を見ないと、未描画の canvas（透明 = rgba(0,0,0,0)）を「全部インク」と数える。**
+// `d[i] < 200` は 0 に当たってしまうからで、**PdfView が canvas に幅を与えてから
+// pdf.js が塗るまでの隙間で ink が 100% を返す**。`until()` は閾値を超えた最初の値で
+// 返すので、**描画も通信も待たずに次へ進み、アセットを取りに行く前に requests を読む**
+// ＝**偽の赤**（実測 2026-09-04: ~29 回に 1 回・`要求 0 件` ＋ `ink=100.00%`。正常時 4.39%）。
+// ⚠️ **`until` の締切を伸ばしても直らない。早く返るのが問題である。**
+// ⇒ **不透明（α ≥ 250）かつ白でない画素だけを数える。**下の判定 0 が合成の canvas で
+// この式そのものを検査する（式が壊れたら、家系ではなく式のほうが赤くなる）。
+const INK_FN = `((el) => {
+  if (!el || !el.width || !el.height) return -1;
+  const d = el.getContext('2d').getImageData(0, 0, el.width, Math.min(el.height, 400)).data;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] < 250) continue;                                  // 未描画・半透明は数えない
+    if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) n++;       // 白でなければインク
+  }
+  return n / (d.length / 4);
+})`;
+const inkOf = (sel) => `${INK_FN}(document.querySelector(${JSON.stringify(sel)}))`;
 
 // ---- 作業ディレクトリ -------------------------------------------------------
 const www = fs.mkdtempSync(path.join(os.tmpdir(), "af-pdfcheck-"));
@@ -56,6 +81,51 @@ async function makeSamplePdf() {
   // 壊れた PDF: 署名だけ本物で中身が無い。pdf.js は InvalidPDFException を返す。
   fs.writeFileSync(path.join(www, "broken.pdf"), Buffer.from("%PDF-1.7\n" + "0".repeat(512)));
   return out;
+}
+
+// ---- 標本 2: **同梱アセットが要る** PDF（フォントを埋め込まない）--------------
+//
+// 🔴 上の sample.pdf は chromium が焼くので**フォントを全部埋め込む**。だから pdf.js は
+// cMap も標準14フォントも 1 度も取りに来ず、**bundle() のアセットのコピーを丸ごと
+// 消しても 11 件すべて OK のまま通っていた**（2026-09-04 実測。配信側の記録で
+// `/assets/pdfjs/<version>/` への要求が 0 件だと分かった）。
+// 同梱アセットが守っているのは pdfjs.ts:11 が書いているとおり
+// 「**埋め込みの無い**日本語 PDF が化けない／空白にならない」ことなので、
+// その形の標本をここで手で組む（リポジトリにバイナリを置かない方針は sample.pdf と同じ）:
+//   - `/UniJIS-UCS2-H`（定義済み CMap・CIDFontType0 の埋め込み無し）→ cmaps/*.bcmap
+//   - `/Symbol`（標準14・埋め込み無し）→ standard_fonts/*.pfb
+// ⚠️ **`/Helvetica` では standard_fonts を取りに来ない**（2026-09-04 実測: 要求は cmaps の
+// 2 件だけ）。pdf.js は base-14 のうち代替できるものをシステムフォントで賄うので、
+// **代替の効かない `/Symbol` を入れて初めて standard_fonts が要求される**（3 件になる）。
+// ——「アセットを取りに来る標本」を用意したつもりで、片方しか踏んでいない形。
+// 中身は ASCII だけ（CJK は 16 進のコードで書く）ので、文字数＝バイト数で offset が合う。
+function makeAssetPdf() {
+  const content =
+    "BT /F1 24 Tf 24 150 Td (Standard 14 Helvetica, not embedded) Tj ET\n" +
+    "BT /F2 24 Tf 24 100 Td <65E5672C8A9E306E898B51FA3057> Tj ET\n" + // 日本語の見出し
+    "BT /F3 24 Tf 24 60 Td (abgdez) Tj ET\n";
+  const objs = [
+    "<</Type/Catalog/Pages 2 0 R>>",
+    "<</Type/Pages/Kids[3 0 R]/Count 1>>",
+    "<</Type/Page/Parent 2 0 R/MediaBox[0 0 460 200]/Resources<</Font<</F1 5 0 R/F2 6 0 R/F3 9 0 R>>>>/Contents 4 0 R>>",
+    `<</Length ${content.length}>>\nstream\n${content}endstream`,
+    "<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding>>",
+    "<</Type/Font/Subtype/Type0/BaseFont/KozMinPr6N-Regular/Encoding/UniJIS-UCS2-H/DescendantFonts[7 0 R]>>",
+    "<</Type/Font/Subtype/CIDFontType0/BaseFont/KozMinPr6N-Regular/CIDSystemInfo<</Registry(Adobe)/Ordering(Japan1)/Supplement 6>>/FontDescriptor 8 0 R/DW 1000>>",
+    "<</Type/FontDescriptor/FontName/KozMinPr6N-Regular/Flags 6/FontBBox[-437 -340 1147 1317]/ItalicAngle 0/Ascent 1317/Descent -349/CapHeight 742/StemV 80>>",
+    "<</Type/Font/Subtype/Type1/BaseFont/Symbol>>",
+  ];
+  let pdf = "%PDF-1.7\n";
+  const offsets = [];
+  for (const [i, body] of objs.entries()) {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  }
+  const startxref = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const o of offsets) pdf += `${String(o).padStart(10, "0")} 00000 n \n`;
+  pdf += `trailer\n<</Size ${objs.length + 1}/Root 1 0 R>>\nstartxref\n${startxref}\n%%EOF\n`;
+  fs.writeFileSync(path.join(www, "assets.pdf"), Buffer.from(pdf, "latin1"));
 }
 
 function run(cmd, args) {
@@ -96,7 +166,7 @@ async function bundle() {
     },
   };
   const esbuild = await import(path.join(CONSOLE, "node_modules/esbuild/lib/main.js"));
-  const version = JSON.parse(fs.readFileSync(path.join(PDFJS, "package.json"), "utf8")).version;
+  const version = PDFJS_VERSION;
   for (const dir of ["cmaps", "standard_fonts"]) {
     fs.cpSync(path.join(PDFJS, dir), path.join(www, "assets/pdfjs", version, dir), { recursive: true });
   }
@@ -127,11 +197,29 @@ async function bundle() {
 
 // ---- 本体 --------------------------------------------------------------------
 await makeSamplePdf();
+makeAssetPdf();
 await bundle();
-const { server, port } = await serveDir(www);
+const { server, port, requests } = await serveDir(www);
 const b = await startBrowser();
 try {
   await b.goto(`http://127.0.0.1:${port}/index.html`);
+
+  // 0. **ink の式そのものの陽性対照**（合成 canvas・ブラウザ内で 3 形を作って測る）。
+  // ここが緑でないと、下の判定 2 と 7 の「待った」は何も待っていない。
+  const ink0 = await b.evaluate(`(() => {
+    const c = document.createElement('canvas'); c.width = 40; c.height = 40;
+    const g = c.getContext('2d');
+    const blank = ${INK_FN}(c);                                   // 幅だけ付けて未描画＝透明
+    g.fillStyle = '#fff'; g.fillRect(0, 0, 40, 40);
+    const white = ${INK_FN}(c);                                   // 白で塗った＝まだ何も無い
+    g.fillStyle = '#000'; g.fillRect(0, 0, 20, 40);
+    const half = ${INK_FN}(c);                                    // 左半分を黒く塗った
+    return { blank, white, half }; })()`);
+  check(
+    ink0.blank === 0 && ink0.white === 0 && ink0.half > 0.4,
+    "ink の式は未描画の canvas を「描かれた」と数えない",
+    `未描画=${(ink0.blank * 100).toFixed(2)}% 白=${(ink0.white * 100).toFixed(2)}% 半分黒=${(ink0.half * 100).toFixed(2)}%`,
+  );
 
   // 1. 6 ページぶんの枠が出て、メタが親へ渡る。
   const pages = await until(b.evaluate, "document.querySelectorAll('.pdfview-page').length", (n) => n === 6);
@@ -147,15 +235,11 @@ try {
   check(styled === "flex", "viewer.css の parts が当たっている", `.pdfview display=${styled}`);
 
   // 2. 1 枚目に本当に絵が出ている（白でない画素の割合）。
-  const inked = await until(
-    b.evaluate,
-    `(() => { const c = document.querySelector('.pdfview-canvas');
-       if (!c || !c.width) return -1;
-       const d = c.getContext('2d').getImageData(0, 0, c.width, Math.min(c.height, 400)).data;
-       let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i+1] < 200 || d[i+2] < 200) n++;
-       return n / (d.length / 4); })()`,
-    (v) => v > 0.001,
-  );
+  // ⚠️ 下限（0.001）を上げないこと。**この値は測る時刻で揺れる** —— until() は閾値を
+  // 超えた最初の値で返すので、描画途中の canvas を読む（実測 2026-09-04: 素の実行で
+  // 1.07%〜3.35%）。⚠️ 環境でも動く（ランナーは日本語フォントが 0 件で豆腐になり 1.65%。
+  // headless.mjs の解説）。**ink は「何かが描かれた」までしか言わない検査である。**
+  const inked = await until(b.evaluate, inkOf(".pdfview-canvas"), (v) => v > 0.001);
   check(inked > 0.001, "1 ページ目に文字が描かれている", `ink=${(inked * 100).toFixed(2)}%`);
 
   // 3. ページ番号と、スクロールでの追従。
@@ -206,7 +290,29 @@ try {
     await b.screenshot(SHOT);
   }
 
-  // 7. 壊れた PDF は、白い面ではなく理由を出す。
+  // 7. **同梱アセットが実際に取りに来られて、配れている。**
+  // 判定は「取りに来た件数 > 0」と「その要求が 404 でない」の 2 本立て。
+  // ⚠️ **404 が 0 件だけでは通ってしまう**——1 度も取りに来なければ 404 も 0 件だから
+  // （それが 2026-09-04 まで見えていなかった状態そのもの）。
+  await b.goto(`http://127.0.0.1:${port}/index.html?src=/assets.pdf`);
+  await until(b.evaluate, "document.querySelectorAll('.pdfview-page').length", (n) => n === 1);
+  const inkedAsset = await until(b.evaluate, inkOf(".pdfview-canvas"), (v) => v > 0.001);
+  const asked = requests.filter((r) => r.path.startsWith(ASSET_PREFIX));
+  const missed = asked.filter((r) => r.status !== 200);
+  const kinds = new Set(asked.map((r) => r.path.slice(ASSET_PREFIX.length).split("/")[0]));
+  check(
+    kinds.has("cmaps") && kinds.has("standard_fonts"),
+    "埋め込み無しの PDF が同梱アセットを取りに来る（cMap ＋ 標準14フォント）",
+    `${ASSET_PREFIX} への要求 ${asked.length} 件: ${[...kinds].join(" ") || "（無し）"}`,
+  );
+  check(
+    missed.length === 0,
+    "同梱アセットを配れている（404 が無い）",
+    missed.length ? `404: ${[...new Set(missed.map((r) => r.path))].slice(0, 3).join(" ")}` : `${asked.length} 件すべて 200`,
+  );
+  check(inkedAsset > 0.001, "埋め込み無しの PDF にも文字が描かれている", `ink=${(inkedAsset * 100).toFixed(2)}%`);
+
+  // 8. 壊れた PDF は、白い面ではなく理由を出す。
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/broken.pdf`);
   const failed = await until(b.evaluate, "document.querySelector('.pdfview.is-failed')?.textContent || ''", (s) => !!s);
   check(!!failed, "壊れた PDF で理由が出る", JSON.stringify(failed));

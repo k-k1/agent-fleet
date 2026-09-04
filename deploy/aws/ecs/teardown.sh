@@ -139,6 +139,26 @@ echo ""
 echo "⚠️ ECR（af-control-plane / af-workspace）は 20-platform のリソースで EmptyOnDelete: true。"
 echo "   スタックを消すとイメージごと消える。立て直しは crane copy からやり直しになる。"
 
+# ★ **控えの復旧点が本当に在るかを、消す前に見る。** ここが最後の機会である:
+# この先で ECR が空になると、GHCR に無いタグの workspace は**どこにも無くなる**。
+# 「params/30-ingress が在るか」（下の検査）は**ファイルの有無**しか見ていない ——
+# 控えは在るのに指す実体が無い、が、この 3 点セットの本体（env.sh の解説）。
+TD_CAPTURED_TAG="$(sed -n 's/^AF_IMAGE_TAG=//p' "$AF_ENV_DIR/env" 2>/dev/null | head -1)"
+if [ "$AF_LIVE" = 1 ] && [ -n "$AF_IMAGE_TAG" ] && [ -n "$TD_CAPTURED_TAG" ] && [ "$TD_CAPTURED_TAG" != "$AF_IMAGE_TAG" ]; then
+  echo "🔴 控えが古い: AF_IMAGE_TAG=$TD_CAPTURED_TAG / いま動いているのは $AF_IMAGE_TAG"
+  echo "   立て直しは古いほうのタグで立つ。取り直すなら: deploy/aws/ecs/capture-env.sh --profile $AF_PROFILE --region $AF_REGION --force"
+fi
+case "$(af_image_recoverable "${TD_CAPTURED_TAG:-$AF_IMAGE_TAG}")" in
+  no)
+    echo "🔴 復旧点が失われる: ${TD_CAPTURED_TAG:-$AF_IMAGE_TAG} は GHCR に揃っていない（ECR にしか無い）。"
+    echo "   このまま消すと standup.sh は「ECR にも GHCR にも無い」で立てられない。**いま**持ち出すこと:"
+    echo "     crane copy \$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AF_REGION.amazonaws.com/af-workspace:${TD_CAPTURED_TAG:-$AF_IMAGE_TAG} $AF_GHCR_DEFAULT/workspace:${TD_CAPTURED_TAG:-$AF_IMAGE_TAG}" ;;
+  unknown)
+    echo "⚠️ 復旧点が引けるかを確かめられなかった（crane が無い）。「無い」と決めつけてはいないが、確かめてもいない。" ;;
+  yes)
+    echo "    復旧点   : ${TD_CAPTURED_TAG:-$AF_IMAGE_TAG} は GHCR に両方ある（立て直せる）" ;;
+esac
+
 if ! af_confirm "この配備をまるごと削除する（取り返しがつかない。home の中身も消える）"; then
   echo ""
   echo "（何もしていない。実行するには --yes）"

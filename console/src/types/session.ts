@@ -151,5 +151,4 @@ export interface SsmHost {
   region: string;
   instanceId: string;
   documentName: string;
-  accountId?: string;
 }

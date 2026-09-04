@@ -57,6 +57,14 @@ af_env_init "$PROFILE" "$REGION" "$STACK"
 OUT="$AF_ENV_DIR"
 if [ -e "$OUT/env" ] && [ "$FORCE" != 1 ]; then
   echo "ERROR: $OUT is already captured (--force to refresh)" >&2
+  # ★ **何が古いのかをここで言う。** 断るだけだと、控えの ImageTag が生きている配備と
+  # ずれていても操作者には見えない —— `dev-deploy.sh` は ImageTag を動かすたびに
+  # 控えを置き去りにするので、**この断りこそが「腐った控えが残る」入口**だった。
+  captured_tag="$(sed -n 's/^AF_IMAGE_TAG=//p' "$OUT/env" | head -1)"
+  if [ -n "$AF_IMAGE_TAG" ] && [ "$captured_tag" != "$AF_IMAGE_TAG" ]; then
+    echo "       🔴 控えは古い: AF_IMAGE_TAG=${captured_tag:-<無し>} / いま動いているのは $AF_IMAGE_TAG" >&2
+    echo "       このまま撤収すると、立て直しは古いタグを指す（ECR は EmptyOnDelete）。--force で取り直すこと。" >&2
+  fi
   exit 1
 fi
 
@@ -118,6 +126,10 @@ save_params "$AF_STACK_INGRESS"  30-ingress
 DEV_MARK=0
 if [ -r "$OUT/env" ] && grep -q '^AF_DEV_DEPLOY=1' "$OUT/env"; then DEV_MARK=1; fi
 
+# ★ **控えが指すイメージが、撤収後も引けるか**を捕まえた時点で見る（env.sh の解説を読むこと）。
+# ここで測るのは「控えのファイルが在るか」ではなく「復旧点が実在するか」。
+RECOVERABLE="$(af_image_recoverable "$AF_IMAGE_TAG")"
+
 cat > "$OUT/env" <<EOF
 # agent-fleet deployment — captured $(date +%Y-%m-%dT%H:%M:%S%z) from $AF_FQDN.
 # Written by deploy/aws/ecs/capture-env.sh. Read when the deployment is NOT live
@@ -136,8 +148,25 @@ AF_IMAGE_TAG=$AF_IMAGE_TAG
 # バッジを出す操作だから。★この印を repo ではなくここに置くのは、「どの配備が開発用か」
 # もまた配備の身元だからである（このリポジトリは公開）。
 AF_DEV_DEPLOY=$DEV_MARK
+# この控えが指す AF_IMAGE_TAG を、撤収後（ECR は EmptyOnDelete）にもう一度引けるか。
+# yes=GHCR に両方ある / no=引けない（ECR にしか無いタグ）/ unknown=crane が無くて測れず。
+AF_IMAGE_RECOVERABLE=$RECOVERABLE
 EOF
 chmod 600 "$OUT/env" 2>/dev/null || true
+
+if [ "$RECOVERABLE" = no ]; then
+  cat >&2 <<EOF
+
+🔴 この控えの復旧点は**このままでは失われる**。
+   AF_IMAGE_TAG=$AF_IMAGE_TAG は GHCR に揃っていない（dev-deploy.sh が workspace を
+   ECR の中で再タグしただけの回は、そのタグの workspace が GHCR に存在しない）。
+   一方 20-platform の ECR は EmptyOnDelete: true なので、**撤収でイメージごと消える。**
+   撤収の前にどれかを済ませること:
+     - GHCR へ持ち出す:  crane copy <account>.dkr.ecr.$AF_REGION.amazonaws.com/af-workspace:$AF_IMAGE_TAG $AF_GHCR_DEFAULT/workspace:$AF_IMAGE_TAG
+     - 両方を焼き直す:    deploy/aws/ecs/dev-deploy.sh --image both（新しいタグで焼き直して控えを取り直す）
+     - 立て直しのときに --image-tag で「両方が揃っているタグ」を指す（standup.sh の preflight が名指しする）
+EOF
+fi
 
 cat <<EOF
 
