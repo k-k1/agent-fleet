@@ -165,18 +165,62 @@ if [ -n "$orphans" ]; then
   say "⚠️  $(echo $orphans)"
 fi
 
-stale=""
-for d in "$HOME"/repos/*/; do
-  [ -d "$d" ] || continue
-  for sub in node_modules target .venv; do
-    [ -e "$d$sub" ] && stale="$stale $(basename "${d%/}")/$sub"
-  done
-done
+# ⚠️ 「存在するか」ではなく「**中の成果物がどのアーキ用か**」を見る。存在で判定すると
+# (a) 入れ直した後も出続け（＝直しても消えない通知になる）、(b) native addon を持たない
+# 純 JS の node_modules を誤って壊れている扱いにする。pip と同じく、アーキはファイルに
+# 書いてあるのだから読めばよい。**1 リポジトリにつき 1 ファイルで打ち切る**（-quit）ので、
+# 巨大な node_modules でも走査は一瞬で終わる。
+stale="$(AF_NOW="$NOW" python3 - "$HOME/repos" <<'PY'
+import os, subprocess, sys
+root = sys.argv[1]
+want = {"amd64": "x86-64", "arm64": "aarch64"}.get(os.environ.get("AF_NOW", ""), "")
+if not want or not os.path.isdir(root):
+    raise SystemExit(0)
+
+def foreign(path, patterns):
+    """そのディレクトリに他アーキのネイティブ成果物があるか（最初の 1 件で打ち切る）。"""
+    for pat in patterns:
+        try:
+            out = subprocess.run(["find", path, "-name", pat, "-type", "f", "-print", "-quit"],
+                                 capture_output=True, text=True, timeout=20).stdout.strip()
+        except Exception:
+            return False
+        if not out:
+            continue
+        try:
+            hdr = subprocess.run(["readelf", "-h", out], capture_output=True, text=True,
+                                 timeout=10).stdout
+        except Exception:
+            return False
+        for line in hdr.splitlines():
+            if "Machine:" in line:
+                return want not in line.lower()
+    return False
+
+hits = []
+for repo in sorted(os.listdir(root)):
+    for sub, pats in (("node_modules", ["*.node"]), ("target", ["*.so"]), (".venv", ["*.so"])):
+        d = os.path.join(root, repo, sub)
+        if os.path.isdir(d) and foreign(d, pats):
+            hits.append(repo + "/" + sub)
+if hits:
+    print(" ".join(hits))
+PY
+)"
 if [ -n "$stale" ]; then
-  say "⚠️ ~/repos のビルド生成物は $WAS 用のままです（~/repos は触っていません）:"
-  say "⚠️  $(echo $stale)"
+  say "⚠️ ~/repos のビルド生成物が $WAS 用のままです（~/repos は触っていません）:"
+  say "⚠️  $stale"
   say "⚠️  直す: node_modules → npm ci ／ target → cargo clean && cargo build ／ .venv → 作り直し"
 fi
+
+# 検出結果を「いま壊れている集合」として書き出す。通知はこの内容のハッシュを event_id に
+# するので、集合が変わらない限り増えず、直せば集合から消えて自然に鳴り止む
+# （ADR 0068 決定 4 の続き・出来事は 1 回・残骸は状態）。
+{ [ -n "$stale" ] && printf 'repos: %s\n' "$stale"
+  [ -n "$orphans" ] && printf 'bin:%s\n' "$orphans"
+  true
+} > "$STATE/arch-residue" 2>/dev/null || true
+[ -s "$STATE/arch-residue" ] || rm -f "$STATE/arch-residue"
 
 [ "$fail" = 0 ] && say "完了" || say "一部やり直しが残っています（次の起動で再試行します）"
 exit 0

@@ -54,4 +54,27 @@ describe("通知の行見出し", () => {
     expect(w.title).toBe(ja["notif.handoff_offer.title"]);
     expect(w.body).toBe("残作業の続き");
   });
+
+  // アーキ変更で自動復旧できなかった残骸の通知（docs/decisions/0068）。対象はセッションでは
+  // なくワークスペースで、displayName は空——だから既定の「body = displayName」に乗ると
+  // **中身が空の通知**になる。行に出るのは payload の中身そのものでなければならない。
+  it("アーキ残骸は payload の対象を行に出す（displayName は空）", () => {
+    setLocale("ja");
+    const w = notificationWording({
+      kind: "arch-residue",
+      displayName: "",
+      payload: { from: "amd64", repos: ["demo/node_modules"], bins: ["mytool"] },
+    });
+    expect(w.title).toBe(ja["notif.arch_residue.title"]);
+    expect(w.body).toBe("demo/node_modules, mytool");
+    // 末尾の usage-reset 文面へ落ちていないこと（schedule-* が踏んだのと同じ罠）。
+    expect(w.body).not.toContain("上限");
+    expect(w.speech).toBe(ja["notif.arch_residue.speech"]);
+  });
+
+  it("アーキ残骸の payload が空でも本文が空にならない", () => {
+    setLocale("ja");
+    const w = notificationWording({ kind: "arch-residue", displayName: "", payload: {} });
+    expect(w.body).toBe(ja["notif.arch_residue.body_generic"]);
+  });
 });

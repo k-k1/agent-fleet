@@ -45,7 +45,22 @@ cmp -s package-lock.json ~/repos/agent-fleet/console/package-lock.json \
   && ln -s ~/repos/agent-fleet/console/node_modules node_modules
 ```
 
-Both vitest projects and `npm run build` resolve through the link (measured).
+`npm run build` and most of both vitest projects resolve through the link (measured).
+
+⚠️ **But 5 dom tests under `src/features/viewer/` fail through the link** —
+`FileView` / `FileViewDrawio` / `FileViewFocus` / `FileViewFollow` / `FileViewDocuments`.
+They import assets out of `node_modules` as URLs (`pdf.worker.min.mjs?url`,
+`anydoc_wasm_bg.wasm?url`), and Vite's default `server.fs.allow` is the project root, so
+resolving them through the link lands **outside this worktree** and is refused:
+
+```
+Error: Denied ID /home/dev/repos/agent-fleet/console/node_modules/pdfjs-dist/build/pdf.worker.min.mjs?url
+```
+
+It looks like a broken viewer, and it is not — the same tests pass against a real
+install (measured: 1962 passed, 0 failed). So **if you touch the viewer, or before you
+report a full-suite result, do a real install** (`rm -rf node_modules` — no trailing
+slash — then `npm ci --prefer-offline`). The link is fine for everything else.
 
 - **Remove the link before any `npm ci` / `npm install`**: `rm -rf node_modules` — *without* a
   trailing slash. `npm ci` through the link empties the parent's `node_modules` and breaks

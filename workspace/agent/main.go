@@ -53,6 +53,13 @@ func main() {
 	// browser pane, the Go toolchain, and AWS CLI + Session Manager plugin for
 	// ssm sessions. Lean rootfs deployments install these into the home on first
 	// use; versions come from the versions.json pins. See install_tools.go.
+	// Arch self-repair's Console face: turn what af-arch-repair could NOT put back into
+	// a notification the member can actually see (the repair script only reaches the
+	// container's stdout). See arch_residue.go for why it is keyed on content.
+	if len(os.Args) > 1 && os.Args[1] == "notify-arch-residue" {
+		runNotifyArchResidue(os.Args[2:])
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "install-chromium" {
 		runInstallChromium(os.Args[2:])
 		return

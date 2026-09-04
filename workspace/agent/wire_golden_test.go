@@ -74,7 +74,7 @@ func TestWireShapeGolden(t *testing.T) {
 		t.Logf("wrote %s (%d keys)", wireGoldenPath, len(got))
 		return
 	}
-	assertGoldenLines(t, wireGoldenPath, got)
+	assertGoldenLines(t, wireGoldenPath, "-update-wire-golden", got)
 }
 
 // TestWireShapeGoldenCoversSession は「撮れているつもりで 0 件」を防ぐ。

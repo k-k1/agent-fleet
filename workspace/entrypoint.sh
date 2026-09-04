@@ -997,5 +997,12 @@ if [ -n "${AF_ARCH_REPAIR_FROM:-}" ] || [ -s "$HOME/.local/share/agent-fleet/arc
   AF_REPAIR_PY=$([ "${af_py_changed:-0}" = 1 ] && echo 0 || echo 1) \
     af-arch-repair "${AF_ARCH_REPAIR_FROM:-?}" "$af_arch_now" || true
 fi
+# 直せなかった分（~/repos の生成物・自前バイナリ）を利用者に届く場所へ出す。
+# ⚠️ ここまでの [entrypoint] / [arch-repair] の出力はコンテナの stdout ＝運用者の
+#    docker logs にしか出ない。利用者に見せる経路は無いので、通知にしないと
+#    「Exec format error だけが原因不明で出る」が続く（docs/decisions/0068 決定 4）。
+# 残骸が無ければ何もしない。残骸の**内容**をキーにするので、同じままなら増えず、
+# 直せば自然に消える（arch_residue.go）。
+workspace-agent notify-arch-residue "${AF_ARCH_REPAIR_FROM:-}" || true
 
 exec "$@"
