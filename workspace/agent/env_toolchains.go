@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -96,6 +96,74 @@ func goOptions() []string {
 	return opts
 }
 
+// nodeBinFor returns the bin dir of the highest installed patch of `major` under the
+// home nvm dir, or "" when that major is not installed (session launch never runs a
+// network install).
+//
+// ⚠️ Compare the version NUMERICALLY. This used to be `sort.Strings` + take the last,
+// which is the same "glob and take an index" trap docs/log/70 §70.5.1 records for the
+// JDK — and it is wrong the moment two patches differ in digit count, because '2' < '9'
+// lexicographically:
+//
+//	['v22.23.1', 'v22.23.2', 'v22.9.0']  -> last is v22.9.0, not v22.23.2
+//
+// That is not hypothetical: the entrypoint runs `nvm install <major>` on every boot, so
+// a long-lived home accumulates patches of the same major (a live workspace was already
+// holding v22.23.1 and v22.23.2), and one older v22.9.x is enough to silently pin every
+// session to the old node.
+func nodeBinFor(major string) string {
+	root := filepath.Join(homeDir(), ".nvm", "versions", "node")
+	m, _ := filepath.Glob(filepath.Join(root, "v"+major+".*", "bin"))
+	best, bestVer := "", []int(nil)
+	for _, bin := range m {
+		name := filepath.Base(filepath.Dir(bin)) // "v22.23.2"
+		v := parseDotted(strings.TrimPrefix(name, "v"))
+		if v == nil {
+			continue
+		}
+		if bestVer == nil || compareDotted(v, bestVer) > 0 {
+			best, bestVer = bin, v
+		}
+	}
+	return best
+}
+
+// parseDotted turns "22.23.2" into []int{22,23,2}; nil when any component is not a
+// number (nvm also holds named dirs like "system" / aliases, which must not win).
+func parseDotted(s string) []int {
+	parts := strings.Split(s, ".")
+	out := make([]int, 0, len(parts))
+	for _, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return nil
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// compareDotted compares two dotted version vectors component by component; a shorter
+// prefix sorts lower ("22.23" < "22.23.1").
+func compareDotted(a, b []int) int {
+	for i := 0; i < len(a) || i < len(b); i++ {
+		var x, y int
+		if i < len(a) {
+			x = a[i]
+		}
+		if i < len(b) {
+			y = b[i]
+		}
+		if x != y {
+			if x < y {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
 // resolvedToolchains resolves the current selection to concrete values for
 // injection into freshly-launched sessions/shells. node uses the highest installed
 // patch of the chosen major under the home nvm dir (must already be installed —
@@ -109,10 +177,7 @@ func resolvedToolchains() (javaHome, nodeBin, goRoot, tz string) {
 		javaHome = javaHomeFor(t.Java)
 	}
 	if t.Node != "" && t.Node != "system" {
-		if m, _ := filepath.Glob(filepath.Join(homeDir(), ".nvm", "versions", "node", "v"+t.Node+".*", "bin")); len(m) > 0 {
-			sort.Strings(m)
-			nodeBin = m[len(m)-1] // highest installed patch
-		}
+		nodeBin = nodeBinFor(t.Node)
 	}
 	goRoot = goRootFor(t.Go)
 	if t.Timezone != "" {
