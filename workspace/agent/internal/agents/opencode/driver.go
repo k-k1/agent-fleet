@@ -1,32 +1,35 @@
 package opencode
 
-// OpenCode の managed driver（docs/log/27 P2）— Driver 型（agents.Driver/ThreadHandle）の
-// 初のフル実装。共有 `opencode serve` の HTTP＋SSE に turn 状態機械（§4）・
-// Interaction（§5）・reconciliation（§6）をマッピングする。
+// The managed OpenCode driver (docs/log/27 P2) — the first full implementation of the
+// Driver type (agents.Driver/ThreadHandle). It maps the turn state machine (§4),
+// Interaction (§5) and reconciliation (§6) onto the shared `opencode serve` HTTP + SSE
+// surface.
 //
-// 実測（1.17.18、docs/log/27 §12.2）に基づく API 選定:
-//   - turn 駆動は v1 の blocking POST /session/{id}/message（唯一 read 層の正本
-//     message/part に書く駆動口）。goroutine で包んで非同期化する。
-//     prompt_async は user message を書くだけで turn が始まらない（実測・不採用）。
-//     v2 /api/session/{id}/prompt は別ストア（session_message）に書き read 層から
-//     見えないため不採用。
-//   - mid-turn steer の口は v1 に無い（v2 の delivery=steer は実行中 v1 turn に
-//     注入されず独自 turn を始める — 実測）。Steer は driver 内キューで受け、実行中
-//     turn の完走後に次 turn として投入する（§4 の queued 状態そのもの）。
-//   - interrupt = POST /session/{id}/abort（blocking 呼び出しは 200 で部分結果を
-//     返し、assistant message に completed が刻まれる — resume 安全）。
-//   - question = question.asked/replied/rejected イベント＋GET /question＋
-//     POST /question/{id}/reply {answers: [[label,…]]}（回答はラベル文字列）。
-//   - 添付 = v1 file part {type:"file", mime, url:"file://…"}（実測で読解確認）。
+// API choices, from measurement (1.17.18, docs/log/27 §12.2):
+//   - Turns are driven by the v1 blocking POST /session/{id}/message, the only entry
+//     point that writes the message/part records the read layer treats as canonical; a
+//     goroutine wraps it to make it asynchronous. prompt_async only writes the user
+//     message and never starts a turn (measured), and v2 /api/session/{id}/prompt writes
+//     to a different store (session_message) that the read layer cannot see.
+//   - v1 has no mid-turn steer entry point (v2's delivery=steer is not injected into the
+//     running v1 turn, it starts its own — measured). Steer is held in a driver-side
+//     queue and submitted as the next turn once the running one finishes, which is
+//     exactly §4's queued state.
+//   - interrupt = POST /session/{id}/abort (the blocking call returns 200 with partial
+//     results and the assistant message is marked completed, so resume is safe).
+//   - question = the question.asked/replied/rejected events plus GET /question and
+//     POST /question/{id}/reply {answers: [[label,…]]} (answers are label strings).
+//   - attachments = the v1 file part {type:"file", mime, url:"file://…"} (measured).
 //
-// ClientMessageID（§4）の冪等化は driver の台帳（accept()）のみで行い、serve へは
-// messageID を渡さない — 実測（1.17.18）: turn ループは message id の辞書順に依存し、
-// 既存 id より小さいクライアント採番 id の turn は拾われず /message が返らない
-// （prompt_async が不動に見えた真因も同じ）。
+// ClientMessageID (§4) idempotency happens only in the driver's ledger (accept()); the
+// messageID is never handed to serve. Measured (1.17.18): the turn loop depends on the
+// lexical order of message ids, so a turn whose client-assigned id sorts below an
+// existing one is never picked up and /message never returns (the same root cause behind
+// prompt_async looking inert).
 //
-// serve の session/question/status/event 面はプロジェクト（directory）にスコープ
-// される（実測）ので、セッションの dir を directory クエリで常に併送し、SSE は
-// プロジェクト横断の /global/event を購読する。
+// serve's session/question/status/event surfaces are scoped to a project (directory)
+// (measured), so the session's dir always travels along as a directory query, and SSE
+// subscribes to the cross-project /global/event.
 
 import (
 	"bytes"
@@ -54,19 +57,19 @@ import (
 // runs for minutes/hours. Interrupt (abort) or daemon death unblocks it.
 var turnClient = &http.Client{}
 
-// ledger は ClientMessageID の永続台帳（§9.5 のプロセス跨ぎ永続化 — §12.2-3 の
-// 将来課題を P3 で解消。in-memory 台帳は Agent 再起動を跨ぐ再送に効かなかった）。
+// ledger is the persistent ClientMessageID ledger (§9.5, persisted across processes): an
+// in-memory ledger does not deduplicate a re-send that spans an Agent restart.
 var ledger = agents.NewMsgLedger("opencode-msgledger")
 
-// NewDriver returns the managed opencode Driver（driverOf が /turn・/respond から
-// 引く）。read 層は agentImpl をそのまま埋め込んで温存する。
+// NewDriver returns the managed opencode Driver (driverOf looks it up from /turn and
+// /respond). The read layer is preserved by embedding agentImpl as is.
 func NewDriver() agents.Driver { return managedDriver{} }
 
 type managedDriver struct{ agentImpl }
 
-// Capabilities（§3.1）。Steer は「実行中 turn への追撃を受け付ける」の意（driver 内
-// キュー実装 — 上記ファイルコメント）。TUIAttach は opencode 固有の強み（serve へ
-// `opencode attach` で無停止アタッチ、実測済み）。
+// Capabilities (§3.1). Steer here means "accepts a follow-up aimed at the running turn",
+// implemented as a driver-side queue (see the file comment). TUIAttach is an opencode
+// strength: `opencode attach` joins a running serve without stopping it (measured).
 func (managedDriver) Capabilities() agents.Capabilities {
 	return agents.Capabilities{
 		ProcessModel:  "shared-daemon",
@@ -81,9 +84,9 @@ func (managedDriver) Capabilities() agents.Capabilities {
 }
 
 // Resume returns the session's ThreadHandle, creating the runtime session when
-// none exists yet（Driver IF: 無ければ新規 start）。§6 の reconciliation 共通手順を
-// 兼ねる: runtime 確保 → session 解決 → snapshot 照合 → live 購読は supervisor が
-// generation 単位で常設。
+// none exists yet (the Driver interface: start a new one if absent). It doubles as §6's
+// shared reconciliation procedure: ensure the runtime, resolve the session, check the
+// snapshot; the live subscription is held permanently by the supervisor, per generation.
 func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindOpencode {
 		return nil, errors.New("opencode driver は opencode セッション専用です")
@@ -115,7 +118,8 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		h.mu.Unlock()
 		return h, nil
 	}
-	// 起動時のモデル既定は meta から（動的変更は UpdateSettings が上書き、§9.4-3）。
+	// The model defaults come from the meta at startup; a dynamic change overwrites them
+	// through UpdateSettings (§9.4-3).
 	if h.settings.Model == "" {
 		h.settings.Model = m.Model
 	}
@@ -143,15 +147,15 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		if err != nil {
 			return nil, err
 		}
-		// claude/codex と同じスロット単位の対応付け（read 層の activeSession が
-		// これを最優先で引く — plugin 不在の managed では driver が書き手）。
+		// The same per-slot mapping claude/codex use: the read layer's activeSession
+		// consults it first, and with no plugin in managed mode the driver is the writer.
 		sids.Write(ocSid, ses)
 	}
 
 	h.mu.Lock()
 	h.addr, h.gen, h.ses, h.alive = addr, gen, ses, true
-	// daemon 死で pump が終了した後の残 queue を復活させる（§31 — opencode は
-	// これが無いと恒久滞留）。
+	// Revive a queue left behind when a daemon death ended the pump (§31): without this
+	// the entries stall forever.
 	if len(h.queue) > 0 && !h.pumping {
 		h.pumping = true
 		go h.pump()
@@ -159,8 +163,8 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	h.mu.Unlock()
 
 	h.reconcile()
-	// exit recording の baseline（tui の startSessionTmux と同じ役割）: 前回の死亡
-	// 記録をクリアし、以後の OOM 帰属をこのセッション期間に限定する。
+	// Baseline for exit recording (the same role startSessionTmux plays for tui): clear
+	// the previous death record so later OOM attribution is bounded to this session.
 	base, _ := status.OOMKillCount()
 	status.PersistExit(m.Name, status.ExitInfo{OOMBase: base})
 	return h, nil
@@ -215,8 +219,8 @@ func DropHandle(name string) {
 	}
 }
 
-// RemoveLedger drops a session's ClientMessageID ledger（/stop — スロットの
-// アイデンティティごと破棄する時だけ。halt/archive は再開があるので残す）。
+// RemoveLedger drops a session's ClientMessageID ledger. Only for /stop, which discards
+// the slot's identity as well; halt/archive keep it because the session can resume.
 func RemoveLedger(name string) { ledger.Remove(name) }
 
 // ManagedAlive reports whether the session has a live runtime handle — the
@@ -231,7 +235,7 @@ func ManagedAlive(name string) bool {
 	return h.alive
 }
 
-// ManagedBusy reports a turn is running or queued (graceful shutdown の待ち条件).
+// ManagedBusy reports a turn is running or queued (graceful shutdown waits on this).
 func ManagedBusy(name string) bool {
 	h := handleFor(name)
 	if h == nil {
@@ -243,9 +247,9 @@ func ManagedBusy(name string) bool {
 }
 
 // AbortManaged interrupts every running managed turn — the managed counterpart of
-// graceful shutdown's per-pane Ctrl-C（docs/log/27 §10.2-8）。ThreadHandle.Interrupt と
-// 同じ経路なので、abort が landing すると turn goroutine が cancelled を刻み status
-// ストアが idle に戻る（anySessionWorking の待ち条件が解ける）。
+// graceful shutdown's per-pane Ctrl-C (docs/log/27 §10.2-8). It takes the same path as
+// ThreadHandle.Interrupt, so once the abort lands the turn goroutine records cancelled
+// and the status store returns to idle, releasing anySessionWorking's wait.
 func AbortManaged() {
 	for _, h := range liveHandles() {
 		h.mu.Lock()
@@ -258,9 +262,9 @@ func AbortManaged() {
 }
 
 // ReconcileManaged re-attaches managed opencode sessions after an Agent boot,
-// daemon restart or daemon death（§6）。対象は「停止扱いになっていない」managed メタ
-// 全部（tui の tmux が Agent 再起動を生き延びるのと同じ体感にする）。失敗しても
-// セッションは 停止中 として残り、ユーザーの 再開 クリック（/start）で再試行される。
+// daemon restart or daemon death (§6). It covers every managed meta not already treated
+// as stopped, so the experience matches tui's tmux surviving an Agent restart. On failure
+// the session stays stopped and the user's resume click (/start) retries it.
 func ReconcileManaged(reason string) {
 	d := managedDriver{}
 	for _, m := range session.ListMetas() {
@@ -276,7 +280,7 @@ func ReconcileManaged(reason string) {
 	}
 }
 
-// reconcileAll is the supervisor-facing wrapper (serve.go の daemon 死・restart 後).
+// reconcileAll is the supervisor-facing wrapper (serve.go, after a daemon death or restart).
 func reconcileAll(reason string) { ReconcileManaged(reason) }
 
 // --- thread handle -----------------------------------------------------------
@@ -300,7 +304,7 @@ type threadHandle struct {
 	pumping  bool
 	queue    []agents.TurnInput
 	settings agents.ThreadSettings
-	inter    *agents.Interaction // pending question（waiting_interaction の中身）
+	inter    *agents.Interaction // pending question (the payload of waiting_interaction)
 	events   chan agents.Event
 }
 
@@ -332,8 +336,8 @@ func (h *threadHandle) currentState() agents.TurnState {
 	return h.state
 }
 
-// runtimeLost drops the handle to unknown（§6-1: 切断時の正直な状態）。The blocked
-// turn call (if any) unblocks with a transport error and keeps unknown until
+// runtimeLost drops the handle to unknown (§6-1: the honest state on a disconnect). The
+// blocked turn call (if any) unblocks with a transport error and keeps unknown until
 // reconcile resolves it.
 func (h *threadHandle) runtimeLost() {
 	h.mu.Lock()
@@ -343,8 +347,8 @@ func (h *threadHandle) runtimeLost() {
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnUnknown})
 }
 
-// reconcile は §6 の手順 3〜4: runtime の session 状態＋pending question を照合して
-// turn 状態を確定する。busy=running / question=waiting_interaction / else completed。
+// reconcile is steps 3-4 of §6: settle the turn state from the runtime's session state
+// plus any pending question. busy=running / question=waiting_interaction / else completed.
 func (h *threadHandle) reconcile() {
 	h.mu.Lock()
 	addr, ses, dir := h.addr, h.ses, h.dir
@@ -369,11 +373,12 @@ func (h *threadHandle) reconcile() {
 
 // --- ThreadHandle interface ---------------------------------------------------
 
-// Send starts a turn (turn/start 相当), queueing behind a running one.
+// Send starts a turn (the turn/start equivalent), queueing behind a running one.
 func (h *threadHandle) Send(in agents.TurnInput) error { return h.accept(in) }
 
-// Steer is an追撃 input to the running turn（§4 queued）。opencode v1 に mid-turn
-// 注入の口が無いため（ファイルコメント）、意味論は「完走後に次 turn として投入」。
+// Steer is a follow-up input to the running turn (§4 queued). opencode v1 has no entry
+// point for mid-turn injection (see the file comment), so the semantics are "submit as
+// the next turn once the running one finishes".
 func (h *threadHandle) Steer(in agents.TurnInput) error { return h.accept(in) }
 
 func (h *threadHandle) accept(in agents.TurnInput) error {
@@ -387,14 +392,15 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 		return errors.New("runtime が停止しています（再開してください）")
 	}
 	if h.inter != nil {
-		// 質問待ち中の自由文送信は誤答のもと（/input の question_pending ガードと
-		// 同じ判断）— 構造化回答（Respond）へ誘導する。
+		// Free text sent while a question is pending invites a mis-answer (the same
+		// call /input's question_pending guard makes): steer the caller to the
+		// structured reply (Respond).
 		h.mu.Unlock()
 		return errQuestionPending
 	}
 	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
 		h.mu.Unlock()
-		return nil // 再送 — 台帳（永続、プロセス跨ぎ）が冪等化（§4）
+		return nil // re-send; the persistent cross-process ledger makes it idempotent (§4)
 	}
 	h.queue = append(h.queue, in)
 	start := !h.pumping
@@ -412,22 +418,23 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 }
 
 // errQuestionPending is matched by the /turn handler to return the same
-// question_pending wire error the tui route uses（P3 で kind 非依存の sentinel へ
-// 一本化 — codex driver も同じ値を返す）。
+// question_pending wire error the tui route uses. The sentinel is kind-independent, so
+// the codex driver returns the same value.
 var errQuestionPending error = agents.ErrQuestionPending
 
 // ErrQuestionPending reports whether err is the "answer the question first" guard.
 func ErrQuestionPending(err error) bool { return errors.Is(err, errQuestionPending) }
 
 // pump processes the queue serially: wait for the runtime to be idle (a TUI-attached
-// user may be running their own turn — serve 側の直列化に賭けず自前で待つ), run the
-// blocking turn, repeat.
+// user may be running their own turn, so wait here rather than betting on serve to
+// serialize), run the blocking turn, repeat.
 func (h *threadHandle) pump() {
 	for {
 		h.mu.Lock()
 		if len(h.queue) == 0 || !h.alive {
-			// accept と同じ lock 内で停止を確定する。空判定後〜defer の隙間を
-			// 作ると、その間の入力が pumping=true を見て起動されず stranded になる。
+			// Settle the stop inside the same lock accept() takes. A gap between the
+			// empty check and clearing the flag strands input that arrives in it: it
+			// sees pumping=true and starts no pump.
 			h.pumping = false
 			h.mu.Unlock()
 			return
@@ -438,8 +445,9 @@ func (h *threadHandle) pump() {
 		h.running = true
 		h.mu.Unlock()
 
-		// TUI 併用ガード: 他クライアントの turn が走っている間は待つ（最大 drain と
-		// 同じ 60s、その後はそのまま投げる — serve は busy でも /message を直列に捌く）。
+		// Guard for TUI co-use: wait while another client's turn is running (the same
+		// 60s as the maximum drain), then send anyway — serve handles /message serially
+		// even when busy.
 		waitIdle(addr, ses, dir, 60*time.Second)
 		h.runTurn(in)
 
@@ -450,15 +458,17 @@ func (h *threadHandle) pump() {
 }
 
 // runTurn executes ONE blocking v1 /message turn and lands the terminal state.
-// status ストア（hooks の代わり）も更新する — WireLive は db 由来の LiveState を
-// 優先するが、フォールバックと anySessionWorking（graceful shutdown の待ち条件）が
-// ここを読む。turn の終端で idle に戻さないと 進行中 に張り付く。
+// It also updates the status store, standing in for hooks: WireLive prefers the
+// db-derived LiveState, but the fallback and anySessionWorking (graceful shutdown's wait
+// condition) read this. Without returning to idle at the end of a turn, the session
+// sticks on "in progress".
 func (h *threadHandle) runTurn(in agents.TurnInput) {
 	agents.MarkTurnStart(h.ocSid)
-	// 終端の turn 状態で idle を刻む（＋完了なら docs/log/30 の報告を出す）。以下の return
-	// 経路はすべて手前で setState 済みなので、defer 時点の state が turn の終端。
-	// failure は失敗の理由（errors.go）— オペレーター報告とチャットブリッジ本文が
-	// 「エラーで終わった」を言えるように終端まで運ぶ。
+	// Stamp idle with the terminal turn state (and emit the docs/log/30 report on
+	// completion). Every return path below has already called setState, so the state at
+	// defer time is the turn's terminal one. failure is the reason it failed (errors.go),
+	// carried to the end so the operator report and the chat bridge body can say the turn
+	// ended in an error.
 	failure := ""
 	defer func() { agents.MarkTurnEndErr(h.ocSid, h.currentState(), failure) }()
 	h.setState(agents.TurnStarting)
@@ -467,10 +477,11 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	st := h.settings
 	h.mu.Unlock()
 
-	// messageID は serve 採番に任せる（実測 1.17.18: turn ループは message id の
-	// 辞書順に依存し、既存 id より小さいクライアント採番 id の turn は拾われず
-	// /message が返らない — prompt_async が不動に見えた真因も同じ）。ClientMessageID
-	// の冪等化は driver の台帳（accept()）だけで行う。
+	// Let serve assign the messageID (measured 1.17.18: the turn loop depends on the
+	// lexical order of message ids, so a turn whose client-assigned id sorts below an
+	// existing one is never picked up and /message never returns — the same root cause
+	// behind prompt_async looking inert). ClientMessageID idempotency happens only in the
+	// driver's ledger (accept()).
 	body := map[string]any{"parts": buildParts(in)}
 	if ag := agentForMode(st.Mode); ag != "" {
 		body["agent"] = ag
@@ -495,7 +506,8 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	req.Header.Set("Content-Type", "application/json")
 	res, err := turnClient.Do(req)
 	if err != nil {
-		// transport 断 = daemon 喪失か中断: 正直に unknown へ落とし §6 に委ねる。
+		// A transport break means the daemon is gone or the turn was interrupted: fall
+		// to unknown honestly and leave it to §6.
 		h.mu.Lock()
 		interrupted := h.state == agents.TurnInterrupting
 		h.mu.Unlock()
@@ -507,14 +519,14 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 		return
 	}
 	defer res.Body.Close()
-	// 200 でも失敗していることがある: opencode はプロバイダ側の失敗を HTTP ステータス
-	// ではなく assistant message の error フィールドで返す（errors.go の実測）。status
-	// だけ見ていた頃は残高切れ・認証エラーが「正常完了」として idle に戻り、転写にも
-	// 何も残らなかった。
+	// A 200 can still be a failure: opencode reports a provider-side failure in the
+	// assistant message's error field, not in the HTTP status (measured, errors.go).
+	// Judging by the status alone lets an exhausted balance or an auth error return to
+	// idle as a normal completion, leaving nothing in the transcript either.
 	turnErr, failed := decodeTurnError(res.Body)
 	h.mu.Lock()
 	interrupted := h.state == agents.TurnInterrupting
-	h.inter = nil // turn が終わった＝質問はもう待っていない
+	h.inter = nil // the turn ended, so no question is pending any more
 	h.mu.Unlock()
 	switch {
 	case interrupted:
@@ -536,8 +548,9 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	}
 }
 
-// Interrupt aborts the running turn and clears the queued追撃（停止の意思表示は
-// キューにも及ぶ — 完走後に古い追撃が勝手に走り出すのが最も驚く挙動）。
+// Interrupt aborts the running turn and clears the queued follow-ups: the intent to stop
+// reaches the queue too, since nothing surprises a user more than an old follow-up
+// starting on its own once the turn finishes.
 func (h *threadHandle) Interrupt() error {
 	h.mu.Lock()
 	addr, ses, dir := h.addr, h.ses, h.dir
@@ -554,9 +567,9 @@ func (h *threadHandle) Interrupt() error {
 	return serveAbort(addr, ses, dir)
 }
 
-// UpdateSettings merges the dynamic thread settings（§9.4-3）。反映は次 turn の
-// /message パラメータ（agent / model / variant）— v1 フローに thread 永続の設定
-// 更新 RPC は無いので、driver が設定の持ち主になる。
+// UpdateSettings merges the dynamic thread settings (§9.4-3). They take effect as the
+// next turn's /message parameters (agent / model / variant): the v1 flow has no RPC that
+// persists a settings update on the thread, so the driver owns the settings.
 func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	h.mu.Lock()
 	if s.ClearModel {
@@ -578,9 +591,9 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	return nil
 }
 
-// Respond answers the pending Interaction（§5）: question 系のみ（3 者とも承認は
-// bypass 運転）。answer は質問ごとの選択ラベル列へ変換して /question/{id}/reply、
-// cancel/deny は /reject に落とす。
+// Respond answers the pending Interaction (§5): questions only, since all three kinds run
+// with approvals bypassed. answer is converted to the per-question list of selected labels
+// and sent to /question/{id}/reply; cancel/deny goes to /reject.
 func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	h.mu.Lock()
 	inter := h.inter
@@ -617,7 +630,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 
 func (h *threadHandle) Events() <-chan agents.Event { return h.events }
 
-// Snapshot（§6-3）: reconciliation 用の現在地。
+// Snapshot (§6-3) is the current position, for reconciliation.
 func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -628,8 +641,8 @@ func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 	}, nil
 }
 
-// queuedPrompts surfaces the driver-held queue for the mirror's キュー済み badge
-// （§10.2-10: ClientMessageID 台帳と turn 状態機械が正）。
+// queuedPrompts surfaces the driver-held queue for the mirror's queued badge (§10.2-10:
+// the ClientMessageID ledger and the turn state machine are canonical).
 func (h *threadHandle) queuedPrompts() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -642,10 +655,10 @@ func (h *threadHandle) queuedPrompts() []string {
 	return out
 }
 
-// managedEnrich folds the driver-side state into the read layer's TranscriptData
-// （readTranscript から呼ばれる）: pending question へ Interaction id を載せ（Console
-// の /respond 経路の宛先）、driver 内キューを キュー済み へ合流する。tui セッション
-// （handle 無し）には何もしない。
+// managedEnrich folds the driver-side state into the read layer's TranscriptData (called
+// from readTranscript): it puts the Interaction id on the pending question (the address
+// the Console's /respond path needs) and merges the driver-side queue into Queued. A tui
+// session, which has no handle, is left alone.
 func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	if m.DriverKind() != session.DriverManaged {
 		return
@@ -667,8 +680,9 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 		td.Pending = qs
 	}
 	td.Queued = append(td.Queued, h.queuedPrompts()...)
-	// mode chip（§10.2-5）: db 由来の mode は「最後の turn の agent」で切替直後は
-	// 古い。driver 設定（＝次 turn が使う値）があればそちらが真実。
+	// mode chip (§10.2-5): the db-derived mode is "the last turn's agent" and is stale
+	// right after a switch. The driver setting, the value the next turn will use, is the
+	// truth whenever it is set.
 	if modeSet != "" {
 		td.Mode = modeSet
 	}
@@ -676,11 +690,10 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 
 // --- serve API helpers ---------------------------------------------------------
 
-// dirQ appends the session's project directory to a serve URL. serve の
-// session/question/status 面はプロジェクト（directory）にスコープされる（実測
-// 1.17.18: serve の cwd と別ディレクトリのセッションは directory を付けないと
-// /question・/session/status に載らない）。session 系 API は id 指定でも directory
-// を付けて呼ぶのが安全。
+// dirQ appends the session's project directory to a serve URL. serve's session/question/
+// status surfaces are scoped to a project (measured 1.17.18: without directory, a session
+// living outside serve's cwd appears in neither /question nor /session/status). Calling
+// the session APIs with directory is the safe choice even when an id is given.
 func dirQ(base, dir string) string {
 	if dir == "" {
 		return base
@@ -713,7 +726,7 @@ func serveSessionBusy(addr, ses, dir string) bool {
 	if json.NewDecoder(res.Body).Decode(&m) != nil {
 		return false
 	}
-	st, ok := m[ses] // idle なセッションは載らない（実測）
+	st, ok := m[ses] // an idle session is not listed (measured)
 	return ok && st.Type != "idle"
 }
 
@@ -747,7 +760,7 @@ func serveCreateSession(addr, dir, title string) (string, error) {
 // serveForkSession copies src into a NEW opencode session. at, when non-empty, is the
 // message the copy stops BEFORE: opencode's fork loop breaks at the first message whose
 // id sorts >= it, so the anchored turn and everything after it stay out of the fork
-// (実測 1.18.14 — docs/log/55 §55.2). Empty at = the whole conversation, as before.
+// (measured 1.18.14 — docs/log/55 §55.2). Empty at = the whole conversation.
 func serveForkSession(addr, src, dir, at string) (string, error) {
 	body := "{}"
 	if at != "" {
@@ -764,7 +777,7 @@ func serveForkSession(addr, src, dir, at string) (string, error) {
 	defer res.Body.Close()
 	// The anchor is client-supplied, so this is the one serve call that can be rejected
 	// for what we asked rather than for how the daemon is doing. Say so instead of
-	// letting it fall through to "応答を解釈できません".
+	// letting it fall through to the generic "cannot parse the response" error.
 	if res.StatusCode >= 400 {
 		if at != "" {
 			return "", fmt.Errorf("opencode が分岐点を受け付けませんでした (HTTP %d)", res.StatusCode)
@@ -789,7 +802,7 @@ func serveAbort(addr, ses, dir string) error {
 	return nil
 }
 
-// serveQuestion is the wire QuestionRequest（GET /question / question.asked event）。
+// serveQuestion is the wire QuestionRequest (GET /question, question.asked event).
 type serveQuestion struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionID"`
@@ -860,10 +873,10 @@ func serveQuestionReject(addr, id, dir string) error {
 	return nil
 }
 
-// --- pure mapping helpers（unit-tested） ---------------------------------------
+// --- pure mapping helpers (unit-tested) ---------------------------------------
 
-// normalizeMsgID makes a ClientMessageID acceptable as opencode's v1 messageID
-// (^msg 必須・実測)。空なら AF 採番（§4: 採番者は AF）。
+// normalizeMsgID makes a ClientMessageID acceptable as opencode's v1 messageID (the ^msg
+// prefix is required — measured). An empty id is assigned here, by AF (§4).
 func normalizeMsgID(id string) string {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -877,8 +890,8 @@ func normalizeMsgID(id string) string {
 	return "msg_af_" + id
 }
 
-// agentForMode maps the ThreadSettings.Mode vocabulary（TranscriptData.Mode と同語彙）
-// onto opencode's agent name.
+// agentForMode maps the ThreadSettings.Mode vocabulary (the same vocabulary as
+// TranscriptData.Mode) onto opencode's agent name.
 func agentForMode(mode string) string {
 	switch mode {
 	case "plan":
@@ -889,9 +902,9 @@ func agentForMode(mode string) string {
 	return ""
 }
 
-// splitModel parses the launch-model string "provider/model" (buildProgram が
-// --model へ渡すのと同じ形) into a v1 model ref. 「/」を含まない値は provider が
-// 特定できないので送らない（serve 既定に任せる）。
+// splitModel parses the launch-model string "provider/model" (the same shape buildProgram
+// passes to --model) into a v1 model ref. A value with no "/" has no identifiable
+// provider, so nothing is sent and serve's default applies.
 func splitModel(s string) (provider, model string, ok bool) {
 	s = strings.TrimSpace(s)
 	i := strings.IndexByte(s, '/')
@@ -902,7 +915,7 @@ func splitModel(s string) (provider, model string, ok bool) {
 }
 
 // buildParts assembles the v1 message parts: prompt text + one file part per
-// attachment（§10.2-3: managed は tmux 貼付でなく API 添付）。
+// attachment (§10.2-3: managed attaches through the API, not by pasting into tmux).
 func buildParts(in agents.TurnInput) []map[string]any {
 	var parts []map[string]any
 	if t := strings.TrimSpace(in.Prompt); t != "" {
@@ -925,9 +938,9 @@ func buildParts(in agents.TurnInput) []map[string]any {
 	return parts
 }
 
-// answersToLabels converts the structured reply（質問ごとの Text / Options index）
-// into opencode's answers（質問ごとの選択ラベル列）。index は該当質問の選択肢へ、
-// Text はそのまま 1 ラベルとして渡す（custom 回答）。
+// answersToLabels converts the structured reply (per-question Text / Options indexes)
+// into opencode's answers (per-question lists of selected labels). An index resolves to
+// that question's option; Text is passed through as a single label (a custom answer).
 func answersToLabels(questions []transcript.Question, answers []agents.InteractionAnswer) ([][]string, error) {
 	if len(answers) != len(questions) {
 		return nil, fmt.Errorf("回答数が質問数と一致しません (%d != %d)", len(answers), len(questions))
@@ -954,15 +967,16 @@ func answersToLabels(questions []transcript.Question, answers []agents.Interacti
 
 // --- SSE dispatch ---------------------------------------------------------------
 
-// handleServeEvent routes one SSE event to the owning handle（supervisor の
-// monitorEvents から）。question 系が本命（§5）; permission.asked は bypass 運転の
-// 保険として自動 allow（3 者とも承認は自動化済み、§5 — serve 既定は素通しを実測
-// 済みだが、ユーザー config が ask を足しても managed セッションが黙って固まらない
-// ようにする）。
+// handleServeEvent routes one SSE event to the owning handle (called from the
+// supervisor's monitorEvents). Questions are the point (§5); permission.asked is
+// auto-allowed as insurance for bypass operation (approvals are automated for all three
+// kinds, §5 — serve's default was measured to pass them through, but a user config that
+// adds ask must not silently wedge a managed session).
 func handleServeEvent(data []byte) {
 	var ev struct {
-		// /global/event は {"payload": {type, properties}} に包む（実測）。素の
-		// /event 形（{type, properties} 直置き）も受ける — テスト・将来の互換用。
+		// /global/event wraps it as {"payload": {type, properties}} (measured). The bare
+		// /event shape ({type, properties} inline) is accepted too, for tests and future
+		// compatibility.
 		Payload    json.RawMessage `json:"payload"`
 		Type       string          `json:"type"`
 		Properties json.RawMessage `json:"properties"`
@@ -1000,7 +1014,7 @@ func handleServeEvent(data []byte) {
 			return
 		}
 		if h := handleBySes(p.SessionID); h != nil {
-			// TUI アタッチ側で答えられたケースも含めて解消する（併用、§2）。
+			// Clear it even when the answer came from the attached TUI (co-use, §2).
 			h.mu.Lock()
 			if h.inter != nil && h.inter.ID == p.RequestID {
 				h.inter = nil

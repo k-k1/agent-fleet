@@ -1,27 +1,28 @@
 //go:build tui_contract
 
-// claude TUI フッタ契約プローブ（P1）。
+// claude TUI footer contract probe (P1).
 //
-// 何を守るテストか: 状態検出（spinnerActive / atPromptFooter）は claude の TUI 表示という
-// **非契約・無版管理の文字列**に依存しており、2026-07-17 時点で 3 回壊れている
-// （79b582b → deac672 → fce5c5e）。3 回とも単体テストは緑のままで、実フリートで人力発見
-// された。testdata/footers のゴールデンコーパスは「既知の形」を固定するだけで、CLI 側が
-// 4 度目のドリフトを起こしても緑のままになる（＝ロックであって検知器ではない）。
-// **実 CLI を実際に走らせて初めてドリフトが分かる** — それがこのファイル。
+// What this test protects: state detection (spinnerActive / atPromptFooter) depends on
+// claude's TUI output, a set of strings that is neither a contract nor versioned, and it has
+// broken three times (79b582b, deac672, fce5c5e). Every time the unit tests stayed green and
+// a human found the breakage in the live fleet. The golden corpus under testdata/footers only
+// pins the shapes already known, so it stays green through a fourth drift on the CLI side: it
+// is a lock, not a detector. Only running the real CLI reveals a drift — that is this file.
 //
-// なぜ agent モジュール内に置くか: e2e/ は独立モジュールで、Go の internal 制約により
-// internal/tmuxx を import できない。判定ロジックを e2e 側で書き直したら「実コードを
-// 検証していないテスト」になり、今回の失敗を繰り返す。実関数をそのまま呼べる場所＝ここ。
-// CI は共通setup actionで Go・tmux・claudeをrunnerへ入れ、
-// `go test -tags tui_contract ./internal/tmuxx/` として走らせる
-// （claude-tui-contract.yml）。巨大なWorkspaceイメージ自体は必要ない。
+// Why it lives inside the agent module: e2e/ is a separate module and Go's internal rule
+// keeps it from importing internal/tmuxx. Rewriting the detection logic on the e2e side would
+// make it a test that does not exercise the real code, repeating the failure it is meant to
+// catch. This is the only place the real functions can be called directly. CI installs Go,
+// tmux and claude on the runner through the shared setup action and runs
+// `go test -tags tui_contract ./internal/tmuxx/` (claude-tui-contract.yml); the full Workspace
+// image is not needed.
 //
-// なぜ `claude -p` ではダメか: 既存 L4（e2e/live_test.go）は headless の -p を使うため
-// **フッタもスピナーも一切描画されない**。だから 3 回の破壊を 1 度も検知できなかった。
-// ここは対話 TUI を tmux で起動する必要がある。
+// Why `claude -p` will not do: the existing L4 (e2e/live_test.go) uses headless -p, which
+// draws neither footer nor spinner, which is why it never caught any of the three breakages.
+// Here the interactive TUI has to be started under tmux.
 //
-// 課金: 実ターンを 2 回（manual / bypass）走らせる。プロンプトは短文エッセイ 1 本で
-// 数百トークン程度。OAuth トークン（サブスク枠）なら追加課金なし。
+// Cost: two real turns (manual / bypass). The prompt is a single short essay, a few hundred
+// tokens. On an OAuth token (subscription quota) there is no extra charge.
 package tmuxx
 
 import (
@@ -38,10 +39,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// 思考させたいので tool を呼ばないプロンプトにする（manual モードでは Bash 等が許可
-// ダイアログを出してしまい、ターンがモーダルで止まる）。エッセイ生成なら manual/bypass
-// どちらでも許可なしに 10〜30 秒級の思考＋ストリーミングになり、**トークン counter が
-// まだ乗らない思考フェーズ**（今回の回帰そのもの）を確実に踏める。
+// The prompt must make the model think without calling a tool: in manual mode Bash and
+// friends raise a permission dialog and the turn stalls on a modal. Generating an essay needs
+// no permission in either mode and gives 10-30 seconds of thinking plus streaming, which
+// reliably hits the thinking phase where the token counter is not yet drawn — the regression
+// this test exists for.
 const contractPrompt = "Think step by step, then write a 120-word essay about the tmux terminal multiplexer."
 
 const (
@@ -53,7 +55,7 @@ const (
 func TestClaudeTUIContractLive(t *testing.T) {
 	for _, b := range []string{"tmux", "claude"} {
 		if _, err := exec.LookPath(b); err != nil {
-			t.Skipf("%s が無い — このテストは実イメージ内で走らせる想定", b)
+			t.Skipf("%s is missing — this test is meant to run inside the real image", b)
 		}
 	}
 	if v, err := exec.Command("claude", "--version").Output(); err == nil {
@@ -64,10 +66,10 @@ func TestClaudeTUIContractLive(t *testing.T) {
 		name string
 		args []string
 	}{
-		// 既定(manual)モード。フッタが「⏸ manual mode on · ← for agents」でヒントが
-		// 一切出ない＝ AtIdlePrompt が壊れた側の条件。
+		// Default (manual) mode: the footer is "⏸ manual mode on · ← for agents" and shows
+		// no hint at all, the condition under which AtIdlePrompt broke.
 		{"manual", nil},
-		// 実フリートの主用途。
+		// The main use in the live fleet.
 		{"bypass", []string{"--dangerously-skip-permissions"}},
 	} {
 		t.Run(m.name, func(t *testing.T) { runContract(t, m.name, m.args) })
@@ -77,15 +79,17 @@ func TestClaudeTUIContractLive(t *testing.T) {
 func runContract(t *testing.T, mode string, args []string) {
 	t.Helper()
 	name := "tuictr-" + mode
-	tn := session.TmuxName(name) // AtIdlePrompt/IsBusy は claude_<name> を見るので合わせる
+	tn := session.TmuxName(name) // AtIdlePrompt/IsBusy look at claude_<name>, so match it
 	dir := t.TempDir()
 
-	// 起動前にフォルダ信頼を書いておく（production の claude.ensureFolderTrusted と同じ形）。
-	// ダイアログを「出させない」のが目的である点が大事: 2.1.248 で選択肢の並びが反転し
-	// 既定が **「No, exit」** になったため（実測・2.1.247 は「Yes, I trust this folder」が
-	// 既定）、「出てから Enter で承認」は承認どころか終了になる。実際それで pane が消え、
-	// 空フレームのまま 90 秒待って落ちていた。本番は必ず先に書くので、ここを合わせる方が
-	// 契約としても正しい（このテストが見たいのはフッタであってオンボーディングではない）。
+	// Write the folder trust before launching, the way production's
+	// claude.ensureFolderTrusted does. The point is to keep the dialog from appearing at all:
+	// 2.1.248 reversed the option order so the default became "No, exit" (measured; in
+	// 2.1.247 "Yes, I trust this folder" was the default), which turns "let it appear, then
+	// press Enter to accept" into an exit. That is what happened — the pane vanished and the
+	// test waited 90 seconds on empty frames before failing. Production always writes it
+	// first, so matching that is also the more correct contract: what this test wants to see
+	// is the footer, not onboarding.
 	preTrustFolder(t, dir)
 
 	argv := append([]string{"new-session", "-d", "-s", tn, "-x", "200", "-y", "50", "-c", dir, "claude"}, args...)
@@ -96,16 +100,17 @@ func runContract(t *testing.T, mode string, args []string) {
 
 	waitReady(t, name, tn)
 
-	// D: 起動直後の ready prompt。実関数（capture 込み）をそのまま呼ぶ。
-	// manual モードの回帰（ヒント消失で常に false）はここで落ちる。
+	// D: the ready prompt right after launch, checked through the real functions (capture
+	// included). The manual-mode regression (always false once the hint disappeared) fails
+	// here.
 	if !AtIdlePrompt(name) {
-		t.Errorf("ready prompt なのに AtIdlePrompt=false — フッタ契約が変わった可能性\n%s", frameDump(tn))
+		t.Errorf("at the ready prompt but AtIdlePrompt=false — the footer contract may have changed\n%s", frameDump(tn))
 	}
 	if IsBusy(name) {
-		t.Errorf("ready prompt なのに IsBusy=true\n%s", frameDump(tn))
+		t.Errorf("at the ready prompt but IsBusy=true\n%s", frameDump(tn))
 	}
 
-	// ターン投入。
+	// Send the turn.
 	if out, err := exec.Command("tmux", "send-keys", "-t", tn, contractPrompt).CombinedOutput(); err != nil {
 		t.Fatalf("send-keys: %v: %s", err, out)
 	}
@@ -116,9 +121,9 @@ func runContract(t *testing.T, mode string, args []string) {
 
 	frames, seen := sampleTurn(t, tn)
 
-	// A: working表示そのものを一度も観測できないなら、表示仕様が根本から変わったか
-	// ターンが走っていない。2.1.220は短いターンで経過タイマーを描かず、footerの
-	// "esc to interrupt"だけを出すため、両方を独立証拠として扱う。
+	// A: if the working display is never observed at all, either the display spec changed
+	// fundamentally or the turn is not running. 2.1.220 draws no elapsed timer on short turns
+	// and shows only the footer's "esc to interrupt", so both count as independent evidence.
 	nGT := 0
 	for _, f := range frames {
 		if f.gt != "" {
@@ -126,41 +131,44 @@ func runContract(t *testing.T, mode string, args []string) {
 		}
 	}
 	if nGT == 0 {
-		t.Errorf("ターンを走らせたのに、経過タイマーまたはesc-to-interrupt表示を1度も観測できなかった"+
-			"（%d フレーム）— TUI の表示仕様が根本的に変わった可能性\n観測した行:\n%s",
+		t.Errorf("a turn was run, yet neither the elapsed timer nor the esc-to-interrupt display was "+
+			"observed once (%d frames) — the TUI display spec may have changed fundamentally\n"+
+			"observed lines:\n%s",
 			len(frames), strings.Join(seen, "\n"))
 		return
 	}
 
-	// B（本命）: **working表示が出ているフレームは必ず busy と判定できねばならない**。
-	// 3 回の回帰はいずれも「spinnerRe が実物より狭い」形で起きた（"esc to interrupt" 必須 →
-	// ローテーションで消えて破綻／"tokens" 必須 → 思考中はトークンが出ず破綻）。この差分
-	// 判定はその失敗モードを直接突く: 判定ロジックとは独立のゆるい基準（括弧付き経過
-	// タイマー、または2.1.220の短いターンで唯一残るesc-to-interrupt footer）で
-	// workingフレームを拾い、production の spinnerActive が追随できているかを見る。
+	// B (the main check): every frame showing the working display must be judged busy. All
+	// three regressions took the shape "spinnerRe is narrower than reality" ("esc to
+	// interrupt" required, then it disappeared on rotation; "tokens" required, then thinking
+	// draws no tokens). This differential check goes straight at that failure mode: working
+	// frames are picked by a loose criterion independent of the detection logic (a
+	// parenthesised elapsed timer, or the esc-to-interrupt footer, the only thing left on
+	// 2.1.220's short turns), then production's spinnerActive is asked to keep up.
 	miss := 0
 	for i, f := range frames {
 		if f.gt != "" && !f.busy {
 			if miss++; miss == 1 {
-				// idle=true なら Console は実際に「入力待ち」バッジを出す（停止ボタンが消える）
-				// ところまで行っている＝ユーザーが見た症状そのもの。
-				t.Errorf("スピナーが出ているのに IsBusy=false（frame#%d, AtIdlePrompt=%v）。"+
-					"spinnerRe が実物に追随できていない:\n  %q", i, f.idle, f.gt)
+				// With idle=true the Console goes as far as showing the "waiting for input"
+				// badge (the stop button disappears) — exactly the symptom users saw.
+				t.Errorf("the spinner is showing yet IsBusy=false (frame#%d, AtIdlePrompt=%v). "+
+					"spinnerRe is not keeping up with reality:\n  %q", i, f.idle, f.gt)
 			}
 		}
 	}
 	if miss > 0 {
-		t.Errorf("スピナー表示フレーム %d 個中 %d 個で busy 判定に失敗\n観測した行:\n%s",
+		t.Errorf("of %d frames showing the spinner, %d failed busy detection\nobserved lines:\n%s",
 			nGT, miss, strings.Join(seen, "\n"))
 	}
 
-	// C: 終了後は idle に落ち着く。ターン後要約（「✻ Worked for 13m 53s」）を busy と
-	// 誤判定すると停止バーが出っぱなしになるので、その逆方向も見る。
+	// C: after the turn it settles back to idle. Mistaking the post-turn summary
+	// ("✻ Worked for 13m 53s") for busy leaves the stop bar up forever, so check that
+	// direction too.
 	if IsBusy(name) {
-		t.Errorf("ターン終了後も IsBusy=true — ターン後要約を busy と誤判定している可能性\n%s", frameDump(tn))
+		t.Errorf("IsBusy=true after the turn ended — the post-turn summary may be judged busy\n%s", frameDump(tn))
 	}
 	if !AtIdlePrompt(name) {
-		t.Errorf("ターン終了後に AtIdlePrompt=false\n%s", frameDump(tn))
+		t.Errorf("AtIdlePrompt=false after the turn ended\n%s", frameDump(tn))
 	}
 
 	nBusy, nTokenless := 0, 0
@@ -172,20 +180,22 @@ func runContract(t *testing.T, mode string, args []string) {
 			nTokenless++
 		}
 	}
-	t.Logf("mode=%s: %d フレーム観測 / スピナー表示 %d / busy 判定 %d / うちトークン無し %d",
+	t.Logf("mode=%s: %d frames observed / spinner shown %d / judged busy %d / of those tokenless %d",
 		mode, len(frames), nGT, nBusy, nTokenless)
 	if nTokenless == 0 {
-		// 3 度目の回帰の現場はここ。踏めなかった run はその分だけ弱い（モデルが即答すると
-		// 思考フェーズが出ない）。落とすほどではないが、緑を過信しないよう明示する。
-		t.Logf("注意: このターンでは思考フェーズ（トークン無しスピナー）を踏めなかった。" +
-			"トークン依存の退行はこの run では検出できていない（testdata/footers の" +
-			" busy_thinking_no_tokens が固定で担保）")
+		// This is where the third regression lived. A run that never hits it is that much
+		// weaker (an instant answer from the model shows no thinking phase). Not worth
+		// failing over, but say so rather than trusting the green.
+		t.Logf("note: this turn never hit the thinking phase (a tokenless spinner). " +
+			"A token-dependent regression would not be detected by this run " +
+			"(busy_thinking_no_tokens in testdata/footers pins it instead)")
 	}
-	t.Logf("観測した spinner/footer 行:\n%s", strings.Join(seen, "\n"))
+	t.Logf("observed spinner/footer lines:\n%s", strings.Join(seen, "\n"))
 }
 
-// waitReady は入力プロンプトに到達するまで待つ。到達できない原因は「認証できていない」
-// （CI で最も疑わしい）か「フッタ契約が変わった」のどちらか。区別できないので両方を出す。
+// waitReady waits until the composer prompt is reached. Failing to reach it means either "not
+// authenticated" (the prime suspect in CI) or "the footer contract changed"; the two cannot be
+// told apart here, so the failure names both.
 func waitReady(t *testing.T, name, tn string) {
 	t.Helper()
 	deadline := time.Now().Add(readyWait)
@@ -200,10 +210,11 @@ func waitReady(t *testing.T, name, tn string) {
 			time.Sleep(2 * time.Second)
 			continue
 		}
-		// 起動時のフォルダ信頼ダイアログ（--dangerously-skip-permissions でも出る）。
-		// preTrustFolder が効いていれば出ないが、上流が保存形式を変えれば出る。**盲打ちの
-		// Enter は絶対にしない** — 既定の選択肢は上流の都合で入れ替わり（2.1.248 で実際に
-		// 反転した）、その日から「承認」が「終了」になる。必ず Yes の行を選んでから押す。
+		// The folder-trust dialog on launch (it appears even with
+		// --dangerously-skip-permissions). preTrustFolder normally suppresses it, but a
+		// change to the upstream storage format brings it back. Never press Enter blind: the
+		// default option moves at upstream's convenience (it actually flipped in 2.1.248),
+		// and from that day on "accept" means "exit". Always select the Yes row first.
 		if strings.Contains(s, "trust this folder") || strings.Contains(s, "Do you trust the files") {
 			chooseTrustYes(t, tn)
 			time.Sleep(2 * time.Second)
@@ -214,32 +225,35 @@ func waitReady(t *testing.T, name, tn string) {
 		}
 		time.Sleep(time.Second)
 	}
-	t.Fatalf("%s 以内に入力プロンプトへ到達できなかった。\n"+
-		"考えられる原因: (1) 認証されていない（CLAUDE_CODE_OAUTH_TOKEN は対話 TUI では効かない\n"+
-		"可能性がある／ANTHROPIC_API_KEY は確認ダイアログを出す）、(2) フッタ契約が変わって\n"+
-		"atPromptFooter が効かなくなった、(3) 未知のオンボーディング画面。\n%s",
+	t.Fatalf("the composer prompt was not reached within %s.\n"+
+		"Possible causes: (1) not authenticated (CLAUDE_CODE_OAUTH_TOKEN may not work in the\n"+
+		"interactive TUI; ANTHROPIC_API_KEY raises a confirmation dialog), (2) the footer contract\n"+
+		"changed and atPromptFooter no longer matches, (3) an unknown onboarding screen.\n%s",
 		readyWait, frameDump(tn))
 }
 
-// frame は 1 回の capture に対する観測。busy/idle は**同一フレーム**に対して当てる
-// （IsBusy と AtIdlePrompt を続けて呼ぶと別フレームを見て競合するので、ここだけは内部の
-// 純粋関数を使う。exported 版は D/C の単発判定で実行経路ごと検証している）。
+// frame is one observation of a single capture. busy and idle are decided against the SAME
+// frame: calling IsBusy and AtIdlePrompt back to back would look at two different frames and
+// race, so this one place uses the internal pure functions. The exported versions are
+// exercised, execution path included, by the one-shot checks D and C.
 type frame struct {
 	busy bool
 	idle bool
-	gt   string // 独立基準で拾った「スピナーが出ている」証拠行（空＝出ていない）
+	gt   string // evidence line for "the spinner is showing", by the independent criterion
 }
 
-// gtSpinnerRe は **production の spinnerRe とは独立の、意図的にゆるい**「スピナーが出て
-// いる」検出。括弧付きの経過タイマーだけを見る（動名詞も「…」も行頭も問わない）。
-// spinnerRe で拾うと「壊れている時に限って証拠が出せない」ので、必ず別基準にすること。
+// gtSpinnerRe detects "the spinner is showing" deliberately loosely and independently of
+// production's spinnerRe: it looks only for a parenthesised elapsed timer, regardless of the
+// gerund, the ellipsis or the start of the line. Using spinnerRe here would mean no evidence
+// exactly when it is broken, so the criterion must stay separate.
 //
-// ターン後要約「✻ Cogitated for 6s」は括弧が無いので当たらない（＝busy を要求しない）。
+// The post-turn summary "✻ Cogitated for 6s" has no parentheses and so does not match, i.e.
+// it does not demand busy.
 var gtSpinnerRe = regexp.MustCompile(`\([^)\n]*[0-9]+(?:h|m|s)\b`)
 
-// gtSpinnerLine は「working表示が出ている」証拠行を返す（無ければ ""）。
-// 2.1.220は短いターンでタイマー付きheaderを省き、footerの"esc to interrupt"だけを
-// 描く。ウェルカムボックス等の枠行は除く。
+// gtSpinnerLine returns the evidence line for "the working display is showing" ("" if none).
+// On short turns 2.1.220 omits the header with the timer and draws only the footer's "esc to
+// interrupt". Border lines such as the welcome box are skipped.
 func gtSpinnerLine(s string) string {
 	for _, ln := range strings.Split(s, "\n") {
 		t := strings.TrimSpace(ln)
@@ -253,12 +267,13 @@ func gtSpinnerLine(s string) string {
 	return ""
 }
 
-// sampleTurn は 1 フレーム 1 capture でターンを観測する。
+// sampleTurn observes the turn, one capture per frame.
 //
-// 終了検出に spinnerActive は使えない（それが壊れている時に無限待ちになる）。また
-// **回答テキストのストリーミング中はスピナーが描画されない**（実測: 6 秒のターンで
-// 思考 1s → スピナー消滅 → ストリーミング 5s → 要約）ので「非 busy が続いたら終了」も
-// 誤判定する。そこで独立信号＝ターン後要約（過去形動詞 + " for "）の出現で終わりを見る。
+// spinnerActive cannot be used to detect the end (when it is the broken thing, the wait never
+// returns). Nor can "busy stayed false for a while": no spinner is drawn while the answer text
+// streams (measured on a 6-second turn: 1s thinking, spinner gone, 5s streaming, summary). So
+// the end is taken from an independent signal, the appearance of the post-turn summary (a past
+// tense verb plus " for ").
 func sampleTurn(t *testing.T, tn string) (frames []frame, seen []string) {
 	t.Helper()
 	uniq := map[string]bool{}
@@ -274,7 +289,7 @@ func sampleTurn(t *testing.T, tn string) (frames []frame, seen []string) {
 			uniq[ln] = true
 		}
 		if f.gt == "" && postTurnSummary(s) != "" {
-			break // 要約が出てスピナーも消えた＝ターン終了
+			break // summary is up and the spinner is gone: the turn ended
 		}
 		time.Sleep(tick)
 	}
@@ -282,12 +297,13 @@ func sampleTurn(t *testing.T, tn string) (frames []frame, seen []string) {
 		seen = append(seen, "  "+k)
 	}
 	sort.Strings(seen)
-	time.Sleep(2 * time.Second) // C の判定前に描画を落ち着かせる
+	time.Sleep(2 * time.Second) // let the drawing settle before check C
 	return frames, seen
 }
 
-// postTurnSummaryRe はターン終了後に残る要約行（「✻ Worked for 13m 53s」）。過去形動詞は
-// スピナーの動名詞とは別系統の語彙なので、終了検出の独立信号に使える。
+// postTurnSummaryRe matches the summary line left after a turn ends ("✻ Worked for 13m 53s").
+// The past tense verbs come from a different vocabulary than the spinner's gerunds, which is
+// what makes them usable as an independent end-of-turn signal.
 var postTurnSummaryRe = regexp.MustCompile(`(?m)^\S? ?(?:Baked|Brewed|Churned|Cogitated|Cooked|Crunched|Saut\x{00E9}ed|Worked) for [0-9]`)
 
 func postTurnSummary(s string) string {
@@ -297,19 +313,19 @@ func postTurnSummary(s string) string {
 	return ""
 }
 
-// spinnerishLines は「スピナーらしき行」を**判定ロジックとは無関係な条件**で拾う。
-// spinnerRe で拾うと、壊れている時に限って何も出せず診断にならない（＝一番欲しい時に
-// 役に立たない）ので、ここは意図的に別基準にしてある。
+// spinnerishLines picks up "lines that look like a spinner" by a condition unrelated to the
+// detection logic. Using spinnerRe would produce nothing precisely when it is broken, i.e. no
+// diagnosis exactly when one is wanted, so the criterion here is deliberately different.
 //
-// 該当行を全部返す: 最初の 1 本だけ返す実装だと、ウェルカムボックスの
-// 「│ Opus 4.8 (1M context) with hi… · Claude Max · │」が先にマッチして本物の
-// スピナー行を握り潰した（実測で踏んだ）。枠線行は除外する。
+// It returns every matching line: returning only the first one let the welcome box's
+// "│ Opus 4.8 (1M context) with hi… · Claude Max · │" match first and swallow the real spinner
+// line (measured). Border lines are excluded.
 func spinnerishLines(s string) []string {
 	var out []string
 	for _, ln := range strings.Split(s, "\n") {
 		t := strings.TrimSpace(ln)
 		if strings.HasPrefix(t, "│") || strings.HasPrefix(t, "╭") || strings.HasPrefix(t, "╰") {
-			continue // ウェルカムボックス等の枠
+			continue // border of the welcome box and friends
 		}
 		if strings.Contains(t, "…") && strings.Contains(t, "(") && strings.Contains(t, ")") {
 			out = append(out, t)
@@ -325,14 +341,15 @@ func spinnerishLines(s string) []string {
 func frameDump(tn string) string {
 	s := CapturePane(tn)
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > 14 { // 末尾（フッタ周辺）だけで足りる
+	if len(lines) > 14 { // the tail (around the footer) is enough
 		lines = lines[len(lines)-14:]
 	}
-	return "--- 最後のフレーム(末尾) ---\n" + strings.Join(lines, "\n") + "\n---"
+	return "--- last frame (tail) ---\n" + strings.Join(lines, "\n") + "\n---"
 }
 
-var _ = os.Getenv // 認証は env（CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY）か既存の
-// .credentials.json 任せ。ここでは読まない（打鍵・ログに載せないため）。
+var _ = os.Getenv // Authentication is left to the env (CLAUDE_CODE_OAUTH_TOKEN /
+// ANTHROPIC_API_KEY) or an existing .credentials.json. Nothing is read here, so no
+// credential is ever typed into the pane or written to a log.
 
 // claudeStateFile is where claude keeps per-user state (onboarding + per-dir trust).
 // Mirrors the CLI's own resolution: $CLAUDE_CONFIG_DIR/.claude.json when set (the
@@ -344,7 +361,7 @@ func claudeStateFile(t *testing.T) string {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		t.Fatalf("home が引けません: %v", err)
+		t.Fatalf("cannot resolve the home directory: %v", err)
 	}
 	return filepath.Join(home, ".claude.json")
 }
@@ -377,10 +394,10 @@ func preTrustFolder(t *testing.T, dir string) {
 	root["projects"] = projects
 	b, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
-		t.Fatalf("%s を組み立てられません: %v", p, err)
+		t.Fatalf("cannot build %s: %v", p, err)
 	}
 	if err := os.WriteFile(p, b, 0o600); err != nil {
-		t.Fatalf("%s を書けません: %v", p, err)
+		t.Fatalf("cannot write %s: %v", p, err)
 	}
 }
 
@@ -399,7 +416,7 @@ func chooseTrustYes(t *testing.T, tn string) {
 			}
 		}
 		if cur == "" {
-			break // 選択マーカーが見つからない — 下でフレームごと報告する
+			break // no selection marker found — report the whole frame below
 		}
 		if strings.Contains(cur, yes) {
 			_ = exec.Command("tmux", "send-keys", "-t", tn, "Enter").Run()
@@ -408,5 +425,5 @@ func chooseTrustYes(t *testing.T, tn string) {
 		_ = exec.Command("tmux", "send-keys", "-t", tn, "Down").Run()
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("信頼ダイアログで %q の行を選べませんでした（選択肢の形が変わった可能性）\n%s", yes, frameDump(tn))
+	t.Fatalf("could not select the %q row in the trust dialog (the option shape may have changed)\n%s", yes, frameDump(tn))
 }

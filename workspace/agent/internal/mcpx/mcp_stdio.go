@@ -39,18 +39,19 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// MCP の版（docs/log/49 + ADR0032）。2026-07-28 は initialize ハンドシェイクを廃し、版・
-// クライアント情報・能力を毎リクエストの `_meta` で運ぶ。この stdio サーバーは元から
-// セッション状態を持たない純粋な switch なので、両方の作法をそのまま受けられる。
+// MCP protocol versions (docs/log/49 + ADR0032). 2026-07-28 drops the initialize handshake
+// and carries the version, client info and capabilities in every request's `_meta`. This
+// stdio server holds no session state to begin with — it is a pure switch — so it can
+// accept both conventions as they are.
 const (
-	mcpStdioProtocol = "2026-07-28" // 推奨（ステートレス版）
-	mcpStdioLegacy   = "2025-06-18" // initialize を送る旧クライアントへ echo する版
+	mcpStdioProtocol = "2026-07-28" // preferred (the stateless era)
+	mcpStdioLegacy   = "2025-06-18" // echoed back to old clients that send initialize
 )
 
-// mcpStdioSupportedVersions は server/discover が広告する版（新しい順）。
+// mcpStdioSupportedVersions is the set server/discover advertises, newest first.
 var mcpStdioSupportedVersions = []string{mcpStdioProtocol, "2025-11-25", mcpStdioLegacy}
 
-// ステートレス版の per-request `_meta` キー（SEP-2575）。
+// The stateless era's per-request `_meta` keys (SEP-2575).
 const (
 	mcpMetaProtocolVersion = "io.modelcontextprotocol/protocolVersion"
 	mcpMetaClientInfo      = "io.modelcontextprotocol/clientInfo"
@@ -58,7 +59,7 @@ const (
 	mcpMetaServerInfo      = "io.modelcontextprotocol/serverInfo"
 )
 
-// spec が予約する -320xx のプロトコル定義エラー。
+// The -320xx protocol-defined errors the spec reserves.
 const (
 	mcpErrUnsupportedVersion = -32022
 	mcpErrMethodNotFound     = -32601
@@ -66,11 +67,11 @@ const (
 )
 
 // SessionOutputTailBytes caps get_session_output at the LAST N bytes of the
-// flattened assistant text (/output?tail= — session_io.go): 約32KiB ≒ 数千〜1万
-// トークン。ツール結果はオペレーター会話のコンテキストに残り続けるため、ここの
-// 上限が以降の全ターンの単価に複利で効く（実測 2026-07: 上限なし時代のオペレーター
-// 会話は 200〜400k トークンを常時引きずった）。設定（設定 > アシスタント）で変更可
-// — 実効値は SessionOutputTail()。
+// flattened assistant text (/output?tail= — session_io.go): ~32KiB, a few thousand to
+// ten thousand tokens. A tool result stays in the operator conversation's context, so this
+// cap compounds into the price of every later turn (measured 2026-07: without a cap,
+// operator conversations dragged 200-400k tokens around permanently). Changeable under
+// Settings > Assistant; the effective value is SessionOutputTail().
 const SessionOutputTailBytes = 32 << 10
 
 // mcpSourceSession is the Agent Fleet slot that owns a session-side MCP process.
@@ -79,10 +80,10 @@ const SessionOutputTailBytes = 32 << 10
 var mcpSourceSession string
 
 // mcpPeerMessagingEnabled adds ONLY the two session-to-session messaging tools to the
-// session-side server (docs/log/58 / ADR 0041 決定3). Enabled by `--self-report
+// session-side server (docs/log/58 / ADR 0041 decision 3). Enabled by `--self-report
 // --peer-messaging`, the same additive shape as --chromium-attach, so `--self-report`
 // alone keeps its historical contract. It is deliberately NOT implied by --write: the
-// operator面 already has send_to_session, and peer messaging carries different rules
+// operator surface already has send_to_session, and peer messaging carries different rules
 // (no arm, no shell targets, server-built envelope).
 var mcpPeerMessagingEnabled bool
 
@@ -164,19 +165,21 @@ func dispatchMCPStdio(line []byte) []byte {
 		return nil
 	}
 	isNotif := len(bytes.TrimSpace(req.ID)) == 0 || string(bytes.TrimSpace(req.ID)) == "null"
-	// ステートレス版で来た要求は、まず `_meta` の必須項目と版を検証する。旧版
-	// （initialize を送るクライアント）は素通しで、従来の挙動をそのまま保つ。
+	// A request from the stateless era is validated first: the required `_meta` fields and
+	// the version. The old era (clients that send initialize) passes straight through and
+	// keeps its existing behaviour.
 	if resp, stop := mcpStdioValidate(req); stop {
 		return resp
 	}
 	switch req.Method {
 	case "server/discover":
-		// 2026-07-28 ではサーバー実装が MUST。stdio には版を判別する HTTP ステータスが
-		// 無いので、両対応クライアントはまずこれを投げて era を決める（SEP-2575）。
+		// A server MUST implement this in 2026-07-28. stdio has no HTTP status to tell the
+		// versions apart, so a dual-era client sends this first to decide (SEP-2575).
 		return mcpResult(req.ID, mcpStdioDiscoverResult())
 	case "initialize":
-		// 旧クライアント専用。2026-07-28 で削除されたが、両対応したいサーバーは残して
-		// よい（SEP-2575 Backward Compatibility）。落とすと未更新の CLI が全部死ぬ。
+		// For old clients only. 2026-07-28 removed it, but a server that wants to serve both
+		// eras may keep it (SEP-2575 Backward Compatibility). Dropping it kills every CLI
+		// that has not been updated.
 		ver := mcpStdioLegacy
 		var p struct {
 			ProtocolVersion string `json:"protocolVersion"`
@@ -193,17 +196,18 @@ func dispatchMCPStdio(line []byte) []byte {
 	case "notifications/initialized", "notifications/cancelled":
 		return nil
 	case "ping":
-		// 2026-07-28 で両方向とも削除（任意の RPC が生存証明になる）。旧版向けに残す。
+		// 2026-07-28 removed ping in both directions (any RPC proves liveness). Kept for
+		// the old era.
 		if isNotif {
 			return nil
 		}
 		return mcpResult(req.ID, map[string]any{"resultType": "complete"})
 	case "tools/list":
-		// ttlMs / cacheScope は 2026-07-28 の list 系結果の必須フィールド（キャッシュ可能
-		// リスト）。opencode 1.18.8 の新 era クライアントは欠落を zod で弾き「Failed to
-		// get tools」でサーバーごと切断する。旧クライアントは未知キーとして無視する
-		// （resultType と同じ扱い — 1.18.5 実測）。ツール集合は --write で決まる静的な
-		// 利用者固有リストなので private。
+		// ttlMs / cacheScope are required fields on 2026-07-28 list results (cacheable
+		// lists). opencode 1.18.8's new-era client rejects a missing one in zod and drops
+		// the whole server with "Failed to get tools"; old clients ignore them as unknown
+		// keys, the same as resultType (measured on 1.18.5). The tool set is a static,
+		// per-user list decided by --write, hence private.
 		return mcpResult(req.ID, map[string]any{
 			"resultType": "complete",
 			"ttlMs":      60000,
@@ -274,10 +278,9 @@ func mcpStdioVersionSupported(v string) bool {
 	return false
 }
 
-// mcpStdioDiscoverResult answers server/discover. serverInfo is emitted BOTH
-// top-level (SEP-2575 の DiscoverResult) と `_meta` 配下（draft ドキュメントの例）に
-// 出す — 両者が食い違っており、余分なフィールドは無害なので、どちらを読む
-// クライアントでも見つかるようにする。
+// mcpStdioDiscoverResult answers server/discover. serverInfo is emitted BOTH top-level
+// (SEP-2575's DiscoverResult) and under `_meta` (the draft documentation's example): the
+// two disagree, and an extra field is harmless, so a client reading either one finds it.
 func mcpStdioDiscoverResult() map[string]any {
 	info := map[string]any{"name": "agent-fleet-local", "version": "q1"}
 	return map[string]any{
@@ -340,12 +343,14 @@ func mcpStdioToolAdvertised(name string) bool {
 	return false
 }
 
-// mcpStdioSelfReportTools — the SESSION-side tool set (docs/log/51 Phase 3): 自分が受けた
-// 指示の完了を1回申告するだけ。報告本文はサーバが組み立てるので、モデルが渡すのは
-// 「どのセッションか」だけ（ADR 0035 決定5: 申告はタイミング信号のみ）。
+// mcpStdioSelfReportTools — the SESSION-side tool set (docs/log/51 Phase 3): report once
+// that the instruction this session received is done, and nothing else. The server builds
+// the report body, so all the model passes is which session it is (ADR 0035 decision 5:
+// the report is a timing signal only).
 //
-// Deps の値を inputSchema へ埋めるため、package 変数にはしない。package main の init が
-// Configure を呼ぶ前に map を組み立てると、SessionTitleMaxRunes の零値 0 を永久に捕捉する。
+// Not a package variable, because the inputSchema embeds values from Deps: building the map
+// before package main's init has called Configure would capture SessionTitleMaxRunes' zero
+// value forever.
 func mcpStdioSelfReportTools() []map[string]any {
 	return []map[string]any{
 		{
@@ -382,13 +387,14 @@ func mcpStdioSelfReportTools() []map[string]any {
 	}
 }
 
-// mcpStdioPeerTools — セッション同士のメッセージ（docs/log/58 / ADR 0041）。`--self-report
-// --peer-messaging` のときだけ広告する。
+// mcpStdioPeerTools — session-to-session messaging (docs/log/58 / ADR 0041), advertised
+// only under `--self-report --peer-messaging`.
 //
-// 意図的に持たせていないもの: 相手の出力を読む（get_session_output 相当）、相手を起こす /
-// 止める / 消す。通知に要らないうえ、オペレーター面の権限をセッションへ配ることになる。
-// PeerIntentNames も Configure 後に初めて値を持つ。早期に map へ捕捉すると enum:null となり、
-// Anthropic API が JSON Schema draft 2020-12 違反としてターン全体を拒否する。
+// Deliberately absent: reading the peer's output (the get_session_output equivalent), and
+// waking / stopping / deleting it. A notification needs none of that, and it would hand the
+// operator surface's powers to a session. PeerIntentNames likewise only has a value after
+// Configure; capturing it into the map early yields enum:null, which the Anthropic API
+// rejects as a JSON Schema draft 2020-12 violation, failing the whole turn.
 func mcpStdioPeerTools() []map[string]any {
 	return []map[string]any{
 		{
@@ -622,10 +628,10 @@ var mcpStdioTools = []map[string]any{
 		},
 	},
 	{
-		// docs/log/39 P4。export / import は意図して公開しない —— P3 で持ち出しに
-		// secret スキャン＋本人の明示 ack を課したのに、MCP 経由で「モデルが ack して
-		// ファイルを吐ける」経路を作ると、その防御を迂回する二つ目の出口になる。
-		// 持ち出し／取り込みは Console の本人操作に限る。
+		// docs/log/39 P4. export / import are deliberately not exposed: P3 put a secret
+		// scan and the user's explicit ack in front of an export, and an MCP route where
+		// the model acks and writes the file itself would be a second exit bypassing that
+		// defence. Export and import stay a Console action the user performs.
 		"name": "list_memory_snapshots",
 		"description": "エージェントメモリ（claude の auto-memory / codex の memories）の変更履歴を新しい順に返す。各行は時刻・契機（auto/manual/pre-restore/restore/import）・変更されたプロジェクトを持つ。" +
 			"「メモリがいつ変わったか」「おかしくなったのはいつからか」を聞かれた時や、restore_memory_snapshot で戻す時点を選ぶ前に呼ぶ。中身の差分は get_memory_snapshot を見る。",
@@ -991,8 +997,9 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
-		// 停止は /halt（再開可能）への中継。破壊的な /stop（メタごと忘却）は意図して
-		// 公開しない — 広告ツール集合がゲートなので、不可逆操作は Console に残す。
+		// Stopping relays to /halt, which is resumable. The destructive /stop (which also
+		// forgets the meta) is deliberately not exposed: the advertised tool set is the
+		// gate, so irreversible operations stay in the Console.
 		"name":        "stop_session",
 		"description": "指定セッションを停止する（停止中＝再開可能。会話履歴と作業ディレクトリは保持され、resume_session や Console から再開できる）。暴走している・不要になった・リソースを空けたいセッションを畳む時に呼ぶ。実行中の作業は中断され、そのセッションへの未達の自動報告は取り消される。実行前に『どのセッションを止めるか』を一言添えて利用者に確認すること。",
 		"inputSchema": map[string]any{
@@ -1083,9 +1090,10 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
-		// 破壊的だが可逆（適用前に pre-restore snapshot が必ず積まれる = docs/log/39 ④）。
-		// この「取り消せる」性質を description に書いておかないと、モデルは安全側に
-		// 倒しすぎて利用者の依頼を実行しないか、逆に軽く見て確認を省く。
+		// Destructive but reversible: a pre-restore snapshot is always taken before the
+		// restore is applied (docs/log/39 ④). Without "this can be undone" in the
+		// description, the model either plays it too safe and refuses what the user asked
+		// for, or takes it too lightly and skips the confirmation.
 		"name": "restore_memory_snapshot",
 		"description": "エージェントメモリを指定時点へ戻す。rev（list_memory_snapshots の id）か at（日時）で戻す先を指定し、範囲は all（全体）／projects（claude のプロジェクト単位）／kinds（claude・codex 単位）で指定する。範囲は必ず明示すること（省略は拒否される）。" +
 			"履歴は書き換えず、戻す直前の状態も自動で snapshot に残るので、この操作自体を後から取り消せる。誤って消した／誤学習したメモリを戻す時に使う。" +
@@ -1135,8 +1143,9 @@ func mcpStdioCall(req mcpReq) []byte {
 	}
 	var a struct {
 		Name string `json:"name"`
-		// Since はポインタ: 「since:0 の明示（先頭から読み直す）」と「省略（前回
-		// カーソルの続きから — mcpSessionOutput）」を区別する必要がある。
+		// Since is a pointer: an explicit since:0 (re-read from the start) has to be
+		// distinguished from an omitted one (continue from the previous cursor —
+		// mcpSessionOutput).
 		Since     *int64 `json:"since"`
 		Prompt    string `json:"prompt"`
 		Assistant string `json:"assistant"`
@@ -1150,12 +1159,13 @@ func mcpStdioCall(req mcpReq) []byte {
 		Branch        string `json:"branch"`
 		NewBranch     string `json:"new_branch"`
 		Subdir        string `json:"subdir"`
-		// answer_session_question args: 質問順の 1-based 選択肢番号。
+		// answer_session_question args: 1-based choice numbers, in question order.
 		Choices []int `json:"choices"`
 		// respond_session_plan args
 		Decision string `json:"decision"`
 		Feedback string `json:"feedback"`
-		// set_chat_plan args（docs/log/33 第5段 案D）: 会話に固定する作業計画の全文。
+		// set_chat_plan args (docs/log/33 stage 5, option D): the full work plan pinned to
+		// the conversation.
 		Plan string `json:"plan"`
 		// memo args (id in the path; the rest are forwarded verbatim via p.Args).
 		// ID doubles as the cleanup-archive id (restore/purge). Repo names the branch's repo.
@@ -1163,8 +1173,8 @@ func mcpStdioCall(req mcpReq) []byte {
 		Repo string `json:"repo"`
 		// agent-memory args (docs/log/39 P4). Rev/At pick the snapshot; All/Kinds/Projects
 		// are the restore scope. Limit/Path narrow the read tools.
-		// af_report（docs/log/51 Phase 3）: 申告元のセッション名。Name と別にするのは、
-		// このツールが「観測対象を指す name」ではなく「自分は誰か」を運ぶから。
+		// af_report (docs/log/51 Phase 3): the reporting session's name. Kept separate from
+		// Name because this tool carries "who I am", not "which session to observe".
 		Session  string   `json:"session"`
 		Rev      string   `json:"rev"`
 		At       string   `json:"at"`
@@ -1173,8 +1183,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		All      bool     `json:"all"`
 		Kinds    []string `json:"kinds"`
 		Projects []string `json:"projects"`
-		// Chromium Attach View（docs/log/53）。MCPはsnake_case、Agent RESTはcamelCase
-		// なので、この境界で明示的に変換する。hostやCDP WebSocket URLは入力に持たない。
+		// Chromium Attach View (docs/log/53). MCP is snake_case while the Agent REST is
+		// camelCase, so the conversion is explicit at this boundary. Neither a host nor a
+		// CDP WebSocket URL is accepted as input.
 		Port              int    `json:"port"`
 		TargetID          string `json:"target_id"`
 		ExpectedBrowserID string `json:"expected_browser_id"`
@@ -1184,14 +1195,15 @@ func mcpStdioCall(req mcpReq) []byte {
 		CompletionLabel   string `json:"completion_label"`
 		AllowCancel       *bool  `json:"allow_cancel"`
 		ControlMode       string `json:"control_mode"`
-		// send_to_peer_session args（docs/log/58 §58.14）: 本文の種別。返信方針は Agent 側が
-		// これから導出するので、ここでは素通しする。
+		// send_to_peer_session args (docs/log/58 §58.14): the message kind. The Agent derives
+		// the reply policy from it, so this layer passes it through untouched.
 		Intent string `json:"intent"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
-	// Chromium attachmentの変更系は広告だけでなくcall側でも拒否する。read-only
-	// clientが名前を推測してtools/callしてもAgent RESTへ到達させない。
+	// The mutating Chromium attachment tools are refused on the call side too, not just in
+	// the advertised set: a read-only client that guesses a name and issues tools/call must
+	// not reach the Agent REST.
 	if !mcpChromiumWriteEnabled() && isChromiumWriteTool(p.Name) {
 		return mcpToolErr(req.ID, "このアシスタントはChromium attachmentの変更を許可されていません")
 	}
@@ -1200,8 +1212,8 @@ func mcpStdioCall(req mcpReq) []byte {
 	// CP store, not the Agent), authenticated by AF_MEMO_TOKEN. list_memos is read-only
 	// (available to af_read too); the mutating ones require --write. The tool args match
 	// the CP wire shape, so p.Args is forwarded as the request body verbatim.
-	// peer ツールも広告だけでなく call 側で拒否する（Chromium 変更系と同じ理由 — 名前を
-	// 推測した tools/call を Agent REST へ到達させない）。
+	// The peer tools are refused on the call side too, for the same reason as the mutating
+	// Chromium ones: a guessed name in tools/call must not reach the Agent REST.
 	if !mcpPeerMessagingEnabled && isPeerTool(p.Name) {
 		return mcpToolErr(req.ID, "このセッションはセッション間メッセージを許可されていません")
 	}
@@ -1219,9 +1231,9 @@ func mcpStdioCall(req mcpReq) []byte {
 			if m.Title != "" {
 				row["title"] = m.Title
 			}
-			// 状態は Agent に聞く。メタには live state が無く、ここで嘘の idle を返すと
-			// 「動いてなさそうだから送っていい」という誤った判断につながる。取れなければ
-			// state を省く（推測で埋めない）。
+			// Ask the Agent for the state. The meta carries no live state, and a made-up
+			// idle here leads to the wrong call ("it looks quiet, so I can send"). When it
+			// cannot be read, omit state rather than guessing at it.
 			if st, err := agentPeerSessionState(m.Name); err == nil && st != "" {
 				row["state"] = st
 			}
@@ -1242,9 +1254,11 @@ func mcpStdioCall(req mcpReq) []byte {
 		if strings.TrimSpace(a.Intent) == "" {
 			return mcpToolErr(req.ID, "intent（本文の種別）が必要です: "+strings.Join(peerIntentNames, " / "))
 		}
-		// 封筒・宛先ポリシー・レート制限・arm 非干渉は Agent 側（session_peer.go）が持つ。
-		// ここで組むと、この薄い層を差し替えるだけで迂回できてしまう。intent の妥当性と
-		// 返信方針の導出も同じ理由で Agent 側（peerResolveIntent）— ここは素通しする。
+		// The envelope, the recipient policy, the rate limit and leaving the arm alone all
+		// belong to the Agent (session_peer.go): building them here would let anyone bypass
+		// them by replacing this thin layer. Validating the intent and deriving the reply
+		// policy stay on the Agent (peerResolveIntent) for the same reason — this layer
+		// passes them through.
 		reqBody, _ := json.Marshal(map[string]any{
 			"prompt": a.Message, "peer_from": self, "peer_intent": a.Intent,
 		})
@@ -1268,9 +1282,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		if strings.TrimSpace(a.Title) == "" {
 			return mcpToolErr(req.ID, "title（新規セッションの表示名）が必要です")
 		}
-		// 表示名はそのままセッション名になるので、**提案の時点で**作成 API と同じ規則
-		// （80 文字以内・制御文字なし）で断る。ここを通してしまうと、長い名前のまま保存
-		// され、利用者が起動を押した瞬間に初めて失敗する（呼び出し側はもう居ない）。
+		// The display name becomes the session name verbatim, so refuse it at proposal time
+		// by the same rule the create API uses (at most 80 runes, no control characters).
+		// Let it through and the long name is stored, only to fail the moment the user
+		// presses launch — by which time the caller is long gone.
 		if _, ok := cleanTitle(a.Title); !ok {
 			return mcpToolErr(req.ID, fmt.Sprintf("title は %d 文字以内・改行なしにしてください（そのままセッションの表示名になります）", sessionTitleMaxRunes))
 		}
@@ -1298,10 +1313,10 @@ func mcpStdioCall(req mcpReq) []byte {
 	case "set_chromium_control_mode":
 		return mcpSetChromiumControlMode(req.ID, a.AttachmentID, a.ControlMode)
 	case "af_report":
-		// 自己申告ファストパス（docs/log/51 Phase 3）。--self-report で起動したセッション側の
-		// サーバー専用 — アシスタントの af_read/af_write はこのツールを広告しないので、
-		// 広告していない経路から呼ばれたら断る（広告集合がスコープの境界・docs/log/19 Q2 と
-		// 同じ作法）。
+		// The self-report fast path (docs/log/51 Phase 3), for the session-side server
+		// started with --self-report only. The assistant's af_read/af_write never advertise
+		// this tool, so a call arriving through an unadvertised route is refused — the same
+		// convention as elsewhere: the advertised set is the scope boundary (docs/log/19 Q2).
 		if !selfReportOnly() {
 			return mcpToolErr(req.ID, "af_report はセッション側の Agent Fleet サーバー専用です")
 		}
@@ -1312,8 +1327,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		if _, err := AgentPOST("/chat/report", body); err != nil {
 			return mcpToolErr(req.ID, "完了の申告に失敗しました: "+err.Error())
 		}
-		// 申告は「早める」だけで、報告そのものはサーバが判定して配る。ここでモデルに
-		// 「報告した」と言うと、呼び忘れ・早呼びの回復（リコンサイラ）が見えなくなる。
+		// The call only makes the report EARLIER; the server still decides and delivers the
+		// report itself. Telling the model "reported" here would hide the recovery paths for
+		// a forgotten or premature call (the reconciler).
 		return mcpTextResult(req.ID, "完了を申告しました（報告は Agent Fleet 側が状態を確認して配信します）。")
 	case "get_agent_usage":
 		// Read-only merge of the two WsBar usage endpoints (5h/weekly windows captured
@@ -1341,8 +1357,8 @@ func mcpStdioCall(req mcpReq) []byte {
 		})
 		return mcpTextResult(req.ID, string(b))
 	case "list_models":
-		// write セットで広告するツールなので呼び出しも同じ境界で断る（広告集合が
-		// スコープの境界・docs/log/19 Q2）。
+		// Advertised in the write set, so the call is refused at the same boundary: the
+		// advertised set is the scope boundary (docs/log/19 Q2).
 		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントはモデル一覧の取得を許可されていません")
 		}
@@ -1470,13 +1486,14 @@ func mcpStdioCall(req mcpReq) []byte {
 	// Write/orchestrate tools — only when this server was started with --write.
 	switch p.Name {
 	case "get_chat_plan", "set_chat_plan":
-		// 作業計画（docs/log/33 第5段 案D）。対象は**常に自分の会話**（convID()）で、
-		// 会話 id を引数に取らない — create_schedule の owner_conv 上書きと同じ作法で、
-		// 「オペレーターは自分にしか書かない」を配線側の性質にしておく。
+		// The work plan (docs/log/33 stage 5, option D). The target is ALWAYS this server's
+		// own conversation (convID()) and there is no conversation-id argument — the same
+		// convention as create_schedule's owner_conv override, making "an operator only
+		// writes to itself" a property of the wiring.
 		//
-		// 読み取りも --write ゲート下に置く: この2本は write ツールとしてしか広告して
-		// いないので、広告集合＝スコープの境界という既存の作法（af_report・docs/log/19 Q2）
-		// に合わせる。
+		// The read is under the --write gate too: both tools are advertised only in the
+		// write set, so this follows the existing rule that the advertised set is the scope
+		// boundary (af_report, docs/log/19 Q2).
 		if !writeEnabled() {
 			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
 		}
@@ -1491,17 +1508,20 @@ func mcpStdioCall(req mcpReq) []byte {
 			}
 			return mcpTextResult(req.ID, out)
 		}
-		// 空で消させない: 計画の破棄は利用者の判断（Console の作業計画パネル）。モデルの
-		// 空文字・空白だけの全文置換は事故（要約の失敗・出力の切れ）であることが多い。
+		// Never let an empty value clear it: discarding the plan is the user's decision, made
+		// in the Console's work-plan panel. A whole-text replacement that is empty or only
+		// whitespace is usually an accident (a failed summary, truncated output).
 		if strings.TrimSpace(a.Plan) == "" {
 			return mcpToolErr(req.ID, "plan（作業計画の全文）が空です。計画を消したい場合は利用者に Console の作業計画パネルから操作してもらってください")
 		}
-		// notice=true: 利用者が見ていない間に計画が動く唯一の経路なので、会話へカードを残す。
+		// notice=true: this is the only route that moves the plan while the user is not
+		// watching, so leave a card in the conversation.
 		body, _ := json.Marshal(map[string]any{"plan": a.Plan, "notice": true})
 		if _, err := agentDo(http.MethodPut, path, body); err != nil {
 			return mcpToolErr(req.ID, "作業計画の更新に失敗しました: "+err.Error())
 		}
-		// 会話まるごとを返さない（返すと計画を書くたびに会話全文がモデルへ戻る）。
+		// Do not return the whole conversation: that would feed its full text back to the
+		// model on every plan write.
 		return mcpTextResult(req.ID, "作業計画を更新しました（以降の新しいセッションへ原文のまま引き継がれます）。")
 	case "create_session":
 		if !writeEnabled() {
@@ -1533,11 +1553,11 @@ func mcpStdioCall(req mcpReq) []byte {
 			"branch":          a.Branch,
 			"new_branch":      a.NewBranch,
 			"driver":          driver,
-			"report_to":       convID(), // docs/log/30: 完了報告をこの会話へ（空なら無効）
+			"report_to":       convID(), // docs/log/30: send the completion report to this conversation (empty = off)
 			"idempotency_key": idemKey,
-			// ADR 0029 §6: オペレーターが立てたセッションであることを出自として明示する。
-			// 無人で増える消費（自動走行・定時実行との組み合わせ）を使用量集計で
-			// 「人が開いたセッション」と分けるための軸。
+			// ADR 0029 §6: record explicitly that an operator started this session. That is
+			// the axis usage accounting needs to separate unattended spend (autopilot and
+			// schedules combined) from sessions a human opened.
 			"origin":      session.OriginOperator,
 			"origin_conv": convID(),
 		})
@@ -1563,10 +1583,12 @@ func mcpStdioCall(req mcpReq) []byte {
 				return mcpToolErr(req.ID, err.Error())
 			}
 		}
-		// confirm（docs/log/38 配達検証）: オペレーター送信は無人経路 — 打鍵 200 では
-		// なく「ターンが実際に始まった証拠」まで待つ。飲まれた場合は Agent 側が
-		// 自己修復（Enter 再送/再タイプ）し、それでも未確認なら delivery_unconfirmed
-		// がツールエラーとして返る（停止中セッションへの指示空振り bc5d685e の対策）。
+		// confirm (docs/log/38 delivery verification): an operator send is an unattended
+		// route, so wait for proof that the turn actually started rather than the 200 that
+		// only means the keystrokes went out. If the input was swallowed the Agent repairs
+		// itself (re-sends Enter / retypes), and if it is still unconfirmed the tool fails
+		// with delivery_unconfirmed — the fix for instructions silently lost to a stopped
+		// session (bc5d685e).
 		reqBody, _ := json.Marshal(map[string]any{"prompt": a.Prompt, "report_to": convID(), "confirm": true})
 		out, resumed, err := AgentSendToSession(a.Name, reqBody)
 		if err != nil {
@@ -1617,8 +1639,8 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
 		}
-		// disarm_report: オペレーターの停止＝指示の取り消しなので、arm 済みの
-		// ワンショット報告を握りつぶす（後日の再開完了で古い報告が届かないように）。
+		// disarm_report: an operator stop means the instruction is cancelled, so swallow the
+		// armed one-shot report — otherwise a later resume's completion delivers a stale one.
 		reqBody, _ := json.Marshal(map[string]bool{"disarm_report": true})
 		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/halt", reqBody)
 		if err != nil {
@@ -1626,10 +1648,11 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "get_memory_snapshot":
-		// tree（その時点に何が入っていたか）と diff（その snapshot が入れた変更）を
-		// 1 回で返す。restore の範囲は tree からしか作れない — 現在のルートを選択肢に
-		// すると、既に消えたプロジェクトを選べず「誤って消したメモリを戻す」という
-		// 本命が成立しない（docs/log/39 ③ が tree を足した理由）。
+		// Return the tree (what was there at that point) and the diff (what that snapshot
+		// changed) in one call. A restore scope can only be built from the tree: offering
+		// the CURRENT roots as the choices makes an already-deleted project unselectable,
+		// which defeats the main case, restoring memory that was deleted by mistake (why
+		// docs/log/39 ③ added the tree).
 		if a.Rev == "" && a.At == "" {
 			return mcpToolErr(req.ID, "rev（snapshot id）か at（日時）のどちらかが必要です")
 		}
@@ -1666,9 +1689,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Rev == "" && a.At == "" {
 			return mcpToolErr(req.ID, "rev（snapshot id）か at（日時）のどちらかが必要です")
 		}
-		// 範囲の省略を「全体」と解釈しない。モデルがフィールドを落としただけで
-		// メモリ全体が巻き戻る事故を、引数の段で構造的に潰す（利用者の承認は
-		// 「この範囲を」に対して得られているはずなので、暗黙の拡大は裏切りになる）。
+		// An omitted scope is NOT read as "everything". Killing that structurally at the
+		// argument level stops the model dropping a field and rolling the whole memory back:
+		// the user's approval was given for a specific scope, so widening it silently is a
+		// betrayal of that approval.
 		if !a.All && len(a.Kinds) == 0 && len(a.Projects) == 0 {
 			return mcpToolErr(req.ID, "戻す範囲が必要です（all=true か projects / kinds を指定してください）")
 		}
@@ -1715,8 +1739,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		if err := bridgeApprovalGate(approvalLabel("delete_worktree"), a.Name); err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
-		// prune_sessions=1 で紐づく停止中メタも整理。force は付けない — dirty/ahead は
-		// 保護のまま Agent 側で拒否させ、理由（要 push / Console で強制）を返す。
+		// prune_sessions=1 also clears the stopped metas attached to it. No force: a dirty or
+		// ahead worktree stays protected and is refused by the Agent, which returns the
+		// reason (push first, or force it from the Console).
 		out, err := agentDo(http.MethodDelete, "/repos/"+url.PathEscape(a.Name)+"?prune_sessions=1", nil)
 		if err != nil {
 			return mcpToolErr(req.ID, "worktree の削除に失敗しました: "+err.Error())
@@ -1732,7 +1757,8 @@ func mcpStdioCall(req mcpReq) []byte {
 		if err := bridgeApprovalGate(approvalLabel("delete_session"), a.Name); err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
-		// reclaim=1 で jsonl も回収。消す前に gz 安全網へ退避される（復元可能）。
+		// reclaim=1 reclaims the jsonl too. It is moved to the gz safety net before deletion,
+		// so it stays restorable.
 		out, err := agentDo(http.MethodDelete, "/sessions/"+url.PathEscape(a.Name)+"?reclaim=1", nil)
 		if err != nil {
 			return mcpToolErr(req.ID, "セッションの削除に失敗しました: "+err.Error())
@@ -1965,8 +1991,8 @@ func mcpListChromiumTargets(id json.RawMessage, port int) []byte {
 		})
 	}
 	result := map[string]any{"targets": targets}
-	// browser_id は「このportに居るChromiumは本当に自分が起動した個体か」を
-	// 呼び出し側が突き合わせるための識別子。CDP endpointでもcredentialでもない。
+	// browser_id lets the caller check that the Chromium on this port really is the instance
+	// it started itself. It is neither a CDP endpoint nor a credential.
 	if response.BrowserID != "" {
 		result["browser_id"] = response.BrowserID
 	}
@@ -2027,7 +2053,8 @@ func mcpAttachChromium(id json.RawMessage, port int, targetID, expectedBrowserID
 	if !validChromiumOpenURL(response.OpenURL, response.ID) {
 		return mcpToolErr(id, "Agentが不正なChromium attachment open URLを返しました")
 	}
-	// Agent応答にtitle/url/port/target/CDP情報が増えてもMCPへは通さない。
+	// Even if the Agent response grows title / url / port / target / CDP fields, none of
+	// them are passed on to MCP.
 	return mcpStructuredResult(id, map[string]any{
 		"attachment_id": response.ID,
 		"open_url":      response.OpenURL,
@@ -2177,8 +2204,8 @@ func chromiumAttachmentStatus(body, fallbackID string) (map[string]any, error) {
 }
 
 // mcpStructuredResult deliberately duplicates the same JSON object in text and
-// structuredContent. P0でstructuredContentをモデルへ渡さないCLIを実測したため、
-// textは説明文ではなく全CLI共通で読める短いJSON fallbackを必ず保持する。
+// structuredContent. P0 measured CLIs that never hand structuredContent to the model, so
+// text always holds a short JSON fallback every CLI can read, not a prose description.
 func mcpStructuredResult(id json.RawMessage, value map[string]any) []byte {
 	text, _ := json.Marshal(value)
 	return mcpResult(id, map[string]any{
@@ -2188,10 +2215,12 @@ func mcpStructuredResult(id json.RawMessage, value map[string]any) []byte {
 	})
 }
 
-// mcpChromiumToolErr keeps raw Agent/CDP details out of the model-visible result.
-// Stable Agent error codes remain useful, while endpoint URLs, ports and target IDs do not.
-// chromiumToolErrHints — 対処が一意に決まるcodeだけ、次の一手を添える。port衝突は
-// 「他セッションのChromiumへ繋ぎかけた」状態なので、リトライではなく起動側を直す。
+// chromiumToolErrHints adds a next step for the codes whose remedy is unambiguous. A port
+// collision means the caller was about to attach to another session's Chromium, so the fix
+// is on the launch side, not a retry.
+//
+// mcpChromiumToolErr below keeps raw Agent/CDP details out of the model-visible result:
+// stable Agent error codes remain useful, endpoint URLs, ports and target IDs do not.
 var chromiumToolErrHints = map[string]string{
 	"cdp_port_ambiguous": "そのportは複数プロセスがlistenしています。別セッションのChromiumへ繋がる恐れがあるため中断しました。" +
 		"自分のChromiumを--remote-debugging-port=0で起動し直し、<user-data-dir>/DevToolsActivePortの1行目のportを使ってください。",
@@ -2214,16 +2243,16 @@ func mcpChromiumToolErr(id json.RawMessage, action string, err error) []byte {
 }
 
 // OutputCursors remembers, per conversation, the last /output cursor returned for
-// each session（ファイル名 = 会話ID・中身 = セッション名→cursor）。since 省略時の
-// 既定にする: オペレーターは同じセッションを報告のたびに読み直すので、毎回 32KiB の
-// 末尾を取り直すとその全部がコンテキストに積み直される — 差分だけ返せば以降の
-// ターンが軽くなる。mcp-stdio はターン毎の短命プロセスなのでメモリではなくファイル
-// （会話削除時に chat.go が消す）。
+// each session (file name = conversation id, contents = session name -> cursor). It is the
+// default when since is omitted: an operator re-reads the same session on every report, and
+// re-fetching the trailing 32KiB each time piles all of it back into the context, whereas
+// returning only the delta keeps later turns cheap. mcp-stdio is a short-lived per-turn
+// process, so this is a file rather than memory (chat.go deletes it with the conversation).
 var OutputCursors = fstore.JSON[map[string]int64](paths.AgentConfigDir, "mcp-output-cursor", ".json")
 
-// SessionOutputTail is the effective get_session_output tail cap（設定 >
-// アシスタント「セッション出力の取得上限」・ui-prefs assistantOutputTailKiB → 既定
-// SessionOutputTailBytes）。
+// SessionOutputTail is the effective get_session_output tail cap: the session-output limit
+// under Settings > Assistant (ui-prefs assistantOutputTailKiB), defaulting to
+// SessionOutputTailBytes.
 func SessionOutputTail() int {
 	if v, ok := readUIPrefs()["assistantOutputTailKiB"].(float64); ok && v > 0 {
 		n := int(v) << 10
@@ -2238,8 +2267,9 @@ func SessionOutputTail() int {
 	return SessionOutputTailBytes
 }
 
-// mcpSessionOutput handles get_session_output: tail 上限を常時指定し、since 省略時は
-// 会話別に記憶した前回カーソルの続きから返す（明示 since — 0 を含む — が最優先）。
+// mcpSessionOutput handles get_session_output: it always passes the tail cap, and when
+// since is omitted it continues from the cursor remembered for this conversation. An
+// explicit since — including 0 — always wins.
 func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 	eff := int64(-1)
 	fromStore := false
@@ -2262,7 +2292,7 @@ func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 	}
 	var resp map[string]any
 	if json.Unmarshal([]byte(body), &resp) == nil {
-		// 返ってきた cursor を次回の既定 since として会話別に記憶する。
+		// Remember the returned cursor per conversation as the next default since.
 		if cursor, ok := resp["cursor"].(float64); ok && convID() != "" {
 			cur, _ := OutputCursors.Read(convID())
 			if cur == nil {
@@ -2273,8 +2303,8 @@ func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 				_ = OutputCursors.Write(convID(), cur)
 			}
 		}
-		// 既定の続き読みで新規出力ゼロ — 空文字のまま返すと「何も出力していない
-		// セッション」と誤読されるので、意味を本文で伝える。
+		// A default continue-read with no new output: returning an empty string reads as
+		// "this session produced nothing", so say what it means in the body.
 		if s, _ := resp["output"].(string); fromStore && strings.TrimSpace(s) == "" {
 			resp["output"] = fmt.Sprintf(
 				"（前回取得（since=%d）以降の新しい出力はありません。過去の出力を読み直す場合は since を明示してください（例: since=0）。）", eff)
@@ -2569,7 +2599,7 @@ func AgentSendToSession(name string, body []byte) (out string, resumed bool, err
 	if !state.Alive {
 		return agentResumeAndSend(name, inputPath, body)
 	}
-	// /input with confirm (配達検証) blocks until the turn provably started — up to two
+	// /input with confirm (delivery verification) blocks until the turn provably started — up to two
 	// evidence windows plus one self-heal — so the client budget must exceed the
 	// server-side worst case (AgentPOST's default 15s does not).
 	out, err = agentDoTimeout(http.MethodPost, inputPath, body, 45*time.Second)
@@ -2593,7 +2623,7 @@ func agentResumeAndSend(name, inputPath string, body []byte) (out string, resume
 		return "", true, err
 	}
 	// 45s for the same reason as the alive path: /input with confirm blocks until the
-	// prompt provably became a turn (配達検証), beyond AgentPOST's default 15s.
+	// prompt provably became a turn (delivery verification), beyond AgentPOST's default 15s.
 	out, err = agentDoTimeout(http.MethodPost, inputPath, body, 45*time.Second)
 	if err != nil {
 		return "", true, fmt.Errorf("再開後の送信に失敗しました: %w", err)

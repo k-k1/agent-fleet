@@ -1,29 +1,34 @@
 package chatx
 
-// 指示台帳 — セッション報告 v2 Phase 2（docs/log/51 §データモデル / ADR 0035 決定1）。
+// The instruction ledger for session report v2 Phase 2 (docs/log/51 §data model /
+// ADR 0035 decision 1).
 //
-// v1 は「指示1件 = arm の1bit（session-report/<name>.json）」だった。1bit には
-// **同一性が無い**ので、指示が重なった瞬間に定義から事故が生まれる:
+// v1 stored "one instruction = one arm bit" (session-report/<name>.json). A bit has no
+// identity, so overlapping instructions broke by construction:
 //
-//   - 穴A: キュー投入で指示2を re-arm すると指示1の arm を上書きする。ターン1の Stop が
-//     その bit を消費した時点で、指示2の完了は誰にも報告されない。
-//   - 穴B: 消費側（v1 の waiter / kick）に「どの指示の分を消費したのか」を検証する手段が
-//     無い（世代が無い）。誤って別指示の分を消費しても検出できない。
+//   - Hole A: queueing instruction 2 re-armed over instruction 1's arm. Once turn 1's Stop
+//     consumed that bit, instruction 2's completion was reported to nobody.
+//   - Hole B: the consumer (v1's waiter / kick) had no way to verify which instruction it
+//     consumed (there was no generation), so consuming another instruction's share went
+//     undetected.
 //
-// Phase 2 は bit を**台帳の行**に置き換える。指示1件 = 1行で、投入は必ず**追加**
-// （上書きしない）。行IDが同一性そのものなので:
+// Phase 2 replaces the bit with a ledger row. One instruction = one row, and delivery always
+// APPENDS (never overwrites). The row id is the identity itself, so:
 //
-//   - 穴A は定義から消える。先行指示の行が reported になっても後行指示の行は pending の
-//     まま残り、その完了で改めて報告される（TestInstrLedgerQueuedInstructionSurvives）。
-//   - 穴B（世代なし消費）と hint の誤着も消える。リコンサイラは「行ID の集合」を報告し、
-//     その集合だけを reported に遷移させる。どの行の分かが常に書かれている。
-//   - 配送はシンク側（会話ロック下）で行IDにより冪等化できる（v1 は「1回だけ」を検出側の
-//     不可逆消費で担保していた — 追記に失敗すれば報告ごと消えた）。
+//   - Hole A disappears by construction. An earlier instruction's row turning reported leaves
+//     a later instruction's row pending, and its completion is reported separately
+//     (TestInstrLedgerQueuedInstructionSurvives).
+//   - Hole B (generation-less consumption) and misrouted hints disappear too. The reconciler
+//     reports a SET OF ROW IDS and transitions only that set to reported, so which row a
+//     report belongs to is always written down.
+//   - Delivery can be made idempotent by row id on the sink side (under the conversation
+//     lock). v1 guaranteed "exactly once" with an irreversible consume on the detection side,
+//     so a failed append lost the report along with it.
 //
-// 状態機械: pending →(interim 報告)→ interim_reported →(完了/異常)→ reported
-//           reported →(補償・Phase 3)→ reopened →…→ reported
-//           pending/interim_reported →(stop_session の disarm)→ cancelled
-// open（＝まだ報告義務が残っている）= pending | interim_reported | reopened。
+// State machine: pending →(interim report)→ interim_reported →(completion/abnormal)→ reported
+//                reported →(compensation, Phase 3)→ reopened →…→ reported
+//                pending/interim_reported →(stop_session disarm)→ cancelled
+// open (= a report is still owed) = pending | interim_reported | reopened.
 
 import (
 	"log"
@@ -39,38 +44,39 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// 行の状態（docs/log/51 §データモデル）。
+// Row states (docs/log/51 §data model).
 const (
 	instrPending   = "pending"
-	instrInterim   = "interim_reported" // 質問/プラン の途中経過を報告済み（**非消費**）
+	instrInterim   = "interim_reported" // interim progress of a question/plan reported (NON-consuming)
 	instrReported  = "reported"
-	instrReopened  = "reopened"  // 誤「完了」の補償で開き直した行（Phase 3）
-	instrCancelled = "cancelled" // stop_session = 指示の取り消し
+	instrReopened  = "reopened"  // row re-opened by the compensation for a wrong "completion" (Phase 3)
+	instrCancelled = "cancelled" // stop_session = the instruction is withdrawn
 )
 
-// instrCursor is the row's progress cursor: 「この時刻より後にセッションが働いた証拠」を
-// 完了報告の前提にするための下限（docs/log/51 §progressed）。Phase 2 は投入時刻1本
-// （＝ Phase 1 の arm 時刻と同じ意味）で、kind 別の濃いカーソル（jsonl サイズ・ターン
-// 連番）は後続の課題。**秒精度の RFC3339 で持つ**のが肝で、比較相手の status マーカーも
-// 秒精度 — ここを nano にすると「投入と同じ秒に終わった速いターン」が永久に settle
-// しなくなる（マーカーがカーソルより前に見える）。
+// instrCursor is the row's progress cursor: the lower bound that makes "the session worked
+// after this time" a precondition of the completion report (docs/log/51 §progressed). Phase 2
+// uses a single delivery time (the same meaning as Phase 1's arm time); richer per-kind cursors
+// (jsonl size, turn sequence number) are later work. Holding it as SECOND-precision RFC3339 is
+// the point, because the status markers it is compared against are second-precision too — going
+// nano here means a fast turn that finished in the same second as the delivery never settles
+// (the marker looks earlier than the cursor).
 type instrCursor struct {
-	At string `json:"at"` // RFC3339（秒）
+	At string `json:"at"` // RFC3339 (seconds)
 }
 
-// instrInterimAt records that this row already carried an interim report. 非消費の
-// 意味論は v1 と同一（完了のワンショットは温存される）— ここは「既報の記録」であって
-// 抑止ではない: 1つの指示の中で質問が2回起きるのは普通で、2回目を握り潰すと
-// オペレーターが答えられなくなる。
+// instrInterimAt records that this row already carried an interim report. The non-consuming
+// semantics are identical to v1 (the completion one-shot is preserved) — this is a record of
+// what was already reported, not a suppressor: two questions within one instruction is normal,
+// and swallowing the second one leaves the operator unable to answer it.
 type instrInterimAt struct {
 	QuestionAt string `json:"question_at,omitempty"`
 	PlanAt     string `json:"plan_at,omitempty"`
 }
 
-// instrRow is one instruction (docs/log/51 §データモデル).
+// instrRow is one instruction (docs/log/51 §data model).
 type instrRow struct {
-	ID          string         `json:"id"`     // 行ID（配送の冪等キー）
-	Conv        string         `json:"conv"`   // 報告先の会話
+	ID          string         `json:"id"`     // row id (idempotency key for delivery)
+	Conv        string         `json:"conv"`   // conversation the report goes to
 	Source      string         `json:"source"` // operator | schedule | schedule-manual …
 	DeliveredAt string         `json:"delivered_at"`
 	Cursor      instrCursor    `json:"cursor"`
@@ -89,21 +95,21 @@ func (r instrRow) open() bool {
 	return false
 }
 
-// instrLedger is the per-session file: rows in投入順.
+// instrLedger is the per-session file: rows in delivery order.
 type instrLedger struct {
 	Rows []instrRow `json:"rows"`
 }
 
 var instrLedgers = fstore.JSON[instrLedger](paths.AgentConfigDir, "instr-ledger", ".json")
 
-// instrClosedKeep bounds the history kept per session: open 行は必ず残し、閉じた行は
-// 新しい方から instrClosedKeep 件だけ残す（reopen の補償・調査に足りる量。長寿の
-// セッションが何百回も steer されても台帳が太らない）。
+// instrClosedKeep bounds the history kept per session: open rows are always kept, closed rows
+// only the newest instrClosedKeep of them — enough for reopen compensation and investigation,
+// while a long-lived session steered hundreds of times does not grow the ledger.
 const instrClosedKeep = 20
 
-// 台帳の read-modify-write はセッション単位で直列化する（docs/log/51: 書き手はサーバ
-// プロセス内の投入ハンドラとリコンサイラだけ）。臨界区間はファイル1枚の read+write
-// だけで、配送（会話ロック・provider 呼び出し）はこの外側で行う。
+// Read-modify-write of a ledger is serialized per session (docs/log/51: the only writers are
+// the delivery handler and the reconciler inside the server process). The critical section is
+// one file read+write; delivery (conversation lock, provider calls) happens outside it.
 var (
 	instrLocksMu sync.Mutex
 	instrLocks   = map[string]*sync.Mutex{}
@@ -121,13 +127,13 @@ func lockInstr(name string) func() {
 	return mu.Unlock
 }
 
-// newInstrID mints a row id. 短い id で十分（衝突面はセッション1件の台帳の中だけ）だが、
-// 予測可能である必要も無いので randUUID の乱数から取る。
+// newInstrID mints a row id. A short id is enough (the collision surface is one session's
+// ledger), but it need not be predictable either, so it is drawn from RandUUID's randomness.
 func newInstrID() string {
 	return "i-" + strings.ReplaceAll(RandUUID(), "-", "")[:10]
 }
 
-// readInstrRows returns the session's ledger rows (投入順).
+// ReadInstrRows returns the session's ledger rows, in delivery order.
 func ReadInstrRows(name string) []instrRow {
 	l, ok := instrLedgers.Read(name)
 	if !ok {
@@ -136,8 +142,8 @@ func ReadInstrRows(name string) []instrRow {
 	return l.Rows
 }
 
-// openInstrRows returns the rows that still owe a report, oldest cursor first —
-// リコンサイラはこの順に依存する（先頭 = 最古の指示 = 証拠の下限）。
+// openInstrRows returns the rows that still owe a report, oldest cursor first — the reconciler
+// depends on this order (the head = the oldest instruction = the lower bound of evidence).
 func openInstrRows(name string) []instrRow {
 	var out []instrRow
 	for _, r := range ReadInstrRows(name) {
@@ -149,13 +155,12 @@ func openInstrRows(name string) []instrRow {
 	return out
 }
 
-// sessionReportPending reports whether the session owes at least one report — hook /
-// record-exit プロセスが「そもそも kick する意味があるか」を見るのに使う
-// （v1 の reportArmed の後継）。
+// SessionReportPending reports whether the session owes at least one report — the hook and
+// record-exit processes use it to see whether a kick is worth doing at all (the successor of
+// v1's reportArmed).
 func SessionReportPending(name string) bool { return len(openInstrRows(name)) > 0 }
 
-// writeInstrRows persists the rows with the retention trim. 呼び出し側が lockInstr を
-// 保持していること。
+// writeInstrRows persists the rows with the retention trim. The caller must hold lockInstr.
 func writeInstrRows(name string, rows []instrRow) {
 	var open, closed []instrRow
 	for _, r := range rows {
@@ -172,29 +177,29 @@ func writeInstrRows(name string, rows []instrRow) {
 		instrLedgers.Remove(name)
 		return
 	}
-	// 追加順（＝ DeliveredAt 順）を保つ: 閉じた行は必ず開いている行より前に投入された
-	// わけではないので、時刻で並べ直す。
+	// Keep the append order (= DeliveredAt order): a closed row was not necessarily delivered
+	// before an open one, so sort by time again.
 	merged := append(append([]instrRow{}, closed...), open...)
 	sort.SliceStable(merged, func(i, j int) bool { return merged[i].DeliveredAt < merged[j].DeliveredAt })
 	_ = instrLedgers.Write(name, instrLedger{Rows: merged})
 }
 
-// addInstruction records one delivered instruction as a NEW ledger row (docs/log/51 §移行
-// Phase 2: arm の書込み箇所を行追加へ)。create_session（report_to 付き）と report_to を
-// 運ぶ /input・/turn の成功時に呼ぶ。**既存行は絶対に触らない** — 重なった指示が
-// 潰れないことがこの置き換えの目的そのもの（穴A）。
+// AddInstruction records one delivered instruction as a NEW ledger row (docs/log/51 §migration
+// Phase 2: the arm write sites become row appends). Called on success by create_session (with
+// report_to) and by /input and /turn carrying report_to. NEVER touch an existing row —
+// overlapping instructions not being squashed is the whole point of this replacement (gap A).
 func AddInstruction(name, convID, source string) string {
 	return addInstructionAt(name, convID, source, time.Now())
 }
 
-// addInstructionAt is addInstruction with an explicit delivery time (テストが投入と
-// 証拠の前後関係を決定的に組むための seam)。
+// addInstructionAt is AddInstruction with an explicit delivery time (a seam so tests can build
+// the ordering between delivery and evidence deterministically).
 func addInstructionAt(name, convID, source string, at time.Time) string {
 	if !session.ValidName(name) || !paths.ValidIDSegment(convID) {
 		return ""
 	}
 	if _, err := LoadConv(convID); err != nil {
-		return "" // unknown conversation — 宛先の無い行は作らない（v1 の arm と同じ判断）
+		return "" // unknown conversation — no row without a destination (the same call as v1's arm)
 	}
 	ts := at.Format(time.RFC3339)
 	row := instrRow{
@@ -204,15 +209,16 @@ func addInstructionAt(name, convID, source string, at time.Time) string {
 	unlock := lockInstr(name)
 	writeInstrRows(name, append(ReadInstrRows(name), row))
 	unlock()
-	// 新しい指示 = 判定のやり直し。前の指示で溜まったデバウンス（静穏カウント）や中断
-	// ヒントを持ち越すと、走り出す前のセッションを「完了」と読みかねない。
+	// A new instruction = decide again from scratch. Carrying over the debounce (quiet count)
+	// and abort hints accumulated for the previous instruction risks reading a session that has
+	// not started running yet as "complete".
 	reportRec.forget(name)
 	return row.ID
 }
 
-// markInstrReported closes the given rows after a SUCCESSFUL delivery (deliver-then-
-// consume)。行IDで指定するので、配送してからここへ戻るまでに追加された指示の行は
-// 巻き添えにならない（穴B の「世代なし消費」がここで構造的に消える）。
+// markInstrReported closes the given rows after a SUCCESSFUL delivery (deliver-then-consume).
+// Rows are named by id, so instructions added between the delivery and returning here are not
+// caught in the crossfire (gap B's generation-less consumption disappears structurally).
 func markInstrReported(name string, ids []string, at time.Time) {
 	if len(ids) == 0 {
 		return
@@ -233,9 +239,10 @@ func markInstrReported(name string, ids []string, at time.Time) {
 	writeInstrRows(name, rows)
 }
 
-// markInstrInterim stamps the interim (non-consuming) report on every open row: 質問 /
-// プランは「この指示の途中経過」なので、その時点で開いている行に既報として刻む。
-// 状態は interim_reported へ進むが **open のまま** — 完了報告の義務は残る。
+// markInstrInterim stamps the interim (non-consuming) report on every open row: a question or
+// a plan is "progress on this instruction", so it is recorded as already reported on whichever
+// rows are open at that moment. The state advances to interim_reported but the row STAYS open —
+// the completion report is still owed.
 func markInstrInterim(name, kind string, at time.Time) {
 	unlock := lockInstr(name)
 	defer unlock()
@@ -261,14 +268,17 @@ func markInstrInterim(name, kind string, at time.Time) {
 }
 
 // instrReopenMax caps how often one row may be re-opened by the compensation path
-// （docs/log/51 §補償）。上限に達した行は「判定が振動している」ので開き直さない。
+// (docs/log/51 §compensation). A row at the cap is not re-opened again: the decision is
+// oscillating.
 const instrReopenMax = 2
 
 // reopenInstrRow re-opens a reported row so the real completion gets another report
-// （docs/log/51 §補償 — 誤「完了」の自己修復）。遷移を引く検出（reported 行の grace 監視中に
-// busy 証拠が復活したか）と訂正の配送は reportReconciler.compensate（Phase 3）にあり、
-// ここは台帳側の遷移だけを持つ。**訂正を配送してから**呼ぶこと: 逆順にすると、訂正が
-// 配送できなかったときに「黙って開き直しただけ」になり、v1 の消失と同じ見え方になる。
+// (docs/log/51 §compensation — self-healing a wrong "completion"). The detection that drives
+// the transition (busy evidence returning while a reported row is under grace watch) and the
+// delivery of the correction live in reportReconciler.compensate (Phase 3); this holds only the
+// ledger-side transition. Call it AFTER the correction has been delivered: in the reverse order,
+// a correction that could not be delivered leaves the row silently re-opened, which looks exactly
+// like v1's lost report.
 func reopenInstrRow(name, id string) bool {
 	unlock := lockInstr(name)
 	defer unlock()
@@ -278,7 +288,7 @@ func reopenInstrRow(name, id string) bool {
 			continue
 		}
 		if rows[i].ReopenCount >= instrReopenMax {
-			return false // 振動している — 開き直さず打ち切る（Phase 3 が利用者へ報告）
+			return false // oscillating — stop instead of re-opening (Phase 3 reports it to the user)
 		}
 		rows[i].State = instrReopened
 		rows[i].ReopenCount++
@@ -289,9 +299,10 @@ func reopenInstrRow(name, id string) bool {
 	return false
 }
 
-// cancelInstructions marks every open row cancelled — オペレーターの stop_session
-// （halt + disarm_report）は「指示の取り消し」なので、後日ユーザーが再開して完了しても
-// 古い報告は届かない。Console の停止（body なし）はこれを呼ばず、行を残す。
+// cancelInstructions marks every open row cancelled — the operator's stop_session (halt +
+// disarm_report) means "the instruction is withdrawn", so the old report is not delivered even
+// if the user resumes later and it completes. The Console's stop (no body) does not call this
+// and leaves the rows in place.
 func cancelInstructions(name string) int {
 	unlock := lockInstr(name)
 	rows := ReadInstrRows(name)
@@ -308,17 +319,17 @@ func cancelInstructions(name string) int {
 	return n
 }
 
-// instrPendingSessions lists the sessions with at least one open row — リコンサイラの
-// sweep 対象。定常コストは台帳ディレクトリの readdir 1回＋小さな read だけ。
+// instrPendingSessions lists the sessions with at least one open row — the reconciler's sweep
+// set. The steady-state cost is one readdir of the ledger directory plus small reads.
 func instrPendingSessions() []string {
 	open, _ := instrSweepSessions(time.Now())
 	return open
 }
 
-// instrSweepSessions splits the ledger directory into the reconciler's two work sets in
-// ONE readdir + read pass: 完了を待っている（open 行あり）セッションと、誤「完了」の
-// 監視中（grace 内の reported 行あり）セッション（docs/log/51 §補償）。両方に載ることは
-// 普通にある — 1件が報告済みでもう1件が pending、という状態がそれ。
+// instrSweepSessions splits the ledger directory into the reconciler's two work sets in ONE
+// readdir + read pass: sessions waiting for a completion (an open row) and sessions under watch
+// for a wrong "completion" (a reported row inside the grace window) (docs/log/51 §compensation).
+// Appearing in both is ordinary — one instruction reported while another is still pending.
 func instrSweepSessions(now time.Time) (open, grace []string) {
 	ents, err := os.ReadDir(instrLedgers.Dir())
 	if err != nil {
@@ -346,9 +357,9 @@ func instrSweepSessions(now time.Time) (open, grace []string) {
 	return open, grace
 }
 
-// --- 行集合のユーティリティ（リコンサイラ / シンクが使う） ------------------------
+// --- Row-set helpers (used by the reconciler and the sink) --------------------------
 
-// instrIDs projects the row ids (台帳の更新対象・ログ).
+// instrIDs projects the row ids (ledger update targets, logging).
 func instrIDs(rows []instrRow) []string {
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -357,10 +368,11 @@ func instrIDs(rows []instrRow) []string {
 	return out
 }
 
-// instrDeliveryKey is the row's IDEMPOTENCY key for the conversation: 行ID＋reopen 世代。
-// 世代を混ぜるのは補償（§Phase 3）のため — reopen された行は同じ行IDで**もう一度**
-// 報告されなければならないので、行IDだけを鍵にすると「配送済み」と誤判定して本完了の
-// 報告を握り潰す。世代 0（通常の指示）は行ID そのもの。
+// instrDeliveryKey is the row's IDEMPOTENCY key for the conversation: row id + reopen
+// generation. The generation is mixed in for the compensation (§Phase 3) — a reopened row must
+// be reported AGAIN under the same row id, so keying on the row id alone reads it as "already
+// delivered" and swallows the real completion report. Generation 0 (an ordinary instruction) is
+// the row id itself.
 func instrDeliveryKey(r instrRow) string {
 	if r.ReopenCount == 0 {
 		return r.ID
@@ -368,11 +380,12 @@ func instrDeliveryKey(r instrRow) string {
 	return r.ID + "#" + strconv.Itoa(r.ReopenCount)
 }
 
-// instrReopenKeySuffix namespaces the COMPENSATION notice's idempotency key away from
-// the completion report's (docs/log/51 §補償 / Phase 3)。訂正は「その世代の完了報告」に
-// 1対1で対応するので、鍵は同じ行ID＋同じ世代の別名前空間にする。行IDだけを共有すると
-// 訂正が「配送済み」の完了報告と衝突し、逆に世代を1つ進めた鍵にすると、次の本完了
-// （reopen 後の世代）の報告を握り潰す。
+// instrReopenKeySuffix namespaces the COMPENSATION notice's idempotency key away from the
+// completion report's (docs/log/51 §compensation / Phase 3). A correction corresponds one-to-one
+// with "the completion report of that generation", so its key is the same row id and the same
+// generation in a separate namespace. Sharing just the row id makes the correction collide with
+// the already-delivered completion report; bumping the generation instead swallows the report of
+// the next real completion (the post-reopen generation).
 const instrReopenKeySuffix = "~reopen"
 
 // instrDeliveryKeyFor is the row's idempotency key for a report of the given kind.
@@ -391,9 +404,9 @@ func instrKeysFor(kind string, rows []instrRow) []string {
 	return out
 }
 
-// instrConvs lists the distinct report targets in投入順. 同じセッションを別々の
-// オペレーター会話が指示していることがあるので、畳み込みは**会話ごと**に行う
-// （1通に混ぜると、片方の会話へもう片方の指示の完了が漏れる）。
+// instrConvs lists the distinct report targets in delivery order. Two different operator
+// conversations can be instructing the same session, so folding is done PER CONVERSATION
+// (mixing them into one message leaks one conversation's instruction completion to the other).
 func instrConvs(rows []instrRow) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -416,11 +429,12 @@ func instrRowsForConv(rows []instrRow, conv string) []instrRow {
 	return out
 }
 
-// instrRowsCoveredBy returns the rows whose cursor is not AFTER the settle evidence
-// （at = idle マーカー / ExitInfo の時刻）。証拠より後に投入された指示は、その静穏では
-// 完了になり得ない — 開いたまま残して次の終端で報告する（穴A）。
-// 時刻が読めないときは reportTimeBefore が false を返す＝「覆っている」に倒れる:
-// 判定不能を理由に本物の完了証拠を捨てると報告が永久に出ない（v1 の消失モード）。
+// instrRowsCoveredBy returns the rows whose cursor is not AFTER the settle evidence (at = the
+// idle marker / ExitInfo time). An instruction delivered after the evidence cannot have
+// completed in that quiet period — it stays open and is reported at the next terminus (gap A).
+// When the time cannot be parsed reportTimeBefore returns false, which falls to "covered":
+// discarding real completion evidence because the decision is undecidable means the report never
+// comes out at all (v1's loss mode).
 func instrRowsCoveredBy(rows []instrRow, at string) []instrRow {
 	var out []instrRow
 	for _, r := range rows {
@@ -431,10 +445,11 @@ func instrRowsCoveredBy(rows []instrRow, at string) []instrRow {
 	return out
 }
 
-// undeliveredInstrRows filters out the rows whose report of THIS kind already exists in
-// the conversation（配送の冪等化 — 呼び出し側は会話ロックを保持していること）。kind を
-// 取るのは補償の訂正（docs/log/51 §補償）のため: 訂正と完了報告は同じ行・同じ世代を指すが
-// 別々の1通なので、鍵の名前空間を分けないと片方がもう片方を握り潰す。
+// undeliveredInstrRows filters out the rows whose report of THIS kind already exists in the
+// conversation (delivery idempotency — the caller must hold the conversation lock). It takes a
+// kind for the compensation's correction (docs/log/51 §compensation): the correction and the
+// completion report name the same row and the same generation but are two separate messages, so
+// without separate key namespaces one swallows the other.
 func undeliveredInstrRows(c *ChatConversation, rows []instrRow, kind string) []instrRow {
 	if len(rows) == 0 {
 		return rows
@@ -457,12 +472,12 @@ func undeliveredInstrRows(c *ChatConversation, rows []instrRow, kind string) []i
 	return out
 }
 
-// reportedInstrTS finds when the conversation actually carried these rows' completion
-// report (unix millis, 0 when not found). **台帳の ReportedAt を使わない**のがこの関数
-// の存在理由: 補償は行を reopen した瞬間に ReportedAt を消す（reopenInstrRow）ので、
-// 「訂正の対象はいつの報告か」を台帳から読むと、訂正が再試行された second pass や
-// 2回目の補償で参照先が消えている。会話メッセージは訂正の対象そのものなので、そこから
-// 取れば世代がずれない。
+// reportedInstrTS finds when the conversation actually carried these rows' completion report
+// (unix millis, 0 when not found). NOT using the ledger's ReportedAt is the reason this function
+// exists: the compensation clears ReportedAt the moment it reopens a row (reopenInstrRow), so
+// reading "which report is being corrected" from the ledger finds the reference gone on a
+// retried second pass or a second compensation. The conversation messages are the thing being
+// corrected, so taking it from there keeps the generation aligned.
 func reportedInstrTS(c *ChatConversation, rows []instrRow) int64 {
 	want := map[string]bool{}
 	for _, r := range rows {
@@ -482,13 +497,15 @@ func reportedInstrTS(c *ChatConversation, rows []instrRow) int64 {
 	return ts
 }
 
-// instrReopenCandidates returns the reported rows still inside the compensation grace
-// window (docs/log/51 §補償: reported 行を grace 期間監視する)。純関数なので、grace の境界と
-// 「新指示があれば補償しない」規則をテーブルで固定できる。
+// instrReopenCandidates returns the reported rows still inside the compensation grace window
+// (docs/log/51 §compensation: reported rows are watched for the grace period). It is a pure
+// function, so the grace boundary and the "no compensation once a new instruction arrived" rule
+// can be pinned by table.
 //
-// 「**新しい指示行が無いまま**」の実装がここ: セッションが再び busy になった理由が
-// 「その報告より後に投入された指示」で説明できるなら、それは誤報告ではなく次の仕事なので
-// 補償の対象から外す（外さないと、キュー投入のたびに直前の正しい報告を訂正してしまう）。
+// The "with NO newer instruction row" part is implemented here: if the session going busy again
+// is explained by an instruction delivered after that report, it is the next job rather than a
+// wrong report, so it is excluded from compensation (otherwise every queued instruction would
+// correct the preceding, correct report).
 func instrReopenCandidates(rows []instrRow, now time.Time, grace time.Duration) []instrRow {
 	newest := ""
 	for _, r := range rows {
@@ -503,22 +520,23 @@ func instrReopenCandidates(rows []instrRow, now time.Time, grace time.Duration) 
 		}
 		at, err := time.Parse(time.RFC3339, r.ReportedAt)
 		if err != nil {
-			continue // 時刻が読めない行は監視できない（grace の始点が無い）
+			continue // a row with an unparsable time cannot be watched (no start for the grace)
 		}
 		if now.Before(at) || now.Sub(at) > grace {
 			continue
 		}
 		if reportTimeBefore(r.ReportedAt, newest) {
-			continue // 報告のあとに新しい指示が来ている — busy は説明が付く
+			continue // a new instruction arrived after the report — the busy state is explained
 		}
 		out = append(out, r)
 	}
 	return out
 }
 
-// instrFoldAts joins the dispatch times of the rows a folded report covers (docs/log/51
-// §データモデル): 複数の指示が同じ静穏で完了したときは1通に**明示的に束ねる**（v1 のように
-// 潰さない）。「指示N件ぶん」の文言そのものは chat_report_text.go（表示言語で組む）。
+// instrFoldAts joins the dispatch times of the rows a folded report covers (docs/log/51 §data
+// model): when several instructions complete in the same quiet period they are bundled into one
+// message EXPLICITLY, not squashed as in v1. The "N instructions" wording itself lives in
+// chat_report_text.go (composed in the display language).
 func instrFoldAts(rows []instrRow) string {
 	ats := make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -527,15 +545,16 @@ func instrFoldAts(rows []instrRow) string {
 	return strings.Join(ats, " / ")
 }
 
-// --- v1 arm からの移行 ------------------------------------------------------------
+// --- Migration from the v1 arm ------------------------------------------------------
 
-// migrateReportArms converts leftover v1 arm files (session-report/<name>.json,
-// armed=true) into one ledger row each, then removes them（docs/log/51 §移行 Phase 2:
-// 「起動時に既存 armed=true を1行に変換」）。起動時に1回だけ走る。
+// MigrateReportArms converts leftover v1 arm files (session-report/<name>.json, armed=true)
+// into one ledger row each, then removes them (docs/log/51 §migration Phase 2: "convert an
+// existing armed=true into one row at startup"). Runs once at startup.
 //
-// 変換後に v1 ファイルを消すのは、再起動のたびに同じ arm を再変換して行が増えるのを
-// 防ぐため。代償は「Phase 1 バイナリへロールバックすると、移行済みの未完了指示の報告が
-// 出ない」こと（指示を出し直せば復旧する）— 二重報告より軽い方に倒した。
+// The v1 files are deleted after conversion so a restart does not re-convert the same arm and
+// multiply rows. The price is that rolling back to a Phase 1 binary drops the report for a
+// migrated but still-open instruction (re-issuing the instruction recovers it) — chosen as the
+// lighter failure against double reporting.
 func MigrateReportArms() {
 	ents, err := os.ReadDir(reportLinks.Dir())
 	if err != nil {
@@ -570,6 +589,6 @@ func MigrateReportArms() {
 		reportLinks.Remove(name)
 	}
 	if n > 0 {
-		log.Printf("session-report: v1 の arm %d 件を指示台帳へ移行した（docs/log/51 Phase 2）", n)
+		log.Printf("session-report: migrated %d v1 arm(s) into the instruction ledger (docs/log/51 Phase 2)", n)
 	}
 }
