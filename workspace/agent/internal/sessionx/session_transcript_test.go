@@ -9,6 +9,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -253,6 +254,74 @@ func TestSweepSettledPending(t *testing.T) {
 		}
 	})
 
+	// ペイロードを消したら state も消す。片方だけだと「決めるカードが無いのに送信を断る」
+	// が残る（利用者報告 2026-09-04「AUQ をキャンセルしたあと、メッセージが送信できなく
+	// なる」）。カード（表示）と state（判定）は同じ決着で同時に畳む。
+	t.Run("伏せていた許可状態も掃除される", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		status.WritePendingQuestion(sid, raw)
+		status.WritePendingPermission(sid, "Claude needs your permission")
+		// AUQ 自身の permission_prompt が state を permission に上書きした形（実測: 質問の
+		// 6 秒後）。キャンセルは PostToolUse を鳴らさないので、これを書き直す者はいない。
+		status.Persist(sid, "permission")
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"), "2026-08-31T12:00:06.000Z")
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"), "2026-08-31T12:00:06.000Z")
+
+		surfacePendingPayloads(map[string]any{}, sid, "permission", [][]byte{ask, decided})
+
+		if st, ok := status.Read(sid); ok {
+			t.Errorf("state %q survived the sweep — 送信は permission_pending で断られるのに、決めるカードはもう無い", st.State)
+		}
+		if got := status.LiveState(sid); got != "idle" {
+			t.Errorf("LiveState = %q, want idle（走っていれば次の poll の reverse-heal が working へ戻す）", got)
+		}
+	})
+
+	// 逆向き: 生きた許可（決着より後に捕まえた本物の Edit/Bash 承認）が残っているなら、
+	// state にも断ってもらわないと自由文が許可メニューに飲まれて Enter が「許可」を押す。
+	t.Run("生きた許可が残っているなら state も残す", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		status.WritePendingPermission(sid, "Edit · /tmp/a.go")
+		status.Persist(sid, "permission")
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"), "2026-08-31T12:09:00.000Z")
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"), "2026-08-31T12:00:06.000Z")
+
+		surfacePendingPayloads(map[string]any{}, sid, "permission", [][]byte{ask, decided})
+
+		if st, ok := status.Read(sid); !ok || st.State != "permission" {
+			t.Errorf("state = %q/%v, want permission（生きた承認ダイアログの前で送信を通してはならない）", st.State, ok)
+		}
+	})
+
+	// 決着の**後**に書かれた state は新しいモーダルのもの（フックが先、tool_use の flush が
+	// 後、の 106〜122ms を含む）。掃除してはならない。
+	t.Run("決着より後の state は残す", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		status.Persist(sid, "permission")
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"), "2026-08-31T12:05:00.100Z")
+
+		surfacePendingPayloads(map[string]any{}, sid, "permission", [][]byte{ask, decided})
+
+		if st, ok := status.Read(sid); !ok || st.State != "permission" {
+			t.Errorf("state = %q/%v, want permission（決着より後に立ったモーダル）", st.State, ok)
+		}
+	})
+
+	// working / idle は掃除の管轄外 — ターンの話であってモーダルの話ではない。ここを
+	// 消すと、答えた直後（PostToolUse→working）のターンが 入力待ち を名乗る。
+	t.Run("モーダルでない state は触らない", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		status.Persist(sid, "working")
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"), "2026-08-31T12:00:06.000Z")
+
+		surfacePendingPayloads(map[string]any{}, sid, "working", [][]byte{ask, decided})
+
+		if st, ok := status.Read(sid); !ok || st.State != "working" {
+			t.Errorf("state = %q/%v, want working", st.State, ok)
+		}
+	})
+
 	t.Run("決着がひとつも無ければ触らない", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingQuestion(sid, raw)
@@ -264,6 +333,46 @@ func TestSweepSettledPending(t *testing.T) {
 			t.Error("pending question swept with no tool_result in the transcript")
 		}
 	})
+}
+
+// 層をまたいで固定する: 掃除（表示側）を通ったあと、送信のガード（判定側）が実際に
+// 開いていること。片方だけのテストでは、この 2 つが食い違ったこと自体を見逃す — 実バグ
+// （2026-09-04）は「カードは消えたのに送信は permission_pending で断られる」だった。
+func TestCancelledInteractionFreesComposer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const name = "auq_cancel"
+	dir := t.TempDir()
+	session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: session.KindClaude})
+	sid := session.UUID(dir, name)
+
+	ask := []byte(`{"type":"assistant","timestamp":"2026-09-04T12:00:00.000Z","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"どれ？","options":[{"label":"A"}]}]}}]}}`)
+	cancelled := []byte(`{"type":"user","timestamp":"2026-09-04T12:05:00.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"q1","is_error":true,"content":"The user doesn't want to proceed with this tool use. The tool use was rejected"}]}}`)
+
+	// キャンセル直前の姿: 質問ペイロード＋それが伏せていた許可ペイロード＋
+	// AUQ 自身の permission_prompt が書いた state。
+	status.WritePendingQuestion(sid, json.RawMessage(`[{"header":"方式","question":"どれ？","options":[{"label":"A"}]}]`))
+	status.WritePendingPermission(sid, "Claude needs your permission")
+	status.Persist(sid, "permission")
+	for path, ts := range map[string]string{
+		filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"): "2026-09-04T12:00:00.100Z",
+		filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"):      "2026-09-04T12:00:06.000Z",
+		filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"):   "2026-09-04T12:00:06.000Z",
+	} {
+		backdate(t, path, ts)
+	}
+	if got := promptBlocker(name); got != "question" {
+		t.Fatalf("キャンセル前は質問カードへ誘導するはず: promptBlocker = %q", got)
+	}
+
+	resp := map[string]any{}
+	surfacePendingPayloads(resp, sid, "permission", [][]byte{ask, cancelled})
+
+	if len(resp) != 0 {
+		t.Fatalf("決着済みのモーダルが出た: %v", resp)
+	}
+	if got := promptBlocker(name); got != "" {
+		t.Fatalf("promptBlocker = %q — 決めるカードが 1 枚も無いのに送信を断っている", got)
+	}
 }
 
 // backdate は保留ペイロードの mtime を「いつ捕まえたか」に合わせる。掃除の判定材料は
