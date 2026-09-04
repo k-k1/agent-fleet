@@ -2,7 +2,7 @@
 
 English | [日本語](0068-debian-13-base.ja.md)
 
-- Status: **accepted — ①–④ done and green on hosted CI, ⑤ and ⑥ outstanding** (2026-09-04).
+- Status: **accepted — ①–⑥ all done; ⑤ and ⑥ measured on real hardware** (2026-09-04).
   The measurements are recorded under "Order of work" below. The motivation for moving the
   base and the comparison of the five options (A–E) are in
   [docs/70 §70.9.3](../log/70-slot-instance-classes.md); the 🔴 correction there is what
@@ -141,6 +141,41 @@ authority for real images.
 | **⑤** | Re-bake the golden snapshots on both architectures | Golden is per-architecture (docs/70 §70.6). ⚠️ Do not repeat §70.14.7, where golden was selected on image identity alone |
 | **⑥** | Real Graviton hardware, if rtk on arm is actually wanted | ②'s QEMU only answers "does it load" (see Consequences) |
 
+**Measurements for ⑤ and ⑥ (2026-09-04, the dev deployment on real AWS, `WsRuntime=ecs-ec2`):**
+
+- **⑤ golden, both architectures.** The deployment was stood up on a `develop` image
+  (`standup.sh --image-tag …`), and the Control Plane's own auto-bake produced **both**
+  goldens without anyone asking: `BakeArches()` is the declared classes' distinct
+  architectures, and `Ec2SlotTypes` already declared an `arm` class. It grew one slot per
+  architecture (`m7i.large` in 1a, `m8g.large` in 1c), booted a seed through the ordinary
+  Start path, snapshotted its home, and published each one only after **a probe workspace
+  started from it cleanly** — x86_64 `snap-070ac5bdc2a768b4a`, arm64
+  `snap-0aaee9345bf91879c`. ⚠️ Both carry the same `af-image-fp`
+  (`sha256:4f71ed…`), so §70.14.7's "selected on image identity alone" is not what happens
+  any more: the stamp is the set of per-platform manifest digests, i.e. content.
+- **⑥ rtk on real Graviton — it works.** Probe: `deploy/aws/ecs/harness/probe-rtk.sh`, run
+  inside the arm64 workspace image on the `m8g.large` slot (aarch64, kernel
+  `6.1.182-227.379.amzn2023.aarch64`, Debian 13, glibc 2.41), with the arm64 golden home
+  attached so `rtk` is the one the product's own boot-install put there. All six checks
+  passed, and the two that QEMU could not answer are the point:
+  **`rtk grep` spawned a child and its output came back**, and the compaction was real —
+  **345,786 bytes → 2,754 bytes, `total_saved` +107,758 tokens**, byte-for-byte the same
+  numbers as on amd64. `rtk hook claude` rewrote `grep …` to `rtk grep …` on the machine.
+- ⚠️ **`rtk` is not in the image on this path.** `dev-deploy.sh` bakes with
+  `BAKE_AGENT_CLIS=0`, so `rtk` is not at `/usr/local/bin/rtk`; the entrypoint
+  boot-installs the pinned `rtk-aarch64-unknown-linux-gnu` into `~/.local/bin`. **A probe
+  that runs the bare image therefore finds no rtk and says nothing about the question** —
+  measured, and the first run of this probe did exactly that. What answers ⑥ is a *home*
+  that has been through boot-install. That the arm64 seed logged
+  `[entrypoint] boot-install rtk 0.47.0` is itself evidence, because the entrypoint runs
+  `--version` and **deletes rtk with a reason when it cannot run**.
+- **The probe is not a rubber stamp.** Against a stub `rtk` that answers `--version` and
+  nothing else — the exact shape of "it loads but cannot spawn", which is what QEMU could
+  have been hiding — check 1 passes and checks 2, 3, 5 and 6 fail. Two checks inside it are
+  matched pairs on purpose: "found the needle" needs "did not find one that is absent"
+  beside it, and "rtk's output is smaller" is satisfied by a one-line error message unless
+  the accounted delta is read too.
+
 **Measurements for ①–④ (2026-09-04, hosted CI, all successful):**
 
 - **① amd64** (run 33843064097): python `3.13.5-1`, git-delta `0.18.2-4+b1`,
@@ -189,15 +224,16 @@ the `BAKE_OPTIONAL_TOOLS=0` branch lists explicitly, **six do not exist in trixi
 - **git-delta becomes available.** trixie's main has `git-delta`. The "not in bookworm, so
   intentionally omitted" note in `workspace/Dockerfile` goes away; this moves from the cost
   column to the benefit column.
-- **arm64 members are on track to get rtk.** rtk's aarch64-gnu build needs exactly two
-  `GLIBC_2.39` symbols (`pidfd_getpid`, `pidfd_spawnp`), and trixie is 2.41; in ② a real
-  arm64 image under QEMU ran `rtk --version` successfully (see the measurements above).
-  ⚠️ But **what QEMU answered is "does it load and report a version"** — `pidfd_spawnp` is
-  exactly the kind of syscall QEMU's user mode may not implement, and the path where rtk
-  actually spawns a child has not been exercised. **Say nothing stronger than "should work"
-  until real Graviton hardware (⑥) confirms it**, so as not to repeat docs/70 §70.9.4
-  ("documented as supported" and "actually runs" are different claims). ⚠️ Likewise, do not
-  retract §70.3.3's "arm members cannot use rtk" until ⑥ passes.
+- **arm64 members get rtk.** rtk's aarch64-gnu build needs exactly two `GLIBC_2.39` symbols
+  (`pidfd_getpid`, `pidfd_spawnp`), and trixie is 2.41; in ② a real arm64 image under QEMU
+  ran `rtk --version` successfully, and in **⑥ a real Graviton m8g.large ran it for real**
+  (see the measurements above). The caution that stood here until ⑥ was measured is worth
+  keeping as a record of what QEMU is and is not evidence for: **QEMU answered "does it load
+  and report a version"**, `pidfd_spawnp` is exactly the kind of syscall its user mode may
+  not implement, and until ⑥ the path where rtk actually spawns a child had not been
+  exercised — so the claim was held at "should work", to avoid repeating docs/70 §70.9.4
+  ("documented as supported" and "actually runs" are different claims). ⑥ is what turned it
+  into "does". docs/70 §70.3.3's "arm members cannot use rtk" now carries a 🔴 correction.
 - **Nothing changes about pushing upstream on rtk.** Waiting on PR #3318 stands, and **this
   migration is not grounds to withdraw it as "solved"** — the missing musl variant is still an
   upstream gap for everyone else.

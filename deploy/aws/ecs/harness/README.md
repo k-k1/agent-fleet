@@ -29,3 +29,17 @@ AF_HARNESS_REPO_DIR=$PWD AF_HARNESS_NAT=1 ~/af-ec2c/setup.sh   # 基盤を作る
   WARN で流れる）。起動と永続の検証には足りるが、CLI の導入まで見たいなら NAT が要る。
 - 失敗して作り直すときは **`AF_ECS_EC2_LIVE_SUFFIX=b`** を付ける。ECS は削除直後の同名サービス
   作成を `Create service is not idempotent` で拒む。
+
+## `probe-rtk.sh` —— rtk は「ロードする」だけでなく**使えるか**
+
+上の基盤とは独立した単体の検査で、**AWS を何も作らない**。ワークスペースのコンテナの中で
+走らせ、rtk が実際に子プロセスを起こし、claude の PreToolUse フックが Bash を書き換え、
+削減が実際に計上されるところまでを 6 項目で見る（[ADR 0068](../../../../docs/decisions/0068-debian-13-base.ja.md) ⑥）。
+
+```bash
+docker exec -i <workspace container> sh -s < deploy/aws/ecs/harness/probe-rtk.sh
+```
+
+⚠️ **素のイメージに対して走らせても答えにならない。** `BAKE_AGENT_CLIS=0` で焼いた
+イメージには rtk が入っておらず、entrypoint が `~/.local/bin` へ導入する。**boot-install を
+通った home** の側で走らせること（実機での踏み方は ADR 0068 の ⑤⑥ 実測を参照）。
