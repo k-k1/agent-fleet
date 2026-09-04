@@ -10,7 +10,7 @@
 // the file itself in the viewer instead. The row menu still offers 差分 for anyone
 // who wants it. Revived from the old FilesSection (deleted 0568750), minus its
 // file-management extras.
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
@@ -119,6 +119,35 @@ export function FilesChanges() {
     setChanges(d.changes || []);
     return true;
   }, [running, filesTick]);
+
+  // 自動更新（セッションが入力待ちに入った・features/files/sessionRefresh.ts）。
+  // 上の読み込みを使い回さないのは setChanges(null) のため — 読み直すたびに一覧が
+  // 「読み込み中」へ戻ると、勝手に画面が点滅しているようにしか見えない。ここは
+  // 届いた一覧で**差し替えるだけ**で、失敗したら黙って今の表示を残す。
+  // prefix は見ない: この一覧は全作業コピー横断の 1 リクエストなので、範囲で絞っても
+  // 減らせるものが無い（同時に終わった複数セッションは 1 本に畳む）。
+  const autoTick = useFilesStore((s) => s.scoped.n);
+  const autoInFlight = useRef(false);
+  const mountedTick = useRef(autoTick); // マウント前の合図は上の初回読み込みが済ませている
+  useEffect(() => {
+    if (autoTick === mountedTick.current || !running || autoInFlight.current) return;
+    let alive = true;
+    autoInFlight.current = true;
+    void (async () => {
+      try {
+        const d = await api("api/fs/changes");
+        if (!alive || !d || d.error || isTransientErr(d) || !Array.isArray(d.changes)) return;
+        setChanges(d.changes);
+      } catch {
+        /* 一過性の失敗は今の表示のまま — 次のターン終了か 更新 で追いつく */
+      } finally {
+        autoInFlight.current = false;
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [autoTick, running]);
 
   if (!running) return <EmptyState icon="debug-disconnect" title={tr("pj.ws_stopped")} />;
   if (changes === null) return <EmptyState icon="loading" title={tr("pj.loading")} />;

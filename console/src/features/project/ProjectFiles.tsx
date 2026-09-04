@@ -67,6 +67,33 @@ const soleChildDir = (entries: Entry[] | undefined): Entry | null =>
 const fsList = (path: string) =>
   api(`api/fs/tree?path=${encodeURIComponent(path)}`).catch(() => ({ entries: [] }));
 
+// Same listing, but for the paths that are ALREADY on screen (the auto-refresh
+// below, and the re-expand revalidation): it must be able to say "I don't know"
+// so a stale row survives a failure.
+//
+// ★ fsList above answers a dropped fetch with `{entries: []}`, which is
+// indistinguishable from an empty directory. Writing that back is fine on a
+// mount (nothing to lose) and fatal on a refresh: one transient 502 — the CP's
+// plain-text answer while the agent restarts — would EMPTY the tree at the end
+// of a turn, which is a far worse lie than a stale listing.
+//   null    → keep what is on screen (transport failure, 5xx, odd body)
+//   "gone"  → the directory no longer exists (terminal 404): drop it
+type Fresh = Entry[] | null | "gone";
+const fsListFresh = async (path: string): Promise<Fresh> => {
+  let d: { entries?: Entry[]; error?: { code?: string } };
+  try {
+    d = await api(`api/fs/tree?path=${encodeURIComponent(path)}`);
+  } catch {
+    return null; // network drop
+  }
+  if (!d || isTransientErr(d)) return null;
+  if (d.error) return d.error.code === "not_dir" ? "gone" : null;
+  return Array.isArray(d.entries) ? d.entries : null;
+};
+
+const sameEntries = (a: Entry[] | undefined, b: Entry[]): boolean =>
+  !!a && a.length === b.length && a.every((e, i) => e.name === b[i].name && e.type === b[i].type);
+
 // Shared empty row list. It must be ONE stable reference, not a fresh literal per
 // render: displayRows below falls back to it while a search is in flight, and it
 // feeds the deps of the sticky-lineage layout effect. A new [] each render made
@@ -104,8 +131,12 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   const running = useWorkspaceStore((s) => s.state) === "running";
   const reveal = useFilesStore((s) => s.reveal);
   const filesTick = useFilesStore((s) => s.tick);
+  const scopedRefresh = useFilesStore((s) => s.scoped);
   const q = useFilesFilter((s) => s.q);
   const nq = normQuery(q);
+  // Declared here (not next to the search effect below) because the auto-refresh
+  // above it stands down while a recursive search owns the rows.
+  const searchMode = !!searchable && !!nq;
   const wset = useActiveWorkingSet(); // 作業グループ (docs/log/52) — repos ツリーの絞り込み
   const focusInput = useFilesFilter((s) => s.focusInput);
   const focusTreeN = useFilesFilter((s) => s.focusTreeN);
@@ -134,6 +165,13 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   const wrapRef = useRef<HTMLDivElement>(null);
   const uid = useId();
   const [sticky, setSticky] = useState<{ rows: Row[]; top: number }>({ rows: [], top: 0 });
+  // Refs the auto-refresh reads (it runs on a store tick, not on a render, so a
+  // closure over state would be a render behind).
+  const menuOpenRef = useRef(false);
+  menuOpenRef.current = !!menu;
+  const liveDirsRef = useRef<string[]>([]);
+  const revalidatingRef = useRef<Set<string>>(new Set());
+  const mountedScopedRef = useRef(scopedRefresh.n);
 
   const showFile = useCallback((p: string) => openTarget({ content: { kind: "file", filePath: p } }), [openTarget]);
   const showFileSplit = useCallback((p: string) => openTargetInNew({ content: { kind: "file", filePath: p } }), [openTargetInNew]);
@@ -184,15 +222,60 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     return true;
   }, [root, filesTick, running]);
 
+  // Apply a batch of re-reads: replace only what actually changed (an unchanged
+  // batch returns the same object, so nothing re-renders), keep what failed, and
+  // forget a directory that is gone.
+  const applyFresh = useCallback((pairs: (readonly [string, Fresh])[]) => {
+    setCache((c) => {
+      const n = { ...c };
+      let changed = false;
+      for (const [p, e] of pairs) {
+        if (e === null) continue; // couldn't read it — leave the rows alone
+        if (e === "gone") {
+          if (p in n) {
+            delete n[p];
+            changed = true;
+          }
+          continue;
+        }
+        if (sameEntries(n[p], e)) continue;
+        n[p] = e;
+        changed = true;
+      }
+      return changed ? n : c;
+    });
+  }, []);
+
+  // Re-read one directory in the background (one in flight per path).
+  const revalidate = useCallback(
+    (path: string) => {
+      const inFlight = revalidatingRef.current;
+      if (inFlight.has(path)) return;
+      inFlight.add(path);
+      void fsListFresh(path)
+        .then((e) => applyFresh([[path, e] as const]))
+        .finally(() => inFlight.delete(path));
+    },
+    [applyFresh],
+  );
+
   const fetchInto = useCallback(
     async (path: string) => {
-      if (cache[path]) return cache[path];
+      // Re-opening a folder shows the cached listing at once and re-reads it
+      // behind that (stale-while-revalidate). Without this, anything an agent
+      // added or removed while the folder was collapsed stayed invisible even
+      // after collapsing and expanding it again — which reads as "the tree is
+      // broken", since that IS the gesture people try first.
+      if (cache[path]) {
+        revalidate(path);
+        return cache[path];
+      }
       const d = await fsList(path);
       const e = d.entries || [];
       setCache((c) => (c[path] ? c : { ...c, [path]: e }));
       return e;
     },
-    [cache],
+    [cache, revalidate],
   );
 
   // expand opens `path`, auto-descending single-subdir chains.
@@ -253,6 +336,62 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     return { rows: out, need };
   }, [entries, open, cache, root]);
 
+  // The directories whose listing is actually IN USE on screen: every visible
+  // dir row (the tree already prefetches those — a folded a/b/c row is decided
+  // by them) and the levels a folded row passes through. The auto-refresh
+  // re-reads these and nothing else, so it costs what is on screen, not what
+  // the tree holds: a folder scrolled past long ago keeps its stale cache until
+  // it is re-opened, and fetchInto revalidates it then.
+  const liveDirs = useMemo(() => {
+    const out: string[] = [];
+    for (const r of rows) if (r.type === "dir") for (const p of r.segPaths) if (cache[p]) out.push(p);
+    return out;
+  }, [rows, cache]);
+  liveDirsRef.current = liveDirs;
+
+  // Scoped auto-refresh: a session's turn ended, so re-read what is on screen
+  // under its working copy (features/files/sessionRefresh.ts). Deliberately NOT
+  // the whole tree — that is what the 更新 button still does.
+  useEffect(() => {
+    const prefix = scopedRefresh.prefix;
+    // A tick that predates this mount is already covered by the initial load
+    // (the tree is unmounted while its section is collapsed, so this is the
+    // normal case, not an edge one).
+    if (scopedRefresh.n === mountedScopedRef.current) return;
+    if (!prefix || !running) return;
+    if (secondary && (prefix === "repos" || prefix.startsWith("repos/"))) return; // the repos tree owns it
+    if (root && prefix !== root && !prefix.startsWith(root + "/")) return; // another tree's business
+    // In search mode the rows are rg hits, and re-running that query on every
+    // turn end would be a recursive search per turn. The tree underneath is
+    // refreshed here anyway, so leaving the query alone loses nothing.
+    if (searchMode) return;
+    // The context menu holds a row it is about to act on; pulling that row out
+    // from under it turns the next click into an error toast.
+    if (menuOpenRef.current) return;
+    const targets = liveDirsRef.current.filter((p) => p === prefix || p.startsWith(prefix + "/"));
+    // A working copy can also appear or vanish under the turn (a worktree added
+    // or removed), which shows in its PARENT's listing — one extra read when
+    // that parent is this tree's root. It is also the whole cost of a session
+    // whose folder is not under ~/repos at all (a shell in the home dir): its
+    // prefix matches no row, and this single read is all that happens.
+    const alsoRoot = parentOf(prefix) === root;
+    if (!targets.length && !alsoRoot) return;
+    let alive = true;
+    void (async () => {
+      const [rootFresh, pairs] = await Promise.all([
+        alsoRoot ? fsListFresh(root) : Promise.resolve<Fresh>(null),
+        Promise.all(targets.map(async (p) => [p, await fsListFresh(p)] as const)),
+      ]);
+      if (!alive) return;
+      if (Array.isArray(rootFresh)) setEntries((cur) => (sameEntries(cur ?? undefined, rootFresh) ? cur : rootFresh));
+      applyFresh(pairs);
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopedRefresh.n]);
+
   // Quick filter: keep rows whose displayed name matches, plus the ancestor dirs
   // that lead to them (so the match keeps its place in the tree). Rows are
   // pre-order with a depth, so an ancestor stack resolves lineage in one pass.
@@ -277,7 +416,6 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // Recursive search (searchable tree + active query): fetch the whole-subtree
   // matches from the backend (debounced), turned into flat file rows. The tree
   // filter above still runs but is bypassed for display in this mode.
-  const searchMode = !!searchable && !!nq;
   useEffect(() => {
     if (!searchMode) {
       setSearchRows(null);

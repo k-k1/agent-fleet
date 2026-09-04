@@ -67,6 +67,14 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
   （TermService・fetch 層）からは `getState()/setState()` で連携する。
 - ストア間連携は subscribe ベース。例: シェルの wireWorkspaceRefresh が workspace の
   stopped↔running **遷移エッジ**（starting 等の未確定状態は無視）で repos/sessions/files/chat を refresh。
+- 同じ形で `features/files/sessionRefresh.ts` が sessions を購読し、セッションの
+  **稼働 → 非稼働エッジ**（working/compacting または backgroundBusy が外れた＝ターンの終わり）で
+  files の**範囲つき**更新（`refreshUnder("repos/<作業コピー>")`）を撃つ。ツリーは範囲内で
+  画面に出ているディレクトリだけを読み直し、「変更」ビューは一覧を消さずに差し替える
+  （エージェントが作った/消したファイルが、更新ボタンを押すまで出てこない問題）。
+  一覧は push/poll でどのみち届くので追加の通信は無く、発火は作業コピー単位に合流させ
+  最短 3 秒空ける。★ 読み直しの失敗（5xx・切断）は**必ず握り潰して現状維持**にすること —
+  失敗を空一覧として書き戻すと、ターンの終わりごとにツリーが空になる。
 - ポーリング周期: workspace 4 秒 / sessions 4 秒 / repos 60 秒 / ワークスペース操作バーのリソース統計 4 秒。
   workspace の状態は CP の `running/starting/stopped/none` + `unknown`（fetch 失敗）で、
   末尾 `…` は楽観的 in-flight の印（ボタンとポーラーは busy として手を出さない）。

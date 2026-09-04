@@ -6,7 +6,8 @@
 // diff, 表示 / 編集 open the file itself (the home-relative path, not the
 // repo-relative one the diff takes), and a deleted file offers the diff only.
 // Plus the one exception to diff-on-click — an untracked file, which has no
-// working diff to show and so opens the file view instead.
+// working diff to show and so opens the file view instead. The last block covers
+// the auto-refresh at the end of a session's turn (差し替えるだけ・失敗しても残す).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -20,10 +21,20 @@ interface Change {
 }
 
 let served: Change[] = [];
+// 自動更新の検証用: 次の api 応答を過渡的失敗にする／応答を手で止める。
+let failing = false;
+let gate: { wait: Promise<void>; open: () => void } | null = null;
 
 vi.mock("../../core/api/client.ts", () => ({
-  api: vi.fn(async () => ({ changes: served })),
-  isTransientErr: () => false,
+  api: vi.fn(async () => {
+    if (gate) await gate.wait;
+    if (failing) return { error: { code: "http_502", status: 502 } };
+    return { changes: served };
+  }),
+  isTransientErr: (d: unknown) => {
+    const err = (d as { error?: { code?: string; status?: number } } | null)?.error;
+    return !!err && ((typeof err.status === "number" && err.status >= 500) || /^http_5\d\d$/.test(err.code || ""));
+  },
 }));
 
 const openFileDiff = vi.fn();
@@ -34,6 +45,7 @@ vi.mock("../viewer/openFile.ts", () => ({ openFileMode: (...a: unknown[]) => ope
 const { FilesChanges } = await import("./FilesChanges.tsx");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { useReposStore } = await import("../repos/store.ts");
+const { useFilesStore } = await import("../files/store.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -69,6 +81,9 @@ beforeEach(() => {
   openFileMode.mockClear();
   useWorkspaceStore.setState({ state: "running" });
   useReposStore.setState({ repos: [] });
+  useFilesStore.setState({ tick: 0, scoped: { prefix: "", n: 0 } });
+  failing = false;
+  gate = null;
   served = [{ path: "repos/demo/src/a.ts", repo: "demo", worktree: "M", index: " " }];
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -219,5 +234,52 @@ describe("working-copy group bands", () => {
       ["af", "temp/new"],
       ["zzz", "main"],
     ]);
+  });
+});
+
+// セッションが入力待ちに入ったときの自動更新（features/files/sessionRefresh.ts の合図）。
+// この一覧は「エージェントが何を触ったか」を見る面なので、ターンの終わりに追いつくのが
+// 本来の姿。ただし読み直しのたびに「読み込み中」へ戻ると、勝手に点滅しているようにしか
+// 見えない — 差し替えるだけであることを固定する。
+describe("ターン終了時の自動更新", () => {
+  const turnEnded = async () => {
+    await act(async () => {
+      useFilesStore.getState().refreshUnder("repos/demo");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  };
+
+  it("一覧を消さずに差し替える（読み込み中に戻さない）", async () => {
+    await render();
+    expect(rows()).toHaveLength(1);
+
+    // 応答を止めたまま合図を出す: 読み直しの最中も古い一覧が出ていること。
+    let open!: () => void;
+    gate = { wait: new Promise<void>((r) => (open = r)), open: () => open() };
+    served = [
+      { path: "repos/demo/src/a.ts", repo: "demo", worktree: "M", index: " " },
+      { path: "repos/demo/src/new.ts", repo: "demo", untracked: true },
+    ];
+    await turnEnded();
+    expect(rows()).toHaveLength(1); // 「読み込み中」に落ちていない
+    expect(host.querySelector(".ui-empty")).toBeNull();
+
+    gate.open();
+    gate = null;
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(rows()).toHaveLength(2); // 差し替わった
+  });
+
+  it("読み直しが 502 で失敗しても、今の一覧を残す", async () => {
+    await render();
+    expect(rows()).toHaveLength(1);
+    failing = true;
+    await turnEnded();
+    expect(rows()).toHaveLength(1);
+    expect(host.querySelector(".ui-empty")).toBeNull();
   });
 });
