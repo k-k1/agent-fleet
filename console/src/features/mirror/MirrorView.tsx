@@ -25,6 +25,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useDraft, writeDraft } from "../../lib/draft.ts";
+import { makeAttachment, useAttachDraft } from "../../lib/attachDraft.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { useBackClose } from "../../lib/backClose.ts";
@@ -264,7 +265,11 @@ export function MirrorView({
   const sendingRef = useRef(false);
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
-  const [attachments, setAttachments] = useState<{ path: string; name: string; url: string; image: boolean }[]>([]);
+  // Persisted per session (lib/attachDraft) like the text draft above — switching to
+  // another session or to the terminal and back unmounts this view, and until the draft
+  // existed that silently threw away everything staged for the turn.
+  const attach = useAttachDraft(session ? "af.mirror-attach." + session : null);
+  const attachments = attach.items;
   const [pasting, setPasting] = useState(false); // an attachment upload is in flight
   const [dragging, setDragging] = useState(false); // an OS file drag is hovering the pane
   const dragDepth = useRef(0); // dragenter/leave nesting counter (leave fires per child)
@@ -369,10 +374,8 @@ export function MirrorView({
     setHistIdx(null);
     setPasting(false);
     setLightbox(null);
-    setAttachments((prev) => {
-      prev.forEach((a) => URL.revokeObjectURL(a.url)); // don't leak the old session's previews
-      return [];
-    });
+    // 添付は useAttachDraft が持つ: セッションが変われば鍵ごと切り替わり、前のセッションの
+    // プレビュー URL はそこで解放され、新しいセッションの下書きが読み直される。
     scroll.resetForSession(session); // 末尾ピン・復元アンカー・浮くピル・完了アンカーの取り直し
     tts.resetForSession(); // 自動読み上げ・小声読み・確認告知の基準を取り直す（履歴は読まない）
     // 離脱時（別セッションへの持ち替え・ターミナルへの切替・ペインを閉じる）に、いま見ていた
@@ -890,10 +893,8 @@ export function MirrorView({
         if (res.status < 300 && res.path && res.name) {
           const path = res.path;
           const nm = res.name;
-          const image = f.type.startsWith("image/");
           // Non-images get no preview URL — the chip shows an icon + name instead.
-          const url = image ? URL.createObjectURL(f) : "";
-          setAttachments((a) => [...a, { path, name: nm, url, image }]);
+          attach.add([makeAttachment(f, { name: nm, path })]);
         } else {
           toast(res.error ? errText(res.error) : tr("mirror.attach_failed"));
         }
@@ -924,18 +925,9 @@ export function MirrorView({
     await addFiles(files);
   };
 
-  const removeAttachment = (i: number) => {
-    setAttachments((a) => {
-      if (a[i]) URL.revokeObjectURL(a[i].url);
-      return a.filter((_, idx) => idx !== i);
-    });
-  };
-  const clearAttachments = () => {
-    setAttachments((a) => {
-      a.forEach((x) => URL.revokeObjectURL(x.url));
-      return [];
-    });
-  };
+  const removeAttachment = (i: number) => attach.remove(i);
+  // 送信できた（＝パスがプロンプトへ渡り切った）ときだけ下書きごと捨てる。
+  const clearAttachments = () => attach.clear();
 
   // An AskUserQuestion can't be answered by the composer's free text — verified against
   // the terminal (v2.1.204, docs/build/92): the modal IGNORES typed text on option rows

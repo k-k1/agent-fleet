@@ -1,9 +1,10 @@
 import { Icon } from "../../../ui/Icon.tsx";
 import FileIcon from "../../../ui/FileIcon.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
+import type { Attachment } from "../../../lib/attachDraft.ts";
 
 /** 送信待ちの添付。`path` はセッションに保存された絶対パス（プロンプト本文が参照する）。 */
-export type Attachment = { path: string; name: string; url: string; image: boolean };
+export type { Attachment };
 
 /** 添付チップの列。画像はサムネイル、それ以外はアイコン＋ファイル名。 */
 export function AttachChips({
@@ -19,7 +20,7 @@ export function AttachChips({
   return (
     <div className="mirror-attach">
       {attachments.map((a, i) => (
-        <div className={"ma-chip" + (a.image ? "" : " ma-file")} key={a.path}>
+        <div className={"ma-chip" + (a.image ? "" : " ma-file")} key={a.id}>
           {a.image ? (
             <img className="ma-thumb" src={a.url} alt="" />
           ) : (

@@ -68,6 +68,7 @@
     "@types/react-dom": "^19.2.0",
     "@types/react-test-renderer": "^19.1.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.0.0",
     "react-test-renderer": "^19.2.7",
     "typescript": "^5.7.0",
