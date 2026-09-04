@@ -33,6 +33,29 @@ const SHOT = shotArg > 0 ? process.argv[shotArg + 1] : "";
 
 const { check, report } = checker();
 
+// 「描かれた画素」の数え方。**判定 2 と 7 で同じ式を使う**（片方だけ直すと、もう片方が
+// 同じ形で嘘をつく —— 実際、下の欠陥は develop から在って両方に当たっていた）。
+//
+// 🔴 **α を見ないと、未描画の canvas（透明 = rgba(0,0,0,0)）を「全部インク」と数える。**
+// `d[i] < 200` は 0 に当たってしまうからで、**PdfView が canvas に幅を与えてから
+// pdf.js が塗るまでの隙間で ink が 100% を返す**。`until()` は閾値を超えた最初の値で
+// 返すので、**描画も通信も待たずに次へ進み、アセットを取りに行く前に requests を読む**
+// ＝**偽の赤**（実測 2026-09-04: ~29 回に 1 回・`要求 0 件` ＋ `ink=100.00%`。正常時 4.39%）。
+// ⚠️ **`until` の締切を伸ばしても直らない。早く返るのが問題である。**
+// ⇒ **不透明（α ≥ 250）かつ白でない画素だけを数える。**下の判定 0 が合成の canvas で
+// この式そのものを検査する（式が壊れたら、家系ではなく式のほうが赤くなる）。
+const INK_FN = `((el) => {
+  if (!el || !el.width || !el.height) return -1;
+  const d = el.getContext('2d').getImageData(0, 0, el.width, Math.min(el.height, 400)).data;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] < 250) continue;                                  // 未描画・半透明は数えない
+    if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) n++;       // 白でなければインク
+  }
+  return n / (d.length / 4);
+})`;
+const inkOf = (sel) => `${INK_FN}(document.querySelector(${JSON.stringify(sel)}))`;
+
 // ---- 作業ディレクトリ -------------------------------------------------------
 const www = fs.mkdtempSync(path.join(os.tmpdir(), "af-pdfcheck-"));
 process.on("exit", () => fs.rmSync(www, { recursive: true, force: true }));
@@ -181,6 +204,23 @@ const b = await startBrowser();
 try {
   await b.goto(`http://127.0.0.1:${port}/index.html`);
 
+  // 0. **ink の式そのものの陽性対照**（合成 canvas・ブラウザ内で 3 形を作って測る）。
+  // ここが緑でないと、下の判定 2 と 7 の「待った」は何も待っていない。
+  const ink0 = await b.evaluate(`(() => {
+    const c = document.createElement('canvas'); c.width = 40; c.height = 40;
+    const g = c.getContext('2d');
+    const blank = ${INK_FN}(c);                                   // 幅だけ付けて未描画＝透明
+    g.fillStyle = '#fff'; g.fillRect(0, 0, 40, 40);
+    const white = ${INK_FN}(c);                                   // 白で塗った＝まだ何も無い
+    g.fillStyle = '#000'; g.fillRect(0, 0, 20, 40);
+    const half = ${INK_FN}(c);                                    // 左半分を黒く塗った
+    return { blank, white, half }; })()`);
+  check(
+    ink0.blank === 0 && ink0.white === 0 && ink0.half > 0.4,
+    "ink の式は未描画の canvas を「描かれた」と数えない",
+    `未描画=${(ink0.blank * 100).toFixed(2)}% 白=${(ink0.white * 100).toFixed(2)}% 半分黒=${(ink0.half * 100).toFixed(2)}%`,
+  );
+
   // 1. 6 ページぶんの枠が出て、メタが親へ渡る。
   const pages = await until(b.evaluate, "document.querySelectorAll('.pdfview-page').length", (n) => n === 6);
   check(pages === 6, "6 ページが並ぶ", `pages=${pages}`);
@@ -199,15 +239,7 @@ try {
   // 超えた最初の値で返すので、描画途中の canvas を読む（実測 2026-09-04: 素の実行で
   // 1.07%〜3.35%）。⚠️ 環境でも動く（ランナーは日本語フォントが 0 件で豆腐になり 1.65%。
   // headless.mjs の解説）。**ink は「何かが描かれた」までしか言わない検査である。**
-  const inked = await until(
-    b.evaluate,
-    `(() => { const c = document.querySelector('.pdfview-canvas');
-       if (!c || !c.width) return -1;
-       const d = c.getContext('2d').getImageData(0, 0, c.width, Math.min(c.height, 400)).data;
-       let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i+1] < 200 || d[i+2] < 200) n++;
-       return n / (d.length / 4); })()`,
-    (v) => v > 0.001,
-  );
+  const inked = await until(b.evaluate, inkOf(".pdfview-canvas"), (v) => v > 0.001);
   check(inked > 0.001, "1 ページ目に文字が描かれている", `ink=${(inked * 100).toFixed(2)}%`);
 
   // 3. ページ番号と、スクロールでの追従。
@@ -264,15 +296,7 @@ try {
   // （それが 2026-09-04 まで見えていなかった状態そのもの）。
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/assets.pdf`);
   await until(b.evaluate, "document.querySelectorAll('.pdfview-page').length", (n) => n === 1);
-  const inkedAsset = await until(
-    b.evaluate,
-    `(() => { const c = document.querySelector('.pdfview-canvas');
-       if (!c || !c.width) return -1;
-       const d = c.getContext('2d').getImageData(0, 0, c.width, Math.min(c.height, 400)).data;
-       let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i+1] < 200 || d[i+2] < 200) n++;
-       return n / (d.length / 4); })()`,
-    (v) => v > 0.001,
-  );
+  const inkedAsset = await until(b.evaluate, inkOf(".pdfview-canvas"), (v) => v > 0.001);
   const asked = requests.filter((r) => r.path.startsWith(ASSET_PREFIX));
   const missed = asked.filter((r) => r.status !== 200);
   const kinds = new Set(asked.map((r) => r.path.slice(ASSET_PREFIX.length).split("/")[0]));
