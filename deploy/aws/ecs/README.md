@@ -44,6 +44,12 @@ platform changes:
 > below). Each stack imports the earlier ones' exports, so deploy in order
 > `00 → 10 → 20 → (40, ecs-ec2 only) → 30`.
 
+`30-ingress.yaml` carries most of the knobs a deployment actually tunes. Its
+`Description:` fields are deliberately one or two lines each; the measurements, the
+trade-offs and the traps behind them are in **[`cfn/PARAMETERS.md`](cfn/PARAMETERS.md)**
+(see [the 51,200-byte wall](#the-51200-byte-wall-why-a-deploy-can-stop-working-without-anyone-touching-it)
+for why they live outside the template).
+
 ### Prerequisites (once per account)
 
 - **ECS service-linked role.** A fresh account has no `AWSServiceRoleForECS`, and
@@ -501,6 +507,28 @@ just "big templates go to S3":
   never exercised" gets reproduced.
 - `deploy/local/ecs-lifecycle-stub-test.sh` cases **3b / 3c** run both of those on every CI
   run, against a deliberately padded template. A fix nobody executes is the original bug.
+
+### Back inside the wall (2026-09-04)
+
+The S3 route is the safety net, not the resting state — it needs a bucket that only exists
+once 20-platform is up, it constrains the teardown order, and its failures surface as CLI
+errors with nothing in the stack events. So `30-ingress.yaml` was put back under the limit:
+**54,681 → 40,493 bytes**, with no parameter, default or resource changed.
+
+What moved was prose. Parameter `Description:` bodies were 21,630 bytes — **40% of the
+template** — and they are the one part that does not have to reach the API to do its job;
+they now live in [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md), in full, with the template
+keeping a line or two per parameter.
+
+⚠️ **A YAML comment costs exactly what a `Description:` costs.** The limit is on the
+template *body*, so `#` is not a cheaper place to put a paragraph — moving one there saves
+zero bytes. Long explanations have to leave the file, not change syntax inside it.
+
+`ecs-lifecycle-stub-test.sh` case **3b-2** now fails the build when any `cfn/*.yaml` exceeds
+51,200 bytes. It is a hard failure on purpose: the growth in 2026-09-01 was silent for three
+months, and a warning would have been too. Crossing the wall again should be a deliberate
+edit to that constant, visible in the diff — while `af_cfn_deploy` keeps measuring at run
+time, so a template that does cross it still deploys instead of dying.
 
 ### Round trip, measured (2026-09-02)
 

@@ -255,6 +255,27 @@ if grep -q "deploy --stack-name t-network .*--s3-bucket" "$LOG"; then
   fail "小さいテンプレートまで S3 経由になっている"
 fi
 
+echo "== case 3b-2: 出荷するテンプレートは 51,200 バイトの内側に収まっている =="
+#
+# ★ case 3b は「超えたら S3 へ回す」保険を見ている。ここで見るのはその手前 ——
+#   **超えないこと自体**である。S3 経由は 20-platform のバケットが要り、撤収の順序に
+#   依存し、CLI のエラーは CFN の event に何も残さない。壁の内側に居るなら、その全部が
+#   要らない。
+#
+# ⚠️ 警告では効かないので落とす。30-ingress は 2026-09-01 に無言で 54,681 バイトへ育ち、
+#   気付いたのは 3 か月後の立て直しだった。太らせる変更をしたその場で気付かせるのが
+#   ここの仕事で、値を動かすなら**意図してこの定数を動かす**（＝差分に残る）。
+#   長い散文は cfn/PARAMETERS.md へ出す。YAML のコメントも Description と同じだけ本文に
+#   数えられるので、「# に移す」では 1 バイトも減らない。
+CFN_MAX=51200
+for t in "$ECS"/cfn/*.yaml; do
+  sz="$(wc -c < "$t" | tr -d ' ')"
+  if [ "$sz" -gt "$CFN_MAX" ]; then
+    echo "NG: $(basename "$t") が $sz バイト > $CFN_MAX —— 説明文を cfn/PARAMETERS.md へ移すこと"
+    exit 1
+  fi
+done
+
 echo "== case 3c: 撤収は 20-platform を消す前にバケットを空にする =="
 # CFN は**中身のあるバケットを削除できない**。ここを飛ばすと 20-platform が
 # DELETE_FAILED で止まり、撤収が途中で死ぬ＝次の立て直しがまた実証されないまま残る。
