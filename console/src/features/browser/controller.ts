@@ -425,8 +425,8 @@ export class BrowserController {
     if (this.rendering) return;
     this.rendering = true;
     void (async () => {
-      // finally で必ず rendering を戻す — drawFrame が同期 throw した場合でも
-      // フラグが立ちっぱなしになって以後のフレーム描画が止まることのないように。
+      // Always clear `rendering` in finally: if drawFrame throws synchronously the flag
+      // would stay set and no further frame would ever be drawn.
       try {
         while (this.latestFrame) {
           const next = this.latestFrame;

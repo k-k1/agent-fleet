@@ -35,8 +35,8 @@
 .chat-msg.role-user .chat-body {
   background: color-mix(in srgb, var(--chat-accent, var(--accent)) 12%, var(--panel));
 }
-/* セッション報告カード（docs/log/30）: 送信者はユーザーでもアシスタントでもなく「セッション」。
-   破線ボーダー＋左アクセントで由来の違いを示す。 */
+/* Session report card (docs/log/30): the sender is neither the user nor the assistant but
+   the session. A dashed border plus a left accent marks that difference in origin. */
 .chat-msg.role-report .chat-role {
   display: inline-flex;
   align-items: center;
@@ -56,8 +56,9 @@
   border-left: 3px solid var(--chat-accent, var(--accent));
   background: color-mix(in srgb, var(--chat-accent, var(--accent)) 5%, var(--panel));
 }
-/* システム通知カード（docs/log/30）: 自動応答が上限に達して停止した等、システム由来の告知。
-   ユーザー/アシスタントのバブルと区別し、中央寄せの控えめな帯で表示する。 */
+/* System notice card (docs/log/30): announcements from the system itself, e.g. auto-reply
+   stopped after hitting its limit. Distinguished from user/assistant bubbles by a centred,
+   restrained band. */
 .chat-msg.role-notice {
   align-self: stretch;
   max-width: 100%;

@@ -1,19 +1,20 @@
-// ファイルビュアーは、別のタブへ行って戻ってきたとき同じ位置に居るか。
+// Does the file viewer come back to the same position after a trip to another tab?
 //
-// 本物の Console バンドル（stub.mjs が配る）を headless Chromium で動かし、CDP を素の
-// WebSocket で叩く（Playwright / Puppeteer は入れない・隣の mirror-scroll と同じ技法）。
-// jsdom では見えない検査である理由は 2 つ:
-//   - **高さが遅れて確定する**。Markdown プレビューは innerHTML を passive effect で書き、
-//     そのあとハイライトで伸びる。「戻す」を 1 回で済ませたビルドはここで落ちる。
-//   - **タブ切替と `hidden` の違い**。タブ表示は選ばれた 1 枚しか描かない＝面ごと unmount、
-//     表示⇄編集は面を display:none にするだけ（ブラウザが scrollTop を 0 に落とす）。
-//     どちらも「戻ってきたら同じ位置」でなければならないが、経路が別物。
+// Runs the real Console bundle (served by stub.mjs) in headless Chromium and drives CDP over a
+// plain WebSocket — no Playwright or Puppeteer, the same technique as the neighbouring
+// mirror-scroll check. Two reasons jsdom cannot see this:
+//   - The height settles late. The Markdown preview writes innerHTML in a passive effect and
+//     then grows again when highlighting lands, so a build that restores the position once
+//     fails here.
+//   - Switching tabs and `hidden` are different paths. Tab layout paints only the selected
+//     view, so the surface is unmounted; view/edit only sets display:none on it, and the
+//     browser drops scrollTop to 0. Both must come back to the same position.
 //
-//   npm --prefix console run build       # console/dist（本物のバンドル）が要る
+//   npm --prefix console run build       # console/dist (the real bundle) is required
 //   npm --prefix console run viewer:scroll
 //   node console/scripts/viewer-scroll/check.mjs --runs 3 --scenario markdown
 //
-// 終了ステータスが検査結果（0 = 全シナリオが同じ位置に戻った）。
+// The exit status is the verdict (0 = every scenario returned to the same position).
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,22 +29,24 @@ const PORT = Number(arg("port", 8793));
 const CDP_PORT = Number(arg("cdp-port", 9253));
 const RUNS = Number(arg("runs", 2));
 const ONLY = arg("scenario", "");
-const CPU = Number(arg("cpu", 4)); // 主スレッドを絞る（mirror-scroll と同じ理由）
+const CPU = Number(arg("cpu", 4)); // throttle the main thread (same reason as mirror-scroll)
 const BASE = `http://127.0.0.1:${PORT}/`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-/** 戻り位置のずれの許容。行の高さ 1 つぶんも動いたら「同じ位置」ではない。 */
+/** Tolerance on the restored position. Moving even one line height is not "the same position". */
 const TOL = 4;
 
 // mode:
-//   tab   — 別のタブへ行って戻る（＝面ごと unmount → 再取得 → 組み直し）
-//   modes — 表示⇄編集を往復する（＝面は生きたまま display:none になる）。★この筋は
-//           **位置の記憶を殺したビルドでも緑になる**（Chromium は display:none を跨いで
-//           scrollTop を保つ・2026-09-04 実測）。契約を固定するために残しているだけで、
-//           退行の再現ではない —— 捕まえているのは tab の 2 本（README の「正の対照」）。
+//   tab   — go to another tab and back (the surface unmounts, refetches and is rebuilt)
+//   modes — go view <-> edit and back (the surface stays alive and gets display:none). This
+//           path stays green even on a build with the position memory removed, because
+//           Chromium preserves scrollTop across display:none (measured). It is kept to pin the
+//           contract, not to reproduce a regression; the two tab scenarios are what catch one
+//           (the "positive control" in the README).
 const SCENARIOS = [
   { name: "code", files: ["repos/shop/a.go", "repos/shop/b.go"], scroller: ".codeview", mode: "tab" },
   { name: "markdown", files: ["repos/shop/a.md", "repos/shop/b.md"], scroller: ".md-scroll", mode: "tab" },
-  // PDF は面が自前でスクロール位置を触る（倍率変更のページ内アンカー）ので別に見る。
+  // PDF gets its own scenario: that surface moves the scroll position itself, for the in-page
+  // anchor it keeps when the zoom changes.
   { name: "pdf", files: ["repos/shop/a.pdf", "repos/shop/b.pdf"], scroller: ".pdfview-scroll", mode: "tab" },
   { name: "modes", files: ["repos/shop/a.go", "repos/shop/b.go"], scroller: ".codeview", mode: "modes", editable: true },
 ];
@@ -75,14 +78,14 @@ class CDP {
 }
 async function fetchJSON(url, init) {
   for (let i = 0; i < 80; i++) {
-    try { const r = await fetch(url, init); if (r.ok) return await r.json(); } catch { /* まだ上がっていない */ }
+    try { const r = await fetch(url, init); if (r.ok) return await r.json(); } catch { /* not up yet */ }
     await sleep(200);
   }
   throw new Error("timeout waiting for " + url);
 }
 
-// 面の位置と、いま何が載っているか。**どのファイルが載っているか**まで見るのは、
-// タブを踏み外して「同じ位置のまま別のファイル」を見ても気づけないから。
+// The surface's position and what is currently loaded in it. Which file it is matters too:
+// landing on the wrong tab shows a different file at the same position and would go unnoticed.
 const probe = (scroller) => `(() => {
   const el = document.querySelector(${JSON.stringify(scroller)});
   if (!el) return null;
@@ -100,14 +103,16 @@ const center = (scroller) => `(() => {
   const r = el.getBoundingClientRect();
   return JSON.stringify({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });
 })()`;
-// タブ本体は .pane-tab（右クリックメニューを持つ器）で、押せるのは中の button[role=tab]。
+// The tab itself is .pane-tab, the container holding the context menu; the clickable element is
+// the button[role=tab] inside it.
 const clickTab = (i) => `(() => {
   const t = document.querySelectorAll('.pane-tab button[role="tab"]')[${i}];
   if (!t) return "no-tab";
   t.click();
   return "ok";
 })()`;
-// 表示⇄編集（FileEditControls の tablist）。「読む面が hidden になる」経路。
+// View <-> edit (the tablist in FileEditControls) — the path where the reading surface becomes
+// hidden.
 const clickMode = (i) => `(() => {
   const b = document.querySelectorAll(".file-mode-tabs button")[${i}];
   if (!b) return "no-tab";
@@ -124,9 +129,9 @@ const layout = (files) => ({
   activeCellId: "cell0",
 });
 
-/** 面が出るまで待つ。**固定の sleep にしない**: 編集できるファイルでは CodeMirror も
- *  上がるので、主スレッドを 4 倍に絞った状態では 5 秒では間に合わないことがある
- *  （実測: modes の筋だけ「面が出ていない」で落ちた）。 */
+/** Wait for the surface to appear. Not a fixed sleep: an editable file also boots CodeMirror,
+ *  and with the main thread throttled 4x, 5 seconds is sometimes not enough (measured: only the
+ *  modes scenario failed, reporting that the surface had not appeared). */
 async function waitFor(cdp, scroller, ms = 20000) {
   for (let waited = 0; waited < ms; waited += 250) {
     const seen = await cdp.ev(`!!document.querySelector(${JSON.stringify(scroller)})`);
@@ -136,8 +141,8 @@ async function waitFor(cdp, scroller, ms = 20000) {
   return false;
 }
 
-/** 読み手が実際に送る。scrollTop への代入ではなく本物のホイールを使う —— 復元の打ち切りは
- *  「入力があったか」で決めているので、入力の経路ごと通しておかないと契約を見たことにならない。 */
+/** Scroll the way a reader does. A real wheel event, not an assignment to scrollTop: restoration
+ *  is abandoned on "was there input?", so the contract is only exercised through the input path. */
 async function wheelDown(cdp, scroller, times = 6) {
   const at = await cdp.ev(center(scroller));
   if (at === "none") throw new Error("scroller not found: " + scroller);
@@ -164,7 +169,7 @@ async function runScenario(sc) {
       await cdp.send("Page.enable");
       await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
       if (CPU > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: CPU });
-      // 戻ってきた利用者のブラウザ: 表示設定（タブ表示）と、2 枚のファイルタブを持つ配置。
+      // A returning user's browser: display settings (tab layout) and a layout with two file tabs.
       await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
         source: `try {
           localStorage.setItem("af-display-settings", '{"locale":"ja","theme":"dark","paneLayout":"tabs"}');
@@ -173,7 +178,7 @@ async function runScenario(sc) {
         } catch (e) {}`,
       });
       await cdp.send("Page.navigate", { url: BASE });
-      await sleep(3000); // ブート＋最初のポーリング（面が出るのはこのあと・waitFor で待つ）
+      await sleep(3000); // boot + first poll round; the surface appears after this (waitFor)
 
       const r = sc.mode === "modes" ? await runModes(cdp, sc) : await runTab(cdp, sc);
       results.push(r);
@@ -188,65 +193,65 @@ async function runScenario(sc) {
   }
 }
 
-/** 別のタブへ移って戻る。 */
+/** Move to another tab and come back. */
 async function runTab(cdp, sc) {
   await waitFor(cdp, sc.scroller);
   const opened = await cdp.ev(probe(sc.scroller));
-  if (!opened) return { ok: false, note: `面が出ていない (${sc.scroller})` };
-  if (opened.tabs !== sc.files.length) return { ok: false, note: `タブが ${opened.tabs} 枚（期待 ${sc.files.length}）` };
+  if (!opened) return { ok: false, note: `the surface did not appear (${sc.scroller})` };
+  if (opened.tabs !== sc.files.length) return { ok: false, note: `${opened.tabs} tabs (expected ${sc.files.length})` };
 
   await wheelDown(cdp, sc.scroller);
   const read = await cdp.ev(probe(sc.scroller));
-  if (!(read.top > 100)) return { ok: false, note: `送れていない top=${read.top} max=${read.max}` };
+  if (!(read.top > 100)) return { ok: false, note: `did not scroll: top=${read.top} max=${read.max}` };
 
-  if ((await cdp.ev(clickTab(1))) !== "ok") return { ok: false, note: "2 枚目のタブが押せない" };
+  if ((await cdp.ev(clickTab(1))) !== "ok") return { ok: false, note: "the second tab cannot be clicked" };
   await sleep(1500);
   const other = await cdp.ev(probe(sc.scroller));
-  if (other && other.file === read.file) return { ok: false, note: "タブを押しても同じファイルのまま" };
+  if (other && other.file === read.file) return { ok: false, note: "still the same file after clicking the tab" };
 
-  if ((await cdp.ev(clickTab(0))) !== "ok") return { ok: false, note: "1 枚目のタブが押せない" };
+  if ((await cdp.ev(clickTab(0))) !== "ok") return { ok: false, note: "the first tab cannot be clicked" };
   await waitFor(cdp, sc.scroller);
   await sleep(2000);
   const back = await cdp.ev(probe(sc.scroller));
   await sleep(2000);
-  const still = await cdp.ev(probe(sc.scroller)); // 遅れて伸びた高さに引きずられていないか
+  const still = await cdp.ev(probe(sc.scroller)); // has a late height increase dragged it away?
 
-  if (!back) return { ok: false, note: "戻ってきた面が出ていない" };
-  if (back.file !== read.file) return { ok: false, note: `戻り先が別のファイル: ${back.file}` };
+  if (!back) return { ok: false, note: "the surface did not appear after coming back" };
+  if (back.file !== read.file) return { ok: false, note: `came back to a different file: ${back.file}` };
   const ok = Math.abs(back.top - read.top) <= TOL && Math.abs(still.top - read.top) <= TOL;
-  return { ok, note: `読んだ位置 ${read.top} → 戻り ${back.top} → 2 秒後 ${still.top}` };
+  return { ok, note: `read at ${read.top} -> back at ${back.top} -> after 2s ${still.top}` };
 }
 
-/** 表示⇄編集を往復する（読む面は unmount されず display:none になる）。 */
+/** Go view <-> edit and back (the reading surface is not unmounted, only display:none). */
 async function runModes(cdp, sc) {
   await waitFor(cdp, sc.scroller);
   const opened = await cdp.ev(probe(sc.scroller));
-  if (!opened) return { ok: false, note: `面が出ていない (${sc.scroller})` };
+  if (!opened) return { ok: false, note: `the surface did not appear (${sc.scroller})` };
 
   await wheelDown(cdp, sc.scroller);
   const read = await cdp.ev(probe(sc.scroller));
-  if (!(read.top > 100)) return { ok: false, note: `送れていない top=${read.top} max=${read.max}` };
+  if (!(read.top > 100)) return { ok: false, note: `did not scroll: top=${read.top} max=${read.max}` };
 
-  if ((await cdp.ev(clickMode(1))) !== "ok") return { ok: false, note: "編集タブが無い（editable が効いていない）" };
+  if ((await cdp.ev(clickMode(1))) !== "ok") return { ok: false, note: "no edit tab (editable had no effect)" };
   await sleep(1200);
   const hidden = await cdp.ev(`(() => {
     const shell = document.querySelector(".file-viewer-shell");
     return shell ? shell.hasAttribute("hidden") : null;
   })()`);
-  if (hidden !== true) return { ok: false, note: "編集にしても読む面が隠れていない（前提が崩れている）" };
+  if (hidden !== true) return { ok: false, note: "switching to edit did not hide the reading surface (premise broken)" };
 
-  if ((await cdp.ev(clickMode(0))) !== "ok") return { ok: false, note: "表示タブが押せない" };
+  if ((await cdp.ev(clickMode(0))) !== "ok") return { ok: false, note: "the view tab cannot be clicked" };
   await sleep(1500);
   const back = await cdp.ev(probe(sc.scroller));
   const ok = !!back && Math.abs(back.top - read.top) <= TOL;
-  return { ok, note: `読んだ位置 ${read.top} → 編集 → 表示 ${back && back.top}` };
+  return { ok, note: `read at ${read.top} -> edit -> view ${back && back.top}` };
 }
 
 const chrome = spawn("/usr/bin/chromium", [
   "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
   `--remote-debugging-port=${CDP_PORT}`, "--remote-allow-origins=*", "--lang=ja-JP", "about:blank",
 ], { stdio: ["ignore", "ignore", "ignore"] });
-const cleanup = () => { try { chrome.kill(); } catch { /* もう居ない */ } };
+const cleanup = () => { try { chrome.kill(); } catch { /* already gone */ } };
 process.on("exit", cleanup);
 process.on("SIGINT", () => { cleanup(); process.exit(1); });
 
@@ -262,5 +267,5 @@ try {
 } finally {
   cleanup();
 }
-console.log(failed ? `\n[viewer-scroll] FAILED: ${failed} run(s) が位置を失った` : "\n[viewer-scroll] OK");
+console.log(failed ? `\n[viewer-scroll] FAILED: ${failed} run(s) lost the position` : "\n[viewer-scroll] OK");
 process.exit(failed ? 1 : 0);

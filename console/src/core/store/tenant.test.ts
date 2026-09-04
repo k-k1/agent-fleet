@@ -1,12 +1,12 @@
-// tenant ストアの whoami 再取得の契約テスト。whoami はブート 1 回きりの
-// スナップショットで、そこにデプロイ capability（scheduler_enabled）も乗って
-// いるため、CP を設定変更つきで再起動してもリロードするまで古い値のままだった。
-// push 再接続で読み直す一方、①短時間の再接続連打では叩かない ②エラー応答や
-// 通信断で解決済みアイデンティティを消さない、を固定する。
+// Contract test for the tenant store's whoami re-read. whoami was a boot-only snapshot that
+// also carries deployment capabilities (scheduler_enabled), so restarting the CP with changed
+// settings left stale values until a reload. It is now re-read on a push reconnect; this pins
+// that (1) back-to-back reconnects do not hammer it and (2) an error response or a network
+// drop never erases an already resolved identity.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// store は api client（window.fetch 束縛・document.baseURI）を import するので
-// 先にグローバルを stub してから import（workspace.test.ts と同じ流儀）。
+// The store imports the api client, which binds window.fetch and reads document.baseURI, so
+// the globals are stubbed before the import (the same style as workspace.test.ts).
 const values = new Map<string, string>();
 vi.stubGlobal("localStorage", {
   getItem: (key: string) => values.get(key) ?? null,
@@ -28,13 +28,13 @@ beforeAll(async () => {
 const jsonRes = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 
-// 間引きは Date.now 基準（モジュール内 state）— テストから時計を進める。
+// The throttle is based on Date.now (module-level state), so the test advances the clock.
 let now = 1_700_000_000_000;
 const advance = (ms: number) => (now += ms);
 vi.spyOn(Date, "now").mockImplementation(() => now);
 
 describe("tenant store refreshWhoami", () => {
-  // 再接続では whoami と /api/tenants の 2 本を読む（= 1 リフレッシュあたり fetch 2 回）。
+  // A reconnect reads both whoami and /api/tenants, i.e. 2 fetches per refresh.
   const reconnectRes = (tenants: unknown) =>
     fetchMock.mockImplementation((...args: unknown[]) =>
       Promise.resolve(
@@ -45,7 +45,7 @@ describe("tenant store refreshWhoami", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     useTenantStore.setState({ whoami: { user: "u1", scheduler_enabled: false }, superAdmin: false });
-    advance(60_000); // 前テストの取得から十分に離す
+    advance(60_000); // move well past the previous test's read
   });
 
   it("adopts the re-read deployment flags (a CP restart flips them)", async () => {
@@ -55,17 +55,18 @@ describe("tenant store refreshWhoami", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  // ★ 本命の再発防止: superAdmin と名簿はブート 1 回きりの読み出しで、
-  // その 1 回が DB 障害に当たると「管理 / テナント管理」がタブの寿命ぶん消えたままだった。
-  // 再接続はまさに答えが変わり得る瞬間なので、ここで読み直して自力で回復する。
+  // The regression guard that matters: superAdmin and the roster were read once at boot, and
+  // if that one read hit a database failure the Admin / Tenant-admin items
+  // (「管理」/「テナント管理」) stayed gone for the life of the tab. A reconnect is exactly the
+  // moment the answer may have changed, so re-reading here heals it without a reload.
   it("re-reads the roster so a boot-time failure heals without a reload", async () => {
     reconnectRes({ tenants: [{ slug: "dev", role: "member" }], super_admin: true });
     await useTenantStore.getState().refreshWhoami();
     expect(useTenantStore.getState().superAdmin).toBe(true);
   });
 
-  // ?tenant= は「着地の初期選択」なので、再接続のたびに効かせると、その後に自分で
-  // 切り替えたテナントから引き戻される。ブートのときだけ見る。
+  // ?tenant= is a landing preselection, so honouring it on every reconnect would yank the
+  // person back out of the tenant they switched to afterwards. Read at boot only.
   it("does not re-apply the ?tenant= boot hint on a reconnect", async () => {
     vi.stubGlobal("location", { search: "?tenant=sales", pathname: "/" });
     setTenant("dev");
@@ -88,7 +89,7 @@ describe("tenant store refreshWhoami", () => {
   });
 
   it("never clobbers a resolved identity with an error payload", async () => {
-    // 再起動中の CP はプレーンテキストの 5xx を返す — api() が http_5xx へ合成。
+    // A restarting CP answers a plain-text 5xx, which api() synthesizes into http_5xx.
     fetchMock.mockResolvedValue(new Response("workspace agent unreachable", { status: 502 }));
     await useTenantStore.getState().refreshWhoami();
     expect(useTenantStore.getState().whoami).toEqual({ user: "u1", scheduler_enabled: false });
@@ -105,7 +106,7 @@ describe("tenant store refreshWhoami", () => {
 // at /login/<slug> (docs/log/61 §61.10.4), so somebody who opened their department's
 // link lands in that department rather than in whichever tenant this browser last
 // used. It is a PRESELECTION only: it is honoured just when the server already
-// listed that tenant among the person's memberships (ADR0043 決定 14).
+// listed that tenant among the person's memberships (ADR0043 decision 14).
 describe("tenant store boot hint", () => {
   const boot = async (search: string, slugs: string[], persisted: string) => {
     vi.stubGlobal("location", { search, pathname: "/" });
@@ -136,11 +137,11 @@ describe("tenant store boot hint", () => {
   });
 });
 
-// 招待前（not_provisioned）の着地（docs/log/61 §61.10.2・P7-2）。
+// The pre-invite (not_provisioned) landing state (docs/log/61 §61.10.2, P7-2).
 //
-// AF_PROVISION=invite が新規インストールの既定になったので、これは異常系ではなく
-// 「招待される前の人が最初に見る状態」。フラグが立たないと通常の Console が開き、
-// 以後すべてのリクエストが 403 で弾かれてトーストが 1 つずつ出るだけになる。
+// AF_PROVISION=invite is the default for new installs, so this is not an error path but the
+// first thing someone sees before they are invited. Without the flag the normal Console opens
+// and every subsequent request is rejected with a 403, one toast at a time.
 describe("tenant store not_provisioned", () => {
   const errRes = (code: string, status = 403) =>
     new Response(JSON.stringify({ error: { code, message: code } }), {
@@ -164,22 +165,24 @@ describe("tenant store not_provisioned", () => {
     expect(useTenantStore.getState().notProvisioned).toBe(true);
   });
 
-  // ★ 他の 403 と混ぜない。テナント未選択や権限不足でここに落ちると、Console が
-  // 開けるべき人に「まだ招待されていません」と言うことになる。
+  // Do not conflate it with other 403s: falling in here on an unselected tenant or a
+  // permission error would tell someone who may open the Console that they are not invited.
   it("does not flag any other terminal error", async () => {
     await boot(() => errRes("forbidden_tenant"));
     expect(useTenantStore.getState().notProvisioned).toBe(false);
   });
 
-  // 一覧が返れば落ちる（管理者がタブを開いたまま追加した → リトライで通った）。
+  // Cleared once the roster answers (an admin added them while the tab was open, and a
+  // retry got through).
   it("clears once the roster answers", async () => {
     useTenantStore.setState({ notProvisioned: true });
     await boot(() => jsonRes({ tenants: [{ slug: "dev" }], super_admin: false }));
     expect(useTenantStore.getState().notProvisioned).toBe(false);
   });
 
-  // ★ super_admin はそもそもここに来ない: CP は所属ゼロでも 200 を返す（決定 23）。
-  // その契約が壊れると、最初のテナントを作る人が着地面に閉じ込められる。
+  // A super_admin never reaches this state: the CP answers 200 even with zero memberships
+  // (decision 23). Break that contract and whoever creates the first tenant is trapped on
+  // the landing page.
   it("never lands a super_admin with no membership", async () => {
     await boot(() => jsonRes({ tenants: [], super_admin: true }));
     const s = useTenantStore.getState();
@@ -187,9 +190,10 @@ describe("tenant store not_provisioned", () => {
     expect(s.superAdmin).toBe(true);
   });
 
-  // ★ CP は DB 障害を **JSON 本文つきの 500**（`{"error":{"code":"internal"}}`）で返す。
-  // コードだけで判定すると「アプリの恒久エラー」に見えてリトライが止まり、superAdmin が
-  // false のまま固定される＝管理メニューが無言で消える（実デプロイで踏んだ）。
+  // The CP reports a database failure as a 500 WITH a JSON body (`{"error":{"code":"internal"}}`).
+  // Judging by the code alone reads that as a permanent application error, retries stop and
+  // superAdmin stays false — the admin menu then disappears silently, as seen on a real
+  // deployment.
   it("retries a JSON-bodied 500 instead of settling on it", async () => {
     let calls = 0;
     useTenantStore.setState({ superAdmin: false });
@@ -197,8 +201,8 @@ describe("tenant store not_provisioned", () => {
       calls++;
       return calls === 1 ? errRes("internal", 500) : jsonRes({ tenants: [], super_admin: true });
     });
-    expect(useTenantStore.getState().superAdmin).toBe(false); // 1 回目は落ちたまま
-    await new Promise((r) => setTimeout(r, 900)); // バックオフ 700ms のリトライを待つ
+    expect(useTenantStore.getState().superAdmin).toBe(false); // still down after the 1st try
+    await new Promise((r) => setTimeout(r, 900)); // wait for the 700ms-backoff retry
     expect(useTenantStore.getState().superAdmin).toBe(true);
     expect(calls).toBeGreaterThan(1);
   });

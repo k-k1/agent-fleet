@@ -40,12 +40,12 @@ export function AssistantTurn({
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<TurnReadHandle | null>(null);
   const [state, setState] = useState<"idle" | "playing" | "paused">("idle");
-  // Floating "ここから読み上げ" pill anchored to a mouse selection inside the bubble.
+  // Floating "read from here" pill anchored to a mouse selection inside the bubble.
   const [selPill, setSelPill] = useState<{ x: number; y: number; block: number } | null>(null);
   const autoLitRef = useRef<HTMLElement | null>(null);
 
-  // 自動読み上げは最終回答の確定後にこの完成済み DOM へ移るため、
-  // startTts から通知された文を本文ブロックへ対応付けて光らせる。
+  // Auto-reading moves to this finished DOM once the final answer settles, so map the
+  // sentence reported by startTts onto a body block and light it up.
   useEffect(() => {
     const body = bodyRef.current;
     if (!body || !highlight) {
@@ -73,7 +73,7 @@ export function AssistantTurn({
     if (!body) return;
     handleRef.current?.stop("replaced");
     // onEnd fires once on natural end AND on preemption (TopBar stop / another playback),
-    // so the footer always falls back to the idle "読み上げ" state.
+    // so the footer always falls back to the idle "read aloud" state.
     const h = readTurn(body, t("chat.label"), fromBlock, () => {
       handleRef.current = null;
       setState("idle");
@@ -97,7 +97,7 @@ export function AssistantTurn({
     setState("idle");
   };
 
-  // After a mouse selection inside the bubble, surface a "ここから読み上げ" pill at the
+  // After a mouse selection inside the bubble, surface a "read from here" pill at the
   // selection head — reading (re)starts from the block the selection begins in. Desktop
   // mouse only (touch selection emits no mouseup); the footer button still reads from top.
   const onMouseUp = () => {

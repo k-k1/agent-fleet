@@ -15,7 +15,7 @@
 // modal advances through each question and doesn't close after the first pick.
 // Every path is key-driven; NEVER send an option label as text — the modal ignores
 // typed text on option rows and the Enter confirms the highlighted first option
-// (v2.1.204 実測, docs/build/92-driving-a-tui.md).
+// (measured on v2.1.204, docs/build/92-driving-a-tui.md).
 
 import { useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
@@ -42,20 +42,21 @@ export function PendingQuestions({
   questions: Question[];
   onSubmitKeys: (keys: string[]) => void;
   onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => void;
-  // onRespond (managed セッション): pending Interaction への構造化回答（docs/log/27 §5、
-  // 質問ごとに 1 エントリ・順序どおり）。渡されたら全経路が semantic 応答になり、
-  // 下の TUI キー駆動（モーダルの挙動に縛られたシーケンス組み立て）は一切通らない。
+  // onRespond (managed sessions): structured answer to the pending Interaction (docs/log/27
+  // §5 — one entry per question, in order). When given, every path answers semantically and
+  // none of the TUI key driving below runs.
   onRespond?: (answers: InteractionAnswer[]) => void;
   // onCancel: dismiss the pending question without answering (Escape / Interrupt) so the
   // conversation can continue with a fresh prompt instead of an answer.
   onCancel?: () => void;
-  // onSubmitAnswers（持ち越し・docs/log/75）: **モーダルがもう無い**質問への回答。渡されたら
-  // 他のどの submit 経路よりも優先し、キー列も seq も組み立てない — 当てる先の無いキーは、
-  // 生きたペインに落ちれば別のものを決めてしまう。回答は Agent が再開後に文章として配達する。
-  // 選択 UI（複数選択・自由入力・preview 比較）はそのまま使い回す。
+  // onSubmitAnswers (carried interactions, docs/log/75): the answer to a question whose modal
+  // no longer exists. When given it takes precedence over every other submit path and builds
+  // no keys or seq at all — a key with nothing to aim at would decide something else if it
+  // landed in a live pane. The Agent delivers the answer as prose after resuming. The option
+  // UI (multi-select, free text, preview comparison) is reused unchanged.
   onSubmitAnswers?: (answers: Array<{ labels: string[]; notes: string }>) => void;
-  // 持ち越しではボタンの意味が変わる（「回答を送信」→「回答して再開」、
-  // 「キャンセル」→「破棄」）ので、文言だけ差し替えられるようにする。
+  // The buttons mean something different for a carried interaction (send answer → answer and
+  // resume, cancel → discard), so the labels are overridable.
   submitLabel?: string;
   cancelLabel?: string;
   sending: boolean;
@@ -74,7 +75,7 @@ export function PendingQuestions({
   // menu question can ALSO be answered with free text — without this the card showed
   // only the listed options and the 4th row was unreachable from chat. The row is
   // entered rather than typed into directly: Down×options.length, Enter (opens
-  // "Your answer:"), the text, then Enter submits — 実測 (agy 1.1.4). That extra Enter
+  // "Your answer:"), the text, then Enter submits — measured on agy 1.1.4. That extra Enter
   // is why this is its own flag and not folded into claude's free-text path, whose row
   // IS the field (type straight into it).
   writeIn?: boolean;
@@ -94,7 +95,7 @@ export function PendingQuestions({
   // TUI modal's key behavior, so every form is drivable.
   const menuDrivable =
     semantic ||
-    !!onSubmitAnswers || // 持ち越しは TUI モーダルの制約を受けない（キーを撃たないので）
+    !!onSubmitAnswers || // a carried interaction fires no keys, so the modal's limits do not apply
     (menu && (single || (multiPage && qs.length > 1 && qs.every((q) => !q.multiSelect))));
 
   const clearFree = (qi: number) =>
@@ -142,7 +143,8 @@ export function PendingQuestions({
   // structured per-question answers — no TUI key encoding, no modal quirks.
   const submitRespond = () => onRespond!(buildRespondAnswers(qs, sel, freeText));
 
-  // 持ち越し（docs/log/75）: 選択と自由入力をそのまま渡す。キー列には一切変換しない。
+  // Carried interaction (docs/log/75): pass the selection and free text through as-is, with
+  // no conversion to a key sequence.
   const submitCarried = () =>
     onSubmitAnswers!(qs.map((_, qi) => ({ labels: sel[qi] || [], notes: (freeText[qi] || "").trim() })));
 

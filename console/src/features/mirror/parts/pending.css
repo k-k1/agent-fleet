@@ -1,9 +1,10 @@
-/* 応答待ちと実行中の面: ツール許可の確認（.mt-perm*）・チャットの主要ボタン・
-入力中インジケータと停止・モードチップ・浮くピル（.mirror-jump*）
+/* The waiting/running surfaces: tool-permission prompts (.mt-perm*), chat primary buttons,
+the typing indicator and stop control, mode chips, and the floating pills (.mirror-jump*)
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
 /* Tool-permission prompt (edit/command approval when not in bypass/accept mode). */
 .mt-perm {
@@ -48,7 +49,7 @@
   margin-top: 7px;
   font-size: 11px;
 }
-/* Chat primary actions (許可 / 承認して実行 / 回答を送信 / 送信) follow the theme
+/* Chat primary actions (allow / approve and run / send answer / send) follow the theme
    accent instead of the fixed app blue. */
 .mirrorview button.primary {
   background: var(--chat-accent);
@@ -58,7 +59,7 @@
   background: color-mix(in srgb, var(--chat-accent) 82%, #ffffff);
 }
 /* A filled CTA can't be disabled with the shared flat fade: label and fill wash out
-   together, so 回答を送信 sat at ~2:1 against its own button and you could not read the
+   together, so the send-answer label sat at ~2:1 against its own button and you could not read the
    action you were waiting to unlock. Give it the plain disabled-button skin instead —
    still unmistakably unavailable (flat, no hover), but legible. */
 .mirrorview button.primary:disabled {
@@ -108,8 +109,8 @@
 .mirror-mode.on {
   background: var(--accent, #6a7fdb);
   border-color: transparent;
-  /* ダークの --accent は明るいシアン — 白文字ではコントラスト不足になるので
-     アクセント上の文字色トークンを使う。 */
+  /* In dark mode --accent is a bright cyan, so white text lacks contrast; use the
+     on-accent foreground token instead. */
   color: var(--on-accent);
 }
 /* Keep the chip legible on hover: the global button:hover swaps in a light --btn-h,
@@ -161,10 +162,10 @@
     transform: translateY(-3px);
   }
 }
-/* 浮くピル（「最新へ」「返信を頭から」）。スクロール本文の最後に sticky で置き、入力欄のすぐ上に
-   浮かせる。ラッパは height:0 で、中身は absolute — in-flow のままだと、はみ出したボタンぶん
-   （実測 12px）がスクロール可能領域を伸ばし、末尾に貼り付いているのに 12px の余白が残る
-   （MirrorView の注記）。 */
+/* Floating pills (jump to latest / to the start of the reply). Stuck to the end of the scrolled
+   body so they float just above the input. The wrapper is height:0 with absolute contents: left
+   in flow, the overflowing button (measured 12px) would extend the scrollable area, leaving a
+   12px gap even when pinned to the bottom (see the note in MirrorView). */
 .mirror-jump-wrap {
   position: sticky;
   bottom: 10px;
@@ -172,7 +173,8 @@
   pointer-events: none; /* let clicks fall through the zero-height strip… */
   z-index: 4;
 }
-/* ボタンの帯。bottom:0 の absolute なので、箱はラッパの「上」へ伸びる＝末尾より下へはみ出さない。 */
+/* The button row. absolute at bottom:0, so the box grows upward from the wrapper and never
+   overflows past the end of the transcript. */
 .mirror-jump-row {
   position: absolute;
   bottom: 0;
@@ -180,8 +182,8 @@
   right: 0;
   display: flex;
   justify-content: center;
-  /* 「返信を頭から」と「最新へ」は同時に出ることがある（回答の途中で、かつ末尾から離れて
-     いる）。折り返さない — 2 つ並んでもスマホ幅（≈360px）に収まる寸法。 */
+  /* Both pills can be shown at once (mid-reply and scrolled away from the end). Never wrap:
+     the two side by side still fit a phone width (~360px). */
   flex-wrap: nowrap;
   gap: 8px;
 }
@@ -194,8 +196,8 @@
      (--bar: light grey / near-black) with the theme foreground, edged and iconed in the
      top-bar accent. These tokens are re-scoped by the mirror's own data-theme, so the pill
      tracks whatever theme the chat surface is showing. Bold + shadow keep it prominent.
-     寸法は本文より小さく — 会話の上に浮かぶ補助の導線なので、読んでいる面より目立たせない
-     （2 つ並んでもスマホ幅に余裕で収まる、というのも効く）。 */
+     Sized below the body text: this is an auxiliary control floating over the conversation and
+     must not outshine what is being read (and it keeps both pills within a phone width). */
   padding: 6px 13px;
   font-size: 12px;
   font-weight: 600;

@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { setLocale } from "../../lib/i18n/index.ts";
 import { reportText } from "./report.ts";
 
-// docs/log/28 P6: 報告カードは「事実」だけをカタログから描く。オペレーターへの行動指示
-// （get_session_output で…）は Agent 側でプロンプトを組むときに生成されるので、
-// ここに現れてはいけない — 現れたら「訳すと指示文まで変わる」元の状態に戻っている。
+// docs/log/28 P6: the report card renders facts only, from the catalogue. Operator instructions
+// ("use get_session_output ...") are built on the Agent side when it assembles the prompt and must
+// never appear here; if they do, we are back to the state where translating a card also rewrote the
+// instructions in it.
 describe("reportText (docs/log/28 P6)", () => {
   beforeEach(() => setLocale("ja"));
   afterEach(() => setLocale("ja"));
@@ -36,8 +37,8 @@ describe("reportText (docs/log/28 P6)", () => {
     }
   });
 
-  // exit の理由はラベルに解決する。知らない理由は生値のまま（新しい Agent が増やした
-  // 理由コードで空欄になるより、生でも見えている方がよい）。
+  // An exit reason resolves to a label; an unknown one stays verbatim, because a raw code is
+  // better than a blank left by a reason code some newer Agent added.
   it("resolves the exit reason label and keeps an unknown one verbatim", () => {
     const exit = (reason: string) =>
       reportText({
@@ -53,8 +54,9 @@ describe("reportText (docs/log/28 P6)", () => {
     expect(exit("from-the-future")).toContain("from-the-future");
   });
 
-  // 付記は引数の有無で出る。時刻は epoch millis で運び、Console 側で表示ロケールに整形する
-  // （サーバ側で「1月2日 15:04」に整形してしまうと英語 Console でも日本語のまま出る）。
+  // A note appears exactly when its argument is present. Times travel as epoch millis and are
+  // formatted in the Console's display locale; formatted server-side they would stay Japanese even
+  // in an English Console.
   it("appends the notes their arguments call for", () => {
     const withNotes = reportText({
       content: "",
@@ -84,7 +86,7 @@ describe("reportText (docs/log/28 P6)", () => {
     expect(bare).not.toContain("件ぶんの完了");
   });
 
-  // 旧レコード（P6 より前・キー無し）と Console が知らないキーは content へ落ちる。
+  // Legacy records (pre-P6, no key) and keys the Console does not know fall back to content.
   it("falls back to the stored content for legacy and unknown reports", () => {
     expect(reportText({ content: "旧 report の本文" })).toBe("旧 report の本文");
     expect(

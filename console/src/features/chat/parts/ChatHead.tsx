@@ -16,7 +16,7 @@ const CHAT_KINDS: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.hea
 
 // ChatHead is the pane's title row: the conversation title, the backend chip (which
 // doubles as the agent-switch picker on a real conversation), the state chip, and the
-// 作業計画 toggle. It owns no state — the picker's open flag, its dismiss wiring and its
+// work-plan toggle. It owns no state — the picker's open flag, its dismiss wiring and its
 // placement all live in ChatView, because they are what the refs below are anchored to.
 export function ChatHead({
   headerActions,
@@ -102,9 +102,9 @@ export function ChatHead({
                     className="ui-menu-item"
                     role="menuitemradio"
                     aria-checked={k === conv?.agent}
-                    // 未接続の CLI にピン留めしても、送信時に接続済みのバックエンドへ退避する
-                    // だけ（chatProviderFor）＝選ばせても効かない。接続状況が分からないとき
-                    // （キャッシュが冷えている）は塞がない。
+                    // Pinning to an unconnected CLI has no effect: on send, chatProviderFor
+                    // just falls back to a connected backend. When connection state is
+                    // unknown (cold cache) do not block the choice.
                     disabled={!!chatConns && !agentOf(k).available({ conns: chatConns })}
                     title={
                       chatConns && !agentOf(k).available({ conns: chatConns })

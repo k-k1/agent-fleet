@@ -28,7 +28,8 @@ export function ChatMessageRow({
   assistId?: string;
   assistVoice: string;
   paneId: string;
-  /** カラオケ読み上げ中の文。最後のターン以外は null（呼び出し側で解決済み）。 */
+  /** The sentence being read in karaoke mode. Null for every turn but the last (the caller
+   * has already resolved it). */
   highlight: string | null;
 }) {
   const tr = useT();

@@ -1,5 +1,5 @@
 // Chat store (zustand): rail-list refresh tick + per-conversation busy flags
-// (進行中 chips published by ChatView, read by the AssistantSection rail).
+// (in-progress chips published by ChatView, read by the AssistantSection rail).
 // Replaces the old chatListKey / chatBusy context slices.
 //
 // It also parks the state of an *in-flight* streaming turn keyed by conversation id
@@ -17,7 +17,7 @@ import type { Conversation, ConversationMeta, ChatStep } from "../../types/chat.
 import type { SessionKind } from "../../types/session.ts";
 
 // Live in-flight turn state: the tentative answer text plus the working steps committed so
-// far (docs/log/19 分離), so a re-opened pane re-attaches to both the process and the answer.
+// far (docs/log/19 separation), so a re-opened pane re-attaches to both the process and the answer.
 export interface LiveTurn {
   text: string;
   steps: ChatStep[];

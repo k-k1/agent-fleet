@@ -59,7 +59,8 @@ export function ChatSuggestRow({
             </button>
           )}
           {suggestChips.map((sg) => (
-            // ピン留めは先頭固定＋📌。削除/ピンは右クリック・長タップ・Menu キーのメニューから。
+            // Pinned suggestions are held at the front and marked with a pin. Delete/pin
+            // live in the right-click, long-press and Menu-key menu.
             <button
               key={(sg.llm ? "l:" : "a:") + sg.text}
               type="button"

@@ -1,7 +1,7 @@
-// ミラーがレイアウトから「もう開いているペイン」を探すための読み取り。どれも購読ではなく
-// クリック時に一度読むだけ（購読するとレイアウトが動くたびにミラー全体が再描画される）。
-// transcript/ ではなくミラー側に置くのは、ペインを開けるのが所有者だけだから — 共有ビューには
-// 開く先のローカルレイアウトが無い。
+// Lookups the mirror uses to find an already-open pane in the layout. Each reads the store once
+// at click time rather than subscribing; a subscription would re-render the whole mirror on every
+// layout change. These live here rather than in transcript/ because opening a pane is an owner
+// action and the shared view has no local layout to open into.
 import { useLayoutStore } from "../../../layout/store.ts";
 
 // findPlanPane returns the id of a pane already reviewing THIS session's plan, if any.

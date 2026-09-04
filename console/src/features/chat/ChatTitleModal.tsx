@@ -1,7 +1,7 @@
 // ChatTitleModal — manual title edit for an assistant chat (rename icon in the left
-// rail). Mirrors SessionTitleModal.tsx: "AIに提案してもらう" fetches a candidate via the
-// preview-only /title/suggest endpoint and shows it as a proposal the user applies
-// explicitly — it never clobbers what they typed.
+// rail). Mirrors SessionTitleModal.tsx: the "ask the AI to suggest one" button fetches a
+// candidate via the preview-only /title/suggest endpoint and shows it as a proposal the user
+// applies explicitly — it never clobbers what they typed.
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -37,7 +37,8 @@ export function ChatTitleModal({ id, title, onClose, onSaved }: ChatTitleModalPr
     if (!t) return;
     setSaving(true);
     try {
-      // apiJSON はサーバエラーを {error} で解決する（例外にならない）— 失敗時は開いたまま。
+      // apiJSON resolves a server error as {error} rather than throwing, so on failure the
+      // modal stays open.
       const j = await chatRename(id, t);
       const err = (j as { error?: ApiError }).error;
       if (err) {

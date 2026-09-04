@@ -11,7 +11,7 @@
   background: var(--chat-bg, var(--bg));
 }
 /* Legacy control styles (old styles.css element globals), scoped to the chat view —
-   the verbatim-ported ChatView's raw buttons (送信 / 停止) relied on them. Same
+   the verbatim-ported ChatView's raw send/stop buttons relied on them. Same
    rationale (and same :where() specificity note) as the .mirrorview block in
    mirror.css; dissolved at P8. */
 :where(.chatview) button {

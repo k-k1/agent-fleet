@@ -323,9 +323,9 @@ describe("AI suggestion (docs/log/44 §4)", () => {
 
   it("a buffer edit after receipt derives staleness and accept refuses", () => {
     const model = editBuffer(setSuggestion(initial(), envelopeFor(initial())), "typed\n");
-    // 提案は保持されたまま（パネルが stale を導出して表示する）…
+    // The suggestion is kept (the panel derives and shows staleness from it)...
     expect(model.suggestion).not.toBeNull();
-    // …だが適用は revision 三重一致で拒否される。
+    // ...but applying it is refused by the three-way revision match.
     expect(() => applySuggestion(model)).toThrow("suggestion_stale");
     expect(model.suggestion?.suggestion.baseRevision).not.toBe(model.bufferRevision);
   });

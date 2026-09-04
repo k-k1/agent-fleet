@@ -1,14 +1,16 @@
-/* 持ち越した対話（docs/log/75）と、引き継ぎの状態行（docs/log/77）
+/* Carried-over exchanges (docs/log/75) and the handoff status line (docs/log/77)
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
-/* 持ち越した対話（docs/log/75）— 停止時に画面に出ていたが答えが届かなかったもの。
-   保留カード（.mt-question / .mt-perm）と**見た目で区別できること**が要件:
-   同じ質問文が同じ形で出ていると、利用者は「さっき答えたのにまた出ている」と読み、
-   キーで答えられるカードとの違いに気づけない。注意色ではなく中立の枠にして、
-   1 行目の説明文（.mt-carried-note）で「まだ届いていない」ことを言う。 */
+/* Carried-over exchanges (docs/log/75) — on screen when the session stopped, but the answer
+   never arrived. They must be visually distinguishable from a live pending card
+   (.mt-question / .mt-perm): the same question in the same shape reads as "I already answered
+   this and it came back", and hides that this one cannot be answered by key. Hence a neutral
+   frame rather than an attention colour, plus the first-line note (.mt-carried-note) saying
+   the answer never got through. */
 .mt-carried .mirror-turn-body {
   border: 1px dashed color-mix(in srgb, var(--fg) 25%, transparent);
   border-radius: 8px;
@@ -31,7 +33,8 @@
   opacity: 0.85;
 }
 
-/* 引き継ぎの状態行（docs/log/77 §77.10）。通知は流れ物なので、二重作業を防ぐのはここの役目。 */
+/* Handoff status line (docs/log/77 §77.10). Notifications are transient, so preventing
+   duplicate work is this line's job. */
 .mirror-handoff-offer {
   margin: 0.35rem 0 0;
   font-size: 0.85em;

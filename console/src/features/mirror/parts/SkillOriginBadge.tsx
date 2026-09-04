@@ -3,9 +3,9 @@ import { t as tr } from "../../../lib/i18n/index.ts";
 import { kindIcon, kindLabel, kindClass } from "../../../lib/sessionkind.ts";
 import { originKind } from "../skillPicker.ts";
 
-// foreign スキルの出所バッジ（docs/log/50 §8）: kind 色（--kind-* 1 ソース）のミニチップで
-// 出所エージェントを示す。.agents はどの kind でもない共有規約 → 中立の「共有」。
-// ネイティブ項目はバッジ無し（従来どおり）。
+// Origin badge for a foreign skill (docs/log/50 §8): a mini chip in the kind colour (--kind-*,
+// one source) naming the agent it came from. .agents is a shared convention belonging to no kind,
+// so it gets the neutral "shared" label. Native entries carry no badge.
 export function SkillOriginBadge({ origin }: { origin: string }) {
   const k = originKind(origin);
   if (!k) return <span className="mirror-skill-src" title={origin}>{tr("mirror.skills_src_shared")}</span>;

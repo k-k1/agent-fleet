@@ -1,10 +1,12 @@
-// 持ち越しカード（docs/log/75）。押さえるのは 2 点だけで、どちらも「壊れると静かに害が出る」型。
+// The carried-interaction card (docs/log/75). Only two things are pinned here, both of which
+// fail silently and harmfully:
 //
-// ①**キー列を 1 つも送らないこと**。持ち越しには当てる先のモーダルが無いので、Down/Enter は
-//   行き場を失い、再開したペインに落ちれば別のもの（新しい質問、コンポーザ）を決めてしまう。
-//   保留カードと同じ選択 UI を使い回している以上、キー経路へ落ちる回帰は起こりうる。
-// ②**承認は確認を挟むこと**。文章の承認だけで claude はそのまま実行する（docs/log/75 §75.10 E の
-//   実測）ので、これは取り消せない決定である。
+// 1. It must send no key sequence at all. A carried interaction has no modal to aim at, so a
+//    Down/Enter landing in the resumed pane would decide something else (a new question, the
+//    composer). The card reuses the pending card's option UI, so a regression back onto the
+//    key path is possible.
+// 2. Approval must go through a confirm. A prose approval alone makes claude execute the plan
+//    (measured, docs/log/75 §75.10 E), so it is an irreversible decision.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -57,8 +59,8 @@ afterEach(() => {
 });
 
 const click = (el: Element | null) => act(() => (el as HTMLElement).click());
-// React は value プロパティを握っているので、ネイティブ setter 経由で書かないと onChange が
-// 発火しない（ChatPlan.dom.test.tsx と同じ流儀）。
+// React owns the value property, so onChange only fires when the write goes through the
+// native setter (same idiom as ChatPlan.dom.test.tsx).
 const type = (el: HTMLTextAreaElement, v: string) =>
   act(() => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, v);
@@ -68,9 +70,9 @@ const buttons = () => Array.from(document.querySelectorAll("button"));
 const byText = (re: RegExp) => buttons().find((b) => re.test(b.textContent || "")) || null;
 
 describe("CarriedBlock", () => {
-  it("質問に答えると /input ではなく carried-answer へラベルが渡る", async () => {
+  it("answering a question passes the labels to carried-answer, not to /input", async () => {
     mount({ kind: "question", questions: [{ question: "どっち？", options: [{ label: "A" }, { label: "B" }] }] });
-    click(document.querySelectorAll(".mq-opt")[1]); // B を選ぶ
+    click(document.querySelectorAll(".mq-opt")[1]); // pick B
     click(document.querySelector(".mq-submit"));
     await act(async () => {});
 
@@ -79,13 +81,13 @@ describe("CarriedBlock", () => {
     expect(session).toBe("s1");
     expect(body.decision).toBe("answer");
     expect(body.answers).toEqual([{ labels: ["B"], notes: "" }]);
-    // ★キー経路へは一切落ちない。
+    // Never falls through to the key path.
     expect(apiJSON).not.toHaveBeenCalled();
     expect(errors).toEqual([]);
     expect(done).toBe(1);
   });
 
-  it("自由入力だけでも送れる（preview 付き AUQ の notes 形）", async () => {
+  it("sends with free text alone (the notes shape of an AUQ with previews)", async () => {
     mount({ kind: "question", questions: [{ question: "どっち？", options: [{ label: "A" }] }] });
     type(document.querySelector<HTMLTextAreaElement>(".mq-freetext")!, "どちらでもない");
     click(document.querySelector(".mq-submit"));
@@ -94,7 +96,7 @@ describe("CarriedBlock", () => {
     expect(body.answers).toEqual([{ labels: [], notes: "どちらでもない" }]);
   });
 
-  it("プランの承認は確認を挟み、拒否すれば送らない", async () => {
+  it("plan approval goes through a confirm and sends nothing when it is declined", async () => {
     mount({ kind: "plan", plan: "# 計画" });
     vi.stubGlobal("confirm", vi.fn(() => false));
     click(byText(/承認して実行|Approve and run/));
@@ -109,7 +111,7 @@ describe("CarriedBlock", () => {
     expect(body.decision).toBe("approve");
   });
 
-  it("却下は確認なしで、入力した指示が一緒に飛ぶ", async () => {
+  it("rejection needs no confirm and carries the typed instructions with it", async () => {
     mount({ kind: "plan", plan: "# 計画" });
     type(document.querySelector<HTMLTextAreaElement>(".mq-freetext")!, "手順 2 を分けて");
     click(byText(/承認しない|Do not approve/));
@@ -118,7 +120,7 @@ describe("CarriedBlock", () => {
     expect(body).toMatchObject({ decision: "reject", feedback: "手順 2 を分けて" });
   });
 
-  it("許可は「続けて再開」だけを出す（許可の答えは届かないので）", async () => {
+  it("a permission offers only resume-and-continue, since the answer cannot be delivered", async () => {
     mount({ kind: "permission", permission: "Bash · npm ci" });
     expect(document.body.textContent).toContain("Bash · npm ci");
     click(byText(/続けて再開|Resume and continue/));
@@ -127,7 +129,7 @@ describe("CarriedBlock", () => {
     expect(body.decision).toBe("continue");
   });
 
-  it("破棄はセッションを起こさない（discard を送るだけ）", async () => {
+  it("discard does not wake the session — it only sends discard", async () => {
     mount({ kind: "question", questions: [{ question: "どっち？", options: [{ label: "A" }] }] });
     click(byText(/破棄|Discard/));
     await act(async () => {});
@@ -136,7 +138,7 @@ describe("CarriedBlock", () => {
     expect(apiJSON).not.toHaveBeenCalled();
   });
 
-  it("送信が失敗したらカードは残り、理由が出る（沈黙は成功と区別できない）", async () => {
+  it("a failed send keeps the card and surfaces the reason (silence reads as success)", async () => {
     sessionCarriedAnswer.mockResolvedValueOnce({ ok: false, message: "workspace is stopping" } as never);
     mount({ kind: "permission", permission: "Bash · ls" });
     click(byText(/続けて再開|Resume and continue/));

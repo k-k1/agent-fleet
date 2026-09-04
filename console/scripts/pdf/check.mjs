@@ -1,17 +1,19 @@
-// PDF ペイン（docs/log/82）の描画ハーネス。
+// Rendering harness for the PDF pane (docs/log/82).
 //
-// 何を守るためのものか:
-//   1. **本当に絵が出ているか。** canvas は「大きさだけ正しくて中身が真っ白」でも
-//      DOM 上は何も壊れて見えない。画素を読んで、白でない点が一定割合あることまで見る。
-//   2. **拡大が読み位置を壊さないか。** 倍率を変えるとページの高さが全部変わるので、
-//      scrollTop をそのまま残すと別のページへ飛ぶ（pdfPages.ts の anchor 計算）。
-//   3. **画面外のページの canvas を捨てているか。** 捨てないと、長い文書を端まで送った
-//      だけでページ数ぶんのビットマップがタブに積まれる。
-//   4. **壊れた PDF / 空の PDF で、黙って白い面にならないか。**
+// What it protects:
+//   1. That a picture is really drawn. A canvas can have the right size and be entirely blank
+//      without anything looking broken in the DOM, so read the pixels and require a minimum
+//      share of non-white ones.
+//   2. That zooming does not break the reading position. Changing the scale changes every page
+//      height, so keeping scrollTop as it was jumps to a different page (the anchor computation
+//      in pdfPages.ts).
+//   3. That canvases of off-screen pages are released. Otherwise scrolling a long document to
+//      the end leaves one bitmap per page piled up in the tab.
+//   4. That a corrupt or empty PDF does not silently become a blank surface.
 //
-// 実バックエンドも CP も要らない: PdfView を React ごと esbuild で 1 枚にまとめ、
-// 素の http サーバで配って CDP で叩く。標本 PDF はその場で chromium の
-// --print-to-pdf で作るので、リポジトリにバイナリを置かない。
+// Needs neither a real backend nor the CP: PdfView and React are bundled into one file with
+// esbuild, served by a plain http server and driven over CDP. The sample PDFs are produced on
+// the spot with chromium's --print-to-pdf, so no binary is committed to the repository.
 //
 //   npm --prefix console run pdf:check
 //   node console/scripts/pdf/check.mjs --screenshot /tmp/pdf.png
@@ -33,34 +35,35 @@ const SHOT = shotArg > 0 ? process.argv[shotArg + 1] : "";
 
 const { check, report } = checker();
 
-// 「描かれた画素」の数え方。**判定 2 と 7 で同じ式を使う**（片方だけ直すと、もう片方が
-// 同じ形で嘘をつく —— 実際、下の欠陥は develop から在って両方に当たっていた）。
+// How a "drawn pixel" is counted. Checks 2 and 7 must use the same expression: fix one only and
+// the other lies in exactly the same way.
 //
-// 🔴 **α を見ないと、未描画の canvas（透明 = rgba(0,0,0,0)）を「全部インク」と数える。**
-// `d[i] < 200` は 0 に当たってしまうからで、**PdfView が canvas に幅を与えてから
-// pdf.js が塗るまでの隙間で ink が 100% を返す**。`until()` は閾値を超えた最初の値で
-// 返すので、**描画も通信も待たずに次へ進み、アセットを取りに行く前に requests を読む**
-// ＝**偽の赤**（実測 2026-09-04: ~29 回に 1 回・`要求 0 件` ＋ `ink=100.00%`。正常時 4.39%）。
-// ⚠️ **`until` の締切を伸ばしても直らない。早く返るのが問題である。**
-// ⇒ **不透明（α ≥ 250）かつ白でない画素だけを数える。**下の判定 0 が合成の canvas で
-// この式そのものを検査する（式が壊れたら、家系ではなく式のほうが赤くなる）。
+// Alpha has to be part of it. Without it an undrawn canvas (transparent = rgba(0,0,0,0)) counts
+// as all ink, because `d[i] < 200` also matches 0, so ink returns 100% in the gap between
+// PdfView giving the canvas a width and pdf.js painting it. `until()` returns on the first value
+// past the threshold, so the run moves on without waiting for either paint or network and reads
+// `requests` before any asset is fetched — a false red (measured: about 1 run in 29, with 0
+// requests and ink=100.00% where a healthy run reads 4.39%). Extending the `until` deadline does
+// not fix it; returning early is the problem. So count only opaque (alpha >= 250) non-white
+// pixels. Check 0 below exercises this expression on a synthetic canvas, so a broken expression
+// turns the expression red instead of the whole family.
 const INK_FN = `((el) => {
   if (!el || !el.width || !el.height) return -1;
   const d = el.getContext('2d').getImageData(0, 0, el.width, Math.min(el.height, 400)).data;
   let n = 0;
   for (let i = 0; i < d.length; i += 4) {
-    if (d[i + 3] < 250) continue;                                  // 未描画・半透明は数えない
-    if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) n++;       // 白でなければインク
+    if (d[i + 3] < 250) continue;                                  // undrawn or translucent: skip
+    if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) n++;       // not white: ink
   }
   return n / (d.length / 4);
 })`;
 const inkOf = (sel) => `${INK_FN}(document.querySelector(${JSON.stringify(sel)}))`;
 
-// ---- 作業ディレクトリ -------------------------------------------------------
+// ---- Working directory ------------------------------------------------------
 const www = fs.mkdtempSync(path.join(os.tmpdir(), "af-pdfcheck-"));
 process.on("exit", () => fs.rmSync(www, { recursive: true, force: true }));
 
-// ---- 標本 PDF（6 ページ・日本語・表つき）------------------------------------
+// ---- Sample PDF (6 pages, Japanese, with a table) ----------------------------
 async function makeSamplePdf() {
   const src = path.join(www, "src.html");
   const pages = [];
@@ -78,31 +81,31 @@ async function makeSamplePdf() {
   );
   const out = path.join(www, "sample.pdf");
   await run(CHROMIUM, ["--headless", "--disable-gpu", "--no-sandbox", `--print-to-pdf=${out}`, "file://" + src]);
-  // 壊れた PDF: 署名だけ本物で中身が無い。pdf.js は InvalidPDFException を返す。
+  // Corrupt PDF: a real signature with no body. pdf.js answers with InvalidPDFException.
   fs.writeFileSync(path.join(www, "broken.pdf"), Buffer.from("%PDF-1.7\n" + "0".repeat(512)));
   return out;
 }
 
-// ---- 標本 2: **同梱アセットが要る** PDF（フォントを埋め込まない）--------------
+// ---- Sample 2: a PDF that *needs* the bundled assets (no embedded fonts) -----
 //
-// 🔴 上の sample.pdf は chromium が焼くので**フォントを全部埋め込む**。だから pdf.js は
-// cMap も標準14フォントも 1 度も取りに来ず、**bundle() のアセットのコピーを丸ごと
-// 消しても 11 件すべて OK のまま通っていた**（2026-09-04 実測。配信側の記録で
-// `/assets/pdfjs/<version>/` への要求が 0 件だと分かった）。
-// 同梱アセットが守っているのは pdfjs.ts:11 が書いているとおり
-// 「**埋め込みの無い**日本語 PDF が化けない／空白にならない」ことなので、
-// その形の標本をここで手で組む（リポジトリにバイナリを置かない方針は sample.pdf と同じ）:
-//   - `/UniJIS-UCS2-H`（定義済み CMap・CIDFontType0 の埋め込み無し）→ cmaps/*.bcmap
-//   - `/Symbol`（標準14・埋め込み無し）→ standard_fonts/*.pfb
-// ⚠️ **`/Helvetica` では standard_fonts を取りに来ない**（2026-09-04 実測: 要求は cmaps の
-// 2 件だけ）。pdf.js は base-14 のうち代替できるものをシステムフォントで賄うので、
-// **代替の効かない `/Symbol` を入れて初めて standard_fonts が要求される**（3 件になる）。
-// ——「アセットを取りに来る標本」を用意したつもりで、片方しか踏んでいない形。
-// 中身は ASCII だけ（CJK は 16 進のコードで書く）ので、文字数＝バイト数で offset が合う。
+// sample.pdf above is baked by chromium, which embeds every font, so pdf.js never fetches a cMap
+// or a standard-14 font: deleting bundle()'s whole asset copy still left all 11 checks OK
+// (measured; the server-side log showed 0 requests for `/assets/pdfjs/<version>/`). What the
+// bundled assets protect is what pdfjs.ts:11 states — that a Japanese PDF *without* embedded
+// fonts renders neither as mojibake nor as blank — so a sample of that shape is assembled here
+// by hand (keeping no binary in the repository, same as sample.pdf):
+//   - `/UniJIS-UCS2-H` (predefined CMap, CIDFontType0 not embedded) -> cmaps/*.bcmap
+//   - `/Symbol` (standard 14, not embedded) -> standard_fonts/*.pfb
+// `/Helvetica` alone does not pull standard_fonts (measured: only the 2 cmaps requests). pdf.js
+// substitutes system fonts for the base-14 faces it can, so standard_fonts is requested only
+// once a face with no substitute, `/Symbol`, is present (3 requests). Without it the "sample
+// that fetches the assets" only exercises one of the two halves.
+// The body is ASCII only (CJK is written as hex codes), so character count equals byte count and
+// the offsets line up.
 function makeAssetPdf() {
   const content =
     "BT /F1 24 Tf 24 150 Td (Standard 14 Helvetica, not embedded) Tj ET\n" +
-    "BT /F2 24 Tf 24 100 Td <65E5672C8A9E306E898B51FA3057> Tj ET\n" + // 日本語の見出し
+    "BT /F2 24 Tf 24 100 Td <65E5672C8A9E306E898B51FA3057> Tj ET\n" + // hex for a Japanese heading
     "BT /F3 24 Tf 24 60 Td (abgdez) Tj ET\n";
   const objs = [
     "<</Type/Catalog/Pages 2 0 R>>",
@@ -136,7 +139,7 @@ function run(cmd, args) {
   });
 }
 
-// ---- 束ねる（製品コードの PdfView をそのまま使う）---------------------------
+// ---- Bundle (using the production PdfView as it is) -------------------------
 async function bundle() {
   const entry = path.join(www, "entry.jsx");
   fs.writeFileSync(
@@ -150,8 +153,8 @@ async function bundle() {
        <PdfView src={src} onMeta={(m) => { window.__meta = m; }} />,
      );`,
   );
-  // `?url` は esbuild が知らない接尾辞。ワーカーを www へ置き、その URL を返す小さな
-  // プラグインで解決する（vite の `?url` と同じ意味になる）。
+  // `?url` is a suffix esbuild does not know. A small plugin resolves it by copying the worker
+  // into www and returning its URL, which is what vite's `?url` means.
   const urlSuffix = {
     name: "url-suffix",
     setup(build) {
@@ -177,7 +180,7 @@ async function bundle() {
     outfile: path.join(www, "app.js"),
     jsx: "automatic",
     absWorkingDir: CONSOLE,
-    // 入口は一時ディレクトリに置くので、そこから辿ると console/node_modules に届かない。
+    // The entry point lives in a temp directory, from which console/node_modules is unreachable.
     nodePaths: [path.join(CONSOLE, "node_modules")],
     define: { __AF_PDFJS_VERSION__: JSON.stringify(version), "process.env.NODE_ENV": '"production"' },
     plugins: [urlSuffix],
@@ -192,10 +195,10 @@ async function bundle() {
      <div id="root"></div><script type="module" src="/app.js"></script>`,
   );
   fs.copyFileSync(path.join(CONSOLE, "src/features/viewer/viewer.css"), path.join(www, "viewer.css"));
-  fs.cpSync(path.join(CONSOLE, "src/features/viewer/parts"), path.join(www, "parts"), { recursive: true, filter: (src) => !src.endsWith(".tsx") && !src.endsWith(".ts") }); // viewer.css は @import だけの索引（parts が無いと無スタイルで撮れてしまう）
+  fs.cpSync(path.join(CONSOLE, "src/features/viewer/parts"), path.join(www, "parts"), { recursive: true, filter: (src) => !src.endsWith(".tsx") && !src.endsWith(".ts") }); // viewer.css is an index of @import only (without parts the shot comes out unstyled)
 }
 
-// ---- 本体 --------------------------------------------------------------------
+// ---- Main --------------------------------------------------------------------
 await makeSamplePdf();
 makeAssetPdf();
 await bundle();
@@ -204,52 +207,54 @@ const b = await startBrowser();
 try {
   await b.goto(`http://127.0.0.1:${port}/index.html`);
 
-  // 0. **ink の式そのものの陽性対照**（合成 canvas・ブラウザ内で 3 形を作って測る）。
-  // ここが緑でないと、下の判定 2 と 7 の「待った」は何も待っていない。
+  // 0. Positive control for the ink expression itself: three synthetic canvases built and
+  // measured inside the browser. If this is not green, the waits in checks 2 and 7 wait for
+  // nothing.
   const ink0 = await b.evaluate(`(() => {
     const c = document.createElement('canvas'); c.width = 40; c.height = 40;
     const g = c.getContext('2d');
-    const blank = ${INK_FN}(c);                                   // 幅だけ付けて未描画＝透明
+    const blank = ${INK_FN}(c);                                   // sized but undrawn = transparent
     g.fillStyle = '#fff'; g.fillRect(0, 0, 40, 40);
-    const white = ${INK_FN}(c);                                   // 白で塗った＝まだ何も無い
+    const white = ${INK_FN}(c);                                   // painted white = still nothing
     g.fillStyle = '#000'; g.fillRect(0, 0, 20, 40);
-    const half = ${INK_FN}(c);                                    // 左半分を黒く塗った
+    const half = ${INK_FN}(c);                                    // left half painted black
     return { blank, white, half }; })()`);
   check(
     ink0.blank === 0 && ink0.white === 0 && ink0.half > 0.4,
-    "ink の式は未描画の canvas を「描かれた」と数えない",
-    `未描画=${(ink0.blank * 100).toFixed(2)}% 白=${(ink0.white * 100).toFixed(2)}% 半分黒=${(ink0.half * 100).toFixed(2)}%`,
+    "the ink expression does not count an undrawn canvas as drawn",
+    `undrawn=${(ink0.blank * 100).toFixed(2)}% white=${(ink0.white * 100).toFixed(2)}% half-black=${(ink0.half * 100).toFixed(2)}%`,
   );
 
-  // 1. 6 ページぶんの枠が出て、メタが親へ渡る。
+  // 1. Six page frames appear and the metadata reaches the parent.
   const pages = await until(b.evaluate, "document.querySelectorAll('.pdfview-page').length", (n) => n === 6);
-  check(pages === 6, "6 ページが並ぶ", `pages=${pages}`);
+  check(pages === 6, "six pages are laid out", `pages=${pages}`);
   const meta = await b.evaluate("window.__meta && window.__meta.pages");
-  check(meta === 6, "onMeta がページ数を返す", `meta=${meta}`);
+  check(meta === 6, "onMeta reports the page count", `meta=${meta}`);
 
-  // 1.5 CSS が本当に当たっている。viewer.css は @import だけの索引なので、parts の
-  // コピーを落とすと **無スタイルのまま全項目 OK で撮れてしまう**（実測: ink が
-  // 1.78% → 100.00% と 56 倍動いても 10 件すべて OK のまま）。撮る前に、
-  // 既定値と違う計算後スタイルを 1 つ見て、目視に頼らず落とす。
+  // 1.5 The CSS really applies. viewer.css is an index of @import only, so dropping the copy of
+  // parts makes the shot come out unstyled while every check still reports OK (measured: ink
+  // moved 56x, 1.78% -> 100.00%, and all 10 checks stayed OK). Before taking the shot, read one
+  // computed style that differs from the default, so this does not depend on looking at it.
   const styled = await b.evaluate("getComputedStyle(document.querySelector('.pdfview')).display");
-  check(styled === "flex", "viewer.css の parts が当たっている", `.pdfview display=${styled}`);
+  check(styled === "flex", "the parts of viewer.css apply", `.pdfview display=${styled}`);
 
-  // 2. 1 枚目に本当に絵が出ている（白でない画素の割合）。
-  // ⚠️ 下限（0.001）を上げないこと。**この値は測る時刻で揺れる** —— until() は閾値を
-  // 超えた最初の値で返すので、描画途中の canvas を読む（実測 2026-09-04: 素の実行で
-  // 1.07%〜3.35%）。⚠️ 環境でも動く（ランナーは日本語フォントが 0 件で豆腐になり 1.65%。
-  // headless.mjs の解説）。**ink は「何かが描かれた」までしか言わない検査である。**
+  // 2. The first page really shows a picture (share of non-white pixels).
+  // Do not raise the lower bound (0.001): the value moves with the moment it is measured, since
+  // until() returns on the first value past the threshold and so reads a canvas mid-paint
+  // (measured: 1.07%-3.35% on a bare run). It also has to hold in CI, where the runner has no
+  // Japanese fonts, renders tofu and reads 1.65% (see the notes in headless.mjs). Ink only ever
+  // says that something was drawn.
   const inked = await until(b.evaluate, inkOf(".pdfview-canvas"), (v) => v > 0.001);
-  check(inked > 0.001, "1 ページ目に文字が描かれている", `ink=${(inked * 100).toFixed(2)}%`);
+  check(inked > 0.001, "text is drawn on page 1", `ink=${(inked * 100).toFixed(2)}%`);
 
-  // 3. ページ番号と、スクロールでの追従。
+  // 3. The page number, and how it follows scrolling.
   const first = await b.evaluate("document.querySelector('.pdfview-pageno').textContent");
-  check(/^1 \//.test(first), "最初は 1 ページ目", `bar=${JSON.stringify(first)}`);
+  check(/^1 \//.test(first), "starts on page 1", `bar=${JSON.stringify(first)}`);
   await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 2000");
   const moved = await until(b.evaluate, "document.querySelector('.pdfview-pageno').textContent", (s) => !/^1 \//.test(s));
-  check(!/^1 \//.test(moved), "スクロールでページ番号が進む", `bar=${JSON.stringify(moved)}`);
+  check(!/^1 \//.test(moved), "the page number advances on scroll", `bar=${JSON.stringify(moved)}`);
 
-  // 4. 拡大しても読み位置（ページ番号）が保たれる。
+  // 4. Zooming preserves the reading position (the page number).
   const before = await b.evaluate("document.querySelector('.pdfview-pageno').textContent");
   const width0 = await b.evaluate("document.querySelector('.pdfview-page').getBoundingClientRect().width");
   await b.evaluate("[...document.querySelectorAll('.pdfview-bar button')].at(-1).click()");
@@ -258,11 +263,12 @@ try {
     "document.querySelector('.pdfview-page').getBoundingClientRect().width",
     (w) => w > width0 + 1,
   );
-  check(width1 > width0 + 1, "＋ でページが大きくなる", `${Math.round(width0)} → ${Math.round(width1)}`);
+  check(width1 > width0 + 1, "+ makes the page larger", `${Math.round(width0)} -> ${Math.round(width1)}`);
   const after = await b.evaluate("document.querySelector('.pdfview-pageno').textContent");
-  check(after === before, "拡大しても読んでいるページが変わらない", `${before} → ${after}`);
+  check(after === before, "zooming does not change the page being read", `${before} -> ${after}`);
 
-  // 5. ペインより広く拡大しても、ページの左端に手が届く（中央寄せの溢れ）。
+  // 5. Zoomed wider than the pane, the left edge of the page is still reachable (centred
+  // overflow).
   await b.evaluate("[...document.querySelectorAll('.pdfview-bar button')].at(-1).click()");
   await b.evaluate("[...document.querySelectorAll('.pdfview-bar button')].at(-1).click()");
   await sleep(300);
@@ -271,9 +277,9 @@ try {
        s.scrollLeft = 0;
        return Math.round(p.getBoundingClientRect().left - s.getBoundingClientRect().left); })()`,
   );
-  check(reach >= 0, "拡大してもページの左端に届く", `left=${reach}px`);
+  check(reach >= 0, "the left edge of the page is reachable when zoomed", `left=${reach}px`);
 
-  // 6. 画面から遠いページの canvas は面積を返している。
+  // 6. Canvases of pages far from the viewport give their area back.
   await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 0");
   await sleep(400);
   await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 1e7");
@@ -282,7 +288,7 @@ try {
     "[...document.querySelectorAll('.pdfview-canvas')].filter((c) => c.width === 0).length",
     (n) => n > 0,
   );
-  check(freed > 0, "画面外のページは canvas を解放する", `freed=${freed}`);
+  check(freed > 0, "off-screen pages release their canvas", `freed=${freed}`);
 
   if (SHOT) {
     await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 0");
@@ -290,10 +296,9 @@ try {
     await b.screenshot(SHOT);
   }
 
-  // 7. **同梱アセットが実際に取りに来られて、配れている。**
-  // 判定は「取りに来た件数 > 0」と「その要求が 404 でない」の 2 本立て。
-  // ⚠️ **404 が 0 件だけでは通ってしまう**——1 度も取りに来なければ 404 も 0 件だから
-  // （それが 2026-09-04 まで見えていなかった状態そのもの）。
+  // 7. The bundled assets are actually requested, and actually served.
+  // Two halves: the request count is > 0, and none of those requests 404s. "No 404s" alone
+  // passes trivially — never requesting anything also produces zero 404s.
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/assets.pdf`);
   await until(b.evaluate, "document.querySelectorAll('.pdfview-page').length", (n) => n === 1);
   const inkedAsset = await until(b.evaluate, inkOf(".pdfview-canvas"), (v) => v > 0.001);
@@ -302,20 +307,20 @@ try {
   const kinds = new Set(asked.map((r) => r.path.slice(ASSET_PREFIX.length).split("/")[0]));
   check(
     kinds.has("cmaps") && kinds.has("standard_fonts"),
-    "埋め込み無しの PDF が同梱アセットを取りに来る（cMap ＋ 標準14フォント）",
-    `${ASSET_PREFIX} への要求 ${asked.length} 件: ${[...kinds].join(" ") || "（無し）"}`,
+    "a PDF without embedded fonts requests the bundled assets (cMap + standard 14 fonts)",
+    `${asked.length} requests for ${ASSET_PREFIX}: ${[...kinds].join(" ") || "(none)"}`,
   );
   check(
     missed.length === 0,
-    "同梱アセットを配れている（404 が無い）",
-    missed.length ? `404: ${[...new Set(missed.map((r) => r.path))].slice(0, 3).join(" ")}` : `${asked.length} 件すべて 200`,
+    "the bundled assets are served (no 404)",
+    missed.length ? `404: ${[...new Set(missed.map((r) => r.path))].slice(0, 3).join(" ")}` : `all ${asked.length} requests 200`,
   );
-  check(inkedAsset > 0.001, "埋め込み無しの PDF にも文字が描かれている", `ink=${(inkedAsset * 100).toFixed(2)}%`);
+  check(inkedAsset > 0.001, "text is drawn for a PDF without embedded fonts too", `ink=${(inkedAsset * 100).toFixed(2)}%`);
 
-  // 8. 壊れた PDF は、白い面ではなく理由を出す。
+  // 8. A corrupt PDF states a reason instead of showing a blank surface.
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/broken.pdf`);
   const failed = await until(b.evaluate, "document.querySelector('.pdfview.is-failed')?.textContent || ''", (s) => !!s);
-  check(!!failed, "壊れた PDF で理由が出る", JSON.stringify(failed));
+  check(!!failed, "a corrupt PDF shows a reason", JSON.stringify(failed));
 } finally {
   b.close();
   server.close();

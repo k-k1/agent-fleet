@@ -1,16 +1,15 @@
-// クラウド費用 — AWS の請求を、コスト配分タグでメンバーに割り当てて見せる面
-// （docs/log/67 + ADR 0048）。
+// Cloud cost - the screen that shows the AWS bill attributed to members through cost allocation
+// tags (docs/log/67 + ADR 0048).
 //
-// ⚠️ 隣の使用量系 2 つとは別物である。個人設定の「エージェント使用量」は**トークン**、
-// 管理とテナント設定の「使用量」は**稼働時間（秒）**。ここだけが**金額**で、しかも AWS の
-// 請求があるデプロイにしか存在しない。だから同じ名前を 4 つ目として使わず
-// 「クラウド費用」にした（ADR 0048 決定 5）。
+// This is not one of the two neighbouring usage screens. Personal settings' "agent usage" counts
+// tokens; admin and tenant settings' "usage" counts running time in seconds. Only this one is
+// money, and it exists only on deployments that have an AWS bill - hence a separate name, "cloud
+// cost", rather than a fourth "usage" (ADR 0048 decision 5).
 //
-// ⚠️ この画面で一番大事なのは数字ではなく**ラベル**である。実測では請求の
-// 約 2 割しか人に紐づかない（残りは NAT・DNS・ロードバランサ・DB・空きプール）。
-// なので個人向けは「あなたのコスト」ではなく
-// 「あなたのワークスペースに直接ひも付く費用（共有分は含みません）」と書く。
-// ここを縮めると、会社が払っている額の 1/5 を「あなたのコスト」と呼ぶことになる。
+// What matters most on this screen is the labels, not the numbers. Measured, only about 20% of the
+// bill attaches to a person (the rest is NAT, DNS, load balancer, DB and the idle pool), so the
+// personal view says "costs attached directly to your workspace (shared costs not included)" and
+// never "your cost". Shorten it and a fifth of what the company pays is being called your cost.
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api, errText } from "../../core/api/client.ts";
@@ -19,8 +18,8 @@ import { useT } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import "./cost.css";
 
-// CP が返す能力申告（GET /api/cost/profile）。available が false のデプロイには
-// 請求そのものが無いので、呼び出し側は面を描かない。
+// Capability declaration returned by the CP (GET /api/cost/profile). A deployment with available
+// false has no bill at all, so the caller does not render the screen.
 export type CostProfile = {
   runtime: string;
   available: boolean;
@@ -29,17 +28,17 @@ export type CostProfile = {
   verified: boolean;
 };
 
-// CP が返すコスト配分タグの有効化状態。⚠️ `pending` のキーがあるということは、
-// その軸の費用が「今まさに永久に失われつつある」ということで、読み込み中ではない。
+// Cost allocation tag activation state returned by the CP. A key under `pending` means that axis's
+// cost is being lost permanently right now; it does not mean "still loading".
 type CostTagState = {
   active?: string[];
   pending?: string[];
   declined?: string[];
   error?: string;
-  // 有効化状態は読めなかったが、その軸の値が請求に実際に返ってきている＝**効いている
-  // ことが実物で分かった**キー（CP の noteAttribution）。組織のメンバーアカウントでは
-  // `ListCostAllocationTags` が構造的に AccessDenied になり、payer がやった有効化を
-  // CP からは永久に読めないので、この経路でしか「効いている」と言えない。
+  // Keys whose activation state could not be read, but whose values did come back in the bill, so
+  // they are proven to be in effect (the CP's noteAttribution). On an organisation member account
+  // `ListCostAllocationTags` is structurally AccessDenied and the payer's activation can never be
+  // read from the CP, so this is the only route to saying it works.
   attributed?: string[];
 };
 
@@ -54,8 +53,8 @@ type CostMeta = {
   profile?: CostProfile;
 };
 
-// useCostProfile — 「このデプロイに費用の面はあるか」を一度だけ聞く。
-// null = まだ聞いていない（ちらつき防止に、確定するまで何も描かない）。
+// useCostProfile asks once whether this deployment has a cost screen at all.
+// null = not asked yet; nothing is drawn until it settles, to avoid a flicker.
 export function useCostProfile(): CostProfile | null {
   const [p, setP] = useState<CostProfile | null>(null);
   useEffect(() => {
@@ -66,35 +65,36 @@ export function useCostProfile(): CostProfile | null {
   return p;
 }
 
-// 金額はマイクロ単位の整数で運ばれてくる（1 USD = 1_000_000）。
-// ⚠️ 通貨は AWS が返したものをそのまま出す。円換算しない（ADR 0048 決定 6）——
-// 換算した瞬間それは請求書ではなくなり、レートの出どころを誰も更新しなくなる。
+// Amounts arrive as integers in micro units (1 USD = 1_000_000).
+// The currency AWS returned is shown as-is and never converted to yen (ADR 0048 decision 6): the
+// moment it is converted it stops being an invoice, and nobody keeps the rate source up to date.
 function fmtMoney(micro: number, currency: string): string {
   const v = (micro || 0) / 1_000_000;
   const cur = currency || "USD";
   try {
     return new Intl.NumberFormat(undefined, { style: "currency", currency: cur, maximumFractionDigits: 2 }).format(v);
   } catch {
-    // 未知の通貨コードでも数字は出す（Intl は知らないコードで throw する）。
+    // Still show the number for an unknown currency code; Intl throws on codes it does not know.
     return `${v.toFixed(2)} ${cur}`;
   }
 }
 
-// 費用センターの識別子は CP が返し、文言は Console が持つ（生の AWS サービス名を
-// そのまま並べない＝ドメインの言葉で出す）。
+// The CP returns cost centre identifiers and the Console owns the wording, so raw AWS service names
+// are not listed as-is but named in the domain's terms.
 function centreLabel(tr: (k: MsgKey) => string, id: string): string {
   const key = ("cost.centre_" + id) as MsgKey;
   const s = tr(key);
   return s === key ? id : s;
 }
 
-// labelStride — 日次の棒に目盛りを何本おきに出すか。10 本前後に収める。
-// 30 日ぶんを毎日ラベルすると隣と重なり、連結して読めない文字列になる。
+// labelStride - how often to put a tick on the daily bars, aiming for about ten.
+// Labelling all 30 days makes neighbours overlap into one unreadable run of characters.
 function labelStride(n: number): number {
   return Math.max(1, Math.ceil(n / 10));
 }
 
-// 期間の入力とデータ取得。稼働時間の面と同じ形（適用ボタンで明示的に取り直す）。
+// Range input and fetching, shaped like the running-time screen: the apply button re-fetches
+// explicitly.
 function useCostRange() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -112,11 +112,11 @@ function useCostRange() {
   return { from, setFrom, to, setTo, qs };
 }
 
-// CostNotes — 数字の「隣」に出す但し書き。
+// CostNotes - the caveats printed next to the numbers.
 //
-// ⚠️ 脚注にしない。約 24 時間遅れであること・当日分が未確定であること・
-// タグ有効化より前は取得できないことは、どれも数字の読み方そのものを変える。
-// 後注に置くと読まれず、「昨日使ったのに 0 円だ、壊れている」になる。
+// Not footnotes. The ~24 hour lag, today's figures not being final, and nothing being available
+// from before the tags were activated each change how the numbers are to be read. Placed at the end
+// they go unread, and the reading becomes "I used it yesterday and it says zero, it is broken".
 function CostNotes({ meta, from }: { meta: CostMeta; from: string }) {
   const tr = useT();
   const gap = meta.first_day && from && from < meta.first_day;
@@ -141,18 +141,18 @@ function CostNotes({ meta, from }: { meta: CostMeta; from: string }) {
           <Icon name="warning" /> {tr("cost.unverified_runtime")}
         </p>
       )}
-      {/* ⚠️ ここは「まだ読み込み中」ではない。有効化が済むまでの分は永久に取れない
-          ので、待っている間ずっと出し続ける必要がある。 */}
+      {/* This is not "still loading": what falls before activation completes can never be fetched,
+          so it has to stay up for as long as the wait lasts. */}
       {(meta.tags?.pending?.length || 0) > 0 && (
         <p className="form-err">
           <Icon name="warning" /> {tr("cost.tags_pending", { keys: (meta.tags?.pending || []).join(", ") })}
         </p>
       )}
-      {/* ⚠️ 按分が効いていることが実物で分かっているなら、ここは**何も出さない**。
-          メンバーアカウントでは有効化状態が読めないので `error` は永久に空にならず、
-          それをそのまま描くと「費用が誰にも割り当てられておらず取り戻せません」という
-          真逆の警告を、按分済みの金額の真上に出し続けることになる（<prod-deployment> で発生）。
-          効いているのは正常な状態であり、正常な状態は黙っている。証拠は数字そのもの。 */}
+      {/* Say nothing here when attribution is known to be working. A member account cannot read the
+          activation state, so `error` never clears, and rendering it puts the exact opposite
+          warning - costs attributed to nobody and unrecoverable - directly above correctly
+          attributed amounts (seen on <prod-deployment>). Working is the normal state, the normal
+          state is silent, and the numbers are the evidence. */}
       {meta.tags?.error && !(meta.tags?.attributed?.length || 0) && (
         <p className="form-err">
           <Icon name="warning" /> {tr("cost.tags_error")} <span className="mono">{meta.tags.error}</span>
@@ -167,11 +167,11 @@ function CostNotes({ meta, from }: { meta: CostMeta; from: string }) {
   );
 }
 
-// --- 1 人分の費用（本人向けと、管理のメンバー詳細で共有する）--------------------
+// --- One person's cost, shared by the personal view and admin's member detail ----
 //
-// ⚠️ 応答の形は `/api/cost/me` と `.../members/{key}/cost` で同一である（CP 側で
-// 集計関数を 1 つにしてある）。だから取得も描画も 1 実装にする——2 つに写すと、
-// 「片方だけ『あなたのコスト』に縮んでいる」類のズレが必ず出る。
+// `/api/cost/me` and `.../members/{key}/cost` return the same shape (the CP keeps one aggregation
+// function), so fetching and rendering stay one implementation: copied into two, a drift such as
+// one of them shrinking to "your cost" is certain to appear.
 function useCostOne(endpoint: string) {
   const tr = useT();
   const range = useCostRange();
@@ -197,8 +197,8 @@ function useCostOne(endpoint: string) {
     }
   }, [endpoint, qs, tr]);
 
-  // ⚠️ 期間は「適用」でしか取り直さない（依存に入れない）。日付入力は 1 文字ごとに
-  // 変わるので、入れると打っている最中に取得が走る。
+  // The range is re-fetched only on apply, and is deliberately not a dependency: a date input
+  // changes on every keystroke, so including it would fetch while the user is still typing.
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -207,9 +207,9 @@ function useCostOne(endpoint: string) {
   return { ...range, data, err, loading, load };
 }
 
-// 期間の入力。稼働時間の面と同じ形（明示的な「適用」で取り直す）。
-// children は日付と「適用」の間に差し込む欄（一覧のテナント選択）。3 つの面で
-// 同じ並びにしておかないと、同じ操作が面ごとに違う位置に出る。
+// Range input, shaped like the running-time screen: an explicit apply re-fetches.
+// children is the field slotted between the dates and apply (the tenant picker on the list). The
+// three screens have to keep the same order, or the same control lands somewhere different on each.
 function CostRangeBar({
   from,
   setFrom,
@@ -246,11 +246,11 @@ function CostRangeBar({
   );
 }
 
-// CostOneBody — 合計・但し書き・日次・内訳。
+// CostOneBody - total, caveats, daily bars and breakdown.
 //
-// ⚠️ totalLabelKey を呼び出し側から渡すのは、ここが「誰の話か」で変わる唯一の場所
-// だからである。中身（共有を含まない・実額の一部でしかない）は同じなので、
-// 二人称と三人称で別の実装を持つのではなく、ラベルだけを差し替える。
+// totalLabelKey comes from the caller because the label is the only thing that changes with whose
+// cost this is. The content (shared costs excluded, only part of the real amount) is identical, so
+// second and third person swap the label instead of having two implementations.
 function CostOneBody({ data, from, totalLabelKey }: { data: any; from: string; totalLabelKey: MsgKey }) {
   const tr = useT();
   const meta: CostMeta = data?.meta || {};
@@ -264,8 +264,8 @@ function CostOneBody({ data, from, totalLabelKey }: { data: any; from: string; t
         <div className="cc-total">{fmtMoney(data?.total_micro || 0, currency)}</div>
         <div className="cc-total-lab muted">{tr(totalLabelKey)}</div>
       </div>
-      {/* ⚠️ 但し書きは必ず数字と一緒に運ぶ。これが無いと、タグ有効化より前の期間の
-          0 が「無料だった」と読まれ、その 0 は永久に自己訂正しない。 */}
+      {/* The caveats always travel with the numbers. Without them a 0 covering a period before the
+          tags were activated reads as "it was free", and that 0 never corrects itself. */}
       <CostNotes meta={meta} from={from} />
 
       {data === null ? (
@@ -281,8 +281,8 @@ function CostOneBody({ data, from, totalLabelKey }: { data: any; from: string; t
                   className="cc-day-fill"
                   style={{ height: (maxDay ? Math.round((d.unblended_micro / maxDay) * 100) : 0) + "%" }}
                 />
-                {/* 30 日を毎日ラベルすると重なって「08-1708-1808-19」と読めなくなる
-                    （実測）。目盛りは間引き、正確な日付は各棒の title に持たせる。 */}
+                {/* Labelling all 30 days overlaps them into an unreadable "08-1708-1808-19"
+                    (measured); thin the ticks out and keep the exact date in each bar's title. */}
                 {i % labelStride(days.length) === 0 && <span className="cc-day-lab muted">{d.day.slice(5)}</span>}
               </div>
             ))}
@@ -302,10 +302,10 @@ function CostOneBody({ data, from, totalLabelKey }: { data: any; from: string; t
   );
 }
 
-// MyCloudCostView — 本人向け。自分に直接ひも付く分だけ。
+// MyCloudCostView - the personal view: only what attaches directly to you.
 //
-// ⚠️ 他人の費用も、デプロイ合計も返ってこないし出さない（引き算で他人の分を
-// 割り出せてしまう）。
+// Neither other people's costs nor the deployment total are returned or shown, because subtraction
+// would reveal someone else's share.
 export function MyCloudCostView() {
   const tr = useT();
   const { from, setFrom, to, setTo, data, err, loading, load } = useCostOne("api/cost/me");
@@ -314,8 +314,8 @@ export function MyCloudCostView() {
     <div className="admin-stage cloud-cost">
       <section className="admin-panel">
         <h4>{tr("cost.my_title")}</h4>
-        {/* ★ このデプロイの請求の 8 割は共有インフラで、誰にも割り当てられない。
-            「あなたのコスト」と書かないための一文であって、飾りではない。 */}
+        {/* Eight tenths of this deployment's bill is shared infrastructure that attaches to
+            nobody. This sentence is what keeps the screen from saying "your cost", not decoration. */}
         <p className="muted cc-lede">{tr("cost.my_intro")}</p>
         <CostRangeBar from={from} setFrom={setFrom} to={to} setTo={setTo} onApply={load} loading={loading} />
         {err && <p className="form-err">{err}</p>}
@@ -328,24 +328,25 @@ export function MyCloudCostView() {
   );
 }
 
-// MemberCostPanel — 管理のメンバー詳細に差す 1 枚（docs/log/67 §67.15）。
+// MemberCostPanel - the single card slotted into admin's member detail (docs/log/67 §67.15).
 //
-// なぜ一覧の再掲ではないか: 一覧（CloudCostAdminView）が持っているのは 1 人 1 行の
-// **合計だけ**で、日次の形もサービス別の内訳も入っていない。そしてこの詳細画面には
-// 「ワークスペースを強制停止」と「上限を設定（ディスク）」が同居している——
-// 「週末も含めて毎日乗っている＝スロットを握りっぱなし」と「EBS に寄っている＝home が
-// 大きい」は、その 2 つの操作にそのまま対応する読みである。
+// Why this is not a repeat of the list: the list (CloudCostAdminView) holds only a per-person total,
+// with no daily shape and no per-service breakdown. This detail screen also carries "force-stop the
+// workspace" and "set a disk quota", and the two readings this card offers - "cost every day
+// including weekends = holding a slot" and "weighted towards EBS = a large home" - map straight onto
+// those two actions.
 //
-// ⚠️ リソースのタイル（res-tiles）に 4 枚目として足さない。あれは 4 秒ポーリングの
-// 「今」で、こちらは約 24 時間遅れの「期間」である。同じカードに時間と $ を並べない
-// のは ADR 0048 決定 2。
+// Do not add it as a fourth resource tile (res-tiles): those poll every 4 seconds and show now,
+// while this is a period roughly 24 hours behind. Not putting time and $ on one card is ADR 0048
+// decision 2.
 //
-// ⚠️ 能力の確認をここで自分でやるのは、prop を渡し忘れると **請求の無いデプロイ
-// （docker / native）に金額 0 の面が出る**からである。0 が並ぶ画面は「無料」と読まれる。
+// The capability check happens here rather than through a prop, because a forgotten prop puts a
+// screen of zero amounts on a deployment with no bill (docker / native), and a screen of zeros
+// reads as "free".
 export function MemberCostPanel({ slug, userKey }: { slug: string; userKey: string }) {
   const profile = useCostProfile();
-  // 能力が確定してから中身をマウントする。ここで分けているのは、取得まで含めて
-  // 「請求の無いデプロイでは何も起きない」ようにするため（管理 API を無駄に叩かない）。
+  // Mount the body only once the capability has settled, so that on a deployment with no bill
+  // nothing happens at all, fetching included - no pointless calls to the admin API.
   if (!profile?.available) return null;
   return <MemberCostBody slug={slug} userKey={userKey} />;
 }
@@ -357,8 +358,9 @@ function MemberCostBody({ slug, userKey }: { slug: string; userKey: string }) {
   return (
     <section className="admin-panel cloud-cost member-cost">
       <h4>{tr("cost.member_title")}</h4>
-      {/* ★ 「このメンバーのコスト」と書かないための一文。実測では請求の 2 割ほどしか
-          人に紐づかないので、縮めた時点で会社が払う額の 1/5 を指すことになる。 */}
+      {/* The sentence that keeps this from saying "this member's cost". Measured, only about 20%
+          of the bill attaches to a person, so shortening it points at a fifth of what the company
+          pays. */}
       <p className="muted cc-lede">{tr("cost.member_intro")}</p>
       <CostRangeBar from={from} setFrom={setFrom} to={to} setTo={setTo} onApply={load} loading={loading} />
       {err && <p className="form-err">{err}</p>}
@@ -367,12 +369,12 @@ function MemberCostBody({ slug, userKey }: { slug: string; userKey: string }) {
   );
 }
 
-// CloudCostAdminView — 管理（全テナント）とテナント設定（自テナント）で共用。
+// CloudCostAdminView - shared by admin (all tenants) and tenant settings (own tenant).
 //
-// ⚠️ 共有インフラのカードは super_admin にしか返ってこない。テナント管理者に
-// デプロイ全体の ALB / RDS / Route53 の請求を見せるのは、テナントの外の情報を
-// 渡すことになる（ADR 0048 決定 4）。ここは「返って来なければ描かない」だけで、
-// 出し分けを画面側で判断しない——判断はサーバが持つ。
+// The shared-infrastructure card comes back only for super_admin: showing a tenant admin the whole
+// deployment's ALB / RDS / Route53 bill would hand over information from outside the tenant
+// (ADR 0048 decision 4). This screen only declines to draw what did not come back; it never decides
+// who sees what - the server owns that.
 export function CloudCostAdminView({
   tenants,
   isSuper,
@@ -471,9 +473,9 @@ export function CloudCostAdminView({
         )}
       </section>
 
-      {/* 共有インフラ。⚠️ 頭割りしない——配った瞬間に実費ではなく見積になる。
-          空きプールのスロット時間もここに落ちるので、「プールが大きすぎる」の
-          実費がここで初めて数字になる。 */}
+      {/* Shared infrastructure. Never divided per head: the moment it is spread out it stops being
+          an actual cost and becomes an estimate. Slot time in the idle pool lands here too, which is
+          where "the pool is too large" first becomes a number. */}
       {shared !== undefined && (
         <section className="admin-panel">
           <h4>{tr("cost.shared_title")}</h4>

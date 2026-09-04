@@ -1,7 +1,7 @@
-// 分岐確認ダイアログ。ここが壊れると分岐という操作そのものが到達不能になるので、
-// 「押したら at 付きで fork を叩く」「成功したら生まれたセッション名を渡す」「失敗したら
-// 閉じずに理由を出す」の3点だけを jsdom で押さえる。特に最後の1つは、閉じてしまうと
-// ユーザーには「押したのに何も起きなかった」に見える。
+// The fork confirmation dialog. If this breaks, forking becomes unreachable as an operation,
+// so three things are pinned in jsdom: the confirm posts fork with `at`, success hands back
+// the new session name, and a failure keeps the dialog open with the reason. The last one
+// matters most — closing on failure reads as "I pressed it and nothing happened".
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -35,14 +35,14 @@ function mount() {
   );
 }
 
-// 確認ボタン = フッターの primary。文言はロケール依存なのでクラスで引く。
+// The confirm button is the footer's primary. Its label is locale-dependent, so select by class.
 function goButton() {
   const el = document.querySelector<HTMLButtonElement>(".ui-modal-foot .ui-btn-primary");
   if (!el) throw new Error("confirm button not rendered");
   return el;
 }
 
-// モード切替（やり直す / 続きから）は radiogroup の 2 つ目が「続きから」。
+// Mode switch (redo / continue): the radiogroup's second button is "continue".
 function modeButton(mode: "redo" | "continue") {
   const els = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="radiogroup"] .seg-btn'));
   if (els.length !== 2) throw new Error(`expected 2 mode buttons, got ${els.length}`);
@@ -80,7 +80,8 @@ describe("ForkAtModal", () => {
   });
 
   it("continue mode posts include=true and seeds NO draft", async () => {
-    // 「続きから」ではその発言が分岐先に残っているので、入力欄にも同じ文が入ると二重に見える。
+    // In continue mode the message is still in the forked conversation, so the same text in
+    // the composer would read as a duplicate.
     apiJSON.mockResolvedValue({ name: "oc-3" });
     mount();
     await act(async () => {
@@ -105,9 +106,9 @@ describe("ForkAtModal", () => {
   });
 
   it("surfaces the server's reason from a RESOLVED {error} body, not a generic message", async () => {
-    // api() は失敗しても reject しない — 4xx/5xx は {error:{code,message}} として
-    // **解決**する（client.ts）。ここを resolve で書かないと、reject しか試さないテストが
-    // 通ってしまい、実際の画面では理由が全部「no session in fork response」に化ける。
+    // api() does not reject on failure — a 4xx/5xx *resolves* as {error:{code,message}}
+    // (client.ts). Written with reject only, this test would pass while the real dialog
+    // turned every reason into "no session in fork response".
     apiJSON.mockResolvedValue({ error: { code: "fork_bad_anchor", message: "エージェントの発言からは分岐できません" } });
     mount();
     await act(async () => {
@@ -119,8 +120,8 @@ describe("ForkAtModal", () => {
   });
 
   it("does not report success when the response carries no session", async () => {
-    // 200 でも name が無ければ分岐できていない。ここで通すと、開くべきペインが無いまま
-    // 「分岐しました」だけが出る。
+    // A 200 without a name means no fork happened. Accepting it would report success with
+    // no pane to open.
     apiJSON.mockResolvedValue({});
     mount();
     await act(async () => {

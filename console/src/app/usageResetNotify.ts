@@ -1,6 +1,6 @@
 // Subscription-limit reset notification (WsBar usage chips). When a limit window the
 // user was actually constrained by (utilization reached ARM_PCT) rolls over, tell them
-// "you can resume now" — via a browser Notification and, when 音声読み上げ is on, a
+// "you can resume now" — via a browser Notification and, when text-to-speech is on, a
 // short TTS announcement. Reuses the data the usage chip already has: every reading
 // carries resetsAt per window. The Control Plane owns the armed/reset state so PC and
 // phone cannot disagree; this hook only submits observations and schedules one precise
@@ -52,7 +52,7 @@ export function useUsageResetNotify(
     // A stale window is not an observation: its 0% and its reset instant are both
     // extrapolated from a reading that predates the window (the agent flags this when
     // the capture went quiet). Submitting it would let a DEAD capture look like a reset
-    // and fire "上限が解放されました" while the user is still blocked.
+    // and fire "the limit has cleared" while the user is still blocked.
     const observations = windows.filter((x) => x.w?.resetsAt && !x.w.stale).map(({ key, w }) => ({
       windowKey: key, percent: w!.pct, resetsAt: w!.resetsAt,
     }));

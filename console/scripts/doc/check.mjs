@@ -1,13 +1,13 @@
-// Office 文書の簡易プレビュー（docs/log/82 §82.4）の検査。
+// Check the simple preview of Office documents (docs/log/82 §82.4).
 //
-// 何を守るためのものか: **WASM が実ブラウザで本当に読み込まれ、実 OOXML を変換できるか**。
-// これは jsdom では絶対に分からない（WebAssembly の初期化も fetch も配信の
-// Content-Type も絡む）。逆に、Markdown をどう描くかは MarkdownView 側の担当なので、
-// ここでは MarkdownView を差し替えて**変換結果の文字列**を見る。
+// What it guards: that the WASM really loads in a real browser and can convert real OOXML.
+// jsdom can never tell us that, since WebAssembly initialisation, fetch and the served
+// Content-Type are all involved. How the Markdown is rendered is MarkdownView's job, so
+// MarkdownView is stubbed out here and the conversion output is inspected as a string.
 //
-// 標本はこの場で組み立てる最小の OOXML（zip を自前で書く）。リポジトリにバイナリを
-// 置かないための選択で、**「実文書での再現度」はここでは測っていない**（それは
-// docs/log/82 §82.2 の実測に置いた）。
+// The samples are minimal OOXML assembled here, with a hand-written zip, to keep binaries out
+// of the repository. Fidelity on real documents is deliberately not measured here; that lives
+// in the measurements in docs/log/82 §82.2.
 //
 //   npm --prefix console run doc:check
 //   node console/scripts/doc/check.mjs --screenshot /tmp/doc.png
@@ -24,7 +24,7 @@ const SHOT = shotArg > 0 ? process.argv[shotArg + 1] : "";
 const www = fs.mkdtempSync(path.join(os.tmpdir(), "af-doccheck-"));
 process.on("exit", () => fs.rmSync(www, { recursive: true, force: true }));
 
-// ---- 最小の zip ライター（無圧縮 = stored）---------------------------------
+// ---- Minimal zip writer (uncompressed = stored) -----------------------------
 const CRC = (() => {
   const t = new Int32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -78,7 +78,7 @@ function zip(entries) {
   return Buffer.concat([...locals, dirBuf, end]);
 }
 
-// ---- 標本（最小の docx / xlsx / pptx）--------------------------------------
+// ---- Samples (minimal docx / xlsx / pptx) -----------------------------------
 const RELS = (target, type) =>
   `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
   `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"/></Relationships>`;
@@ -151,10 +151,10 @@ const pptx = zip({
 fs.writeFileSync(path.join(www, "sample.docx"), docx);
 fs.writeFileSync(path.join(www, "sample.xlsx"), xlsx);
 fs.writeFileSync(path.join(www, "sample.pptx"), pptx);
-// 拡張子は Office でも中身は zip ですらないファイル。黙って白い面にならないこと。
+// An Office extension over content that is not even a zip. It must not silently render blank.
 fs.writeFileSync(path.join(www, "broken.docx"), Buffer.from("not an office document at all"));
 
-// ---- 束ねる（製品コードの DocPreview をそのまま使う）------------------------
+// ---- Bundle, using the production DocPreview as-is --------------------------
 const esbuild = await import(path.join(CONSOLE, "node_modules/esbuild/lib/main.js"));
 const entry = path.join(www, "entry.jsx");
 fs.writeFileSync(
@@ -166,7 +166,8 @@ fs.writeFileSync(
      <DocPreview src={q.get("src") || "/sample.docx"} format={q.get("fmt") || undefined} />,
    );`,
 );
-// Markdown の描画は MarkdownView の担当。ここでは変換結果そのものを見たいので差し替える。
+// Rendering Markdown is MarkdownView's job; stub it out so the conversion output itself is what
+// gets inspected.
 const stubMarkdown = {
   name: "stub-markdown",
   setup(build) {
@@ -174,13 +175,14 @@ const stubMarkdown = {
     build.onLoad({ filter: /.*/, namespace: "stub" }, () => ({
       contents: `export function MarkdownView({ source }) { return <pre data-md>{source}</pre>; }`,
       loader: "jsx",
-      // 仮想モジュールには解決の起点が無い。JSX が差し込む react/jsx-runtime を
-      // 引けるよう、console/ を起点に指定する。
+      // A virtual module has no resolution base, so point it at console/ to make the
+      // react/jsx-runtime that JSX injects resolvable.
       resolveDir: CONSOLE,
     }));
   },
 };
-// `?url` は esbuild が知らない接尾辞（vite の意味に合わせる）。WASM を www へ置いて URL を返す。
+// `?url` is a suffix esbuild does not know; match vite's meaning by copying the WASM into www
+// and returning its URL.
 const urlSuffix = {
   name: "url-suffix",
   setup(build) {
@@ -214,9 +216,9 @@ fs.writeFileSync(
    <div id="root"></div><script type="module" src="/app.js"></script>`,
 );
 fs.copyFileSync(path.join(CONSOLE, "src/features/viewer/viewer.css"), path.join(www, "viewer.css"));
-fs.cpSync(path.join(CONSOLE, "src/features/viewer/parts"), path.join(www, "parts"), { recursive: true, filter: (src) => !src.endsWith(".tsx") && !src.endsWith(".ts") }); // viewer.css は @import だけの索引（parts が無いと無スタイルで撮れてしまう）
+fs.cpSync(path.join(CONSOLE, "src/features/viewer/parts"), path.join(www, "parts"), { recursive: true, filter: (src) => !src.endsWith(".tsx") && !src.endsWith(".ts") }); // viewer.css is an index of @import only; without parts the shot comes out unstyled
 
-// ---- 見る --------------------------------------------------------------------
+// ---- Inspect -----------------------------------------------------------------
 const { server, port } = await serveDir(www);
 const b = await startBrowser();
 const md = () => b.evaluate("document.querySelector('[data-md]')?.textContent || ''");
@@ -230,33 +232,34 @@ try {
     await b.goto(`http://127.0.0.1:${port}/index.html?src=/${file}&fmt=${fmt}`);
     const text = await until(b.evaluate, "document.querySelector('[data-md]')?.textContent || ''", (s) => !!s, 150);
     const missing = wants.filter((w) => !text.includes(w));
-    check(missing.length === 0, `${file} が Markdown に変換される`, missing.length ? `欠け: ${missing.join(", ")}` : `${text.length} 文字`);
+    check(missing.length === 0, `${file} converts to Markdown`, missing.length ? `missing: ${missing.join(", ")}` : `${text.length} chars`);
   }
 
-  // 表は表のまま出る（GFM の行）。値だけ拾えても列が崩れていては読めない。
+  // A table stays a table (a GFM row). Picking up the values is not enough if the columns are
+  // mangled, because then it cannot be read.
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/sample.xlsx&fmt=xlsx`);
   const sheet = await until(b.evaluate, "document.querySelector('[data-md]')?.textContent || ''", (s) => !!s, 150);
-  check(/\|\s*みかん\s*\|\s*34\s*\|/.test(sheet), "表が GFM の表として出る", JSON.stringify(sheet.split("\n").find((l) => l.includes("みかん")) || ""));
+  check(/\|\s*みかん\s*\|\s*34\s*\|/.test(sheet), "a table renders as a GFM table", JSON.stringify(sheet.split("\n").find((l) => l.includes("みかん")) || ""));
 
-  // 「簡易プレビュー」の断りが、読み始める前に見える位置にある。
+  // The "simple preview" caveat sits where it is seen before reading starts.
   const note = await b.evaluate("document.querySelector('.docpreview-note')?.textContent || ''");
-  check(note.includes("簡易プレビュー"), "簡易プレビューだと明示している", JSON.stringify(note.trim().slice(0, 30)));
+  check(note.includes("簡易プレビュー"), "states that this is a simple preview", JSON.stringify(note.trim().slice(0, 30)));
 
-  // CSS が本当に当たっている。viewer.css は @import だけの索引なので、parts の
-  // コピーを落とすと **無スタイルのまま全項目 OK で撮れてしまう**（判定は 1 文字も
-  // 変わらず、画像だけが別物になる）。撮る前に、目視に頼らず落とす。
+  // The CSS really applies. viewer.css is an index of @import only, so dropping the copy of
+  // parts would let every check pass with a completely unstyled page: the verdict would not
+  // change by a single character while the screenshot became a different picture. Catch that
+  // here rather than by eye, before the shot is taken.
   //
-  // ⚠️ **「font-size が 11px ちょうど」で見ない**（2026-09-04）。守りたいのは
-  // 「parts が当たっていること」であって 11px そのものではないのに、
-  // **doc.css の font-size を 11px → 12px にしただけでこの検査は赤くなっていた**（実測）。
-  // 代わりに **同じタグの素の要素**を隣に置いて突き合わせる: parts が当たっていれば
-  // 計算後スタイルはどこかで既定と違い、当たっていなければ全部一致する。
-  // これなら CSS の値をいくつに変えても緑のまま、コピーを落とした瞬間だけ赤くなる。
+  // Do not test for "font-size is exactly 11px": what matters is that parts applies, not the
+  // 11px, and measured, changing doc.css font-size from 11px to 12px alone turned this check
+  // red. Instead, put a bare element of the same tag next to it and compare: if parts applies,
+  // the computed style differs from the default somewhere; if it does not, every property
+  // matches. That stays green for any CSS value and goes red only when the copy is dropped.
   const styled = await b.evaluate(
     `(() => { const el = document.querySelector('.docpreview-note');
-       if (!el) return { error: '.docpreview-note が無い' };
+       if (!el) return { error: 'no .docpreview-note' };
        const bare = document.createElement(el.tagName);
-       el.parentNode.insertBefore(bare, el);            // 同じ親＝継承の条件をそろえる
+       el.parentNode.insertBefore(bare, el);            // same parent = same inheritance
        const a = getComputedStyle(el), b = getComputedStyle(bare);
        const props = ['display', 'fontSize', 'paddingLeft', 'borderBottomStyle', 'backgroundColor'];
        const diff = props.filter((p) => a[p] !== b[p]).map((p) => p + '=' + a[p] + '≠' + b[p]);
@@ -265,17 +268,18 @@ try {
   );
   check(
     !styled.error && styled.diff.length > 0,
-    "viewer.css の parts が当たっている",
-    styled.error || (styled.diff.length ? styled.diff.join(" / ") : `素の要素と全項目が同じ（font-size=${styled.fontSize}）`),
+    "viewer.css parts apply",
+    styled.error || (styled.diff.length ? styled.diff.join(" / ") : `every property equals the bare element (font-size=${styled.fontSize})`),
   );
 
   if (SHOT) await b.screenshot(SHOT);
 
-  // 壊れたファイルは、白い面ではなく理由とダウンロード導線を出す。
+  // A broken file must show the reason and a download link, not a blank page.
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/broken.docx&fmt=docx`);
-  // 待つ条件は **assert する条件に揃える**。「非空で待つ」と読み込み中の
-  // 「文書を変換しています…」で抜けてしまい、そのあと現れる導線を先に assert する
-  // レースになる（変換が少しでも遅いと必ず負ける）。終端の状態まで待ってから読む。
+  // Wait on the same condition that is asserted. Waiting merely for non-empty text returns on
+  // the in-progress "converting the document" message, which races the assertion against the
+  // link that appears afterwards and loses whenever conversion is even slightly slow. Wait for
+  // the terminal state, then read.
   const hint = await until(
     b.evaluate,
     "[...document.querySelectorAll('.docpreview-status')].map((e) => e.textContent).join(' ')",
@@ -283,9 +287,9 @@ try {
     150,
   );
   const why = await b.evaluate("document.querySelector('.docpreview-status')?.textContent || ''");
-  check(!!why, "壊れたファイルで理由が出る", JSON.stringify(why));
-  check(hint.includes("ダウンロード"), "原本を開く導線を出す");
-  check(await md() === "", "壊れたファイルで本文の面は出さない");
+  check(!!why, "a broken file shows the reason", JSON.stringify(why));
+  check(hint.includes("ダウンロード"), "offers a way to open the original");
+  check(await md() === "", "a broken file shows no body surface");
 } finally {
   b.close();
   server.close();

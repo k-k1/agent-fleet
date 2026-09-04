@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installSwipeGestures, LONG_PRESS_MS } from "./swipeGestures.ts";
 import type { SwipeSurfaces } from "./swipeGestures.ts";
 
-// jsdom は TouchEvent を実装していないので、ハンドラが実際に読む形（touches[0] の
-// 座標と target）だけを持つイベントを組んで dispatch する。
+// jsdom does not implement TouchEvent, so dispatch an event carrying only what the
+// handlers actually read: touches[0]'s coordinates, and the target.
 function touchEvent(type: string, x: number, y: number, target: Element): Event {
   const e = new Event(type, { bubbles: true });
   Object.defineProperty(e, "touches", { value: [{ clientX: x, clientY: y }] });
@@ -42,7 +42,7 @@ function setup(over: Partial<Harness["state"]> = {}): Harness {
   return { surfaces, calls, state, target, uninstall };
 }
 
-/** 起点 (x,y) から (x+dx, y+dy) へ 1 回で動かす。 */
+/** Move from (x,y) to (x+dx, y+dy) in a single step. */
 function swipe(from: [number, number], dx: number, dy = 0): void {
   touchEvent("touchstart", from[0], from[1], h.target);
   touchEvent("touchmove", from[0] + dx, from[1] + dy, h.target);
@@ -50,7 +50,7 @@ function swipe(from: [number, number], dx: number, dy = 0): void {
 }
 
 beforeEach(() => {
-  // 幅は phone 相当（左 1/3 判定は min(innerWidth*0.33, 160)）。
+  // Phone-sized width; the left-third test is min(innerWidth*0.33, 160).
   Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
 });
 
@@ -60,26 +60,26 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("左ペインの出し入れ（従来の挙動）", () => {
-  it("スマホ: 左端から → で drawer が開く", () => {
+describe("left pane show/hide", () => {
+  it("phone: swiping right from the left edge opens the drawer", () => {
     h = setup();
     swipe([10, 300], 80);
     expect(h.calls).toEqual(["drawer:open"]);
   });
 
-  it("スマホ: drawer が開いていれば ← は閉じる（ローテートしない）", () => {
+  it("phone: with the drawer open a left swipe closes it, and does not rotate", () => {
     h = setup({ drawer: true });
     swipe([200, 300], -120);
     expect(h.calls).toEqual(["drawer:close"]);
   });
 
-  it("スマホ: 左端始まりの → は drawer が優先（前のセッションへは戻さない）", () => {
+  it("phone: a right swipe from the left edge belongs to the drawer, not the previous session", () => {
     h = setup();
     swipe([10, 300], 120);
     expect(h.calls).toEqual(["drawer:open"]);
   });
 
-  it("タブレット（スマホ幅でないタッチ端末）はレールを overlay で出し入れする", () => {
+  it("tablet (touch device wider than a phone) shows and hides the rail as an overlay", () => {
     h = setup({ phone: false, coarse: true });
     Object.defineProperty(window, "innerWidth", { value: 1024, configurable: true });
     swipe([20, 300], 80);
@@ -89,46 +89,46 @@ describe("左ペインの出し入れ（従来の挙動）", () => {
     expect(h.calls).toEqual(["rail:open", "rail:close"]);
   });
 
-  it("マウス機（タッチでない広い画面）は不活性", () => {
+  it("mouse machines (wide, non-touch screens) are inert", () => {
     h = setup({ phone: false, coarse: false });
     swipe([10, 300], 80);
     swipe([300, 300], -120);
     expect(h.calls).toEqual([]);
   });
 
-  it("モーダルが出ている間は背後のレールを触らない", () => {
+  it("while a modal is up the rail behind it is left alone", () => {
     h = setup({ modal: true });
     swipe([10, 300], 80);
     expect(h.calls).toEqual([]);
   });
 });
 
-describe("スマホの横スワイプ＝稼働中セッションのローテート", () => {
-  it("drawer が閉じているときの ← で次のセッションへ送る", () => {
+describe("phone horizontal swipe = rotate through running sessions", () => {
+  it("a left swipe with the drawer closed advances to the next session", () => {
     h = setup();
     swipe([300, 300], -120);
     expect(h.calls).toEqual(["rotate:next"]);
   });
 
-  it("左端以外からの → は前のセッションへ戻す", () => {
+  it("a right swipe away from the left edge goes back to the previous session", () => {
     h = setup();
     swipe([300, 300], 120);
     expect(h.calls).toEqual(["rotate:prev"]);
   });
 
-  it("左端始まりの ← でも（→ 待ちと両立して）ローテートに落ちる", () => {
+  it("a left swipe from the left edge still rotates, coexisting with the pending right swipe", () => {
     h = setup();
     swipe([10, 300], -120);
     expect(h.calls).toEqual(["rotate:next"]);
   });
 
-  it("drawer が開いていれば → も何もしない（閉じる ← だけを受ける）", () => {
+  it("with the drawer open a right swipe does nothing; only the closing left swipe is taken", () => {
     h = setup({ drawer: true });
     swipe([300, 300], 120);
     expect(h.calls).toEqual([]);
   });
 
-  it("70px に届かない横ぶれでは発火しない（レール開閉の 50px より遠い）", () => {
+  it("a sideways wobble short of 70px does not fire (farther than the rail's 50px)", () => {
     h = setup();
     swipe([300, 300], -60);
     expect(h.calls).toEqual([]);
@@ -136,14 +136,14 @@ describe("スマホの横スワイプ＝稼働中セッションのローテー�
     expect(h.calls).toEqual([]);
   });
 
-  it("縦優先: 斜めでも縦の方が大きければスクロールに譲る", () => {
+  it("vertical wins: a diagonal with more vertical travel yields to scrolling", () => {
     h = setup();
     swipe([300, 300], -120, -200);
     swipe([300, 300], 120, 200);
     expect(h.calls).toEqual([]);
   });
 
-  it("1 ジェスチャで 1 回だけ（そのまま指を滑らせても連続発火しない）", () => {
+  it("fires once per gesture; sliding the finger further does not fire again", () => {
     h = setup();
     touchEvent("touchstart", 300, 300, h.target);
     touchEvent("touchmove", 180, 300, h.target);
@@ -152,7 +152,7 @@ describe("スマホの横スワイプ＝稼働中セッションのローテー�
     expect(h.calls).toEqual(["rotate:next"]);
   });
 
-  it("戻したあと同じ指で反対へ振っても、確定は 1 回きり", () => {
+  it("swinging back the other way with the same finger still settles only once", () => {
     h = setup();
     touchEvent("touchstart", 300, 300, h.target);
     touchEvent("touchmove", 440, 300, h.target);
@@ -161,7 +161,7 @@ describe("スマホの横スワイプ＝稼働中セッションのローテー�
     expect(h.calls).toEqual(["rotate:prev"]);
   });
 
-  it("長押しの窓を越えたら候補を取り消す（テキスト選択のドラッグを化けさせない）", () => {
+  it("passing the long-press window cancels the candidate, so a text-selection drag is not mistaken for a swipe", () => {
     vi.useFakeTimers();
     h = setup();
     touchEvent("touchstart", 300, 300, h.target);
@@ -170,7 +170,7 @@ describe("スマホの横スワイプ＝稼働中セッションのローテー�
     expect(h.calls).toEqual([]);
   });
 
-  it("横操作を持つ面（入力欄など）が起点なら見送る", () => {
+  it("stands down when the gesture starts on a surface that owns horizontal interaction, such as an input", () => {
     h = setup();
     const input = document.createElement("textarea");
     h.target.appendChild(input);
@@ -179,20 +179,20 @@ describe("スマホの横スワイプ＝稼働中セッションのローテー�
     expect(h.calls).toEqual([]);
   });
 
-  it("切り離しタブ（rotatable=false）ではローテートしない", () => {
+  it("a popped-out tab (rotatable=false) does not rotate", () => {
     h = setup({ rotatable: false });
     swipe([300, 300], -120);
     expect(h.calls).toEqual([]);
   });
 
-  it("タブレットでは ← / → でローテートしない（スマホだけの操作）", () => {
+  it("a tablet does not rotate on left/right swipes; that is a phone-only gesture", () => {
     h = setup({ phone: false, coarse: true });
     swipe([500, 300], -120);
     swipe([500, 300], 120);
     expect(h.calls).toEqual([]);
   });
 
-  it("解除するとイベントを拾わなくなる", () => {
+  it("after uninstall, events are no longer picked up", () => {
     h = setup();
     h.uninstall();
     swipe([300, 300], -120);

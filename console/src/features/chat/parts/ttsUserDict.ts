@@ -1,10 +1,13 @@
-// --- ユーザー読み仮名辞書（表記→読みのリテラル置換） ----------------------------
-// 設定 ttsUserDict（1 行 "表記=読み"）を、読み上げ用に整形したテキストへ素朴な文字列置換で
-// 適用する。英語/日本語/記号どれでも効き、enkana(英語→カタカナ)の前段で当たるので、
-// enkana の ON/OFF に依らずユーザー指定の読みが優先される。VOICEVOX のユーザー辞書と同じ発想。
+// --- User reading dictionary (literal spelling -> reading substitution) ----------
+// Applies the ttsUserDict setting (one "spelling=reading" per line) to the text prepared for
+// reading, by plain string substitution. It works for English, Japanese and symbols alike, and
+// runs ahead of enkana (English -> katakana), so the user's reading wins whether enkana is on or
+// off. Same idea as VOICEVOX's own user dictionary.
 
-// parseUserDict は設定文字列を [表記, 読み] の配列に。空行と # 始まりはコメント。区切りは
-// 半角/全角の = 。表記が空の行は捨てる。長い表記を先に当てられるよう表記長の降順で返す。
+// parseUserDict turns the setting string into an array of [spelling, reading]. Blank lines and
+// lines starting with # are comments; the separator is = in either ASCII or full width; lines
+// with an empty spelling are dropped. Sorted by descending spelling length so that longer
+// spellings are applied first.
 export function parseUserDict(raw: string): [string, string][] {
   if (!raw) return [];
   const pairs: [string, string][] = [];
@@ -12,18 +15,19 @@ export function parseUserDict(raw: string): [string, string][] {
     const t = line.trim();
     if (!t || t.startsWith("#")) continue;
     const eq = t.search(/[=＝]/);
-    if (eq <= 0) continue; // 区切り無し、または表記が空
+    if (eq <= 0) continue; // no separator, or an empty spelling
     const from = t.slice(0, eq).trim();
     const to = t.slice(eq + 1).trim();
-    if (!from) continue; // 読みは空でも可（その語を読み飛ばす用途）
+    if (!from) continue; // an empty reading is allowed: it skips that word
     pairs.push([from, to]);
   }
-  pairs.sort((a, b) => b[0].length - a[0].length); // 長い表記から適用（部分一致の取りこぼし防止）
+  pairs.sort((a, b) => b[0].length - a[0].length); // apply longest first, so a partial match cannot shadow it
   return pairs;
 }
 
-// applyUserDict は辞書をテキストへリテラル置換で適用する（全出現・長い表記優先）。
-// split/join なので正規表現エスケープ不要。dict は parseUserDict の出力を想定。
+// applyUserDict applies the dictionary to the text as literal substitution: every occurrence,
+// longest spelling first. It uses split/join, so no regexp escaping is needed. dict is expected
+// to be the output of parseUserDict.
 export function applyUserDict(text: string, dict: [string, string][]): string {
   let out = text;
   for (const [from, to] of dict) {
@@ -32,9 +36,10 @@ export function applyUserDict(text: string, dict: [string, string][]): string {
   return out;
 }
 
-// mergeDicts はユーザー辞書とテナント共通辞書を合成する。同じ表記はユーザー側が勝つ
-// （上書き。読みを空にして「読み飛ばす」上書きも効く）。返りは表記長の降順に並べ直し、
-// applyUserDict / abbrevCode の「長い表記から当てる」前提を保つ。
+// mergeDicts combines the user dictionary with the tenant-wide one. For the same spelling the
+// user's entry wins, including an override with an empty reading that skips the word. The result
+// is re-sorted by descending spelling length to preserve the "longest spelling first"
+// precondition of applyUserDict and abbrevCode.
 export function mergeDicts(user: [string, string][], tenant: [string, string][]): [string, string][] {
   if (!tenant.length) return user;
   const seen = new Set(user.map(([from]) => from));
@@ -43,16 +48,18 @@ export function mergeDicts(user: [string, string][], tenant: [string, string][])
   return out;
 }
 
-// --- 開始レイテンシ短縮（最初の 1 文だけ早出し） --------------------------------
-// 長い第 1 文が句点で終わるまで待つと発話開始が遅い。**最初の発話に限り**句点を待たず、
-// 読点などの軽い区切り（十分な長さがあれば）か、区切りが来なくても一定長で切り出して
-// 鳴らし始める。2 文目以降は tts.ts が従来どおり句点粒度で切る（過度な細切れを避ける）。
-const FIRST_MIN = 10; // 早出しの最小長（これ未満では切らない＝出だしが細切れにならない）
-const FIRST_MAX = 28; // 区切りが来なくてもこの長さで最初だけ強制的に切る
-const EARLY_BREAK = /[、，,；;）」』】]/; // 早出しの軽い区切り（読点・閉じ括弧類）
+// --- Cutting start latency by emitting the first sentence early ------------------
+// Waiting for a long first sentence to reach its full stop delays the start of speech. For the
+// first utterance only, do not wait for the full stop: cut at a light break such as a comma
+// (once there is enough text), or at a fixed length if no break arrives. From the second
+// sentence on, tts.ts keeps cutting at full-stop granularity, so nothing is chopped too finely.
+const FIRST_MIN = 10; // minimum length for the early cut, below which nothing is cut
+const FIRST_MAX = 28; // for the first cut only, force a cut at this length even without a break
+const EARLY_BREAK = /[、，,；;）」』】]/; // light breaks for the early cut (commas, closing brackets)
 
-// firstChunkCut は「最初の発話」を早出しするための切り出し位置（1-origin の終端 index）を返す。
-// 切らない場合は -1。読点等が FIRST_MIN 以降にあればそこで、無ければ FIRST_MAX で強制的に切る。
+// firstChunkCut returns the cut position (1-origin end index) for emitting the first utterance
+// early, or -1 for no cut. It cuts at a comma or similar at or after FIRST_MIN, and otherwise
+// forces a cut at FIRST_MAX.
 export function firstChunkCut(buf: string): number {
   const m = buf.match(EARLY_BREAK);
   if (m && m.index! + 1 >= FIRST_MIN) return m.index! + 1;

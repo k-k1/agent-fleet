@@ -148,10 +148,10 @@ export async function probeFileMeta(path: string): Promise<FileProbeResult> {
   }
 }
 
-// --- AI 変更提案（docs/log/44 Phase 4） ---
+// --- AI edit suggestions (docs/log/44 Phase 4) ---
 
-// LLM 生成はファイル IO の 15 秒では足りない。Agent 側の editSuggestTimeout（90s）
-// より広く取り、通常はサーバー側のタイムアウトが先に確定する。
+// LLM generation does not fit in the 15s file-IO budget. Kept wider than the Agent's
+// editSuggestTimeout (90s) so the server-side timeout normally settles first.
 export const SUGGEST_EDIT_TIMEOUT_MS = 100_000;
 
 export interface SuggestEditRequest {
@@ -166,9 +166,10 @@ export type SuggestEditResult =
   | { ok: true; summary: string; replacement: string }
   | { ok: false; code: string };
 
-/** POST /api/fs/suggest-edit — 置換文の生成だけを頼む同期呼び出し。envelope
- *  （paneId/requestId/sourceRevision）はクライアントが控えて応答へ合成するため
- *  wire には載せない。例外を投げず、全失敗を code に畳む（提案は advisory）。 */
+/** POST /api/fs/suggest-edit — a synchronous call asking only for the replacement text.
+ *  The envelope (paneId/requestId/sourceRevision) is held by the client and merged into
+ *  the response, so it never goes on the wire. Never throws: a suggestion is advisory,
+ *  so every failure folds into a code. */
 export async function suggestEdit(request: SuggestEditRequest): Promise<SuggestEditResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SUGGEST_EDIT_TIMEOUT_MS);

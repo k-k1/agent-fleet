@@ -159,9 +159,10 @@ export class BrowserInputBridge {
   }
 
   keyDown(e: RemoteKeyLike): void {
-    // IME 起動の初回 keydown は compositionstart より先に届くため isComposing=false の
-    // まま key="Process" で来る。転送すると対の keyup は合成中で握り潰され down/up が
-    // 非対称になるので、合成扱いにして code を控えるだけにする。
+    // The first keydown that starts an IME arrives before compositionstart, so it comes in
+    // with isComposing=false and key="Process". Forwarding it would leave down/up
+    // asymmetric, since the matching keyup is swallowed while composing — treat it as
+    // composition and just remember the code.
     if (this.composing || e.isComposing || e.key === "Process") {
       if (e.code) this.composingCodes.add(e.code);
       return;

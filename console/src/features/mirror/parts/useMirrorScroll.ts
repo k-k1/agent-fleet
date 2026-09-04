@@ -10,31 +10,33 @@ import type { Group } from "../transcript/types.ts";
 const NEAR_BOTTOM_PX = 80;
 
 // After an interaction inside the transcript, hold off the bottom re-pin for this long, so
-// content the READER grew (expanding a 作業過程 disclosure, switching code wrapping) keeps
+// content the READER grew (expanding a work-progress disclosure, switching code wrapping) keeps
 // their position instead of snapping past it. Only needs to outlive the reflow the click
 // causes — everything else that grows the transcript is content, and is followed.
 const INTERACT_HOLD_MS = 600;
 
-// 「返信を頭から」の頭出しで、返信ブロックの上端に残す余白（px）。0 だと切り出しに見える。
+// Padding (px) kept above the reply block when "jump to reply top" scrolls to it. At 0 the
+// block looks cropped.
 const REPLY_TOP_PAD = 8;
 
 /**
- * 転写のスクロール位置ぜんぶ（末尾追従・完了時の頭出し・位置復元・浮くピル・古い履歴を
- * 継ぎ足したときの視点固定）。MirrorView からそのまま移送したもので、判断は 1 つも
- * 変えていない。
+ * Everything about the transcript's scroll position: bottom-follow, the re-anchor when a reply
+ * completes, position restore, the floating pills, and holding the viewport still when older
+ * history is prepended.
  *
- * 呼び出し側に残るのは「いつ」だけ:
- *   - `applyFollow()`  転写が動いたときの layout effect（deps は MirrorView が持つ）
- *   - `resetForSession()` / `saveMarkFor()` セッション持ち替えの layout effect と、その後始末
- *   - `armFollow()`    送信＝「会話へ連れて行け」の意思表示
- *   - `capturePrependHeight()` / `applyPrependAdjust()` 古い履歴の継ぎ足し
+ * The caller keeps only the "when":
+ *   - `applyFollow()`  the layout effect for a transcript that moved (MirrorView owns the deps)
+ *   - `resetForSession()` / `saveMarkFor()` the session-switch layout effect and its teardown
+ *   - `armFollow()`    a send — "take me to the conversation"
+ *   - `capturePrependHeight()` / `applyPrependAdjust()` prepending older history
  */
 export function useMirrorScroll() {
   // Show a "jump to latest ↓" affordance whenever the user has scrolled up off the bottom
   // (auto-follow is paused) so new/streaming content below is discoverable with one click.
   const [showJump, setShowJump] = useState(false);
-  // 「返信を頭から」— 最新の回答ブロックの先頭が画面より上に流れていて、かつ末尾追従が切れて
-  // いるときだけ出す（末尾では出さない: 押すべきボタンの上に被るため。syncReplyTop の注記）。
+  // "Jump to reply top" — shown only when the latest reply block's top has scrolled off above
+  // the viewport AND follow is off. Never at the bottom, where it would cover the buttons the
+  // user has to press (see syncReplyTop).
   const [showReplyTop, setShowReplyTop] = useState(false);
   // Backward paging: the pre-prepend scrollHeight, so we can pin the viewport across it.
   const prependAdjustRef = useRef<number | null>(null);
@@ -43,7 +45,7 @@ export function useMirrorScroll() {
   const scrollBoxRef = useRef<HTMLDivElement>(null); // inner content wrapper — its height tracks the transcript
   // Is auto-follow on (keep the end of the transcript in view)? This tracks the user's
   // INTENT, not raw geometry: it goes false when they actually move the viewport up, and
-  // true again when they come back to the end (or send, or press 最新へ). Content growing
+  // true again when they come back to the end (or send, or press jump-to-latest). Content growing
   // under a pinned viewport is not a reason to drop it — see onBodyScroll.
   const atBottomRef = useRef(true);
   // The scrollTop WE last wrote. onBodyScroll compares against it to tell "content grew
@@ -51,26 +53,28 @@ export function useMirrorScroll() {
   const selfTopRef = useRef(0);
   // Until this ms, a geometry change is attributed to the reader's own click, not to content.
   const interactUntilRef = useRef(0);
-  // 位置復元（scrollMark）: このセッションに戻ってきたときに復元すべき位置。復元中（= restoring
-  // が true）は、末尾ピンではなくこのアンカーを保つ。
+  // Position restore (scrollMark): where to return to when this session is reopened. While
+  // restoring (restoringRef true) we hold THIS anchor rather than the bottom pin.
   //
-  // 時間で切らないのは末尾ピンと同じ理由 — 高さは何段にも分かれて遅れて確定し、その最後の一段が
-  // いつ来るかは端末しだい。実測（4x スロットリング / 400 ターン）では、遅延レイアウトが 1 回の
-  // 大きなコミットで片付き、ResizeObserver が鳴ったのは着地の 3.6 秒後だった。3 秒で切る設計だと
-  // その 1 回を取りこぼし、目的地の 24〜729px 手前で固まる。抜けるのは「読者が触った」ときと
-  // 「末尾追従に戻った」とき（送信・最新へ）だけにする。
+  // There is deliberately no time limit, for the same reason as the bottom pin: the height
+  // settles late and in several steps, and when the last step lands depends on the machine.
+  // Measured (4x throttling / 400 turns), the late layout finished in one large commit and the
+  // ResizeObserver fired 3.6s after landing; a 3s cutoff would miss exactly that step and leave
+  // the view frozen 24–729px short of the target. The only exits are "the reader touched it"
+  // and "follow was re-armed" (send, jump to latest).
   const restoreMarkRef = useRef<ScrollMark | null>(null);
   const restoringRef = useRef(false);
-  // 「返信を頭から」の対象＝最新の回答ブロックの idx。レンダごとに書き、[] で作られる
-  // ResizeObserver / onScroll のクロージャからも今の値が読めるようにする（ttsCaptureRef と同型）。
+  // The idx of the latest reply block — what "jump to reply top" targets. Written on every
+  // render so the closures built with [] (the ResizeObserver, onScroll) can read the current
+  // value, as ttsCaptureRef does.
   const lastReplyIdxRef = useRef<number | undefined>(undefined);
   // The idx of the assistant block whose TOP we last brought to the viewport top. A fresh
   // reply is anchored there once (so the user reads it from its first line) and then left
   // alone as it streams; this remembers which reply we've already anchored.
   const anchoredIdxRef = useRef<number | undefined>(undefined);
   // The idx of the reply whose FINAL ANSWER top we've already brought to the viewport top.
-  // On completion a following pane collapses the 作業過程 into a disclosure, so the reply's
-  // top becomes that collapsed row; we then re-anchor once to the final answer's first line
+  // On completion a following pane collapses the work-progress block into a disclosure, so the
+  // reply's top becomes that collapsed row; we then re-anchor once to the final answer's first line
   // (docs/log/24). Kept separate from anchoredIdxRef so the top-anchor and the answer-anchor each
   // fire exactly once per reply.
   const answerAnchoredRef = useRef<number | undefined>(undefined);
@@ -79,7 +83,7 @@ export function useMirrorScroll() {
   // the user is watching get anchored to the top — history isn't retro-scrolled.
   const didInitRef = useRef(false);
   // Keep a bottom-stuck view pinned as geometry changes OUTSIDE the poll-driven follow
-  // effect: the body's own box resizing (ToDo / 消費推移 / コンテキスト panels above it, the
+  // effect: the body's own box resizing (the ToDo / spend / context panels above it, the
   // composer auto-growing, a pane/window resize) AND — via the inner wrapper — the
   // transcript's content height changing as late content lays out (images, code
   // highlighting, math) or streams in. This is what makes opening a session settle at the
@@ -98,7 +102,7 @@ export function useMirrorScroll() {
   }, []);
 
   // Re-pin whenever the geometry changes while follow is on: the body's own box resizing
-  // (ToDo / 消費推移 / コンテキスト panels above it, the composer auto-growing, a pane/window
+  // (the ToDo / spend / context panels above it, the composer auto-growing, a pane/window
   // resize) AND — via the inner wrapper — the transcript's content height changing as late
   // content lays out or streams in.
   //
@@ -111,7 +115,7 @@ export function useMirrorScroll() {
   // rule is simply "while following, keep the end in view".
   //
   // The one growth we must NOT chase is the one the user caused themselves — expanding a
-  // 作業過程 disclosure while parked at the bottom must keep their position, not snap them
+  // work-progress disclosure while parked at the bottom must keep their position, not snap them
   // past what they just opened. That is decided by cause, not by timing: interactUntilRef
   // is armed by an interaction inside the transcript (see the handlers on .mirror-scroll).
   useEffect(() => {
@@ -119,9 +123,9 @@ export function useMirrorScroll() {
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
       scheduleReplyTopSync();
-      // 位置復元中は、末尾ではなくアンカーを保つ。理由は末尾ピンと同じ（高さが遅れて入る）で、
-      // 向き先だけが違う。atBottomRef が立っていたら誰かが末尾追従へ戻した合図（送信・最新へ）
-      // なので、そちらを優先して復元を畳む。
+      // While restoring, hold the anchor instead of the end — same reason as the bottom pin
+      // (height arrives late), only a different target. If atBottomRef is set, something
+      // re-armed follow (a send, jump to latest), which wins: fold the restore away.
       if (restoringRef.current) {
         const mark = restoreMarkRef.current;
         if (mark && !atBottomRef.current && applyMark(el, mark)) {
@@ -141,14 +145,14 @@ export function useMirrorScroll() {
     return () => ro.disconnect();
   }, []);
   // Arm the "the reader caused this reflow" window. A pointer or keyboard interaction inside
-  // the transcript can toggle a disclosure (作業過程 / thinking / tool run), switch code
+  // the transcript can toggle a disclosure (work progress / thinking / tool run), switch code
   // wrapping, or open a plan comment box — all of which grow the content under a reader who
   // is sitting at the bottom. Both are captured on .mirror-scroll, so the pointer path and
   // the keyboard path (Enter/Space on a <summary>) arm it before the reflow lands. A fold
   // that WE change (foldWork on completion) is content, not interaction, and is followed.
   const noteInteraction = () => {
     interactUntilRef.current = Date.now() + INTERACT_HOLD_MS;
-    endRestoreOnInput(); // 読者が触った ⇒ 位置の復元より、その手を優先する
+    endRestoreOnInput(); // the reader touched it — their hand outranks the position restore
   };
 
   // Follow state, from user INTENT rather than from raw geometry.
@@ -181,22 +185,23 @@ export function useMirrorScroll() {
     setShowJump((s) => (s === !stuck ? s : !stuck));
   };
 
-  // 位置復元をやめる（ユーザーが触った／末尾追従へ戻った）。以後は従来どおり atBottomRef だけが
-  // 追従を決める。
+  // Stop restoring (the user touched it, or follow was re-armed). From here on atBottomRef
+  // alone decides whether we follow.
   const endRestore = () => {
     restoringRef.current = false;
     restoreMarkRef.current = null;
   };
 
-  // 復元を打ち切るのは「ユーザーが入力した」ときだけ — scrollTop が自分の書いた値からズレた
-  // ことを根拠にしてはいけない。ブラウザ自身のスクロールアンカリング（上の内容が伸びた分だけ
-  // scrollTop を勝手に足して見た目を保つ機構）が遅延レイアウトのたびに動かすので、それを
-  // 「触られた」と読むと復元を途中でやめてしまう（実測: 目的地の 354px 手前で固まり、以後
-  // 二度と直らなかった）。入力（ホイール・タッチ・キー・ポインタ）だけを退出条件にすれば、
-  // アンカリングのズレは次の再適用で必ず上書きされる。
+  // Only real INPUT ends a restore — never the fact that scrollTop drifted from the value we
+  // wrote. The browser's own scroll anchoring (it adds to scrollTop by however much the content
+  // above grew, to keep the view stable) moves it on every late layout, so reading that as "the
+  // user touched it" aborts the restore mid-flight (measured: frozen 354px short of the target
+  // and never recovering). With wheel / touch / key / pointer as the only exit, an anchoring
+  // drift is always overwritten by the next re-apply.
   //
-  // 取りこぼすのはネイティブのスクロールバーをドラッグした場合（Chromium は要素へ
-  // pointerdown を出さない）。復元が畳まれるまで引っぱり合いになるが、掴み直せば済む。
+  // The case this misses is dragging the native scrollbar, for which Chromium dispatches no
+  // pointerdown to the element. That tugs against the restore until it folds, but re-grabbing
+  // the scrollbar is enough.
   const endRestoreOnInput = () => {
     if (restoringRef.current) endRestore();
   };
@@ -205,7 +210,7 @@ export function useMirrorScroll() {
   const jumpToBottom = () => {
     const el = bodyRef.current;
     if (!el) return;
-    endRestore(); // 明示的に末尾を選んだ ⇒ 復元アンカーは捨てる
+    endRestore(); // the end was chosen explicitly — drop the restore anchor
     el.scrollTop = el.scrollHeight;
     selfTopRef.current = el.scrollTop;
     atBottomRef.current = true;
@@ -213,12 +218,13 @@ export function useMirrorScroll() {
     syncReplyTop();
   };
 
-  // 「返信を頭から」— 最新の回答ブロックの上端を画面の一番上へ。長い回答の途中から 1 タップで
-  // 頭出しするための導線（末尾に貼り付いている間は出さない — syncReplyTop の注記）。
+  // "Jump to reply top" — bring the latest reply block's top to the top of the viewport, so a
+  // long answer can be restarted from its beginning in one tap. Hidden while stuck to the
+  // bottom (see syncReplyTop).
   //
-  // 対象はユーザー発言ではなく回答ブロックの先頭（＝畳まれた 作業過程 の行から）。完了時の
-  // 自動アンカー（answerAnchoredRef、回答本文の 1 行目）より 1 段上を見せる位置で、「この
-  // 返信は何をやったのか」から読み直せる。
+  // The target is the head of the reply block, not the user's turn: the collapsed work-progress
+  // row. That is one step above the completion anchor (answerAnchoredRef, the answer's first
+  // line), so the reader can re-read from "what did this reply actually do".
   const jumpToReplyTop = () => {
     const el = bodyRef.current;
     const idx = lastReplyIdxRef.current;
@@ -228,17 +234,17 @@ export function useMirrorScroll() {
     endRestore();
     el.scrollTop = top;
     selfTopRef.current = el.scrollTop;
-    // 末尾から離れた ⇒ 追従は切る（ここで切らないと、次の poll でまた末尾へ引き戻される）。
+    // We left the end, so follow goes off — otherwise the next poll drags us back down.
     atBottomRef.current = false;
     setShowJump(true);
     syncReplyTop();
   };
 
-  // ピルの出し入れ（＝下の setState）は、必ず次のフレームへ逃がす。末尾ピンと同じフレームで
-  // DOM を足し引きすると着地を壊す — 実測: ResizeObserver や follow の layout effect から
-  // 直接呼んだ版は、末尾着地が 4 回に 1 回ほど 240px（＝画像 1 枚ぶんの遅延レイアウト）手前で
-  // 止まり、そのまま直らなかった。mirror-scroll ハーネスの long シナリオが赤くなる。
-  // 1 フレーム遅れて出ることに実害はないので、素直に逃がす。
+  // Showing or hiding the pill (the setState below) must always be deferred to the next frame.
+  // Adding or removing DOM in the same frame as the bottom pin breaks the landing: calling this
+  // straight from the ResizeObserver or the follow layout effect left the view about one time in
+  // four stuck 240px (one image's worth of late layout) short of the end, permanently — the
+  // mirror-scroll harness's long scenario goes red. A frame of delay on the pill costs nothing.
   const replyTopSyncRef = useRef(false);
   const scheduleReplyTopSync = () => {
     if (replyTopSyncRef.current) return;
@@ -249,8 +255,9 @@ export function useMirrorScroll() {
     });
   };
 
-  // 「返信を頭から」を出すべきか — 最新の回答ブロックの先頭が、ビューポート上端より上に
-  // 流れているときだけ。すでに頭が見えているなら押しても何も起きないので出さない。
+  // Whether "jump to reply top" should be shown — only while the latest reply block's head has
+  // scrolled off above the viewport top. If the head is already visible the button would do
+  // nothing, so it stays hidden.
   const syncReplyTop = () => {
     const el = bodyRef.current;
     const idx = lastReplyIdxRef.current;
@@ -258,9 +265,10 @@ export function useMirrorScroll() {
     const on = !!(
       el &&
       turn &&
-      // 末尾に貼り付いている間は出さない。末尾には押すべきものが並ぶ面（引き継ぎカードの
-      // 起動ボタン、質問 / プラン / 許可の回答ボタン、コピー…）で、その上に浮くピルが被って
-      // 押せなくなる。読んでいる途中＝追従が切れているときだけの導線にする。
+      // Never while stuck to the bottom: the end of the transcript is where the things to press
+      // are (the handoff card's launch button, the question / plan / permission answer buttons,
+      // copy) and a floating pill over them makes them unclickable. This affordance belongs to
+      // reading mid-transcript, i.e. only while follow is off.
       !atBottomRef.current &&
       turn.getBoundingClientRect().top < el.getBoundingClientRect().top - REPLY_TOP_PAD
     );
@@ -275,12 +283,12 @@ export function useMirrorScroll() {
   // scrolling here first means we set a valid scrollTop before the browser would clamp it
   // and fire a stray scroll (which used to race this effect and mis-place the viewport).
   //
-  // While a reply is still WORKING we follow the bottom so the streamed 作業過程 / answer stays
+  // While a reply is still WORKING we follow the bottom so the streamed work / answer stays
   // in view. We do NOT strand the user at the end of a long answer, though: the moment the
   // reply COMPLETES we re-anchor once to the FINAL ANSWER's first line at the viewport top
   // (tracked by its idx), so it reads from the start instead of the tail. That upward scroll
   // honestly flips atBottomRef→false via onBodyScroll, so afterwards the user is left alone.
-  // ※ 元は useLayoutEffect の本体。呼ぶのは MirrorView（deps を持っているのはあちら）。
+  // Called from MirrorView's layout effect — that is where the deps live.
   const applyFollow = ({
     groups,
     loaded,
@@ -296,7 +304,7 @@ export function useMirrorScroll() {
     pendingPlan: string | null;
     pendingPerm: string | null;
   }) => {
-    scheduleReplyTopSync(); // 内容が変わるたび「返信を頭から」の要否を採り直す（末尾追従の有無に依らない）
+    scheduleReplyTopSync(); // re-decide "jump to reply top" on every content change, follow or not
     if (!atBottomRef.current) return;
     const el = bodyRef.current;
     if (!el) return;
@@ -331,15 +339,15 @@ export function useMirrorScroll() {
         didInitRef.current = true;
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = replyIdx; // a reply already present at open isn't re-anchored
-        // …ただし、このセッションを「途中まで読んだ状態」で離れていたなら、そこへ戻す
-        // （scrollMark）。末尾で離れていた（atBottom）ときは意図が「最新を見る」なので
-        // 従来どおり末尾。アンカーのターンが tail ウィンドウに載っていなければ復元は
-        // 諦めて末尾＝どのみち読み直せる位置に落とす。
+        // …except when the session was left part-read: go back there (scrollMark). Leaving at
+        // the bottom (atBottom) means "show me the latest", so that still lands at the end. If
+        // the anchor's turn is not in the tail window, give the restore up and fall back to the
+        // end, which is readable from anyway.
         const mark = restoreMarkRef.current;
         if (mark && !mark.atBottom && applyMark(el, mark)) {
           selfTopRef.current = el.scrollTop;
-          atBottomRef.current = false; // 末尾ではない ⇒ 追従は切れ、最新へ の導線が出る
-          restoringRef.current = true; // 以後、遅れて入る高さのたびにこのアンカーへ置き直す
+          atBottomRef.current = false; // not at the end: follow is off and jump-to-latest appears
+          restoringRef.current = true; // from now on, re-apply this anchor on every late height
           setShowJump(true);
           scheduleReplyTopSync();
           return;
@@ -358,15 +366,16 @@ export function useMirrorScroll() {
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = undefined; // this reply's final answer hasn't been anchored yet
       }
-      // Still working, a background run (サブエージェント/Workflow) is appending, or we're
+      // Still working, a background run (subagent/Workflow) is appending, or we're
       // bridging the idle→reply gap (finalizing) — follow the bottom so the streamed tail
       // (and the typing indicator) stay in view.
       if (busy) {
         toBottom();
         return;
       }
-      // Completed: a following pane collapses the 作業過程 into a disclosure (defaultWorkOpen=
-      // !atBottom, and we've been at the bottom) so the reply's top becomes that collapsed row —
+      // Completed: a following pane collapses the work-progress block into a disclosure
+      // (defaultWorkOpen=!atBottom, and we've been at the bottom) so the reply's top becomes that
+      // collapsed row —
       // re-anchor once to the FINAL ANSWER's first line at the viewport top, so the user reads
       // it from the start rather than the tail we followed to. Only when work was actually
       // folded; a reply with no foldable work already sits with its answer at the top.
@@ -391,50 +400,51 @@ export function useMirrorScroll() {
     toBottom();
   };
 
-  // 送信・「最新へ」＝「会話へ連れて行け」の意思表示。末尾追従を張り直す。
+  // A send or a jump-to-latest is the user saying "take me to the conversation" — re-arm follow.
   const armFollow = () => {
     atBottomRef.current = true;
     setShowJump(false);
   };
 
-  // セッション持ち替え時のリセット（MirrorView の layout effect の中で、そこでの順序のまま）。
+  // Reset on a session switch, run inside MirrorView's layout effect in that effect's order.
   const resetForSession = (session: string) => {
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
     // The old scroller can be reused for another session (pane D&D / opening a row
     // in the current mirror). Clear its physical offset in the same pre-paint phase;
     // the first transcript layout effect then pins the new content to its end.
     if (bodyRef.current) { bodyRef.current.scrollTop = 0; selfTopRef.current = 0; }
-    // 「読者自身が広げた」窓は前のセッションの話なので、持ち越さない。スマホの横スワイプで
-    // セッションを持ち替えると、その指の pointerdown が transcript の上に降りて
-    // noteInteraction を 600ms 武装する（.mirror-scroll の capture ハンドラ）。ミラーの高さは
-    // ほぼ全部が遅れて入るので、窓が開いたままだと ResizeObserver の再ピンが握りつぶされ、
-    // 着地位置が中途半端なところで止まりうる。
+    // The "the reader grew this" window belongs to the PREVIOUS session and must not carry over.
+    // Switching sessions with a horizontal swipe on a phone drops that finger's pointerdown on
+    // the transcript and arms noteInteraction for 600ms (the capture handler on .mirror-scroll);
+    // since almost all of the mirror's height arrives late, a window still open swallows the
+    // ResizeObserver's re-pin and the view can settle somewhere short of the end.
     //
-    // ただし正直に言うと、これは塞いだ穴であって再現した不具合ではない: mirror-scroll の
-    // swipe シナリオでは、この 1 行の有無にかかわらず末尾に着地した（fetch とレンダが毎回
-    // 600ms より長くかかり、窓が閉じたあとの成長で再ピンが効いてしまう）。窓が実際に効く
-    // 速さの端末では効く、という理屈のぶんだけの手当て。
+    // To be honest this closes a hole rather than a reproduced bug: in the mirror-scroll swipe
+    // scenario the view landed at the end with or without this line, because fetch plus render
+    // always took longer than 600ms. It only matters on a machine fast enough for the window to
+    // still be open.
     interactUntilRef.current = 0;
-    // このセッションを最後に見ていた位置（あれば）。実際に戻すのは transcript が載ってから＝
-    // 初回 settle で、そこまでは末尾ピンのまま待つ。
+    // Where this session was last read, if anywhere. The restore itself waits until the
+    // transcript is mounted (the first settle); until then the bottom pin holds.
     restoreMarkRef.current = loadMark(session);
     restoringRef.current = false;
     setShowJump(false); // …so no jump-to-latest affordance until they scroll up
-    setShowReplyTop(false); // 新しいセッションの回答が載るまで頭出しの対象が無い
+    setShowReplyTop(false); // nothing to jump to until the new session's reply is mounted
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
     answerAnchoredRef.current = undefined; // …nor its final answer
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
   };
 
-  /** 継ぎ足しの保留を捨てる（セッション持ち替えの頭で、他のカーソル類と一緒に）。 */
+  /** Drop a pending prepend adjustment, at the head of a session switch with the other cursors. */
   const resetPrepend = () => {
     prependAdjustRef.current = null;
   };
 
-  /** 離脱時に、いま見ていた位置を控える（cleanup が読む DOM は「出ていく側」のもの）。 */
+  /** Record the position being read on leave; the DOM the cleanup reads is the OUTGOING one. */
   const saveMarkFor = (session: string) => saveMark(session, captureMark(bodyRef.current, atBottomRef.current));
 
-  /** 古い履歴を継ぎ足す直前の高さを控える（継ぎ足したぶんだけ scrollTop を足して視点を保つ）。 */
+  /** Record the height just before older history is prepended, so scrollTop can be advanced by
+   *  exactly that much and the viewport held. */
   const capturePrependHeight = () => {
     const el = bodyRef.current;
     prependAdjustRef.current = el ? el.scrollHeight : null; // pin the viewport across the prepend

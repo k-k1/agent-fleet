@@ -1,9 +1,10 @@
-/* 転写の上下に積む「状況の帯」: plan モード・端末の注意喚起・タイトル提案、および
-転写に残る圧縮サマリの畳み込み（.mirror-compact*）
+/* Status bands stacked above and below the transcript: plan mode, terminal warnings, title
+suggestions, and the collapsed compaction summary left in the transcript (.mirror-compact*)
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
 /* Plan-mode banner + ExitPlanMode plan block. */
 .mirror-planmode {
@@ -55,7 +56,7 @@
   flex: 1;
   min-width: 0;
   /* Wrap the candidate rather than ellipsis-truncating it — the user must be able to
-     read the whole proposed title before pressing 承認. */
+     read the whole proposed title before pressing Approve (「承認」). */
   overflow-wrap: anywhere;
 }
 .mirror-title-suggest .mts-btn {
@@ -124,7 +125,7 @@
 .mirror-compact-head .mc-effect ~ .mc-time {
   margin-left: 8px;
 }
-/* Before/after bars in the expanded body: two full-width tracks, the 圧縮後 fill scaled
+/* Before/after bars in the expanded body: two full-width tracks, the after-compaction fill scaled
    to after/before so the shrink is visible at a glance. */
 .mirror-compact .mc-bars {
   display: flex;

@@ -1,14 +1,16 @@
-// CarriedBlock — 停止時に画面に出ていた対話（docs/log/75 §75.6）。
+// CarriedBlock — the interaction that was on screen when the session stopped
+// (docs/log/75 §75.6).
 //
-// PendingQuestions（保留カード）との決定的な違いは**答え方**である。保留カードは
-// 生きた TUI モーダルへキー列（Down/Enter）を撃つ。持ち越しにはモーダルが無い —
-// セッションが畳まれた時点で消え、`claude --resume` しても戻らない（未応答の tool_use は
-// 親ポインタで迂回されて会話木から外れる。docs/log/75 §75.10 A で実測）。だから回答は
-// **文章として**配達するしかなく、このコンポーネントはキー列を 1 つも組み立てない。
+// The decisive difference from PendingQuestions (the pending card) is how it is answered.
+// A pending card fires a key sequence (Down/Enter) at a live TUI modal; a carried
+// interaction has no modal — it died with the session and `claude --resume` does not bring
+// it back (an unanswered tool_use is bypassed through the parent pointer and drops out of
+// the conversation tree; measured, docs/log/75 §75.10 A). The answer can therefore only be
+// delivered as prose, and this component builds no key sequence at all.
 //
-// カードを分けてあるのはその不変条件を型で守るため: キーを撃つコード（questionKeys）は
-// ここから import していないので、持ち越しのボタンが生きたペインへ Down/Enter を送る
-// 経路が構造的に存在しない。
+// The card is kept separate so that invariant is enforced structurally: the key-firing code
+// (questionKeys) is not imported here, so no carried-interaction button can reach a live
+// pane with Down/Enter.
 import { useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { t as tr } from "../../lib/i18n/index.ts";
@@ -28,7 +30,7 @@ export function CarriedBlock({
   carried: CarriedInteraction;
   session: string;
   agentName: string;
-  /** 送信/破棄が受理された（カードを引っ込めてポーリングに任せる）。 */
+  /** Send/discard was accepted — retract the card and let polling take over. */
   onDone: () => void;
   onError: (message: string) => void;
   onOpenPlan?: (plan: string) => void;
@@ -41,7 +43,7 @@ export function CarriedBlock({
     setSending(true);
     const r = await sessionCarriedAnswer(session, body);
     setSending(false);
-    // 沈黙は成功と区別が付かない（docs/build/92 §7 の教訓）。失敗は必ずトーストする。
+    // Silence is indistinguishable from success (docs/build/92 §7), so always toast a failure.
     if (!r.ok) {
       onError(r.message || tr("err.send_failed"));
       return;
@@ -63,9 +65,9 @@ export function CarriedBlock({
         <span className="mt-model muted">{title}</span>
       </div>
       <div className="mirror-turn-body">
-        {/* なぜこのカードが出ているのかを最初に言う。利用者から見ると「答えたはずの
-            質問がまた出ている」ようにも見えるので、答えが届いていないことと、
-            答えれば再開することを説明する。 */}
+        {/* Say up front why this card is here: it can look like a question the user already
+            answered has come back, so state that the answer never arrived and that
+            answering now resumes the session. */}
         <div className="mt-carried-note muted">
           <Icon name="info" /> {tr("mirror.carried_note")}
         </div>
@@ -74,7 +76,7 @@ export function CarriedBlock({
           <PendingQuestions
             questions={carried.questions || []}
             sending={sending}
-            // キー駆動の入口は塞ぐ。持ち越しには当てる先のモーダルが無い。
+            // Block the key-driven entry points: a carried interaction has no modal to aim at.
             onSubmitKeys={() => onError(tr("mirror.carried_no_keys"))}
             onSubmitSeq={() => onError(tr("mirror.carried_no_keys"))}
             onSubmitAnswers={(answers: CarriedAnswerInput[]) => void send({ decision: "answer", answers })}
@@ -106,9 +108,9 @@ export function CarriedBlock({
               >
                 {tr("mirror.carried_plan_reject")}
               </button>
-              {/* ★承認は「承認」ではなく実行の指示である（docs/log/75 §75.10 E の実測: 文章で
-                  承認を送ると claude は ExitPlanMode を出し直さずそのまま実行する）。
-                  取り消せない決定なので confirm を挟む。 */}
+              {/* Approving here is an instruction to execute, not just an approval: measured
+                  (docs/log/75 §75.10 E), a prose approval makes claude run the plan rather than
+                  re-issue ExitPlanMode. The decision cannot be undone, so confirm first. */}
               <button
                 type="button"
                 className="btn primary"
@@ -125,8 +127,9 @@ export function CarriedBlock({
         )}
         {carried.kind === "permission" && (
           <>
-            {/* 許可の答えは死んだツール呼び出しには届かない。運べるのは事実だけなので、
-                このカードは「何を訊かれていたか」を出して「続けて」の 1 手だけを持つ。 */}
+            {/* A permission answer cannot reach a dead tool call; only the fact of it can be
+                carried. So the card shows what was asked and offers the single "continue"
+                action. */}
             <div className="mt-perm-msg">{carried.permission}</div>
             <div className="mq-submit-row mq-footer">
               <button type="button" className="ghost" disabled={sending} onClick={() => void send({ decision: "discard" })}>

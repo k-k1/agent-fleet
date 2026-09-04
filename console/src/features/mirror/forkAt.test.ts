@@ -16,18 +16,18 @@ describe("canBranchFrom", () => {
   });
 
   it("refuses an assistant turn", () => {
-    // v1 は「その発言を打ち直す」ための分岐なので、回答からは分岐させない。
+    // v1 forks in order to re-type a message, so an agent reply is never a fork point.
     expect(canBranchFrom(bot())).toBe(false);
   });
 
   it("refuses a turn with no anchor", () => {
-    // アンカー無しで分岐要求を投げると at が空になり、会話まるごと分岐に化ける。
+    // Without an anchor the request goes out with an empty `at` and forks the whole conversation.
     expect(canBranchFrom(user(undefined))).toBe(false);
     expect(canBranchFrom(user(""))).toBe(false);
   });
 
   it("refuses an optimistic echo and a queued prompt", () => {
-    // どちらもまだ転写に無いので、指せる id が存在しない。
+    // Neither is in the transcript yet, so there is no id to point at.
     expect(canBranchFrom(user("msg_1", { pending: true }))).toBe(false);
     expect(canBranchFrom(user("msg_1", { queued: true }))).toBe(false);
   });
@@ -53,12 +53,12 @@ describe("canBranchInSession", () => {
 
   it("requires managed only for the kinds whose fork point lives in the runtime API", () => {
     expect(canBranchInSession(managedOnly, { managed: true, readOnly: false })).toBe(true);
-    // CLI ルートには分岐点を渡す引数が無いので、押せば必ず 400 になる。
+    // The CLI route has no argument for the fork point, so using it always ends in a 400.
     expect(canBranchInSession(managedOnly, { managed: false, readOnly: false })).toBe(false);
   });
 
   it("allows a TUI session for a kind that cuts its own transcript", () => {
-    // claude は managed driver を持たない。ここを managed 必須にすると導線が永久に出ない。
+    // claude has no managed driver; requiring managed here would hide the control forever.
     expect(canBranchInSession(anyRoute, { managed: false, readOnly: false })).toBe(true);
   });
 
@@ -77,7 +77,7 @@ describe("carriedUserTurns", () => {
     const u2 = user("msg_3");
     const u3 = user("msg_5");
     const groups = [u1, bot(), u2, bot(), u3];
-    expect(carriedUserTurns(groups, u1)).toBe(0); // 最初の発言から分岐 = まっさら
+    expect(carriedUserTurns(groups, u1)).toBe(0); // forking from the first message carries nothing
     expect(carriedUserTurns(groups, u2)).toBe(1);
     expect(carriedUserTurns(groups, u3)).toBe(2);
   });

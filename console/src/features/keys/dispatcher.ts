@@ -80,7 +80,8 @@ export function wireKeys(): () => void {
   // move focus itself.
   let savedFocus: HTMLElement | null = null;
 
-  // "Turn IME off" for the leader sequence. An active IME (e.g. Japanese 変換) would compose
+  // "Turn IME off" for the leader sequence. An active IME (Japanese kana-kanji conversion,
+  // say) would compose
   // the follow-up keys (p, r, …) into the focused field/terminal, and shouldIgnore() would
   // then swallow them — the sequence breaks and stray characters can leak in. Web pages can't
   // toggle the OS IME, but blurring the compose target ends any composition and parks focus on
@@ -172,7 +173,7 @@ export function wireKeys(): () => void {
     if (e.repeat) return; // never fire a shortcut on auto-repeat (a held-down key)
     const chord = eventChordString(e); // from e.code — valid even while an IME composes
     if (chord == null) return; // modifier-only keydown — keep waiting
-    // An IME is mid-composition (Japanese 変換 reports isComposing / keyCode 229).
+    // An IME is mid-composition (Japanese conversion reports isComposing / keyCode 229).
     const composing = e.isComposing === true || e.keyCode === 229;
 
     // Live-resolved reserved chords (respect user rebinds; "" = unbound → never matched,
@@ -235,7 +236,7 @@ export function wireKeys(): () => void {
     }
 
     // --- Not in leader mode. While an IME is composing, defer to it — EXCEPT the leader
-    // chord, which drops IME and opens command mode even mid-変換 (Ctrl+K is never part of a
+    // chord, which drops IME and opens command mode even mid-composition (Ctrl+K is never part of a
     // composition). Every other key flows to the IME untouched. ---
     if (composing) {
       if (chord === LEADER && !hasOpenOverlay()) {

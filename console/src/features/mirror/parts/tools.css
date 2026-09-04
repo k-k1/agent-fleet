@@ -1,8 +1,10 @@
-/* ツール実行の痕跡（.mt-tool*）と、思考・作業過程の畳み込み（.mirror-thinking / .mirror-disclosure*）
+/* Traces of tool activity (.mt-tool*) and the reasoning / work-in-progress disclosures
+ * (.mirror-thinking / .mirror-disclosure*)
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
 /* A faint trace of claude's tool activity, interleaved between text parts. Kept
    low-contrast and single-line so it reads as "background work", not content. */
@@ -140,10 +142,10 @@ button.mt-tool-outhead {
   min-height: 0;
   overflow: hidden;
 }
-/* The closing edge of an expanded 作業過程 / 思考 (DisclosureFoot): the head's toggle repeated
-   at the BOTTOM, so a long block can be folded away from where it was read instead of scrolling
-   back up to the only control. Faint until hovered — it sits inside the body and must not
-   compete with the content above it. */
+/* The closing edge of an expanded work-progress / reasoning block (DisclosureFoot): the head's
+   toggle repeated at the BOTTOM, so a long block can be folded away from where it was read
+   instead of scrolling back up to the only control. Faint until hovered — it sits inside the
+   body and must not compete with the content above it. */
 .mirror-disclosure-foot {
   display: flex;
   align-items: center;
@@ -159,8 +161,9 @@ button.mt-tool-outhead {
   cursor: pointer;
   font: inherit;
   font-size: 11px;
-  /* --muted そのまま。opacity で更に落とすと、思考の本文（.mirror-thinking-body が既に
-     0.8）の中で二重に掛かって操作要素が読めなくなる — ライトでもダークでも 4.5:1 を切る。 */
+  /* --muted as-is. Dimming further with opacity would compound inside the reasoning body
+     (.mirror-thinking-body is already at 0.8) and make the control illegible — below 4.5:1
+     in both the light and the dark theme. */
   color: var(--muted);
 }
 .mirror-disclosure-foot:hover {
@@ -170,9 +173,10 @@ button.mt-tool-outhead {
 .mirror-disclosure-foot .codicon {
   font-size: 11px;
 }
-/* 作業過程は枠のあるカードなので、閉じる帯は本文の左右 padding だけ打ち消して枠いっぱいに
-   敷く（罫線が中途半端な位置で切れないように）。下は詰めない — カードの枠線に貼り付くと
-   二重線に見える。思考には枠が無いので本文幅のまま。 */
+/* The work-progress block is a bordered card, so the closing strip cancels the body's left and
+   right padding and spans the full card width, otherwise its rule stops short of the border.
+   Nothing is cancelled at the bottom: flush against the card border it would read as a double
+   line. The reasoning block has no border, so it keeps the body width. */
 .mt-work-body > .mirror-disclosure-foot {
   margin-left: -20px;
   margin-right: -9px;

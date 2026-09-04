@@ -25,14 +25,14 @@ interface WorkspaceStore {
   /** The running container/agent predates the deployed backend: a stop→start would
    * swap in newer code (CP-side detection — control-plane/workspace_stale.go). The
    * CP only sets it while running, and clears it on its own once the workspace comes
-   * back on the current build, so this is a STATE (WS-bar 要再起動 badge), not an
+   * back on the current build, so this is a STATE (the WS-bar restart-needed badge), not an
    * event. False whenever the CP can't tell — never guessed client-side. */
   stale: boolean;
-  /** なぜ state が読めなかったのかのエラーコード（"" = 正常に読めている）。"unknown" は
-   * 「取得に失敗した」以上のことを言えず、招待前の super_admin には**理由の書かれていない
-   * 「不明」と反応しない起動ボタン**だけが残る（招待済みでない人は NotProvisioned の面に
-   * 降りるので、ここに来るのは最初のテナントを作る人だけ）。コードを残して、バーが
-   * 「不明」ではなく実際の理由を出せるようにする。 */
+  /** Error code explaining why the state could not be read ("" = read fine). "unknown" says
+   * no more than "the fetch failed", which leaves a not-yet-invited super_admin with an
+   * unexplained "unknown" and a start button that does nothing (anyone not invited lands on
+   * NotProvisioned instead, so only the person creating the first tenant gets here). Keeping
+   * the code lets the bar show the real reason. */
   reason: string;
   refresh(): Promise<void>;
   /** Apply a pushed workspace payload (api/events). Poll parity: an optimistic
@@ -48,7 +48,7 @@ interface WorkspaceStore {
   restart(): Promise<void>;
   /** Tear the container down and start fresh from the current image. Logins +
    * connections persist; cloned repos and running sessions are wiped — the caller
-   * guards this behind a warning dialog (設定 > 環境) and resets the layout first.
+   * guards this behind a warning dialog (Settings > Environment) and resets the layout first.
    * Returns the error message on failure (the caller toasts). */
   recreate(skipDirtyGuard?: boolean): Promise<string | null>;
   /** Deeper reset than recreate: wipe the whole home EXCEPT logins/connections
@@ -74,18 +74,19 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       // clears an optimistic "…", so the settle refresh must always land.
       if (pushStamp("workspace") !== stamp && !wsBusy(get().state)) return;
       if (w?.error) {
-        // ゲートウェイ/CP 再起動中の一時的な 5xx（{error:{code:"http_5xx"}} — tenant.init
-        // と同じ isTransientErr 判定）で "unknown"/stale=false に落とすと、running ゲートの
-        // 配下ポーラーまで止まってしまう — 現在値を保持して次のポーリングに任せる。ただし
-        // 楽観 "…" の settle 中に保持すると busy が固着する（4s ポーリングは busy 中スキップ）
-        // ので、その間と terminal エラーは従来どおり unknown へ落とす。
+        // Dropping to "unknown"/stale=false on a transient 5xx while the gateway or CP
+        // restarts ({error:{code:"http_5xx"}}, the same isTransientErr judgement as
+        // tenant.init) would also stop every poller gated on running — keep the current
+        // value and let the next poll decide. Holding it while an optimistic "…" settles
+        // would wedge busy instead (the 4s poll skips while busy), so during that, and on a
+        // terminal error, fall to unknown as before.
         if (isTransientErr(w) && !wsBusy(get().state)) return;
         set({ state: "unknown", bootPhase: "", stale: false, reason: String(w.error.code || "") });
         return;
       }
       set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale, reason: "" });
     } catch {
-      set({ state: "unknown" }); // 通信断: 理由は前回のまま（次のポーリングで確定する）
+      set({ state: "unknown" }); // network drop: keep the previous reason; the next poll settles it
     }
   },
 
@@ -112,18 +113,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }, 2000);
     // The poll skips while the state ends in "…", so even an aborted POST (e.g. a
     // gateway timeout on a slow ECS start) must settle to the real server state —
-    // otherwise the bar sticks on 起動中… until a manual reload. api() only
-    // rejects on network failure (HTTP errors come back as {error} JSON), so a
+    // otherwise the bar sticks on the starting label (「起動中…」) until a manual reload.
+    // api() only rejects on network failure (HTTP errors come back as {error} JSON), so a
     // catch + unconditional refresh covers both.
-    // ★ 起動できなかった理由は必ず出す。api() は HTTP エラーを {error} JSON で返して
-    // reject しないので、戻り値を見ないと**何も起きなかったように見える**（楽観の
-    // 「起動中…」が一瞬出て「不明」に戻るだけ）。招待前の super_admin が押したときの
-    // 403 not_provisioned がまさにこれで、押しても無反応としか読めなかった。
+    // Always surface why the start failed. Since api() returns HTTP errors as {error} JSON
+    // instead of rejecting, ignoring the return value makes it look like nothing happened:
+    // the optimistic "starting…" flashes and falls back to "unknown". That is exactly what a
+    // not-yet-invited super_admin saw on a 403 not_provisioned — a button with no reaction.
     try {
       const r = await api("api/workspace/start", { method: "POST" });
       if (r?.error) toast(errText(r.error) || t("wsbar.start_failed"), { kind: "error" });
     } catch {
-      /* ネットワーク断。下の refresh が実状態に落とす */
+      /* network drop; the refresh below settles the real state */
     }
     clearInterval(iv);
     await get().refresh();
@@ -200,12 +201,12 @@ export const wsRunning = (state: string): boolean => state === "running";
 /** True while starting the workspace would be wrong: an optimistic "…" transition
  * is in flight OR the server already reports "starting" (ECS cold pull, minutes).
  * The CP no-ops a re-Start anyway, but every start button disables on this so the
- * UI doesn't offer 起動 for a workspace that is already coming up. */
+ * UI doesn't offer Start for a workspace that is already coming up. */
 export const wsStartBusy = (state: string): boolean => wsBusy(state) || state === "starting";
 
 /** True when the power toggle must STOP rather than start.
  *
- * ⚠️ Deliberately NOT `state === "running"`. The server-reported "starting" has no
+ * Deliberately NOT `state === "running"`. The server-reported "starting" has no
  * guaranteed exit: an ECS task the scheduler cannot place sits at desired=1/running=0
  * and State() reports "starting" forever (measured on the dev deployment — docs/log/70 §70.14.6,
  * a task definition declaring ARM64 while pinned to an x86_64 slot). While the toggle
@@ -230,7 +231,7 @@ export const wsPreparing = (state: string, bootPhase: string): boolean =>
 // crash) reflects on its own. Skipped while hidden, while the push channel
 // covers this stream (api/events — the poll is the fallback), or mid-transition
 // (trailing "…" only — the server-reported "starting" keeps polling, which is
-// what walks an ECS cold start to 稼働中 without a reload). Returns the cleanup,
+// what walks an ECS cold start to running without a reload). Returns the cleanup,
 // so the caller (App boot effect) is StrictMode-safe.
 export function startWorkspacePolling(): () => void {
   const t = setInterval(() => {

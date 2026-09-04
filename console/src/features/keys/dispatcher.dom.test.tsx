@@ -1,12 +1,15 @@
-// 日常操作の Alt 直キーが「実イベント → chord 正規化 → コマンド実行」まで通ることを、
-// 本物のディスパッチャ（wireKeys の capture リスナ）に本物の KeyboardEvent を投げて確かめる。
+// Checks that the everyday Alt accelerators survive the whole path — real event, chord
+// normalisation, command execution — by throwing real KeyboardEvents at the real
+// dispatcher (wireKeys' capture listener).
 //
-// commands.test.ts はレジストリ DATA の不変条件（重複・予約衝突）を見るだけで、`.code` が
-// 意図した chord に化けるか（Comma → ","、PageDown → "pagedown"、Shift の順序）や、`when`
-// ゲートが閉じているときに**キーを握らず端末へ流す**か、までは分からない。そこが本番で効く
-// 差なので、ここで押さえる。
+// commands.test.ts only covers invariants of the registry DATA (duplicates, reserved-chord
+// collisions). It cannot tell whether `.code` normalises to the intended chord (Comma ->
+// ",", PageDown -> "pagedown", the order of Shift), nor whether a closed `when` gate
+// releases the key to the terminal instead of claiming it. Those are what matter in
+// production, so they are pinned here.
 //
-// 記録するのは layout ストアへの副作用だけ（新規セッション等はネットワークに触るので対象外）。
+// Only side effects on the layout store are exercised; commands that touch the network
+// (new session and friends) are out of scope.
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -25,7 +28,7 @@ const view = (id: string, session: string) => ({
   wrap: null,
 });
 
-/** タブモード: セル g0 が 3 枚、g1 が 1 枚。 */
+/** Tabs mode: cell g0 holds three tabs, g1 holds one. */
 const tabsLayout = (): Layout => ({
   version: 3,
   mode: "tabs",
@@ -43,7 +46,8 @@ const tabsLayout = (): Layout => ({
   activeCellId: "g0",
 });
 
-/** 実キーを capture リスナへ。preventDefault されたか＝アプリが握ったか を返す。 */
+/** Sends a real key to the capture listener. Returns whether it was preventDefault'd, i.e.
+ *  whether the app claimed it. */
 const press = (code: string, mods: { alt?: boolean; shift?: boolean; mod?: boolean } = {}): boolean => {
   const e = new KeyboardEvent("keydown", {
     code,
@@ -77,7 +81,7 @@ describe("Alt accelerators (real dispatcher, real KeyboardEvents)", () => {
   it("Alt+W closes only the ACTIVE TAB — not the whole cell (the bug this fixes)", () => {
     expect(press("KeyW", { alt: true })).toBe(true);
     expect(viewIds()).toEqual(["p1", "p2", "p9"]);
-    // 残ったタブが選択され、セルは生きたまま。
+    // A remaining tab becomes selected and the cell stays alive.
     expect(selected("g0")).toBe("p1");
   });
 
@@ -99,18 +103,18 @@ describe("Alt accelerators (real dispatcher, real KeyboardEvents)", () => {
 
   it("leaves Alt+PageDown to the terminal when the active cell has nothing to cycle", () => {
     useLayoutStore.setState({ layout: { ...tabsLayout(), activeCellId: "g1" } });
-    expect(press("PageDown", { alt: true })).toBe(false); // 未登録扱い＝素通し
+    expect(press("PageDown", { alt: true })).toBe(false); // treated as unbound, so passed through
     expect(selected("g1")).toBe("p9");
   });
 
   it("Alt+= / Alt+- / Alt+0 drive the font size of the ACTIVE pane's surface", () => {
-    // アクティブは端末ペイン（tabsLayout の p0）→ 動くのは termSize であって viewerSize ではない。
+    // The active pane is the terminal (p0 in tabsLayout), so termSize moves, not viewerSize.
     setSetting("termSize", 13);
     setSetting("viewerSize", 13);
     expect(press("Equal", { alt: true })).toBe(true);
     expect(getSettings().termSize).toBe(14);
-    expect(getSettings().viewerSize).toBe(13); // 別の面は巻き添えにしない
-    // US 配列の「+」は Shift+= ——同じ拡大に落ちること。
+    expect(getSettings().viewerSize).toBe(13); // other surfaces are not dragged along
+    // On a US layout "+" is Shift+=, and it must land on the same enlargement.
     expect(press("Equal", { alt: true, shift: true })).toBe(true);
     expect(getSettings().termSize).toBe(15);
     expect(press("Minus", { alt: true })).toBe(true);
@@ -134,15 +138,16 @@ describe("Alt accelerators (real dispatcher, real KeyboardEvents)", () => {
     l.cols[0].cells[0].views[0].content = { kind: "browser", port: 5173, path: "/" };
     useLayoutStore.setState({ layout: l });
     setSetting("termSize", 13);
-    expect(press("Equal", { alt: true })).toBe(false); // 未登録扱い＝素通し
+    expect(press("Equal", { alt: true })).toBe(false); // treated as unbound, so passed through
     expect(getSettings().termSize).toBe(13);
   });
 
   it("resolves the punctuation and letter accelerators to the intended commands", () => {
-    // run() が外部に触れるコマンド（設定・メモ・読み上げ…）は、実行せず照合だけ見る。
-    // レールの絞り込みはワークスペース起動中しか描画されないので、そのゲートも一緒に見る。
+    // For commands whose run() reaches outside (settings, memo, read-aloud, ...) only the
+    // match is checked, never the execution. The rail filter only renders while the
+    // workspace is running, so that gate is checked here too.
     const ctxNow = { ...buildContext(), region: "main" as const, focusedKind: "other" as const };
-    expect(matchDirect(effectiveCommands(), "alt+/", ctxNow)).toBeUndefined(); // 停止中は握らない
+    expect(matchDirect(effectiveCommands(), "alt+/", ctxNow)).toBeUndefined(); // not claimed while stopped
     useWorkspaceStore.setState({ state: "running" });
 
     const cases: [string, boolean, string][] = [
@@ -165,8 +170,8 @@ describe("Alt accelerators (real dispatcher, real KeyboardEvents)", () => {
   });
 });
 
-// `.code` → 正規 chord のベースキー（chords.ts の codeToKey と同じ規則。ここでは
-// 期待値の組み立てに使うだけなので、テスト側で素直に書き下す）。
+// `.code` -> the base key of the canonical chord, the same rule as codeToKey in chords.ts.
+// It is only used to build expectations here, so it is spelled out plainly on the test side.
 function chordKey(code: string): string {
   if (code === "Comma") return ",";
   if (code === "Slash") return "/";

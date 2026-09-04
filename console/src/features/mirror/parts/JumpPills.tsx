@@ -2,19 +2,18 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
 
 /**
- * 入力欄のすぐ上に浮くピル。sticky で本文の最後に置く（bottom 指定の sticky は
- * 「本来の位置より下へ行きそうなときだけ上へ留める」ので、先頭に置くと二度と
- * 降りてこない — 実測で本文の 42,000px 上に取り残された）。
+ * Pills floating just above the input. They must be the LAST child of the body: sticky with a
+ * bottom offset only holds an element up when it would otherwise fall below its natural
+ * position, so placing them first strands them at the top (measured: 42,000px above the body).
  *
- * ラッパは height:0、ボタンはその中で absolute。in-flow のまま置くと、はみ出した
- * ボタンぶん（実測 12px）がスクロール可能領域を伸ばし、末尾に貼り付いているのに
- * 12px の余白が残る。「最新へ」は末尾から離れたときしか出ないので誰も踏まなかったが、
- * 「返信を頭から」は末尾でも出るので表に出た。bottom:0 の absolute なら、ボタンの箱は
- * ラッパの上へ伸びる＝末尾より下へはみ出さない。
+ * The wrapper is height:0 and the buttons are absolute inside it. Left in flow, the overflowing
+ * button (measured 12px) extends the scrollable area, leaving a 12px gap even when scrolled to
+ * the very end. With absolute at bottom:0 the button box grows upward from the wrapper and never
+ * overflows past the end.
  *
- * 「返信を頭から」は逆向きの導線で、条件も別（最新の回答の先頭が画面より上にある）。
- * 同じ帯に並べる — 両方出る場面（回答の途中を読んでいて、かつ末尾から離れている）
- * では、上へ・下への 2 択がそのまま並んで見える。
+ * The jump-to-reply-top pill points the other way and has its own condition (the top of the
+ * latest reply is above the viewport). Both sit in the same row so that when both apply (reading
+ * mid-reply while scrolled away from the end) the up and down choices appear side by side.
  */
 export function JumpPills({
   showJump,
@@ -34,9 +33,9 @@ export function JumpPills({
         {showReplyTop && (
           <button
             type="button"
-            // 見た目は 最新へ と同じピル。クラスを足すのは検証のため — mirror-scroll の
-            // ハーネスは「最新へ が出ていないこと」で末尾着地を判定しており、素の
-            // .mirror-jump が 2 種類あると区別が付かない。
+            // Same pill as jump-to-latest; the extra class exists for verification. The
+            // mirror-scroll harness decides "landed at the end" by the absence of the
+            // jump-to-latest pill, and could not tell two bare .mirror-jump elements apart.
             className="mirror-jump mirror-jump-top"
             onClick={onJumpReplyTop}
             title={tr("mirror.jump_reply_top")}

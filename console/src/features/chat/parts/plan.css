@@ -1,6 +1,7 @@
-/* 作業計画パネル（docs/log/33 第5段）— ChatPlan.tsx。
-   ヘッダー直下に開く折り畳み面。会話バブルではなく「会話に付随する状態」なので、
-   ContextBar と同じ薄い枠・小さめの文字で、本文の邪魔をしない見え方にする。 */
+/* Work plan panel (docs/log/33 stage 5) — ChatPlan.tsx.
+   A collapsible surface that opens right under the header. It is state attached to the
+   conversation rather than a conversation bubble, so it uses ContextBar's thin border and
+   smaller type to stay out of the body's way. */
 .chat-plan-toggle {
   flex: none;
   display: inline-flex;
@@ -18,7 +19,8 @@
   color: var(--fg);
   border-color: color-mix(in srgb, var(--fg) 30%, transparent);
 }
-/* 計画が入っている会話だけ塗る（＝アシスタントが忘れない内容を持つ会話の目印）。 */
+/* Tint only conversations that hold a plan, marking the ones with content the assistant
+   will not forget. */
 .chat-plan-toggle.has-plan {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
@@ -88,7 +90,8 @@
 .chat-plan .cp-body {
   font-size: 13px;
 }
-/* 計画は箇条書きが主体。既定の markdown 余白は縦に間延びするので詰める。 */
+/* Plans are mostly bullet lists; the default markdown spacing stretches them vertically,
+   so tighten it. */
 .chat-plan .cp-body :is(h1, h2, h3, h4) {
   margin: 8px 0 4px;
   font-size: 12px;

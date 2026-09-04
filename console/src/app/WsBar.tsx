@@ -41,8 +41,9 @@ interface HostHistPoint {
   mem: number;
 }
 
-// api/workspace/stats・api/admin/host 応答のうち WS バーが表示に使うフィールドだけの
-// 部分型（応答全体の正は Agent/CP 側 — 未知フィールドは素通し）。
+// Partial type covering only the fields the WS bar displays from the api/workspace/stats
+// and api/admin/host responses; the Agent/CP side owns the full shape, and unknown fields
+// pass through.
 interface WsStats {
   running?: boolean;
   mem_used?: number | null;
@@ -59,15 +60,15 @@ interface HostStats {
   ncpu?: number;
 }
 
-// 使用量チップ各種（claude/codex/agy/copilot）が共有する reading の部分型。エージェント毎に
-// 使うフィールドは異なる（fiveHour/sevenDay ↔ groups ↔ quotas）が、shape は 1 つの union に
-// せず optional の合併で表す — チップ側は元々フィールドの有無で分岐している。
+// The reading shared by the usage chips (claude/codex/agy/copilot). Each agent uses
+// different fields (fiveHour/sevenDay vs groups vs quotas), expressed as one type with
+// optionals rather than a union, because the chips already branch on field presence.
 interface UsageWindow {
   pct: number;
   resetsAt: string;
-  // 捕捉より後に窓が明けている＝% は「その後の消費ゼロ」を仮定した推定。読み取り値では
-  // ないので、チップも行も 0% と言い切らず "—" で出す（捕捉が死んでいる場合と区別が
-  // つかない）。claude のみ返す。
+  // The window rolled over after the capture, so the % is an estimate assuming zero use
+  // since. It is not an observation, so chip and row show "—" rather than asserting 0%,
+  // which would be indistinguishable from a dead capture. Only claude returns this.
   stale?: boolean;
 }
 interface UsageReading {
@@ -81,14 +82,14 @@ interface UsageReading {
   fiveHour?: UsageWindow;
   sevenDay?: UsageWindow;
   resetCredits?: { availableCount?: number; credits?: { expiresAt?: string }[] };
-  // agy: モデルグループ毎のプール（週次＋有償tierは5時間枠）。remaining ベース。
+  // agy: a pool per model group (weekly, plus a 5-hour window on paid tiers), remaining-based.
   groups?: {
     label: string;
     remainingPct: number;
     resetsAt?: string;
     fiveHour?: { remainingPct: number; resetsAt?: string };
   }[];
-  // copilot: プール毎のクォータ＋共通の月次リセット。
+  // copilot: a quota per pool plus one shared monthly reset.
   quotas?: { id: string; remainingPct: number }[];
   resetsAt?: string;
   canUpgrade?: boolean;
@@ -249,7 +250,7 @@ function useUsage(tenant: string | null, endpoint: string) {
   return { usage, refreshing, refresh: () => load(true) };
 }
 
-// agoText: seconds since the usage was fetched → "N秒/分/時間前" (freshness label).
+// agoText: seconds since the usage was fetched -> "N seconds/minutes/hours ago" (freshness label).
 function agoText(sec: number | null | undefined) {
   if (sec == null) return "";
   if (sec >= 3600) return tCount("wsbar.ago_hour", Math.round(sec / 3600));
@@ -257,9 +258,10 @@ function agoText(sec: number | null | undefined) {
   return tCount("wsbar.ago_sec", Math.max(0, sec));
 }
 
-// UsageBreakdownLink: 使用量チップ → 設定「エージェント使用量」タブへのディープリンク（docs/log/46 §5）。
-// このチップが答えるのは「サブスク枠がどれだけ残っているか」で、「何にトークンを使ったか」は
-// 別の問い。枠を見て「で、何に消えた?」となった所からそのまま渡す導線。
+// UsageBreakdownLink: deep link from the usage chip into the Settings > agent usage tab
+// (docs/log/46 §5). The chip answers "how much of the subscription window is left"; "what
+// were the tokens spent on" is a separate question, and this hands the user straight over
+// at the moment they ask it.
 function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
   const tr = useT();
   const openSettings = useSettingsUI((s) => s.openSettings);
@@ -278,7 +280,7 @@ function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
 }
 
 // UsageRow: one limit window in the usage dropdown — label + percent, a fill bar, and
-// the reset shown both relatively ("あとN時間") and as an absolute date-time. A stale
+// the reset shown both relatively ("in N hours") and as an absolute date-time. A stale
 // window (the reading predates the window it describes, so its 0% is an assumption the
 // agent could not verify) shows "—" and an empty bar instead: a confident 0% next to a
 // reset time is indistinguishable from a real one, which is exactly how a dead capture
@@ -302,7 +304,7 @@ function UsageRow({ label, w }: { label: string; w: { pct: number; until: string
   );
 }
 
-// untilText: a reset instant → a compact relative "あとN日/N時間/N分" (the weekday+time
+// untilText: a reset instant -> a compact relative "in N days/hours/minutes" (the weekday+time
 // the app shows is hard to read; relative is glanceable, the absolute date-time goes
 // in the tooltip). whenText: the absolute local "M/D HH:MM".
 function untilText(iso: string) {
@@ -324,7 +326,7 @@ function expiryText(iso: string) {
 }
 
 // resetChipText: reset instant → the compact form shown ON the chip when a window is
-// Max付近. Same-day resets drop the date (just HH:MM); a later day keeps M/D so the
+// near its cap. Same-day resets drop the date (just HH:MM); a later day keeps M/D so the
 // day is unambiguous.
 function resetChipText(iso: string) {
   const d = new Date(iso);
@@ -335,9 +337,10 @@ function resetChipText(iso: string) {
   return sameDay ? fmtDateTime(d, TIME_HM) : fmtDateTime(d);
 }
 
-// Max付近しきい値: 枠の利用率がこの値以上なら、チップを「N% / M%」からその枠のリセット時刻
-// 表示へ切り替える（あと僅かで詰まる／既に詰まっている＝「いつ解放されるか」の方が有用）。
-// ドロップダウンの crit 着色境界（95%）と揃える。
+// Near-cap threshold: at or above this utilization the chip switches from "N% / M%" to
+// that window's reset time, because once you are about to be blocked (or already are)
+// "when does it clear" is the more useful answer. Kept in step with the dropdown's crit
+// coloring boundary (95%).
 const NEAR_MAX_PCT = 95;
 
 // A usage source = one agent's subscription-limit chip (Claude / Codex). Both endpoints
@@ -351,7 +354,7 @@ interface UsageSource {
   cls: string; // kind color class (kind-claude / kind-codex)
   fiveLabelKey: MsgKey; // 5-hour window label (i18n key)
   weekLabelKey: MsgKey; // weekly window label (i18n key)
-  // live = the endpoint queries the current usage (claude), so a 更新 button makes
+  // live = the endpoint queries the current usage (claude), so a refresh button makes
   // sense. When false (codex), the reading is a snapshot from the last turn — no
   // manual refresh; a note explains it instead.
   live: boolean;
@@ -426,9 +429,10 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   const unavailable = !uh && !uw && !resetCount;
   if (unavailable && !usage?.authed) return null;
 
-  // Max付近（利用率 ≥ NEAR_MAX_PCT）の枠があれば、% ではなく「いつ解放されるか」を出す。候補は
-  // Max付近の枠だけ、その中で最も早くリセットする枠（＝最初に解放される時刻）を 1 つだけ。両枠
-  // とも Max付近なら近い方（通常は5時間枠）になる。詳細（どの枠か・%・相対）はツールチップへ。
+  // If any window is near its cap (utilization >= NEAR_MAX_PCT), show when it clears
+  // instead of the %. Only near-cap windows are candidates, and exactly one is shown: the
+  // earliest to reset, i.e. the first relief. With both near the cap that is usually the
+  // 5-hour window. Which window, its % and the relative form go in the tooltip.
   const nearMax: { label: string; pct: number; resetsAt: string }[] = [];
   if (usage?.fiveHour && usage.fiveHour.pct >= NEAR_MAX_PCT && usage.fiveHour.resetsAt)
     nearMax.push({ label: fiveLabel, ...usage.fiveHour });
@@ -526,7 +530,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
 }
 
 // AgyUsageChip: Antigravity's quota chip (docs/log/32 — moved here from the AgyCard so
-// the 残量 sits beside the Claude / Codex chips). agy's wallet is split into
+// the remaining balance sits beside the Claude / Codex chips). agy's wallet is split into
 // per-model-group pools (Gemini / Claude+GPT), each with a weekly window plus a
 // 5-hour window on paid tiers, and the agent reports REMAINING percent (matching
 // the TUI's own /usage bars). Shown as USED percent so the chip and dropdown read
@@ -557,7 +561,7 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
   const unavailable = wins.length === 0;
   if (unavailable && !usage?.authed) return null;
 
-  // Max付近: any window ≥ NEAR_MAX_PCT switches the chip to the earliest reset time
+  // Near the cap: any window >= NEAR_MAX_PCT switches the chip to the earliest reset time
   // among the constrained windows (same rule as UsageChip).
   const nearMax = wins.filter((w) => w.pct >= NEAR_MAX_PCT && w.resetsAt);
   const bind = nearMax.length
@@ -614,7 +618,7 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
               />
             ))
           )}
-          {/* 実験枠 note (採用条件 — docs/log/32 Track C-3): the Starter pool is tiny and
+          {/* Experimental-tier note (docs/log/32 Track C-3): the Starter pool is tiny and
               shared with the Antigravity IDE / Jules, so the popover always says so. */}
           <div className="wu-note muted">{tr("agents.agy_exp_label")}</div>
           <div className="wu-foot">
@@ -723,7 +727,7 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
           </div>
           <UsageBreakdownLink onNavigate={() => setOpen(false)} />
           {/* Manage link on its own row (same as the generic UsageChip) — cramming it
-              into wu-foot alongside 取得/更新 broke the layout. */}
+              into wu-foot alongside the fetched-at line and refresh broke the layout. */}
           <a className="wu-manage" href="https://github.com/settings/copilot" target="_blank" rel="noopener">
             <Icon name="link-external" /> {tr("wsbar.usage.open_page")}
           </a>
@@ -735,9 +739,9 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
 
 // WS bar: the (single) workspace's state plus Start / Stop. The backend models one
 // workspace per membership, so there is no select / create / delete. The
-// destructive "作り直す" lives deep in 設定 > 環境 (warning-gated), off this bar.
-// SharedPreview は GET /api/preview/shared の 1 行（docs/log/81 §14.6）。running は
-// 「プレビューの URL が今あるか」であって、コンテナの状態そのものではない。
+// destructive "recreate" lives deep in Settings > Environment (warning-gated), off this bar.
+// SharedPreview is one row of GET /api/preview/shared (docs/log/81 §14.6). `running` means
+// "a preview URL exists right now", not the container's own state.
 type SharedPreview = {
   ownerUserKey: string;
   ownerEmail: string;
@@ -753,15 +757,16 @@ type SharedPreview = {
 // Friendly label for the raw container state. The CP returns runtime-derived
 // states (runtime.go State()): "running" | "starting" | "stopped" | "none".
 // "starting" is server-reported (ECS: the workspace image cold-pulls for minutes
-// before the task runs) — shown as 起動中 and walked to 稼働中 by the 4s poll, no
+// before the task runs) — shown as "starting" and walked to "running" by the 4s poll, no
 // reload needed. Stop does `docker rm -f` locally, so the *normal* stopped state
 // is "none" (no container — data persists in the bind mount, recreated on Start);
 // "stopped" only appears when a container exists but exited on its own (crash /
-// OOM) or the ECS service sits at desired 0. Both read as 停止 to the user; the
+// OOM) or the ECS service sits at desired 0. Both read as "stopped" to the user; the
 // raw state stays in the tooltip. Optimistic in-flight states (set by the store
 // around start/stop POSTs) end in "…".
-// reason は state が読めなかった理由（workspace ストア）。"unknown" のままでは
-// 「取得に失敗した」しか言えず、招待前の super_admin には理由の無い「不明」だけが残る。
+// `reason` is why the state could not be read (workspace store). Left as "unknown" the bar
+// can only say the fetch failed, which leaves a super_admin who has not been invited yet
+// with an "unknown" that names no cause.
 function wsLabel(s: string, reason = ""): string {
   if (s === "unknown" && reason === "not_provisioned") return t("wsbar.state.no_tenant");
   switch (s) {
@@ -806,8 +811,8 @@ function tile({
   title: string;
 }) {
   return (
-    // key は静的な k のみ — title は live 値（mem 使用量など）を含むので混ぜると
-    // 値が変わるたびに remount されてスパークラインがちらつく。
+    // The key is the static k only: title carries live values (memory use and the like),
+    // so folding it in would remount on every change and make the sparkline flicker.
     <span className={"ws-graph" + (level === 2 ? " crit" : level === 1 ? " warn" : "")} title={title} key={k}>
       <span className="ws-graph-k">{k}</span>
       <Sparkline data={series} max={max} track={track} />
@@ -825,9 +830,9 @@ export function WsBar() {
   const wsReason = useWorkspaceStore((s) => s.reason);
   const tenant = useTenantStore((s) => s.tenant);
   const superAdmin = useTenantStore((s) => s.superAdmin);
-  // どのテナントにも所属していない＝ワークスペースがそもそも存在しない。招待前の
-  // super_admin だけがここに来る（他の人は NotProvisioned の面に降りる）ので、
-  // 案内は「管理からテナントに自分を足す」が正解になる。
+  // Belonging to no tenant means no workspace exists at all. Only a super_admin who has
+  // not been invited yet reaches this (everyone else lands on NotProvisioned), so the
+  // right guidance is to add themselves to a tenant from Admin.
   const noTenant = wsState === "unknown" && wsReason === "not_provisioned";
   const layout = useLayoutStore((s) => s.layout);
   const splitRight = useLayoutStore((s) => s.splitRight);
@@ -846,19 +851,20 @@ export function WsBar() {
   // Live Chromium attachments, read when the popover opens (no polling: this is
   // a recovery entry, and the authoritative state is the pane's own socket).
   const [attachments, setAttachments] = useState<BrowserAttachmentStatus[]>([]);
-  // 発行済みのプレビュー用サブドメイン（docs/log/81）。起動のたびに変わるので、開いた
-  // 瞬間に読み直す。ホスト方式が無いデプロイでは previewDomain が空 = 何も出さない。
+  // The issued preview subdomain (docs/log/81). It changes on every start, so re-read it
+  // the moment the popover opens. On a deployment without host-based previews
+  // previewDomain is empty and nothing is shown.
   const [pvHosts, setPvHosts] = useState<{
     domain: string;
     urls: Record<string, string>;
-    // 起動をまたいで有効な、貼れるリンク（docs/log/81 §14.6）。停止中でも入っている。
+    // A pasteable link that survives restarts (docs/log/81 §14.6); present while stopped too.
     shareLinks: Record<string, string>;
     public: boolean;
     tenantShare: boolean;
   } | null>(null);
-  // 同じテナントの他の人が共有しているプレビュー（docs/log/81 §14.6）。
+  // Previews shared by other people in the same tenant (docs/log/81 §14.6).
   const [pvShared, setPvShared] = useState<SharedPreview[]>([]);
-  const [staleOpen, setStaleOpen] = useState(false); // 要再起動 badge popover
+  const [staleOpen, setStaleOpen] = useState(false); // "restart required" badge popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
   // Keyboard: Ctrl/⌘+K g r toggles the resource-tiles popover (desktop).
@@ -870,9 +876,9 @@ export function WsBar() {
   const running = wsState === "running";
   // Toggle inert while a transition is in flight: the optimistic "…" states AND the
   // server-reported "starting" (ECS cold pull — a second Start click must not
-  // re-drive the deployment; the 4s poll flips the bar to 稼働中 on its own).
+  // re-drive the deployment; the 4s poll flips the bar to "running" on its own).
   const busy = wsStartBusy(wsState);
-  // ⚠️ …but only the OPTIMISTIC "…" states may disable the POWER button — those are
+  // …but only the OPTIMISTIC "…" states may disable the POWER button — those are
   // momentary (one request in flight). The server-reported "starting" is not, and it
   // must stay clickable so a wedged start can be cancelled (wsPowerStops).
   const inFlight = wsBusy(wsState);
@@ -884,14 +890,14 @@ export function WsBar() {
   const onlyPane = totalPanes === 1 ? layout.cols[0].cells[0] : null;
   const canCloseAll = !(onlyPane && isBlankPane(onlyPane));
 
-  // Split (moved here from the per-pane header): 右に分割 appends a column (global);
-  // 上下に分割 splits the ACTIVE pane's column into rows. Same limits as before — up to
+  // Split (moved here from the per-pane header): split-right appends a column (global);
+  // split-down splits the ACTIVE pane's column into rows. Same limits as before — up to
   // 4 columns (desktop only), each column up to 2 panes. Mobile: one top/bottom split.
   const activeCol = layout.cols.find((c) => c.cells.some((p) => p.id === activePaneId));
   const canSplitRight = !isMobile && layout.cols.length < (layout.mode === "tabs" ? MAX_TAB_COLS : 4);
   const canSplitDown = isMobile ? totalPanes < 2 : (activeCol ? activeCol.cells.length : totalPanes) < 2;
 
-  // はじめる while stopped: don't dead-end (起動導線 Ph3) — confirm, start the
+  // The "start" entry while stopped: don't dead-end (launch flow Ph3) — confirm, start the
   // workspace, and open the hub once the 4s poll reports running. startQueued
   // survives the whole starting window; a second click while queued re-confirms
   // harmlessly (startWs is only re-fired from a genuinely stopped state).
@@ -902,9 +908,10 @@ export function WsBar() {
       setStartQueued(false);
       openStart();
     } else if (!busy) {
-      // 起動失敗・外部停止などで stopped/none/unknown に落ち着いた: running には
-      // 二度と遷移しないので、ここで解除しないと はじめる がスピナーのまま固着する。
-      // （クリック直後は start() が同バッチで "starting…" を積むため誤解除しない。）
+      // Settled on stopped/none/unknown (start failed, stopped externally, …): it will
+      // never reach running now, so without clearing here the start button sticks on its
+      // spinner. Right after the click start() queues "starting…" in the same batch, so
+      // this cannot clear it early.
       setStartQueued(false);
     }
   }, [startQueued, running, busy, openStart]);
@@ -925,7 +932,7 @@ export function WsBar() {
   };
 
   // Start is immediate; Stop is confirmed — it docker-removes the container, so
-  // running sessions drop to 停止 (resumable) and opencode web / preview disconnect.
+  // running sessions drop to "stopped" (resumable) and opencode web / preview disconnect.
   // Reversible (Start recreates; data persists in the bind mount), so it's a caution,
   // not a red destructive action.
   const onToggle = async () => {
@@ -1025,8 +1032,9 @@ export function WsBar() {
     };
   }, [pvOpen, moreOpen, running]);
 
-  // 同じテナントで共有されているプレビュー（docs/log/81 §14.6）。★ running を条件にしない
-  // —— ここに出るのは**他人の** Workspace で、自分が止まっているかは無関係である。
+  // Previews shared within this tenant (docs/log/81 §14.6). Not conditioned on running:
+  // what appears here belongs to OTHER people's workspaces, so whether ours is stopped is
+  // irrelevant.
   useEffect(() => {
     if (!pvOpen && !moreOpen) return;
     let cancelled = false;
@@ -1050,8 +1058,8 @@ export function WsBar() {
 
   // Container (own workspace): memory fill (vs quota) + CPU%. Shown to everyone.
   const hasWs = wsStats && wsStats.running && wsStats.mem_used != null;
-  // hasWs が mem_used != null を保証するが、TS のプロパティ narrowing は alias 越しに
-  // 届かないので ?? 0 で明示（到達しないフォールバック）。
+  // hasWs already guarantees mem_used != null, but TS property narrowing does not reach
+  // through the alias, so ?? 0 spells it out (an unreachable fallback).
   const memRatio = hasWs && wsStats.mem_max ? (wsStats.mem_used ?? 0) / wsStats.mem_max : null;
   // A process in this container was OOM-killed within the last few minutes (the
   // container itself survived). Flag the memory tile crit so it's noticed even after
@@ -1117,7 +1125,7 @@ export function WsBar() {
     </>
   );
 
-  // Desktop: collapse the resource sparkline tiles behind one "リソース" chip so the
+  // Desktop: collapse the resource sparkline tiles behind one "resources" chip so the
   // bar isn't a wall of tiles. The chip shows a glanceable container summary
   // (mem/cpu %) and opens a popover with the full trend tiles (incl. host for
   // super_admin). On mobile the tiles already live in the ⋯ overflow, so this is
@@ -1194,17 +1202,18 @@ export function WsBar() {
           <button onClick={openBrowserPane} disabled={!running || !browserTarget(Number(port.trim()), previewPath.trim())}>
             {tr("wsbar.preview.open_pane")}
           </button>
-          {/* openPreview と同じ browserTarget 検証で無効化 — 範囲外/7700 ポートで
-              「押せるのに無反応」にならないように（ペインで開く ボタンと同型）。 */}
+          {/* Disabled by the same browserTarget check openPreview uses, so an out-of-range
+              or 7700 port cannot leave a clickable button that does nothing (same shape as
+              the open-in-pane button). */}
           <button onClick={openPreview} disabled={!running || !browserTarget(Number(port.trim()), "/")}>
             {tr("wsbar.preview.open_light")}
           </button>
         </div>
         <div className="pv-hint">{tr("wsbar.preview.hint")}</div>
       </div>
-      {/* 発行済みのプレビュー用サブドメイン（docs/log/81）。★ 停止中は URL を出さない
-          —— slug は起動ごとに発行され停止で失効するので、出したところで 404 にしか
-          ならないリンクは「機能が壊れている」という報告になって返ってくる。 */}
+      {/* The issued preview subdomain (docs/log/81). No URL is shown while stopped: the
+          slug is issued per start and expires on stop, so the link would only 404 — and a
+          404 comes back as a report that the feature is broken. */}
       {pvHosts && Object.keys(pvHosts.urls).length > 0 && (
         <div className="pv-section">
           <label className="pv-label">
@@ -1233,8 +1242,9 @@ export function WsBar() {
                 >
                   {tr("wsbar.preview.copy")}
                 </button>
-                {/* 共有中のときだけ出す、起動をまたいで有効なリンク（docs/log/81 §14.6）。
-                    ★ 生 URL の方は起動ごとに腐るので、人に渡すのはこちらである。 */}
+                {/* Shown only while sharing: the link that survives restarts (docs/log/81
+                    §14.6). The raw URL rots on every start, so this is the one to hand
+                    to someone. */}
                 {pvHosts.tenantShare && pvHosts.shareLinks[p] && (
                   <button
                     className="ghost"
@@ -1251,9 +1261,9 @@ export function WsBar() {
           <div className="pv-hint">{tr("wsbar.preview.hosts_hint")}</div>
         </div>
       )}
-      {/* 同じテナントの他の人が共有しているプレビュー（docs/log/81 §14.6）。★ 開くのは
-          Console オリジンの固定リンクで、そこが今の slug を解決する —— 生 URL を
-          持ち回ると相手が再起動した瞬間に 404 になる。 */}
+      {/* Previews shared by other people in the same tenant (docs/log/81 §14.6). What opens
+          is a stable link on the Console origin that resolves the current slug; carrying the
+          raw URL around 404s the moment its owner restarts. */}
       {pvShared.length > 0 && (
         <div className="pv-section">
           <label className="pv-label">{tr("wsbar.preview.shared_label")}</label>
@@ -1278,7 +1288,7 @@ export function WsBar() {
                   </button>
                 ))
               ) : (
-                // 停止中は行ごと消さない。消すと「共有されていない」と読めてしまう。
+                // Keep the row while stopped; removing it would read as "not shared".
                 <span className="muted">{tr("wsbar.preview.shared_stopped")}</span>
               )}
             </div>
@@ -1286,9 +1296,9 @@ export function WsBar() {
           <div className="pv-hint">{tr("wsbar.preview.shared_hint")}</div>
         </div>
       )}
-      {/* エージェントが attach した既存 Chromium への戻り道（docs/log/53 §53.7）。
-          本来の入口はミラーの action リンクだが、会話が流れてリンクを見失ったり
-          ペインを閉じた後でも、生きている接続へ戻れるようにする。 */}
+      {/* Way back to an existing Chromium an agent attached to (docs/log/53 §53.7). The
+          intended entry is the action link in the mirror; this keeps a live attachment
+          reachable after the conversation scrolls past it or the pane is closed. */}
       {attachments.length > 0 && (
         <div className="pv-section">
           <label className="pv-label">{tr("wsbar.preview.attachments_label")}</label>
@@ -1316,7 +1326,7 @@ export function WsBar() {
     <div className="wsbar">
       <span className="ws-label">Workspace</span>
       {/* Power toggle: a single icon-only ⏻ to the LEFT of the state chip — the chip
-          says 稼働中/停止, this starts or stops accordingly (no separate labeled
+          says running/stopped, this starts or stops accordingly (no separate labeled
           button). The bar auto-syncs wsState from the 4s workspace poll, so an
           externally-changed workspace (admin stop / OOM) reflects without a manual
           refresh. Disabled mid-transition (starting…/stopping…), where it shows a
@@ -1376,7 +1386,7 @@ export function WsBar() {
       >
         {wsLabel(wsState, wsReason)}
       </span>
-      {/* 要再起動 — the backend moved on while this container kept running. Sits
+      {/* "Restart required" — the backend moved on while this container kept running. Sits
           right of the state chip (and dots the power button next to it) because the
           fix IS the power toggle; the popover explains the cost and offers the
           stop→start in one click. Label folds away on a phone, tap target stays. */}
@@ -1406,8 +1416,8 @@ export function WsBar() {
           )}
         </div>
       )}
-      {/* はじめる — the single "start anything" entry (起動導線 Ph2): opens the
-          StartModal hub (chat / repo / clone / home / その他). While the workspace
+      {/* The single "start anything" entry (launch flow Ph2): opens the StartModal hub
+          (chat / repo / clone / home / other). While the workspace
           is stopped it offers to start it and opens the hub when ready (Ph3). */}
       <button
         className="ghost ws-split ws-newsession"
@@ -1464,8 +1474,9 @@ export function WsBar() {
           </button>
           {moreOpen && (
             <div className="ws-more-pop">
-              {/* statsBlock は常に truthy な Fragment（チップは各自 null で自己非表示）なので
-                  ここでは判定できない — 空のときの余白は CSS の :empty で畳む（wsbar.css）。 */}
+              {/* statsBlock is always a truthy Fragment (each chip hides itself by returning
+                  null), so emptiness cannot be tested here; the padding of an empty block is
+                  folded away by CSS :empty (wsbar.css). */}
               <div className="ws-more-stats">{statsBlock}</div>
               {previewPop}
             </div>

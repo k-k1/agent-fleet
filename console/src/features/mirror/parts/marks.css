@@ -1,33 +1,36 @@
-/* 転写のマーカー（docs/log/69 / ADR 0050）: 引いた線・色ピル・カード・一覧帯
+/* Transcript marks (docs/log/69 / ADR 0050): the underline, colour pill, card and list band
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
-/* ── 転写のマーカー（docs/log/69 / ADR 0050）─────────────────────────────────────
-   色は利用者が選ぶ「意味」の軸、作成者は下線の色。2つを1つの軸へ押し込むと、
-   共有先が3人いる会話で色が意味を失う（ADR 0050 決定 5）。 */
+/* Transcript marks (docs/log/69 / ADR 0050).
+   Colour is the "meaning" axis the user picks; the author is carried by the underline colour.
+   Folding the two into one axis makes colour meaningless once a conversation is shared with
+   three people (ADR 0050 decision 5). */
 mark.tmark {
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
   cursor: pointer;
-  /* 下線ぶんの高さで行が揺れないよう、box-shadow で引く（border-bottom は行送りを変える）。 */
+  /* Draw with box-shadow so the underline adds no height (border-bottom shifts leading). */
   box-shadow: inset 0 -2px 0 0 var(--tmark-author, transparent);
 }
 mark.tmark-yellow { background: var(--mark-yellow); }
 mark.tmark-green { background: var(--mark-green); }
 mark.tmark-blue { background: var(--mark-blue); }
 mark.tmark-pink { background: var(--mark-pink); }
-/* 所有者（a0）は下線を出さない: 1人で使っているセッションで全部に線が入ると煩い。
-   誰が引いたかが問題になるのは共有して2人目が現れた時なので、そこから色が付く。 */
+/* The owner (a0) gets no underline: in a single-user session underlining everything is just
+   noise. Who marked it only matters once the session is shared and a second author appears,
+   which is when the colour starts to show. */
 mark.tmark-a1 { --tmark-author: var(--mark-author-1); }
 mark.tmark-a2 { --tmark-author: var(--mark-author-2); }
 mark.tmark-a3 { --tmark-author: var(--mark-author-3); }
 mark.tmark-a4 { --tmark-author: var(--mark-author-4); }
 mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
 
-/* 選択したときに出る色ピル。 */
+/* Colour pill shown on selection. */
 .tmark-pill {
   position: fixed; z-index: 60; display: flex; gap: 6px;
   padding: 6px; border: 1px solid var(--border); border-radius: 8px;
@@ -43,7 +46,7 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
 .tmark-swatch.tmark-pink { background: var(--mark-pink); }
 .tmark-swatch:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* 引いてある線をクリックしたときのカード（誰が・いつ・引用・消す）。 */
+/* Card shown when an existing mark is clicked (who, when, quote, delete). */
 .tmark-card {
   position: fixed; z-index: 60; max-width: min(360px, 92vw);
   display: flex; flex-direction: column; gap: 6px;
@@ -63,8 +66,9 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
 }
 .tmark-card-del { align-self: flex-start; }
 
-/* マーカーの一覧帯（docs/log/69 §69.7）。畳み方と寸法は変更ファイル帯（.mirror-files）に
-   揃える — 同じ帯に並ぶパネルが別々の作法だと、無関係な機能が2つあるように読める。 */
+/* Mark list band (docs/log/69 §69.7). Collapsing behaviour and dimensions follow the changed-
+   files band (.mirror-files): two panels in the same band behaving differently read as two
+   unrelated features. */
 .mirror-marks {
   margin: 6px 16px;
   border: 1px solid var(--border);
@@ -89,7 +93,7 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
   color: var(--fg); cursor: pointer; font-size: 12px; text-align: left;
 }
 .tmark-row-btn:hover:not(:disabled) { background: var(--hover, var(--panel2)); }
-/* 押せない行 = その印のターンがまだ tail 窓の外（スクロール先が画面に無い）。 */
+/* A disabled row means the marked turn is still outside the tail window (nothing to scroll to). */
 .tmark-row-btn:disabled { opacity: 0.5; cursor: default; }
 .tmark-chip { flex: none; width: 10px; height: 10px; border-radius: 3px; }
 .tmark-chip.tmark-yellow { background: var(--mark-yellow); }

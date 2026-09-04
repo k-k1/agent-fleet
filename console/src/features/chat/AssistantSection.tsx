@@ -1,4 +1,4 @@
-// AssistantSection — left-rail home for headless-CLI chat (docs/log/19): a ＋新規
+// AssistantSection — left-rail home for headless-CLI chat (docs/log/19): a "new" (「＋新規」)
 // assistant picker popover (templates stay out of the rail) over the
 // conversation history list. Picking an assistant opens a DRAFT — nothing is
 // persisted until the first message. Port onto the zustand stores.
@@ -80,16 +80,17 @@ export const AssistantSection = memo(function AssistantSection() {
       .then((r) => setAssistants(r.assistants || []))
       .catch(() => {});
   }, [setConvs]);
-  // 一覧は agent へプロキシされるので、WS 起動直後は不通で {error: http_5xx} が返る（api() は
-  // これを例外にせず解決するため上の .catch は拾わない）。この欄は他の左ペイン欄と違ってポーリングが
-  // 無く、過渡応答を空と確定すると次の listTick まで「チャットはまだありません」のまま無期限に固着
-  // していた。running 中の過渡的失敗はバックオフ再試行し、停止中（同じ 502 が返る）は空を確定する。
-  // deps の chatListTick は、下書きが実スレッドになったときに再取得させるためのもの。
+  // The list is proxied to the agent, so right after a workspace start it is unreachable and
+  // answers {error: http_5xx} — api() resolves that instead of throwing, so the .catch above
+  // does not see it. Unlike the other left-rail sections this one has no poller, so treating a
+  // transient answer as empty pinned the "no chats yet" text until the next listTick. A
+  // transient failure while running is retried with backoff; while stopped (the same 502) the
+  // empty result is final. The chatListTick dep re-fetches when a draft becomes a real thread.
   useRetryLoad(
     async (signal) => {
       const [c, a] = await Promise.all([chatList().catch(() => null), assistantList().catch(() => null)]);
       if (signal.aborted) return true;
-      const stalled = (r: unknown) => r === null || isTransientErr(r); // 例外＝通信断も過渡的
+      const stalled = (r: unknown) => r === null || isTransientErr(r); // a throw (network drop) is transient too
       if (running && (stalled(c) || stalled(a))) return false; // agent still booting — retry
       setConvs(c?.conversations || []);
       setAssistants(a?.assistants || []);
@@ -99,7 +100,7 @@ export const AssistantSection = memo(function AssistantSection() {
   );
 
   useDismiss([pickerRef, pickerMenuRef], pickerOpen, () => setPickerOpen(false));
-  // Anchor the popover below the ＋ button, viewport-clamped.
+  // Anchor the popover below the new-chat button, viewport-clamped.
   useLayoutEffect(() => {
     const el = pickerMenuRef.current;
     const anchor = pickerRef.current;
@@ -158,7 +159,7 @@ export const AssistantSection = memo(function AssistantSection() {
   };
 
   // Only started threads are listed — a draft is never persisted (docs/log/19).
-  // 作業グループ (docs/log/52): scope the list to the active group's conversations.
+  // Working group (docs/log/52): scope the list to the active group's conversations.
   const wsets = workingSetList(useSettings());
   const wset = useActiveWorkingSet();
   const startedConvs = useMemo(
@@ -175,9 +176,9 @@ export const AssistantSection = memo(function AssistantSection() {
   const startChat = (a: Assistant) => openAssistantDraft(a.id);
 
   const saveAssistant = async (input: AssistantInput) => {
-    // apiJSON はサーバエラーを {error} で解決する（例外にならない）。黙って成功扱いにすると
-    // モーダルが閉じて入力（persona 等）が消えるので、失敗はトーストして throw し、
-    // AssistantModal 側は開いたままにする。
+    // apiJSON resolves a server error as {error} rather than throwing. Treating that as
+    // success would close the modal and lose what was typed (the persona, …), so a failure is
+    // toasted and re-thrown, leaving AssistantModal open.
     const res = await (editing ? assistantUpdate(editing.id, input) : assistantCreate(input)).catch(() => null);
     if (!res || (res as { error?: unknown }).error) {
       toast(editing ? tr("asst.update_failed") : tr("asst.create_failed"));
@@ -195,7 +196,8 @@ export const AssistantSection = memo(function AssistantSection() {
     });
     if (!ok) return;
     try {
-      // raw() は HTTP エラーでも resolve する — res.ok を見ないと失敗が無通知になる。
+      // raw() resolves even on an HTTP error, so without checking res.ok a failure would be
+      // silent.
       const res = await assistantDelete(a.id);
       if (!res.ok) {
         toast(tr("asst.delete_failed"));
@@ -220,8 +222,9 @@ export const AssistantSection = memo(function AssistantSection() {
     }
   };
 
-  // 削除ロック（docs/log/45）: この会話を削除保護に固定/解除する。保護そのものは Agent
-  // 側（DELETE が 403）で、ここは切替と見た目の抑止だけ。
+  // Deletion lock (docs/log/45): pin or release this conversation against deletion. The
+  // protection itself is on the Agent (DELETE answers 403); this only toggles it and greys
+  // out the affordance.
   const toggleConvLock = async (c: ConversationMeta) => {
     const locked = !c.locked;
     const res = await chatSetLock(c.id, locked);
@@ -237,7 +240,7 @@ export const AssistantSection = memo(function AssistantSection() {
     refresh();
   };
 
-  // Copy the conversation's short slug ("a…", docs/log/38 アシスタント発火) — the id humans
+  // Copy the conversation's short slug ("a…", docs/log/38 §assistant triggering) — the id humans
   // and schedules address a conversation by. UUID fallback only for a conversation the
   // agent hasn't backfilled yet.
   const copyId = (c: ConversationMeta) => {

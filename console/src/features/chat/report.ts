@@ -20,8 +20,8 @@ const NOTE_RATE_LIMIT = "chat.report.note.rate_limit_resume";
 const NOTE_FOLD = "chat.report.note.fold";
 const NOTE_REOPEN_TARGET = "chat.report.note.reopen_target";
 
-// Times ride as epoch millis so the Console formats them in the user's locale — a
-// server-formatted「1月2日 15:04」would stay Japanese in an English Console.
+// Times ride as epoch millis so the Console formats them in the user's locale; formatted
+// server-side they would stay Japanese in an English Console.
 function at(ms: string | undefined): string {
   const n = Number(ms);
   return Number.isFinite(n) && n > 0 ? fmtDateTime(n) : "";

@@ -1,12 +1,11 @@
-// SendSelectionModal — ported from the old components/SendSelectionModal.tsx
-// (docs/log/22 P6c). Sends a file — with a comment — to a running session (the coding
+// SendSelectionModal — sends a file, with a comment, to a running session (the coding
 // agent that acts on it) or an assistant chat. Two modes:
 //   - QUOTE mode (quote/startLine/endLine given): a selected range is quoted inline (a
 //     Files/CodeView selection → session/assistant, docs/log/19 Phase C).
 //   - FILE mode (no quote): the WHOLE file is handed by PATH reference to a SESSION — for
 //     work that produces a file (e.g. "translate this manual and save it"), which the
 //     chat assistant can't do (it's chat-only, no file writes). Assistants are hidden here
-//     since attaching a file to a chat is the Files "アシスタントで開く" flow.
+//     since attaching a file to a chat is the Files "open with the assistant" flow.
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -28,8 +27,8 @@ import { baseName, langFor } from "../../lib/filemeta.ts";
 import type { Session } from "../../types/session.ts";
 import type { Assistant } from "../../types/assistant.ts";
 
-// Remember the session the user last sent to, so it's re-selected next time (if still
-// 入力待ち). A single key — "the session I'm feeding excerpts/files to".
+// Remember the session the user last sent to, so it's re-selected next time (if it is
+// still waiting for input). A single key — "the session I'm feeding excerpts/files to".
 const LAST_SESSION_KEY = "af.sendsel.lastSession";
 
 interface SendSelectionModalProps {
@@ -71,11 +70,11 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
 
   // The repo the file lives in (repos/<repo>/…), used to prefer a session in it.
   const fileRepo = filePath.startsWith("repos/") ? filePath.split("/")[1] : null;
-  // "入力待ち": an alive coding-agent session that's idle (not working/question/…) — the
+  // "Waiting for input": an alive coding-agent session that's idle (not working/question/…) — the
   // best target since it picks the instruction up immediately (see sessionview stateInfo).
   const isWaiting = (s: Session) =>
     !!s.alive && agentOf(s.kind).caps.chat && (!s.state || s.state === "idle");
-  // Rank alive sessions: same repo first, then 入力待ち. Used for both the default
+  // Rank alive sessions: same repo first, then waiting for input. Used for both the default
   // selection and the option order.
   const rank = (s: Session) => (fileRepo && s.repo === fileRepo ? 2 : 0) + (isWaiting(s) ? 1 : 0);
   const sortedSessions = useMemo(
@@ -84,8 +83,9 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
     [sessions, fileRepo],
   );
 
-  // Default target: the last session sent to if it's still 入力待ち; else the highest-ranked
-  // alive session (same-repo / 入力待ち優先); else the first session, else (quote mode) an assistant.
+  // Default target: the last session sent to if it's still waiting for input; else the
+  // highest-ranked alive session (same repo and waiting for input preferred); else the
+  // first session, else (quote mode) an assistant.
   useEffect(() => {
     if (target) return;
     const last = localStorage.getItem(LAST_SESSION_KEY);
@@ -171,7 +171,7 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
   // Queue the item instead of sending now (docs/log/21): file mode → a file memo (path +
   // comment), quote mode → a text memo carrying the composed quote. repo comes from the
   // path; category is free-form (with existing-category suggestions). Doesn't need a
-  // running session — the queue is flushed later from the メモキュー panel.
+  // running session — the queue is flushed later from the memo queue panel.
   const addToQueue = async () => {
     if (busy) return;
     setBusy(true);

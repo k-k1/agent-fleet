@@ -1,11 +1,12 @@
 // MemoQueueSection (docs/log/21, UI刷新) — the left-pane memo queue. Notes accumulate per
 // membership and sync across devices (Control-Plane persisted, no server push → refetch
 // on mount / store bump + slow poll while mounted). The revamp:
-//   - the composer is hidden by default; a header ＋ or leader Ctrl/⌘+K → M reveals it;
+//   - the composer is hidden by default; a header "+" or leader Ctrl/⌘+K → M reveals it;
 //   - a queued memo is editable in place (click to expand full text, click again to edit);
 //   - categories are first-class (add empty, rename, delete) and everything reorders by
 //     drag — memos within/between categories, and the categories themselves;
-//   - "送信…" opens SendMemoModal to edit the concatenated text and pick a destination.
+//   - the send button (「送信…」) opens SendMemoModal to edit the concatenated text and
+//     pick a destination.
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -287,7 +288,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     }
   };
 
-  // One-shot: a PWA share (Android 共有シート) launches the app at ?share=<id>. Pull the
+  // One-shot: a PWA share (the Android share sheet) launches the app at ?share=<id>. Pull the
   // shared text + images out of the SW stash, reveal the composer, and prefill it.
   useEffect(() => {
     let alive = true;
@@ -310,7 +311,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     setEditing(null);
     try {
       const res = await memoUpdate(m.id, { body: body.trim(), category: category.trim() });
-      // apiJSON はサーバエラーを {error} で解決する（例外にならない）— 偽の成功トーストを出さない。
+      // apiJSON resolves a server error as {error} rather than throwing, so check it or a
+      // false success toast is shown.
       if ((res as { error?: unknown }).error) {
         toast(t("common.send_failed"));
         return;
@@ -326,8 +328,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const remove = async (id: string) => {
     try {
       const res = await memoDelete(id);
-      // 失敗時に下の GC まで走らせない: keep 集合から当該メモの画像が抜けるため、削除に
-      // 失敗して生き残ったメモの画像だけがコンテナから消えてしまう。
+      // Do not fall through to the GC below on failure: that memo's image leaves the keep
+      // set, so the images of the very memos that survived a failed delete would be the
+      // ones erased from the container.
       if (!res.ok) {
         toast(t("common.delete_failed"));
         return;
@@ -361,7 +364,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     if (!next || next === c.name) return;
     try {
       const res = await memoCategoryUpdate(c.id, { name: next });
-      // apiJSON はサーバエラーを {error} で解決する（例外にならない）— 失敗を黙って握り潰さない。
+      // apiJSON resolves a server error as {error} rather than throwing, so check it or the
+      // failure is swallowed silently.
       if ((res as { error?: unknown }).error) {
         toast(t("common.send_failed"));
         return;
@@ -380,7 +384,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     });
     if (!ok) return;
     try {
-      // raw() は HTTP エラーでも resolve する — res.ok を見ないと偽の成功トーストになる。
+      // raw() resolves even on an HTTP error, so without checking res.ok this shows a false
+      // success toast.
       const res = await memoCategoryDelete(c.id);
       if (!res.ok) {
         toast(t("common.delete_failed"));
@@ -424,7 +429,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     const [moved] = arr.splice(di, 1);
     const target = arr.find((m) => m.id === targetId)!;
     const changedGroups = [{ repo: moved.repo, category: moved.category }];
-    // state 配列内のオブジェクトを直接書き換えない — 新オブジェクトで差し替える。
+    // Never mutate an object inside the state array; replace it with a new one.
     const placed = { ...moved, repo: target.repo, category: target.category };
     const insertAt = arr.findIndex((m) => m.id === targetId);
     arr.splice(insertAt, 0, placed);
@@ -444,7 +449,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       arr.splice(di, 0, moved); // no-op drop onto own group
       return;
     }
-    // state 配列内のオブジェクトを直接書き換えない — 新オブジェクトで差し替える。
+    // Never mutate an object inside the state array; replace it with a new one.
     const placed = { ...moved, repo, category };
     arr.push(placed);
     setMemos(arr);
@@ -463,8 +468,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     repoCats.splice(di, 1);
     const ti = repoCats.findIndex((c) => c.id === targetId);
     repoCats.splice(ti, 0, drag);
-    // 楽観更新: prev をそのまま map すると要素の並びが変わらず no-op（refetch まで反映されない）。
-    // この repo のカテゴリが占めるスロットへ、並べ替え後の repoCats を先頭から順に差し込む。
+    // Optimistic update: mapping `prev` straight through leaves the element order unchanged
+    // and is a no-op, so nothing shows until the refetch. Instead, fill the slots this
+    // repo's categories occupy with the reordered repoCats, in order.
     setCats((prev) => {
       let i = 0;
       return prev.map((c) => (c.repo === drag.repo ? repoCats[i++] : c));
@@ -725,7 +731,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             <Icon name="gripper" />
                           </span>
                         ) : (
-                          // 未分類 isn't reorderable/deletable, but keep the grip column so its
+                          // The uncategorised bucket isn't reorderable/deletable, but keep the grip column so its
                           // header aligns with the named categories below.
                           <span className="memo-cat-grip placeholder" aria-hidden="true" />
                         )}

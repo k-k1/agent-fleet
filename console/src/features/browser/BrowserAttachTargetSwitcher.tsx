@@ -1,7 +1,7 @@
-// タブ切替(docs/log/53 §53.??): 複数タブを順に操作するスクリプトへ attach したとき、
-// 別タブへ切り替えるたびに「ペインを閉じる→エージェントに再attachを頼む→新しいリンクを
-// 開く」を繰り返すのは UX を損ねる。同じ attachment id のまま裏の CDP target だけ差し替える
-// Retarget API をこのボタンから直接呼べるようにする。
+// Tab switching (docs/log/53): when attached to a script that drives several tabs in turn,
+// repeating "close the pane, ask the agent to re-attach, open the new link" for every switch
+// is poor UX. This button calls the Retarget API directly instead, swapping only the
+// underlying CDP target while the attachment id stays the same.
 import { createPortal } from "react-dom";
 import { useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";

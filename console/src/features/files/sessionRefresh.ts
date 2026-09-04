@@ -1,56 +1,63 @@
-// sessionRefresh — 「セッションのターンが終わったら、そのセッションの作業コピーの
-// ぶんだけ FILES を読み直す」配線。
+// sessionRefresh — the wiring that re-reads FILES for one session's working copy when
+// that session's turn ends.
 //
-// なぜ要るか: ツリーの更新は今まで **手動の更新ボタンと WS の起動/停止だけ**だった
-// （store.ts の tick）。エージェントが作った/消したファイルは次に人が更新ボタンを
-// 押すまで出てこず、そのボタンに気づかない人が「反映されない」と詰まっていた。
+// Why it exists: the tree used to refresh only on the manual refresh button and on
+// workspace start/stop (the tick in store.ts). Files an agent created or deleted stayed
+// invisible until someone pressed that button, and anyone who had not noticed the button
+// was stuck believing nothing had happened.
 //
-// なぜ「入力待ちに入った瞬間」か: ターン中はファイルが増減し続けるので、そこを
-// 追いかけるには監視か定期取得が要る（どちらも往復が要る・docs の検討を見よ）。
-// 一方ターンの終わりは **すでに手元にある情報**で分かる — セッション一覧は push でも
-// poll でも applyList を通り、state を運んでくる。だから追加の通信はゼロで、
-// 「エージェントが手を止めた ＝ 結果が出そろった」という人の期待とも一致する。
+// Why the moment the session goes idle: files keep appearing and disappearing during a
+// turn, so following that would need a watcher or periodic fetches, both of which cost
+// round trips. The end of a turn, by contrast, is derivable from information already in
+// hand — the session list carries state through applyList whether it arrived by push or
+// by poll. So this costs no extra traffic, and it matches the expectation that the agent
+// stopping means the results are in.
 //
-// 前例: 「稼働 → 非稼働」の縁の取り方は useSessionNotifications / waiting.ts と同じ。
-// 初観測では**発火しない**のも同じ理由で、リロード直後に全セッションぶんが一斉に
-// 走るのを防ぐ（waiting.ts の note を見よ）。
+// The busy -> not-busy edge is detected the same way as in useSessionNotifications /
+// waiting.ts, including not firing on the first observation, which keeps a reload from
+// refreshing every session at once (see the note in waiting.ts).
 //
-// ターンの終わりだけでは足りない場面が 2 つあり、それぞれ別の引き金で埋める:
-//   - **長いターンの最中に見に行く人** → 走っているセッションの作業コピーだけを
-//     WORKING_TICK_MS 間隔で読み直す（下の tickWorking。走っているものが無ければ
-//     タイマーごと止まる）。
-//   - **離席していた人** → タブ復帰／ウィンドウ focus での再検証。これはツリー側
-//     （ProjectFiles / FilesChanges）に置く。state を持たない shell セッションが
-//     触ったファイルを拾えるのも、事実上ここだけ。
+// Two cases the end of a turn does not cover, each filled by its own trigger:
+//   - Someone looking mid-way through a long turn: re-read only running sessions' working
+//     copies every WORKING_TICK_MS (tickWorking below; the timer stops entirely when
+//     nothing is running).
+//   - Someone who was away: revalidation on tab return / window focus, which lives on the
+//     tree side (ProjectFiles / FilesChanges). It is also effectively the only way to pick
+//     up files touched by a shell session, which carries no state.
 import { useSessionsStore } from "../sessions/store.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { COALESCE_MS, MIN_GAP_MS, WORKING_TICK_MS } from "./refreshPolicy.ts";
 import { useFilesStore } from "./store.ts";
 import type { Session } from "../../types/session.ts";
 
-/** 走っている状態。これ以外（idle / question / plan / permission / limited /
- *  blocked / auth …）は「ターンが終わって人の番になった」側で、どれも読み直す価値が
- *  ある — 質問で止まったセッションも、そこまでに書いたファイルは残っている。 */
+/** The running states. Everything else (idle / question / plan / permission / limited /
+ *  blocked / auth ...) means the turn ended and it is the human's move, and all of them
+ *  are worth re-reading: a session paused on a question still leaves behind the files it
+ *  wrote up to that point. */
 const BUSY_STATES = new Set(["working", "compacting"]);
 
-/** 稼働中（＝まだ書いているかもしれない）か。backgroundBusy は「hook 上は idle だが
- *  バックグラウンドのタスクがまだ走っている」— そこで読んでも取りこぼすので busy 扱い。 */
+/** Whether the session is running, i.e. may still be writing. backgroundBusy means idle
+ *  as far as the hook is concerned but with a background task still going; reading then
+ *  would miss files, so it counts as busy. */
 export const isBusySession = (s: Pick<Session, "alive" | "state" | "backgroundBusy">): boolean =>
   !!s.alive && (BUSY_STATES.has(s.state || "") || !!s.backgroundBusy);
 
-/** そのセッションが書き換えうる範囲（home 相対）。作業コピーを持たないセッション
- *  （home で動く shell など）は "" — 範囲が決められないので何もしない。
- *  subdir があっても作業コピー単位に丸める: エージェントは cwd の外も普通に触る。 */
+/** The range a session may rewrite, relative to home. A session with no working copy (a
+ *  shell running in home, say) gets "" — no range can be determined, so nothing happens.
+ *  Rounded to the working copy even when a subdir is set: agents routinely touch files
+ *  outside their cwd. */
 export const sessionPrefix = (s: Pick<Session, "repo">): string => (s.repo ? "repos/" + s.repo : "");
 
-// 間合いの数字とその根拠は refreshPolicy.ts（撃つ側と読む側で共有する）。
+// The timing constants and the reasoning behind them live in refreshPolicy.ts, shared
+// between the side that fires and the side that reads.
 
 /**
- * 一覧が届くたびに呼び、「読み直すべき作業コピー」を返す純関数を作る。
- * 台帳（name → 直前は busy だったか）は呼び出しごとに更新される。
+ * Builds a pure function to call on every incoming list, returning the working copies
+ * that should be re-read. Its ledger (name -> was busy last time) is updated per call.
  *
- * ★ 初観測は記録だけで発火しない。★ 一覧から消えたセッション（削除・アーカイブ）も
- * 発火しない — 消えた行は repo を持って行ってしまうので、そもそも範囲が引けない。
+ * A first observation is only recorded, never fired on. Sessions that vanish from the
+ * list (deleted, archived) do not fire either: the row takes its repo with it, so no
+ * range can be derived.
  */
 export function createTurnEndDetector(): (list: Session[]) => string[] {
   let before = new Map<string, boolean>();
@@ -60,8 +67,9 @@ export function createTurnEndDetector(): (list: Session[]) => string[] {
     for (const s of list) {
       const busy = isBusySession(s);
       next.set(s.name, busy);
-      // true → false だけが縁。undefined（初観測）は素通り。alive が落ちた行も
-      // busy=false になるので、停止/終了で終わったターンもここで拾える。
+      // Only true -> false is an edge; undefined (first observation) passes through. A row
+      // whose alive dropped also becomes busy=false, so turns ended by a stop or an exit
+      // are picked up here too.
       if (before.get(s.name) === true && !busy) {
         const prefix = sessionPrefix(s);
         if (prefix) out.add(prefix);
@@ -73,12 +81,14 @@ export function createTurnEndDetector(): (list: Session[]) => string[] {
 }
 
 /**
- * ストアへ配線する（App が 1 回だけ呼ぶ）。返り値は解除（StrictMode 安全）。
+ * Wires this into the store; App calls it exactly once. The return value unsubscribes and
+ * is StrictMode-safe.
  *
- * 発火は作業コピーごとに合流させ、最短間隔を空ける。FILES セクションが閉じていても
- * 止めない — 合図はストアのカウンタを 1 つ進めるだけで、木が生えていなければ誰も
- * 読みに行かない（ProjectFiles は閉じるとアンマウントされる）。**この形のおかげで、
- * 走行中の低頻度更新も「誰も見ていなければ 0 リクエスト」になる。**
+ * Firing is coalesced per working copy and kept above a minimum gap. It is not stopped
+ * when the FILES section is closed: the signal only advances a counter in the store, and
+ * with no tree mounted nobody goes and reads (ProjectFiles unmounts when closed). That
+ * shape is what makes the low-frequency mid-turn refresh cost zero requests when nobody
+ * is looking.
  */
 export function wireFilesSessionRefresh(): () => void {
   const detect = createTurnEndDetector();
@@ -93,14 +103,15 @@ export function wireFilesSessionRefresh(): () => void {
     useFilesStore.getState().refreshUnder(prefix);
   };
   const schedule = (prefix: string) => {
-    if (timers.has(prefix)) return; // 予約済み — その 1 回が今回のぶんも兼ねる
+    if (timers.has(prefix)) return; // already scheduled; that one run covers this call too
     const since = Date.now() - (lastAt.get(prefix) || 0);
     const delay = Math.max(COALESCE_MS, MIN_GAP_MS - since);
     timers.set(prefix, window.setTimeout(() => fire(prefix), delay));
   };
 
-  // 走行中の低頻度更新。見えていない（タブが裏・WS が停止）ときは撃たない —
-  // 「見ている人のための更新」であって、監視ではない。
+  // The low-frequency mid-turn refresh. It does not fire when nothing is visible (tab in
+  // the background, workspace stopped): this refreshes for someone who is looking, it is
+  // not a watcher.
   const tickWorking = () => {
     if (document.hidden || !wsRunning(useWorkspaceStore.getState().state)) return;
     for (const prefix of busyPrefixes) schedule(prefix);
@@ -111,7 +122,7 @@ export function wireFilesSessionRefresh(): () => void {
     busyPrefixes = [
       ...new Set(s.sessions.filter(isBusySession).map(sessionPrefix).filter(Boolean)),
     ];
-    // 走っているものが 1 つも無ければタイマーを畳む（常駐させない）。
+    // Fold the timer away once nothing is running, so it never becomes resident.
     if (busyPrefixes.length && !ticker) ticker = window.setInterval(tickWorking, WORKING_TICK_MS);
     else if (!busyPrefixes.length && ticker) {
       window.clearInterval(ticker);

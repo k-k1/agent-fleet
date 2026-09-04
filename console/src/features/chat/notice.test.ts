@@ -22,11 +22,11 @@ describe("noticeText (ADR 0033)", () => {
     const text = noticeText({ content: "", notice_key: "chat.notice.compact_auto", notice_args: { summary } });
     expect(text).toContain("自動で圧縮しました");
     expect(text).toContain(summary);
-    expect(text).toContain("\n\n---\n\n"); // 要約の前の区切り線は残す
+    expect(text).toContain("\n\n---\n\n"); // keep the rule that precedes the summary
   });
 
-  // 要約は LLM が書いた任意のテキスト。{...} を含んでいても二重展開されない
-  // （interpolate は 1 パスなので、差し込んだ中身は再走査されない）。
+  // The summary is arbitrary LLM-written text: even when it contains {...} it is not expanded
+  // a second time, because interpolate makes a single pass and never rescans what it inserted.
   it("does not re-expand placeholders that appear inside the summary", () => {
     const text = noticeText({
       content: "",
@@ -70,7 +70,8 @@ describe("noticeText (ADR 0033)", () => {
     expect(many).toContain("3 session reports are still unprocessed");
   });
 
-  // エージェント切替の notice は kind（"codex"）を運ぶ。カードは他の画面と同じ製品名で出す。
+  // The agent-switch notice carries the kind ("codex"); the card must show the same product
+  // name as every other screen.
   it("renders the agent-switch notice with the agent's display name", () => {
     const text = noticeText({
       content: "",
@@ -79,11 +80,11 @@ describe("noticeText (ADR 0033)", () => {
     });
     expect(text).toContain("Codex");
     expect(text).not.toContain("{agent}");
-    expect(text).not.toContain("「codex」"); // 生の kind を出さない
+    expect(text).not.toContain("「codex」"); // never surface the raw kind
   });
 
-  // Console が知らない kind は生値のまま（agentOf() の既定は Claude なので、名前を
-  // 借りると「別のエージェントに切り替えた」と嘘をつくカードになる）。
+  // A kind the Console does not know stays verbatim: agentOf() defaults to Claude, so
+  // borrowing a name would produce a card that lies about which agent was switched to.
   it("keeps an unknown agent kind verbatim", () => {
     const text = noticeText({
       content: "",
@@ -94,7 +95,8 @@ describe("noticeText (ADR 0033)", () => {
     expect(text).not.toContain("Claude");
   });
 
-  // 旧レコード（キー無し）と、Console が知らないキーは content へ落ちる。空カードにしない。
+  // Legacy records (no key) and keys the Console does not know fall back to content, so the
+  // card is never empty.
   it("falls back to the stored content for legacy and unknown notices", () => {
     expect(noticeText({ content: "旧 notice の本文" })).toBe("旧 notice の本文");
     expect(noticeText({ content: "旧 notice の本文", notice_key: "chat.notice.from_the_future" })).toBe(

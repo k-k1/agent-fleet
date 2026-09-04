@@ -42,19 +42,20 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const s = useSettings();
   const tr = useT();
   const isMobile = useIsMobile();
-  // 音声読み上げ（docs/log/24）: ピルは常時表示。再生中は「読み上げ中＋停止」（クリックで全体
-  // 1 本の再生を止める）、アイドル時は設定 ttsEnabled の ON/OFF トグルとして働く。
-  // ttsSessionNotify（音声通知）は別軸なので、OFF でも speaking になり得る＝speaking 優先。
+  // Text-to-speech (docs/log/24): the pill is always shown. While speaking it reads
+  // "speaking + stop" and a click stops the whole utterance; when idle it is the ON/OFF
+  // toggle for the ttsEnabled setting. Voice session notifications (ttsSessionNotify) are
+  // a separate axis and can speak while the setting is OFF, so speaking wins.
   const ttsSpeaking = useTtsStore((st) => st.speaking);
   const ttsPreparing = useTtsStore((st) => st.preparing);
   const ttsSource = useTtsStore((st) => st.source);
   const ttsVoice = useTtsStore((st) => st.voice);
-  const ttsBusy = ttsSpeaking || ttsPreparing; // 生成中（最初の音の前）もピルは再生扱い
+  const ttsBusy = ttsSpeaking || ttsPreparing; // synthesis counts as playing for the pill
   // Hamburger: single-click toggles the left pane open/closed; double-click toggles
   // its desktop display mode (Push ⇄ overlay). We debounce the single action so a
   // double-click doesn't also fire it. Mobile keeps the immediate drawer toggle.
   const clickTimer = useRef<number | null>(null);
-  // unmount 時に保留中のシングルクリック遅延を破棄 — アンマウント後の toggleLeft 発火を防ぐ。
+  // Drop the pending single-click delay on unmount, so toggleLeft cannot fire afterwards.
   useEffect(() => {
     return () => {
       if (clickTimer.current != null) window.clearTimeout(clickTimer.current);
@@ -79,7 +80,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const me = whoami?.email || whoami?.user || "";
   const canLogout = whoami?.auth_mode === "oauth"; // CP-native session we can clear
   const [menuOpen, setMenuOpen] = useState(false);
-  const [apprOpen, setApprOpen] = useState(false); // 外観 (theme + surface colors) popover
+  const [apprOpen, setApprOpen] = useState(false); // appearance (theme + surface colors) popover
   const [fullscreen, setFullscreen] = useState(false);
   const acctRef = useRef<HTMLDivElement>(null);
   const apprRef = useRef<HTMLDivElement>(null);
@@ -96,8 +97,8 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
     else document.documentElement.requestFullscreen?.().catch(() => {});
   };
 
-  // Close the account menu / 外観 popover on an outside click or Escape. The 外観
-  // popover is kept separate from the account menu so surface colors can be tuned in
+  // Close the account menu / appearance popover on an outside click or Escape. The
+  // appearance popover is kept separate from the account menu so surface colors can be tuned in
   // a light popover while the panes stay visible behind it (a full settings modal
   // would hide the live preview).
   useDismiss(acctRef, menuOpen, () => setMenuOpen(false));
@@ -108,7 +109,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const openTenantSettings = useSettingsUI((st) => st.openTenantSettings);
   // Native host self-update (docs/log/42): null on non-native deployments. When a newer
   // version is staged we surface it here — next to the build stamp — as a nudge into
-  // 設定 → ツールチェーン, where the actual "再起動して適用" action lives.
+  // Settings -> Toolchains, where the actual "restart and apply" action lives.
   const hostUpdate = useHostUpdate();
   const updateReady = !!hostUpdate?.restartRequired;
   // Deployment identity (version + images). Fetched only once the menu is opened —
@@ -177,10 +178,10 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 ? tr("topbar.tts.on")
                 : tr("topbar.tts.off")
           }
-          // 停止＋OFF の一体化ロジックはキーボードコマンドと共有（core/store/tts）。
+          // The combined stop+OFF logic is shared with the keyboard command (core/store/tts).
           onClick={toggleTtsPlayback}
         >
-          {/* 最初の音が鳴る前（合成待ち）はぐるぐるで「生成中」を示す */}
+          {/* Before the first sound (still synthesising), spin to show it is generating */}
           <Icon
             name={ttsPreparing ? "loading" : ttsBusy || s.ttsEnabled ? "unmute" : "mute"}
             spin={ttsPreparing}
@@ -204,7 +205,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         >
           <Icon name={fullscreen ? "screen-normal" : "screen-full"} />
         </button>
-        {/* PWA (standalone) 起動時はブラウザの再読み込みUIが無いので、代替のリロードボタンを出す。 */}
+        {/* Launched as a standalone PWA there is no browser reload UI, so offer one here. */}
         {isStandalonePWA() && (
           <button
             className="gear reload-toggle"
@@ -218,7 +219,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             <Icon name="refresh" />
           </button>
         )}
-        {/* 外観: a light popover so colors preview live on the panes behind it. */}
+        {/* Appearance: a light popover so colors preview live on the panes behind it. */}
         <div className="acct appr" ref={apprRef}>
           <button
             className="gear appr-btn"
@@ -260,10 +261,11 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     ))}
                   </div>
                 </div>
-                {/* 配置（分割ペイン / タブ付きグリッド）は色ではないが、面の見え方を
-                    ここで完結させたいので外観ポップの先頭付近に置く。設定→表示と同じ
-                    paneLayout を書くだけで、実際の切り替え（未保存の編集がある場合の
-                    確認を含む）は App の loadMode 側が受け持つ。 */}
+                {/* Pane layout (split panes / tabbed grid) is not a color, but everything
+                    about how the surfaces look should be settleable here, so it sits near
+                    the top of the appearance popover. This only writes the same paneLayout
+                    as Settings -> Display; the actual switch (including the confirmation
+                    when there are unsaved edits) is App's loadMode. */}
                 <div className="appr-seg-row">
                   <span className="appr-seg-lbl">{tr("display.pane_layout")}</span>
                   <div className="ui-seg choice-seg acct-theme-seg">
@@ -321,7 +323,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             {menuOpen && (
               <div className="acct-menu" role="menu">
                 {me && <div className="acct-email" title={me}>{me}</div>}
-                {/* テナント選択はアカウントメニュー内に集約（上部バーの横幅を節約）。 */}
+                {/* Tenant selection lives inside the account menu to save top-bar width. */}
                 {showPicker && (
                   <>
                     <label className="acct-tenant">
@@ -340,30 +342,31 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 <button className="acct-item" role="menuitem" onClick={() => run(openUserGuide)}>
                   <Icon name="book" /> {tr("topbar.user_guide")}
                 </button>
-                {/* 初回カードを「あとで」で閉じたあとの再入口（起動導線 Ph1）。 */}
+                {/* Way back in after dismissing the first-run card with "later" (launch flow Ph1). */}
                 <button className="acct-item" role="menuitem" onClick={() => run(openGuide)}>
                   <Icon name="rocket" /> {tr("topbar.guide")}
                 </button>
                 <button className="acct-item" role="menuitem" onClick={() => run(() => openSettings())}>
                   <Icon name="gear" /> {tr("topbar.settings")}
                 </button>
-                {/* テナント設定は「自分が管理しているテナント」の面。入口は在籍で決まる
-                    ——のだが、⚠️ **super_admin も出す**。サーバは前から super_admin を
-                    どのテナントの管理者としても通す（`tenantAdminFor`）ので、隠していたのは
-                    表示だけであり、その表示が「デプロイ管理者は管理モーダルから入る」という
-                    暗黙のルールを人に要求していた。実際それで、テナント設定にしか無い面
-                    （接続元の制限・docs/log/66）が在籍の無い super_admin から見えなくなった。
-                    テナントが複数あればモーダル側にピッカーが出る（TenantDialog）。 */}
+                {/* Tenant settings are the surface for tenants you administer, so membership
+                    normally decides the entry point — but super_admin gets it too. The server
+                    has always let super_admin through as an admin of any tenant
+                    (`tenantAdminFor`), so hiding the item hid only the door, and that door was
+                    the sole way into surfaces that exist nowhere else (source-address
+                    restriction, docs/log/66) for a super_admin with no membership. With more
+                    than one tenant the modal shows its own picker (TenantDialog). */}
                 {(superAdmin || tenants?.some((t) => t.role === "tenant_admin")) && (
                   <button className="acct-item" role="menuitem" onClick={() => run(() => openTenantSettings())}>
                     <Icon name="organization" /> {tr("topbar.tenant_settings")}
                   </button>
                 )}
-                {/* ★ 管理はデプロイ全体の面（テナントの作成・上限・ログイン規則・
-                    egress・ホスト・読み上げ辞書）で、CP はどれも withSuperAdmin 固定。
-                    tenant_admin にも意味のある面（メンバー・セッション・使用量・監査・
-                    MCP 配布）はテナント設定へ移したので、ここは super_admin だけでよい。
-                    ここを閉じたことは権限の実装ではない — サーバは前から 403 を返す。 */}
+                {/* Admin is the deployment-wide surface (creating tenants, limits, login
+                    rules, egress, hosts, the TTS dictionary) and the CP pins every one of
+                    those to withSuperAdmin. The surfaces that also mean something to a
+                    tenant_admin (members, sessions, usage, audit, MCP distribution) moved to
+                    tenant settings, so super_admin alone is right here. Hiding it is not the
+                    permission check: the server has always returned 403. */}
                 {superAdmin && (
                   <button className="acct-item" role="menuitem" onClick={() => run(openAdmin)}>
                     <Icon name="shield" /> {tr("topbar.admin")}
@@ -391,7 +394,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                   </>
                 )}
                 {/* Version zone. Native host self-update (docs/log/42) sits above the FE
-                    build stamp: a CTA when a newer af is staged (→ 設定 for the restart),
+                    build stamp: a CTA when a newer af is staged (-> Settings for the restart),
                     else the current host version. Both hidden on non-native (hostUpdate
                     null). The build stamp below is the Console FRONTEND bundle — a
                     separate thing — so each carries its own label. */}
@@ -418,7 +421,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     and the workspace share one ImageTag by convention, but a rollback
                     can move just one of them. The digest rides along because `:dev` is
                     mutable. Nothing here is compared against anything: backend drift is
-                    the WS-bar 要再起動 badge's job, and a second opinion here would be
+                    the WS-bar "restart required" badge's job, and a second opinion here would be
                     the version-comparison trap workspace_stale.go warns about. */}
                 {deployImages && (
                   <>
@@ -463,7 +466,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
 }
 
 // SwatchRow: a labeled row wrapping the shared SwatchGrid (surface-color picker) for
-// the 外観 popover. Tapping applies immediately and keeps the popover open.
+// the appearance popover. Tapping applies immediately and keeps the popover open.
 interface SwatchRowProps {
   label: string;
   theme: string;

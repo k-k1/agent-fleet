@@ -1,8 +1,9 @@
-// 作業計画パネル（docs/log/33 第5段）の描画・操作テスト。
+// Render and interaction test for the work-plan panel (docs/log/33 stage 5).
 //
-// 守りたいのは「原文キャリーフォワードの誤上書きを人が直せる」経路そのもの:
-// 編集中に外から計画が動いても打ちかけの文字を消さない、保存は打った本文をそのまま
-// 送る、クリアは確認を通す。ここが壊れると、自動更新が暴走したときの逃げ道が無くなる。
+// What this protects is the path by which a person repairs a bad verbatim carry-forward: an
+// external change to the plan while editing must not wipe half-typed text, save must send
+// exactly what was typed, and clear must go through the confirmation. Break this and there is
+// no escape hatch when the automatic update goes wrong.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -18,7 +19,8 @@ vi.mock("./api.ts", () => ({
 vi.mock("../../ui/ConfirmProvider.tsx", () => ({
   useConfirm: () => async () => confirmAnswer.value,
 }));
-// MarkdownView は本文を DOM へ流し込むだけで十分（描画経路の検証は本題ではない）。
+// Dumping the source into the DOM is enough for MarkdownView here; the render path is not
+// what this test measures.
 vi.mock("../viewer/MarkdownView.tsx", () => ({
   MarkdownView: ({ source }: { source?: string }) => <pre>{source}</pre>,
 }));
@@ -30,8 +32,8 @@ let host: HTMLDivElement;
 
 const CONV = { id: "c1", agent: "claude", title: "t", created_at: 0, updated_at: 0, messages: [] };
 
-// React は value プロパティの変更を握っているので、ネイティブ setter 経由で書かないと
-// onChange が発火しない（LaunchModal.dom.test.tsx と同じ流儀）。
+// React intercepts writes to the value property, so onChange only fires when the value is set
+// through the native setter (the same style as LaunchModal.dom.test.tsx).
 async function type(el: HTMLTextAreaElement, v: string): Promise<void> {
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, v);
@@ -95,14 +97,15 @@ describe("ChatPlan", () => {
     expect(setPlan).toHaveBeenCalledWith("c1", "## これからやること\n- Lane 2 を先に");
   });
 
-  // ★編集中に圧縮や別ペインが計画を書き換えても、打ちかけの本文を奪わない。
+  // A compaction or another pane rewriting the plan while editing must not take the
+  // half-typed text away.
   it("does not overwrite the draft while editing", async () => {
     await render();
     await click(btn("編集"));
     await type(area()!, "打ちかけ");
     await render({ plan: "## 外から入った新しい計画" });
     expect(area()!.value).toBe("打ちかけ");
-    // 編集を取り消せば、外から入った最新版に追随する。
+    // Cancelling the edit follows the newest externally-set version again.
     await click(btn("キャンセル"));
     expect(host.textContent).toContain("外から入った新しい計画");
   });

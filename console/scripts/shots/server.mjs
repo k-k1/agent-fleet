@@ -23,8 +23,8 @@ const arg = (name, dflt) => {
 };
 const PORT = Number(arg("port", 8765));
 const LOCALE = arg("locale", "ja");
-// 管理／テナント設定の面を出すかどうか。⚠️ 既定は off — 入口が 1 つ増えると
-// README のスクショ（アカウントメニュー）が黙って変わる。目視のときだけ立てる。
+// Whether to expose the admin / tenant-settings surface. Off by default: one extra entry point
+// silently changes the README screenshot of the account menu. Turn it on only to look at it.
 const ADMIN = argv.includes("--admin") || process.env.SHOTS_ADMIN === "1";
 
 const MIME = {
@@ -74,11 +74,11 @@ const exact = {
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/chat/conversations": () => ({ conversations: fx.conversations(LOCALE) }),
   "/api/assistants": () => fx.assistants(LOCALE),
-  // 作業項目（docs/log/80）。★ 未対応ルートは {} を返すだけなので、これが無いと
-  // レールの新しい面は「常に空」で描かれ、検証にならない。
+  // Work items (docs/log/80). Unhandled routes only answer {}, so without this the rail's new
+  // surface always renders empty and verifies nothing.
   "/api/work-items": () => fx.workItems(LOCALE),
-  // テナントが OAuth アプリを登録済みの状態（docs/log/80 §80.17）。これが無いと Jira の
-  // 「OAuth で接続」は常に無効で描かれ、導線を確かめられない。
+  // The state where the tenant has registered an OAuth app (docs/log/80 §80.17). Without it
+  // Jira's "connect with OAuth" always renders disabled and the flow cannot be checked.
   "/api/git-oauth": () => ({
     github: { configured: true },
     bitbucket: { configured: true },
@@ -90,12 +90,12 @@ const exact = {
   "/api/env/ui-prefs": () => ({}),
   "/api/update/status": () => ({ current: "0.3.0", latest: "0.3.0" }),
   "/api/usage": () => ({ agents: fx.usage(LOCALE) }),
-  // クラウド費用（docs/log/67）。⚠️ profile.available が true でないとタブごと出ないので、
-  // このスタブが無いとハーネスでは新しい面が存在しないのと同じになる。
+  // Cloud cost (docs/log/67). The whole tab is hidden unless profile.available is true, so
+  // without this stub the new surface does not exist as far as the harness is concerned.
   "/api/cost/profile": () => fx.costProfile(),
   "/api/cost/me": () => fx.myCloudCost(),
   "/api/admin/cloud-cost": () => fx.adminCloudCost(),
-  // テナント設定 → メンバー → 詳細（--admin のときだけ入口が出る）。
+  // Tenant settings -> members -> detail (the entry point appears only with --admin).
   "/api/admin/tenants": () => fx.adminTenants(),
   "/api/admin/workspace-sizing": () => ({
     runtime: "ecs-ec2",
@@ -146,8 +146,8 @@ const exact = {
   "/api/pat": () => ({}),
   "/api/tts/dict": () => ({ entries: [] }),
   "/api/workspace/stats": () => fx.stats(),
-  // プレビュー用サブドメイン（docs/log/81）: 発行済み URL と Workspace 単位の設定。
-  // 起動中の Workspace を模すので URL が入っている（停止中は previewUrls が空）。
+  // Preview subdomains (docs/log/81): the issued URLs and the per-workspace settings. This
+  // mimics a running Workspace, so the URLs are present; a stopped one has previewUrls empty.
   "/api/env/ws-settings": () => ({
     agentUpdate: false,
     allowAgentUpdate: true,
@@ -162,17 +162,18 @@ const exact = {
       "8080": "https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com",
     },
   }),
-  // 左ペイン「変更」ビュー — cross-repo, one call (see FilesChanges).
+  // The left rail's Changes view — cross-repo, one call (see FilesChanges).
   "/api/fs/changes": () => fx.fsChanges(LOCALE),
 };
 
 const re = [
   [/^\/api\/sessions\/([^/]+)\/messages$/, (m) => fx.messages(LOCALE, decodeURIComponent(m[1]))],
-  // 変更ファイル帯の「コミット済み」判定（docs/log/68 P2）: セッション開始以降のコミットに
-  // 現れた repo 相対パス。
+  // The "committed" verdict of the changed-files strip (docs/log/68 P2): repo-relative paths
+  // that appeared in a commit made since the session started.
   [/^\/api\/sessions\/([^/]+)\/committed$/, () => fx.committedFiles()],
-  // メンバー詳細の 4 本（docs/log/67 §67.15）。cost だけは stats/sessions の 4 秒ポーリングに
-  // 乗らず、開いたときと「適用」のときだけ引かれる（費用は 6 時間更新の DB 読みなので）。
+  // The four member-detail routes (docs/log/67 §67.15). cost alone stays off the 4-second
+  // stats/sessions polling and is fetched on open and on Apply, because it reads a DB refreshed
+  // every 6 hours.
   [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => fx.adminMembers()],
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/stats$/, () => fx.adminMemberStats()],
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/sessions$/, () => fx.adminMemberSessions(LOCALE)],

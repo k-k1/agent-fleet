@@ -1,33 +1,33 @@
-// Console UI E2E（L3）の happy path 1 本: ブラウザで Console を開き、左ペインの
-// セッションを開いて、xterm への打鍵が実コンテナの bash まで届くことを検証する。
-// xterm.js は canvas/WebGL 描画で DOM から文字が読めないため、ターミナル内容の
-// 目視アサートはせず「打鍵 → コンテナ内にファイルが生まれる」を CP の fs API で
-// 観測する（ブラウザ → WS 中継 → PTY → bash → fs の縦串がすべて本物）。
+// One happy path for the Console UI E2E (L3): open the Console in a browser, open a session
+// from the left pane, and check that keystrokes into xterm reach bash in the real container.
+// xterm.js draws to canvas/WebGL, so the characters cannot be read from the DOM; instead of
+// asserting on terminal content we observe "keystroke -> a file appears in the container"
+// through CP's fs API, which exercises browser -> WS relay -> PTY -> bash -> fs for real.
 import { test, expect } from "@playwright/test";
 
 const base = process.env.E2E_CP_BASE || "";
 
-test.skip(!base, "docker / イメージ / console-dist が無いため skip（CI は E2E_REQUIRE=1 で setup が fail する）");
+test.skip(!base, "skipped: docker / the image / console-dist is missing (on CI, E2E_REQUIRE=1 makes setup fail instead)");
 
-test("Console → セッションを開く → 打鍵がコンテナに届く", async ({ page, request }) => {
+test("Console -> open a session -> keystrokes reach the container", async ({ page, request }) => {
   await page.goto(base + "/");
 
-  // global-setup が API で作った shell セッション（home 配下 = repo なし）は
-  // 左ペイン「その他のセッション」に SessionRow（.sess-btn）として出る。
+  // The shell session global-setup created through the API (under home, so no repo) shows up
+  // in the left pane's "other sessions" group as a SessionRow (.sess-btn).
   const row = page.locator(".sess-btn", { hasText: process.env.E2E_SESSION_TITLE || "e2e-ui" });
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.click();
 
-  // ターミナルペインが開き xterm がマウントされる（.terminal 配下に .xterm が生える）。
+  // The terminal pane opens and xterm mounts (.xterm appears under .terminal).
   const term = page.locator(".termview .terminal .xterm").first();
   await expect(term).toBeVisible({ timeout: 30_000 });
-  await term.click(); // xterm にフォーカス
+  await term.click(); // focus xterm
 
-  // WS 接続 & PTY attach の完了は DOM から観測できないため、固定スリープでは
-  // 待たず「打鍵 → コンテナにファイルが生まれる」自体をリトライ単位にする
-  // （attach 前に落ちた打鍵は次の試行で打ち直す。echo の再実行は冪等）。
-  // 効果はコンテナ側の事実で判定する（fs API は home 相対）。
-  const marker = `ui-marker-${Date.now()}.txt`; // このテスト自前の一意名（他テストと非共有）
+  // Completion of the WS connect and PTY attach is not observable from the DOM, so instead of a
+  // fixed sleep the retry unit is "keystroke -> a file appears in the container": keystrokes
+  // dropped before attach are simply typed again, and re-running echo is idempotent. The
+  // verdict comes from a fact on the container side (the fs API is relative to home).
+  const marker = `ui-marker-${Date.now()}.txt`; // unique to this test, shared with no other
   const nonce = `ui-ok-${Date.now()}`;
   await expect
     .poll(
@@ -44,16 +44,16 @@ test("Console → セッションを開く → 打鍵がコンテナに届く", 
     .toContain(nonce);
 });
 
-test("Text編集 → keyboard/ボタン保存 → CAS競合をmine保持で表示", async ({ page, request }) => {
-  // このテスト自前の一意名ファイルを API で実コンテナに用意する（先行テストの
-  // 成果物には依存しない — 単独実行・順序入替でも成立させる）。
+test("edit text -> save by keyboard and by button -> CAS conflict shown while keeping mine", async ({ page, request }) => {
+  // Create a file with a name unique to this test in the real container through the API, so it
+  // depends on no earlier test's output and holds when run alone or reordered.
   const marker = `ui-edit-${Date.now()}.txt`;
   const created = await request.post(`${base}/api/fs/newfile?path=${marker}`);
   expect(created.ok()).toBeTruthy();
 
   await page.goto(base + "/");
 
-  // home scopeの再帰検索から、上で作成したテキストを開く。
+  // Open the text file created above from the recursive search over the home scope.
   const files = page.locator(".ui-section", { has: page.locator(".ui-section-title", { hasText: /ファイル|Files/ }) });
   const toggle = files.locator(".ui-section-toggle");
   if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
@@ -72,14 +72,15 @@ test("Text編集 → keyboard/ボタン保存 → CAS競合をmine保持で表�
   const cm = page.locator(".file-editor-cm .cm-content");
   await expect(cm).toBeFocused();
 
-  // Ctrl/Cmd+S と常設Saveボタンを同じsnapshotフローで検証する。
+  // Check Ctrl/Cmd+S and the always-present Save button through the same snapshot flow.
   const first = `keyboard-save-${Date.now()}\n`;
   await page.keyboard.press("Control+A");
   await page.keyboard.type(first);
   await page.keyboard.press("Control+S");
-  // 英語ロケールでは saved（保存直後）と clean（保存済み）がどちらも "Saved" で
-  // 区別できないため、config で ja-JP に固定した上で日本語文言を先頭アンカーで照合する
-  // （status 要素は外部変更ノートを後置しうるので ^ のみ・$ は付けない）。
+  // Under an English locale saved (just saved) and clean (already saved) both render as
+  // "Saved" and cannot be told apart, so the config pins ja-JP and we match the Japanese
+  // wording anchored at the start only: the status element can append an external-change note,
+  // so no $ anchor.
   await expect(page.locator(".fileview").getByRole("status")).toContainText(/^保存しました/);
   await expect
     .poll(async () => {
@@ -93,11 +94,13 @@ test("Text編集 → keyboard/ボタン保存 → CAS競合をmine保持で表�
   const second = `button-save-${Date.now()}\n`;
   await page.keyboard.press("Control+A");
   await page.keyboard.type(second);
-  // RegExp の name に exact は効かない（Playwright 仕様: 文字列 name 専用）→ アンカーで全一致。
+  // exact does not apply to a RegExp name (Playwright only honours it for string names), so
+  // anchor the pattern for a full match.
   await page.locator(".fileview").getByRole("button", { name: /^保存$|^Save$/ }).click();
   await expect(page.locator(".fileview").getByRole("status")).toContainText(/^保存しました/);
 
-  // 外部writerを挟んで旧baseのPUTを409にし、mine/remote差分と解決操作を確認する。
+  // Slip an external writer in so the PUT from the stale base gets a 409, then check the
+  // mine/remote diff and the resolution controls.
   const beforeConflict: any = await (await request.get(`${base}/api/fs/file?path=${marker}`)).json();
   const mine = `mine-${Date.now()}\n`;
   await cm.click();

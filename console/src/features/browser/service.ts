@@ -14,8 +14,9 @@ async function createPage(
   if (!result || typeof result.id !== "string" || !result.id) {
     throw { code: "browser_start_failed", message: "Browser page response did not contain an id" };
   }
-  // 無検証キャストにしない: id 以外のフィールドも型どおりへ正規化して返す
-  // （壊れた応答でも下流の targetFromURL / state 判定が黙って型ずれしないように）。
+  // Not an unchecked cast: every field, not just id, is normalized to its declared type, so
+  // a malformed response cannot silently hand a wrong type to targetFromURL or the state
+  // checks downstream.
   return {
     id: result.id,
     port: typeof result.port === "number" ? result.port : 0,

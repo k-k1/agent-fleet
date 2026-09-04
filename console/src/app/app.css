@@ -42,7 +42,7 @@
   --active-bg: var(--lp-active-bg);
   --hover-bg: var(--lp-hover-bg);
 }
-/* Inputs inside the rail (the 絞り込み box) must stay editable/selectable —
+/* Inputs inside the rail (the filter box) must stay editable/selectable —
    Safari inherits -webkit-user-select: none into form fields. */
 .app-rail input,
 .app-rail textarea {
@@ -55,7 +55,7 @@
   overflow-y: auto;
   overflow-x: hidden;
 }
-/* 作業グループ switcher (docs/log/52) — pinned between the layout map and the
+/* Working-set switcher (docs/log/52) — pinned between the layout map and the
    scroll area. The scoped state tints the whole bar with the accent so an
    active filter is unmissable (the "where did my session go" guard). */
 .wset-bar {

@@ -1,4 +1,4 @@
-// FileChangeStrip —「変更ファイル」: the files this session's agent edited, folded into
+// FileChangeStrip — "changed files": the files this session's agent edited, folded into
 // one collapsible strip directly under the mirror's head (docs/log/68 §68.5).
 //
 // It sits beside the ToDo checklist and deliberately copies its manners — the same
@@ -6,7 +6,7 @@
 // session from the parent — because two panels in the same band that fold differently
 // read as two unrelated features.
 //
-// What it is NOT: the rail's 変更 list and the SCM pane answer "what is dirty in this
+// What it is NOT: the rail's changes list and the SCM pane answer "what is dirty in this
 // working copy". This answers "what did THIS session do", which is a different question
 // whenever more than one session has passed through the same working copy.
 import { useState } from "react";
@@ -66,8 +66,8 @@ export function FileChangeStrip({ session, files }: { session: string; files: Se
     [newest, filesTick, session],
   );
 
-  // ⚠️ No empty state. A kind that records no edit coordinates at all (kiro / agy /
-  // shell — docs/log/68 §68.2.1) would otherwise show a permanent「0 件」that is
+  // No empty state. A kind that records no edit coordinates at all (kiro / agy / shell —
+  // docs/log/68 §68.2.1) would otherwise show a permanent "0 files" that is
   // indistinguishable from "this session really changed nothing".
   if (!files.length) return null;
 

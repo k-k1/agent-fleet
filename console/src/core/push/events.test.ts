@@ -1,10 +1,10 @@
-// 統合 push チャネル受信ハブ（通信量削減 P3）の契約テスト。SSE フレームの
-// 分配・チャンク跨ぎ再組み立て・pushHealthy/pushStamp のライフサイクル・
-// 旧 CP(404) フォールバック・ハンドラ例外の隔離を固定する。
+// Contract test for the unified push channel's receive hub (traffic reduction P3). Pins the
+// per-stream dispatch, reassembly across chunk boundaries, the pushHealthy/pushStamp
+// lifecycle, the old-CP (404) fallback and the isolation of a throwing handler.
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-// events.ts は api/client.ts (window.fetch 束縛・document.baseURI) を import
-// するので、repos/store.test.ts と同じくグローバルを先に stub してから import。
+// events.ts imports api/client.ts, which binds window.fetch and reads document.baseURI, so
+// the globals are stubbed before the import, as in repos/store.test.ts.
 const values = new Map<string, string>();
 vi.stubGlobal("localStorage", {
   getItem: (key: string) => values.get(key) ?? null,
@@ -29,7 +29,7 @@ beforeAll(async () => {
 
 const enc = new TextEncoder();
 
-// 手動制御の SSE レスポンス: enqueue で任意のバイト列を流し、close で切断。
+// A hand-driven SSE response: enqueue pushes arbitrary bytes, close drops the connection.
 function sseResponse() {
   let ctrl!: ReadableStreamDefaultController<Uint8Array>;
   const body = new ReadableStream<Uint8Array>({ start: (c) => (ctrl = c) });
@@ -47,7 +47,7 @@ function sseResponse() {
 const frame = (stream: string, data: unknown) =>
   `data: ${JSON.stringify({ stream, data })}\n\n`;
 
-// マイクロタスク+マクロタスクを数回回して reader ループに追いつかせる。
+// Turn the microtask + macrotask queues a few times so the reader loop catches up.
 const settle = async () => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
 };
@@ -78,7 +78,7 @@ describe("push events hub", () => {
     expect(got).toEqual([{ sessions: [{ name: "s1" }] }]);
     expect(push.pushStamp("sessions")).toBe(stamp0 + 1);
 
-    // 切断でフォールバックへ: healthy が下りる（ポーラーが次 tick から引き継ぐ）。
+    // A disconnect falls back: healthy drops, so the pollers take over from the next tick.
     sse.close();
     await settle();
     expect(push.pushHealthy()).toBe(false);
@@ -96,7 +96,7 @@ describe("push events hub", () => {
     const whole = frame("stats", { running: true, mem_used: 8388608 });
     sse.enqueue(whole.slice(0, 20));
     await settle();
-    expect(got).toEqual([]); // 半端なフレームはまだ適用されない
+    expect(got).toEqual([]); // a partial frame is not applied yet
     sse.enqueue(whole.slice(20));
     await settle();
     expect(got).toEqual([{ running: true, mem_used: 8388608 }]);
@@ -108,11 +108,11 @@ describe("push events hub", () => {
     cleanup = push.startPushChannel();
     await settle();
     expect(push.pushHealthy()).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(1); // 即リトライの嵐にしない（5 分後に再確認）
+    expect(fetchMock).toHaveBeenCalledTimes(1); // no immediate retry storm; re-check in 5 min
   });
 
-  // 再接続フック: ブート時しか読まない状態（whoami のデプロイ capability）を
-  // CP 再起動後に読み直すための入口。接続の度に呼ばれ、切断では呼ばれない。
+  // Reconnect hook: the entry point for re-reading state that is only read at boot (whoami's
+  // deployment capabilities) after a CP restart. Fires on every connect, never on disconnect.
   it("fires connect handlers on every (re)connection, not on disconnect", async () => {
     const sse1 = sseResponse();
     fetchMock.mockResolvedValue(sse1.res);
@@ -123,7 +123,7 @@ describe("push events hub", () => {
     await settle();
     expect(connects).toBe(1);
 
-    sse1.close(); // 切断そのものでは増えない
+    sse1.close(); // a disconnect alone does not increment
     await settle();
     expect(connects).toBe(1);
 
@@ -138,7 +138,7 @@ describe("push events hub", () => {
     fetchMock.mockResolvedValue(sse3.res);
     push.restartPush();
     await settle();
-    expect(connects).toBe(2); // 解除後は呼ばれない
+    expect(connects).toBe(2); // not called after unsubscribing
   });
 
   it("isolates a throwing connect handler from the stream", async () => {
@@ -172,7 +172,7 @@ describe("push events hub", () => {
     sse.enqueue(frame("workspace", { state: "running" }));
     await settle();
     expect(got).toEqual([{ state: "running" }]);
-    expect(push.pushHealthy()).toBe(true); // ハンドラ例外でストリームは死なない
+    expect(push.pushHealthy()).toBe(true); // a throwing handler does not kill the stream
     un1();
     un2();
   });

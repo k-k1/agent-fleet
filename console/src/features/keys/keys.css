@@ -203,7 +203,7 @@
   padding: 1px 8px;
   flex: none;
 }
-/* ---- palette: session rows (the セッション mode) ----
+/* ---- palette: session rows (the sessions mode) ----
    Four parts on one line: kind icon, display name, working copy (project [+ worktree]),
    state chip. The chip is the rail's own .session-state (sessions.css) so the colours can
    never disagree with the left pane — only the sizing is nudged for this denser row. */

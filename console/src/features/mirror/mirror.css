@@ -1,25 +1,25 @@
 /* Mirror (session chat) styles — extracted from the old console's styles.css
    (regions 2551–3423, 3513–3910) for pixel parity. Trimmed at P8. */
-/* **この 1 枚は面ごとの CSS を読み込む索引で、規則は持たない。**
+/* This file is only the index that imports the per-surface CSS; it carries no rules itself.
  *
- * ADR 0067 / FE-MIRROR で 3,059 行の 1 枚を割った。割り方は**元の 1 枚での登場順のまま
- * 切っただけ**で、並べ替えは 1 箇所もしていない。つまり下の @import を上から詰め込むと
- * 元の 1 枚とバイト単位で同じものになり、**カスケードは変わりようがない**。
+ * ADR 0067 / FE-MIRROR split the original 3,059-line sheet by cutting it at its own order of
+ * appearance, with no reordering anywhere: concatenating the @imports below reproduces the
+ * original sheet byte for byte, so the cascade cannot have changed.
  *
- * この Console の CSS は全部グローバルなので、同名クラスが 2 ファイルに分かれても衝突には
- * ならず **@import 順で無言に合成**される（scripts/css-dup.mjs が数えている）。だから
- * 「面ごとにきれいに分ける」ために順序を触るのは、色が静かに変わる側の賭けになる。
- * ウェーブ A の FE-SETTINGS が実際にそれで踏んだ（`className={{"x x-" + v}}` のように連結して
- * 作る名前は語がソースに無く、本体と修飾子が別ファイルへ落ちて文字色が #777 → #888 に
- * 変わった。規則の数も css:dup も合ったままで、見つけたのは描画比較だけ）。
+ * All of this Console's CSS is global, so the same class name living in two files is not a
+ * conflict — the rules are silently merged in @import order (scripts/css-dup.mjs counts them).
+ * Touching the order to "split cleanly by surface" is therefore a bet that no colour changes
+ * quietly: a class name built by concatenation (`className={"x x-" + v}`) has no whole word in
+ * the source, so base and modifier can land in different files and the text colour shifts with
+ * the rule count and css:dup still matching. Only a rendered diff catches it.
  *
- * その代償として、面と 1 対 1 でないファイルが 1 枚ある: `parts/responsive.css`
- * （スマホ幅の @media は元から末尾にあり、上のどのクラスも再定義しうる）。分けずに
- * 「元の位置のまま 1 枚に切り出した」ことを名前と中の注記で明示してある。
+ * The price is one file that is not 1:1 with a surface: `parts/responsive.css` (the phone-width
+ * @media block was already at the end and may redefine any class above it). It is kept at its
+ * original position rather than distributed.
  *
- * ★ 追記するときは、そのクラスが**元の 1 枚のどこに居たか**ではなく「どのファイルの面か」で
- *   選んでよい。ただし**既存の規則を別ファイルへ移すのは順序を変える**ので、やるなら
- *   ビルドした CSS バンドルを (メディア, セレクタ, 宣言) に平坦化して突き合わせること。
+ * When adding a rule, pick the file by surface, not by where the class sat in the original
+ * sheet. Moving an existing rule to another file does change the order — if you must, flatten
+ * the built CSS bundle to (media, selector, declarations) and compare before and after.
  */
 @import "./parts/shell.css";
 @import "./parts/contextbar.css";

@@ -8,9 +8,9 @@ import { en } from "../lib/i18n/locales/en.ts";
 // "installing agent CLIs" is how a normal start reads as stuck (ADR 0045 / docs/log/64).
 describe("phaseKey", () => {
   it("names the infrastructure waits of the EC2 pool runtime", () => {
-    // ⚠️ 「片付けてから作る」は起動の中でいちばん長い経路（上限に張り付いたプールが、
-    // この人が乗れない大きさの箱で埋まっている）。ここを generic に落とすと、
-    // **最長の待ちだけが理由を名乗らない**ことになる。
+    // "making room" is the longest path in a start: the pool is at its cap and full of
+    // boxes too small for this user. Letting it fall through to generic would leave the
+    // longest wait of all as the one that never names its reason.
     expect(phaseKey("slot: making room")).toBe("wsstart.slot_making_room");
     expect(phaseKey("slot: creating")).toBe("wsstart.slot_creating");
     expect(phaseKey("slot: waking")).toBe("wsstart.slot_waking");

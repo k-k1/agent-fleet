@@ -1,12 +1,12 @@
-// 実ブラウザ検査の土台（scripts/pdf, scripts/doc から使う）。
+// Foundation for real-browser checks (used by scripts/pdf and scripts/doc).
 //
-// CP も Agent も要らない検査のために、①一時ディレクトリを素の http で配り
-// ②headless Chromium を上げて ③CDP を**素の WebSocket**で叩く、の 3 つだけを持つ。
-// puppeteer / playwright は入れない（イメージに焼いた chromium をそのまま使う）。
+// For checks that need neither CP nor Agent, it holds only three things: serve a temp directory
+// over plain http, start headless Chromium, and drive CDP over a raw WebSocket. No puppeteer or
+// playwright - the chromium baked into the image is used as it comes.
 //
-// ポートは必ず 0 で取る: セッションは 1 つのコンテナを共有していて、固定ポートは
-// 他のセッションのサーバと衝突する（衝突しても chromium は黙って IPv6 側へ回るので、
-// 「別のブラウザに繋がっていた」という形で気づけない）。
+// Always take port 0: sessions share one container, and a fixed port collides with another
+// session's server. On collision chromium silently falls back to the IPv6 side, so the failure
+// shows up as "we were attached to a different browser" and is never noticed.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -21,17 +21,17 @@ const TYPES = {
   ".mjs": "text/javascript",
   ".css": "text/css",
   ".pdf": "application/pdf",
-  ".wasm": "application/wasm", // これを外すと wasm は instantiateStreaming に落ちる
+  ".wasm": "application/wasm", // drop this and wasm falls out of instantiateStreaming
   ".json": "application/json",
 };
 
-/** ディレクトリを 127.0.0.1 の空きポートで配る。
+/** Serve a directory on a free port of 127.0.0.1.
  *
- *  返り値の `requests` は**配ったものの記録**（`{ path, status }` の配列）。
- *  これが要るのは、**「ページが実際に何を取りに来たか」は DOM に出ないから**である
- *  —— 同梱アセット（pdf.js の cMap / 標準14フォント）のコピーを丸ごと落としても、
- *  pdf:check は **11 件すべて OK のまま通っていた**（2026-09-04 実測）。
- *  取りに来た URL と、それを配れたかどうかを見るしかない。 */
+ *  The returned `requests` is the record of what was served (an array of `{ path, status }`).
+ *  It is needed because what the page actually fetched never shows up in the DOM: measured, with
+ *  the copy of the bundled assets (pdf.js cMaps / the standard 14 fonts) removed entirely,
+ *  pdf:check still passed with all 11 checks OK. The only way to see it is the URLs requested and
+ *  whether they could be served. */
 export function serveDir(dir) {
   const requests = [];
   const server = http.createServer((req, res) => {
@@ -51,20 +51,20 @@ export function serveDir(dir) {
   );
 }
 
-// 実ブラウザの居場所。**環境ごとに違い、どれも「無いかもしれない」**:
-//   - この Workspace のコンテナ … /usr/bin/chromium（イメージに焼いてある）
-//   - GitHub の ubuntu-latest  … /usr/bin/chromium も /usr/bin/google-chrome も在る
-//     （実測 2026-09-04・ci.yml の使い捨て probe: Chromium 151.0.7922.0 /
-//      Google Chrome 151.0.7922.173・CHROME_BIN=/usr/bin/google-chrome）
-// 既定を 1 本のパス文字列で持っていると、**在るあいだは正しく、無くなった日に
-// 「debugging port が開かない」という原因を指さない形で落ちる**（spawn の ENOENT は
-// stdio を捨てているので誰の目にも入らない）。候補を並べて、選んだ実体を名前で言う。
+// Where the real browser lives. It differs per environment and any of them may be absent:
+//   - this Workspace container - /usr/bin/chromium (baked into the image)
+//   - GitHub ubuntu-latest     - both /usr/bin/chromium and /usr/bin/google-chrome exist
+//     (measured with a throwaway probe in ci.yml: Chromium 151.0.7922.0 /
+//      Google Chrome 151.0.7922.173, CHROME_BIN=/usr/bin/google-chrome)
+// Holding the default as a single path string is correct while that path exists and, on the day it
+// stops existing, fails as "the debugging port never opens" without naming the cause (spawn's
+// ENOENT goes nowhere because stdio is discarded). List the candidates and name the one chosen.
 //
-// 🔴 **ランナーには日本語フォントが 1 つも無い**（実測 2026-09-04: `fc-list :lang=ja` が
-// **0 件**。このコンテナには Noto CJK が焼いてある）。いまの pdf:check / doc:check は
-// 「描かれたか・アセットを配れたか」しか見ないので判定は動かない（標本の日本語は
-// **豆腐で描かれたまま緑になる**）が、**字形・文字幅・スクリーンショットの比較を
-// この土台の上に足すと、CI でだけ壊れる**。そのときはフォントを入れる段が要る。
+// The runner has no Japanese font at all (measured: `fc-list :lang=ja` returns 0; this container
+// has Noto CJK baked in). Today's pdf:check / doc:check only look at whether something was drawn
+// and whether the assets could be served, so the verdicts still hold - the Japanese sample stays
+// green while it is drawn as tofu. But adding glyph, advance-width or screenshot comparison on top
+// of this foundation would break in CI only, and that would need a font-install step.
 const CHROMIUM_CANDIDATES = ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"];
 
 const usable = (p) => {
@@ -76,23 +76,24 @@ const usable = (p) => {
   }
 };
 
-/** 使うブラウザの実体を決める。明示された 1 本（引数 / CHROMIUM / CHROME_BIN）は
- *  **黙って別のブラウザへ回さない**（頼んだものと違うもので測るのが一番わかりにくい）。 */
+/** Decide which browser binary to use. An explicitly named one (argument / CHROMIUM / CHROME_BIN)
+ *  is never silently swapped for another - measuring with something other than what was asked for
+ *  is the hardest failure to see. */
 export function resolveChromium(explicit = "") {
   const asked = explicit || process.env.CHROMIUM || "";
   if (asked) {
     if (usable(asked)) return asked;
-    throw new Error(`指定されたブラウザが実行できない: ${asked}（CHROMIUM / 引数で指定された）`);
+    throw new Error(`the specified browser is not executable: ${asked} (given via CHROMIUM or an argument)`);
   }
   const tried = [...CHROMIUM_CANDIDATES, process.env.CHROME_BIN || ""].filter(Boolean);
   const found = tried.find(usable);
   if (found) return found;
   throw new Error(
-    "実ブラウザが見つからない。CHROMIUM=<path> で指定するか、chromium を入れること。探した先: " + tried.join(" "),
+    "no real browser found. Point CHROMIUM=<path> at one, or install chromium. Looked in: " + tried.join(" "),
   );
 }
 
-/** headless Chromium を上げ、CDP を繋いだハンドルを返す。 */
+/** Start headless Chromium and return a handle with CDP connected. */
 export async function startBrowser({ chromium = "", size = "1000,760" } = {}) {
   const bin = resolveChromium(chromium);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-headless-"));
@@ -100,21 +101,21 @@ export async function startBrowser({ chromium = "", size = "1000,760" } = {}) {
     "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
     "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
     `--user-data-dir=${dir}`, `--window-size=${size}`,
-    // headless は既定で「ホバーもポインタも無い」と答える。デスクトップの見た目を
-    // 検査するときはこれが要る（workspace-notes「Headless browser」）。
+    // Headless answers "no hover, no pointer" by default. This is required when checking the
+    // desktop appearance (workspace-notes, "Headless browser").
     "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
     "about:blank",
   ], { stdio: ["ignore", "ignore", "ignore"] });
 
-  // spawn の失敗（ENOENT / EACCES）は既定では誰にも見えない —— stdio を捨てているので
-  // 12 秒待って「debugging port が開かない」に化ける。理由をそのまま持って落ちる。
+  // A spawn failure (ENOENT / EACCES) is invisible by default: stdio is discarded, so it turns
+  // into "the debugging port never opens" after a 12 second wait. Fail carrying the real reason.
   let spawnErr = null;
   proc.on("error", (e) => (spawnErr = e));
 
   let port = 0;
   for (let i = 0; i < 120 && !port; i++) {
     await sleep(100);
-    if (spawnErr) throw new Error(`ブラウザを起動できない: ${bin}: ${spawnErr.message}`);
+    if (spawnErr) throw new Error(`cannot start the browser: ${bin}: ${spawnErr.message}`);
     try {
       port = Number(fs.readFileSync(path.join(dir, "DevToolsActivePort"), "utf8").split("\n")[0]) || 0;
     } catch {}
@@ -169,7 +170,7 @@ export async function startBrowser({ chromium = "", size = "1000,760" } = {}) {
   };
 }
 
-/** 条件が成立するまでポーリングし、最後に読んだ値を返す（成立しなくても返す）。 */
+/** Poll until the condition holds and return the last value read (returned even if it never holds). */
 export async function until(evaluate, expression, want, tries = 100, waitMs = 100) {
   let last;
   for (let i = 0; i < tries; i++) {
@@ -180,7 +181,7 @@ export async function until(evaluate, expression, want, tries = 100, waitMs = 10
   return last;
 }
 
-/** 結果の集計。check(条件, 名前, 補足) で足し、report() で出して終了コードを決める。 */
+/** Result tally. Add with check(condition, label, detail); report() prints and decides the exit code. */
 export function checker() {
   const ok = [];
   const bad = [];
@@ -189,7 +190,7 @@ export function checker() {
     report: () => {
       for (const line of ok) console.log("  OK   " + line);
       for (const line of bad) console.log("  NG   " + line);
-      console.log(bad.length ? `\n${bad.length} 件が NG` : `\n${ok.length} 件すべて OK`);
+      console.log(bad.length ? `\n${bad.length} NG` : `\nall ${ok.length} OK`);
       return bad.length ? 1 : 0;
     },
   };

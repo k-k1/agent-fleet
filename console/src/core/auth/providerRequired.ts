@@ -1,5 +1,5 @@
 // providerRequired — a module-level latch for "this tenant needs a different
-// sign-in method" (docs/log/61 §61.9.4 + ADR0043 決定 18).
+// sign-in method" (docs/log/61 §61.9.4 + ADR0043 decision 18).
 //
 // A session carries exactly ONE identity provider, deliberately: letting a cookie
 // hold several would turn it into a set of authorization states and make expiry

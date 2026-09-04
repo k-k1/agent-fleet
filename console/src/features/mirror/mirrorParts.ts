@@ -17,8 +17,8 @@ export interface PromptBoundaryLike {
   queued?: boolean;
 }
 
-// 作業過程を探索し始める直前のユーザーターン。送信直後の optimistic echo（pending）も
-// 今回の作業境界だが、まだ実行されていない queued prompt は境界にしない。
+// The user turn just before the work to explore begins. A just-sent optimistic echo (pending)
+// also bounds the current work, but a queued prompt that has not run yet does not.
 export function latestWorkPromptIndex(groups: PromptBoundaryLike[]): number {
   for (let i = groups.length - 1; i >= 0; i--) {
     if (groups[i].role === "user" && !groups[i].queued) return i;

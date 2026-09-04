@@ -1,15 +1,16 @@
-// global-setup — L2（e2e/fleet_test.go）の Node 版ハーネス: CP を AUTH=dev で起動し、
-// workspace running + shell セッション作成まで整えてからブラウザテストへ渡す。
-// 前提（docker / build 済みイメージ / console/dist）が無ければ E2E_CP_BASE を設定せず
-// 戻る（テスト側で skip）。E2E_REQUIRE=1 のときは fail に格上げ（CI 用）。
-// teardown が使う状態（CP の pid・データ dir 等）は .e2e-state.json に書く。
+// global-setup — the Node counterpart of the L2 harness (e2e/fleet_test.go): start CP with
+// AUTH=dev, bring the workspace to running and create a shell session, then hand over to the
+// browser tests. When a prerequisite is missing (docker / a built image / console/dist) it
+// returns without setting E2E_CP_BASE so the tests skip; E2E_REQUIRE=1 turns that into a
+// failure instead (for CI). State the teardown needs (CP pid, data dir, ...) goes to
+// .e2e-state.json.
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-const USER = "e2e-ui"; // コンテナ af-ws-e2e-ui / ネットワーク af-net-e2e-ui（L2 と分離）
+const USER = "e2e-ui"; // container af-ws-e2e-ui / network af-net-e2e-ui, kept separate from L2
 const ROOT = path.resolve(__dirname, "..");
 const STATE = path.join(__dirname, ".e2e-state.json");
 
@@ -18,12 +19,12 @@ function prereqMissing(msg: string): void {
   console.log(`[ui-e2e] skip: ${msg}`);
 }
 
-// 空きポートを count 本まとめて確保する。逐次 listen(0)→close だと、close した
-// ポートが直後の listen(0) に再割当されて自己衝突しうるため、全 listener を同時に
-// 保持して番号を得てから閉じる。close→CP/Agent が実際に bind するまでの TOCTOU
-// （他プロセスの横取り）は残るが、CP は CP_ADDR 固定 bind で 0 番 bind の実ポート
-// 報告手段が無い。起きた場合は後段の healthz / running 待ちタイムアウトとして
-// 顕在化するので許容する。
+// Reserve `count` free ports at once. Doing listen(0)->close one at a time can collide with
+// itself, because a just-closed port can be handed straight back to the next listen(0), so
+// hold every listener open, read the numbers, then close them all. The TOCTOU between close
+// and CP/Agent actually binding (another process grabbing the port) remains, but CP binds the
+// fixed CP_ADDR and has no way to report the real port of a bind on 0. If it happens it shows
+// up as the later healthz / running wait timing out, which is acceptable.
 async function freePorts(count: number): Promise<number[]> {
   const servers: net.Server[] = [];
   for (let i = 0; i < count; i++) {
@@ -63,16 +64,16 @@ export default async function globalSetup(): Promise<void> {
     return prereqMissing(`workspace image not built: ${image}`);
   const dist = path.join(ROOT, "console", "dist");
   if (!fs.existsSync(path.join(dist, "index.html")))
-    return prereqMissing("console/dist がありません（npm --prefix console run build）");
+    return prereqMissing("console/dist is missing (npm --prefix console run build)");
 
-  // 前回 run の残骸（teardown まで辿り着けなかったコンテナ / ネットワーク）は
-  // 固定名なので名前衝突になり、workspace/start の 120 秒リトライが空回りする。
-  // best-effort で先に消しておく（無ければ単に失敗するだけ）。
+  // Leftovers from a previous run (a container / network whose teardown never ran) use fixed
+  // names, so they collide and make the 120 s workspace/start retry spin for nothing. Remove
+  // them best-effort first; if they are absent the commands simply fail.
   spawnSync("docker", ["rm", "-f", `af-ws-${USER}`]);
   spawnSync("docker", ["network", "rm", `af-net-${USER}`]);
 
-  // CP build（e2e/ の buildCP と同じ）。置き場の mkdtemp は STATE に記録して
-  // teardown で回収する（従来は未記録・未削除で run ごとに残留していた）。
+  // Build CP (same as buildCP in e2e/). The mkdtemp holding it is recorded in STATE so the
+  // teardown can remove it; otherwise one directory leaks per run.
   const cpBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "af-ui-cp-"));
   const cpBin = path.join(cpBinDir, "af-cp");
   const build = spawnSync("go", ["build", "-o", cpBin, "."], {
@@ -80,12 +81,12 @@ export default async function globalSetup(): Promise<void> {
     encoding: "utf8",
   });
   if (build.status !== 0) {
-    fs.rmSync(cpBinDir, { recursive: true, force: true }); // STATE 書込前の失敗はここで回収
+    fs.rmSync(cpBinDir, { recursive: true, force: true }); // failed before STATE was written
     throw new Error("build control-plane: " + build.stderr);
   }
 
-  // Workspace データ。ランナー uid ≠ コンテナ dev(uid 1000) 対策で mount 先を 0777 で
-  // 先に掘る（詳細は e2e/fleet_test.go の同処理コメント）。
+  // Workspace data. The runner uid differs from the container's dev (uid 1000), so create the
+  // mount targets up front with mode 0777 (see the matching comment in e2e/fleet_test.go).
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "af-ui-data-"));
   for (const d of ["home", "claude-config"]) {
     const p = path.join(dataDir, USER, d);
@@ -96,7 +97,7 @@ export default async function globalSetup(): Promise<void> {
   const [cpPort, agentPort] = await freePorts(2);
   const logDir = path.join(__dirname, "test-results");
   fs.mkdirSync(logDir, { recursive: true });
-  const logPath = path.join(logDir, "cp.log"); // 失敗時に artifact として回収される置き場
+  const logPath = path.join(logDir, "cp.log"); // collected as an artifact when a test fails
   const logFd = fs.openSync(logPath, "w");
 
   const cp = spawn(cpBin, [], {
@@ -107,7 +108,7 @@ export default async function globalSetup(): Promise<void> {
       WS_DATA: dataDir,
       DEV_USER: USER,
       WS_AGENT_PORT: String(agentPort),
-      CONSOLE_DIR: dist, // 本物の Console を配信する（ここが L2 との違い）
+      CONSOLE_DIR: dist, // serve the real Console — this is what differs from L2
     },
     stdio: ["ignore", logFd, logFd],
     detached: false,
@@ -116,8 +117,8 @@ export default async function globalSetup(): Promise<void> {
   fs.writeFileSync(STATE, JSON.stringify({ pid: cp.pid, dataDir, cpBinDir, image, user: USER, logPath }));
 
   await waitFor("CP /healthz", 15_000, async () => (await fetch(`${base}/healthz`)).ok);
-  // workspace/start は Agent healthz 待ち（15s）に間に合わないと 500 を返すが冪等 →
-  // 200 までリトライしてから running を確認（L2 と同じ）。
+  // workspace/start returns 500 when the Agent healthz wait (15 s) does not finish in time, but
+  // it is idempotent: retry until 200, then confirm running (same as L2).
   await waitFor("workspace/start accepted", 120_000, async () => {
     const res = await fetch(`${base}/api/workspace/start`, { method: "POST" });
     return res.status === 200;
@@ -127,8 +128,8 @@ export default async function globalSetup(): Promise<void> {
     return ws.state === "running";
   });
 
-  // shell セッションを API で用意（LLM クレデンシャル不要）。UI テストは
-  // 「一覧に出る → 開ける → 打鍵が届く」に集中する。
+  // Create the shell session through the API, so no LLM credentials are needed. The UI tests
+  // then focus on: it appears in the list -> it opens -> keystrokes reach it.
   const created = await fetch(`${base}/api/sessions`, {
     method: "POST",
     headers: { "content-type": "application/json" },

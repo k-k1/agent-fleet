@@ -1,25 +1,25 @@
 import { defineConfig } from "@playwright/test";
 
-// Console UI E2E（L3）。CP・Workspace コンテナの起動は global-setup が行い、
-// ベース URL は E2E_CP_BASE 経由でテストへ渡る（未設定 = 前提不足 → テスト側で skip）。
-// UI E2E はフレークしやすいので CI は 1 リトライ・trace は失敗時のみ保存。
+// Console UI E2E (L3). global-setup starts the CP and the Workspace container and passes the
+// base URL to the tests through E2E_CP_BASE (unset = a prerequisite is missing, so the tests
+// skip). UI E2E is flaky-prone, hence one retry on CI and traces kept only on failure.
 export default defineConfig({
   testDir: "./tests",
   timeout: 120_000,
   expect: { timeout: 15_000 },
   retries: process.env.CI ? 1 : 0,
-  workers: 1, // 1 CP / 1 workspace を共有するため直列
+  workers: 1, // serial: one CP and one workspace are shared
   globalSetup: "./global-setup.ts",
   globalTeardown: "./global-teardown.ts",
   reporter: [["list"]],
   use: {
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    // UI 言語を日本語に固定する（Console は navigator.language で言語を決める）。
-    // 英語ロケールだと editor.status.saved / clean が同じ "Saved" になり
-    // 「保存直後」の照合が clean 状態と区別できないため（console.spec.ts）。
+    // Pin the UI language to Japanese (the Console picks its language from navigator.language).
+    // Under an English locale editor.status.saved and clean both render as "Saved", so the
+    // just-saved assertion cannot be told apart from the clean state (console.spec.ts).
     locale: "ja-JP",
-    // 環境変数で上書き可能に（既定はイメージ焼き込みの chromium）。
+    // Overridable by env var; defaults to the chromium baked into the image.
     launchOptions: { executablePath: process.env.E2E_CHROMIUM_PATH || "/usr/bin/chromium" },
   },
 });

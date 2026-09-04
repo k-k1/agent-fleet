@@ -1,5 +1,5 @@
-/* 作業過程はミラービューの .mt-work / .mt-tool をそのまま使う。チャットの
-   flex レイアウト内で横幅だけ補い、両画面の表示密度と開閉操作を揃える。 */
+/* The work trail reuses the mirror view's .mt-work / .mt-tool as-is; only the width is topped up
+   for chat's flex layout, so both screens keep the same density and expand/collapse behaviour. */
 .chat-steps {
   align-self: stretch;
   max-width: 100%;
@@ -12,11 +12,11 @@
 .chat-step + .chat-step {
   margin-top: 8px;
 }
-/* カラオケ読み上げ（AssistantTurn / turnTts, docs/log/24）: いま読んでいる文が属するブロックを
-   ハイライトし、scrollIntoView(nearest) で追従する。ミラーの .mirror-turn-body .tts-active と
-   同趣。ブロック（p/見出し/li/blockquote 内段落）に付く。 */
+/* Karaoke read-aloud (AssistantTurn / turnTts, docs/log/24): highlights the block the sentence
+   being spoken belongs to and follows it with scrollIntoView(nearest). Same idea as the mirror's
+   .mirror-turn-body .tts-active. Applied to blocks (p, headings, li, paragraphs in blockquote). */
 .chat-body .tts-active {
   background: color-mix(in srgb, var(--chat-accent, var(--accent)) 14%, transparent);
   border-radius: 4px;
-  scroll-margin: 64px; /* ヘッダ等に隠れない余白 */
+  scroll-margin: 64px; /* keeps it clear of the header */
 }

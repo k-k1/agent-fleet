@@ -40,16 +40,16 @@
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
 }
-/* 自動更新で増えた行（features/files/sessionRefresh.ts）。ターンが終わって一覧が
-   差し替わったとき、「増えた」ことより「どれが増えたか」が知りたい情報なので、
-   数秒だけ淡く残して消える。色だけの手掛かりで、行の中身には何も足さない —
-   消えても失われる情報が無いようにしてある。 */
+/* Rows added by an auto-refresh (features/files/sessionRefresh.ts). When a turn ends and
+   the list is replaced, what a reader wants is which rows appeared, not that some did, so
+   the tint lingers for a few seconds and fades. It is a colour-only cue that adds nothing
+   to the row itself, so nothing is lost when it goes. */
 .fsrow.fs-new {
   animation: af-fs-new 5s ease-out 1;
 }
-/* 最初の 3 割は色を保ってから褪せる。ease-out で頭から落とすと、視線が行く前に
-   ほとんど消えていて「光ったのに、どれか分からない」になる（実測: 5s の 0.4s 時点で
-   もう薄い）。 */
+/* Hold the colour for the first 30% and only then fade. Dropping it from the start with
+   ease-out leaves it nearly gone before the eye arrives, so something flashed but you
+   cannot tell what (measured: at 0.4s into 5s it is already faint). */
 @keyframes af-fs-new {
   0%,
   30% {
@@ -59,7 +59,7 @@
     background: transparent;
   }
 }
-/* 動きを減らす設定では点かず、静かな下地だけを同じ時間だけ出す。 */
+/* With reduced motion, do not flash: show only a quiet background for the same duration. */
 @media (prefers-reduced-motion: reduce) {
   .fsrow.fs-new {
     animation: none;
@@ -161,7 +161,7 @@
   padding: 0;
 }
 /* The band naming the working copy a group of changes belongs to. It carries
-   プロジェクト + ブランチ (WorkingCopyLabel), so it lays out as a row whose two
+   project + branch (WorkingCopyLabel), so it lays out as a row whose two
    halves each trim on their own instead of one long string. */
 .chg-repo {
   display: flex;
@@ -234,7 +234,7 @@
   }
 }
 
-/* ＋ menu head (target folder) + anchored wrap. */
+/* "+" menu head (target folder) + anchored wrap. */
 .files-ops {
   position: relative;
 }
@@ -289,7 +289,7 @@
   color: var(--warn);
 }
 
-/* "アシスタントで開く" submenu (docs/log/19 Phase C) — old styles.css verbatim, with
+/* "open with the assistant" submenu (docs/log/19 Phase C) — old styles.css verbatim, with
    the .ctxmenu parent selectors mapped to the new .files-ctxmenu. */
 .files-ctxmenu li.ctx-sub {
   padding: 0;

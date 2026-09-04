@@ -1,9 +1,11 @@
-/* ヘッダ下の 2 本の帯: /context 相当のコンテキスト量ゲージ（.mirror-ctxbar / .cb-*）と、
-ブランチ・作業ディレクトリが変わったときだけターンの上に出る文脈ストリップ（.mirror-context / .mc-*）
+/* The two bands under the head: the context-usage gauge equivalent to /context
+(.mirror-ctxbar / .cb-*), and the context strip shown above a turn only when the branch or
+working directory changed (.mirror-context / .mc-*)
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
 /* /context-like fill gauge under the header: a segmented bar (cache read / cache
    creation / fresh input) sized against the context window. */
@@ -16,7 +18,7 @@
   background: var(--bar);
   font-size: 11.5px;
 }
-/* Context half (left): "コンテキスト" label · bar · figure — a 50% flex column that
+/* Context half (left): "Context" label (「コンテキスト」) - bar - figure, a 50% flex column that
    splits the row evenly with the token-spend trend on the right. */
 .cb-ctx {
   flex: 1 1 0;
@@ -29,7 +31,7 @@
   flex: none;
   color: var(--muted);
 }
-/* Context-bar labels shorten (コンテキスト→ctx, トークン消費推移→token) when the pane
+/* Context-bar labels shorten (「コンテキスト」→ctx, 「トークン消費推移」→token) when the pane
    is narrow, via the paneview inline-size container (.mirrorview / .termview). */
 .cb-lbl-short {
   display: none;

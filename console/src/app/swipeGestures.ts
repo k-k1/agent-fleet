@@ -1,60 +1,65 @@
-// タッチの横スワイプ認識 — 左ペインの出し入れ（従来）と、スマホでの稼働中セッション
-// ローテート（← が次・→ が前）。
+// Touch horizontal-swipe recognition — opening/closing the left pane, and rotating
+// through running sessions on a phone (left = next, right = previous).
 //
-// App.tsx の useEffect に直書きされていた認識ロジックをここへ出した。理由は検証性で、
-// スマホのジェスチャは実機でしか触れない一方、判定そのもの（どの向き・どの距離・どの
-// 状態でどれが発火するか）は window イベントさえ与えれば jsdom で全パターン回せる。
-// 画面状態の読み取りと副作用は SwipeSurfaces で注入する（ここはストアを一切 import
-// しない）。
+// The recognition logic lives here rather than in an App.tsx useEffect so it can be
+// tested: phone gestures can only be tried on a real device, but the decisions themselves
+// (which direction, which distance, which state fires what) run in jsdom given nothing
+// but window events. Screen-state reads and side effects are injected via SwipeSurfaces,
+// so this module imports no store.
 //
-// 規則:
-// - スマホ（≤760px）: 左ペインはオフキャンバス drawer。閉→左 1/3 から右で開く／開→左で閉じる。
-//   drawer が閉じている間の横スワイプは「稼働中セッションを 1 件送る／戻す」に使う。
-// - **左端始まりの → は drawer 優先**（そこは「レールを引き出す」場所）。判定順で
-//   先に 50px の drawer 分岐に落ち、ローテートの 70px には届かないまま確定する。
-//   → で前へ戻すのは左端以外から始めたときだけ。
-// - タブレット（>760px かつタッチ）: 同じエッジスワイプがデスクトップのレールを
-//   overlay として出し入れする。マウス機は TouchEvent を出さないので不活性。
-// - 縦優先（|dx| <= |dy| は無視）＝スクロールを奪わない。長押し窓（500ms）を超えたら
-//   候補を取り消す＝ミラーの選択ハンドルのドラッグをエッジスワイプに化けさせない。
+// Rules:
+// - Phone (<=760px): the left pane is an off-canvas drawer. Closed -> swipe right from
+//   the left third opens it; open -> swipe left closes it. While the drawer is closed a
+//   horizontal swipe advances/rewinds the running session by one.
+// - A rightward swipe starting at the left edge belongs to the drawer (that is where the
+//   rail is pulled out from). In the ordering below it settles on the 50px drawer branch
+//   first and never reaches the 70px rotate threshold, so going back with a rightward
+//   swipe only works when the gesture starts away from the edge.
+// - Tablet (>760px and touch): the same edge swipe shows/hides the desktop rail as an
+//   overlay. Mouse machines emit no TouchEvent, so this is inert there.
+// - Vertical wins (|dx| <= |dy| is ignored) so scrolling is never stolen. Passing the
+//   long-press window (500ms) cancels the candidate, so dragging the mirror's selection
+//   handles cannot turn into an edge swipe.
 import { swipeBlocked } from "./swipeGuard.ts";
 
-/** 画面状態の読み取りと副作用（App.tsx がストアに配線する）。 */
+/** Screen-state reads and side effects (App.tsx wires these to the store). */
 export interface SwipeSurfaces {
-  /** スマホ幅（≤760px）か。 */
+  /** Is this a phone width (<=760px)? */
   phone(): boolean;
-  /** タッチ主体の端末か（スマホ幅でないときのタブレット判定に使う）。 */
+  /** Is this a touch-first device? Used to spot a tablet when not at phone width. */
   coarse(): boolean;
-  /** モーダルが出ているか — 出ている間は背後のレールを触らせない。 */
+  /** Is a modal up? While one is, the rail behind it must stay untouched. */
   modal(): boolean;
   drawerOpen(): boolean;
   railOpen(): boolean;
-  /** セッションのローテートを許す状況か（切り離しタブでは false）。 */
+  /** May sessions be rotated here? False in a popped-out tab. */
   rotatable(): boolean;
   setDrawer(open: boolean): void;
   openRailOverlay(): void;
   closeRail(): void;
-  /** 稼働中セッションを delta 件ぶん送る（← が +1＝次、→ が -1＝前）。 */
+  /** Advance the running session by delta (left swipe = +1 next, right = -1 previous). */
   rotateSession(delta: number): void;
 }
 
-/** レール開閉に要る横移動量。 */
+/** Horizontal travel needed to open or close the rail. */
 export const SWIPE_DIST = 50;
-/** セッションの持ち替えに要る横移動量。画面が丸ごと入れ替わり戻すのに手間がかかるので、
- * レール開閉より長くして、拾い読み中の小さな横ぶれで発火しないようにする。 */
+/** Horizontal travel needed to switch session. Longer than the rail threshold because
+ * the whole screen changes and undoing it costs the user work, so a small sideways
+ * wobble while skim-reading must not fire it. */
 export const ROTATE_DIST = 70;
-/** これを超えたら候補を取り消す（ブラウザの長押し窓）。 */
+/** Past this, the candidate gesture is cancelled (the browser's long-press window). */
 export const LONG_PRESS_MS = 500;
 
-/** win にジェスチャ認識を取り付ける。戻り値は解除（StrictMode の二重実行に耐える）。 */
+/** Attach gesture recognition to win. The returned function detaches it (survives
+ * StrictMode's double invocation). */
 export function installSwipeGestures(win: Window, s: SwipeSurfaces): () => void {
   let sx = 0,
     sy = 0,
     mode: "open" | "close" | null = null,
-    // このジェスチャが駆動する面（touchstart で確定）: スマホの drawer か、
-    // タブレットのデスクトップレール（overlay）か。
+    // Which surface this gesture drives, settled at touchstart: the phone drawer, or
+    // the tablet's desktop rail (as an overlay).
     drawer = false,
-    // ← でセッションをローテートしてよいか（同じく touchstart で確定）。
+    // May a left swipe rotate sessions? Also settled at touchstart.
     rotate = false,
     longPressTimer: number | null = null;
 
@@ -67,13 +72,13 @@ export function installSwipeGestures(win: Window, s: SwipeSurfaces): () => void 
     }
   };
 
-  // ローカル変数は touch — i18n の t を隠さない名前に（App.tsx から引き継いだ約束）。
+  // The local is named `touch`, not `t`, so it cannot shadow the i18n `t`.
   const onStart = (e: TouchEvent) => {
     const touch = e.touches[0];
     cancelGesture();
     const phone = s.phone();
-    // スマホ幅より上では、タッチ端末（タブレット）のときだけ有効にする — マウス機に
-    // エッジスワイプのレールは要らない。
+    // Above phone width this is only active on touch devices (tablets); a mouse machine
+    // has no use for an edge-swipe rail.
     const tablet = !phone && s.coarse();
     drawer = phone;
     if (touch && (phone || tablet) && !s.modal()) {
@@ -107,13 +112,13 @@ export function installSwipeGestures(win: Window, s: SwipeSurfaces): () => void 
       else s.closeRail();
       cancelGesture();
     } else if (rotate && dx < -ROTATE_DIST) {
-      // 左端始まりの ← は mode==="open"（右スワイプ待ち）と両立するが、向きで
-      // ここに落ちるので取り合いにはならない。
+      // A left swipe starting at the edge coexists with mode==="open" (which waits for
+      // a rightward swipe), but direction lands it here, so the two never contend.
       s.rotateSession(1);
       cancelGesture();
     } else if (rotate && dx > ROTATE_DIST) {
-      // ここに来るのは左端始まりでないとき（左端なら上の drawer 分岐が 50px で
-      // 先に確定している）。
+      // Only reached when the gesture did not start at the left edge; there the drawer
+      // branch above settles first, at 50px.
       s.rotateSession(-1);
       cancelGesture();
     }

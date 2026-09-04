@@ -1,8 +1,8 @@
-// WorkingSetBar — the rail-top 作業グループ switcher (docs/log/52 + ADR 0036).
+// WorkingSetBar — the rail-top working-set switcher (docs/log/52 + ADR 0036).
 // Pinned above .app-rail-scroll (outside it, so it stays visible however far the
 // rail scrolls — that visibility is the "why did my session disappear" guard)
 // and rendered for the stopped rail too. The button shows the active group name
-// (すべて when unscoped); the menu switches groups, the modal manages them.
+// ("All" when unscoped); the menu switches groups, the modal manages them.
 // Assignment lives on the rows themselves (repo / conversation / session menus).
 import { createPortal } from "react-dom";
 import { memo, useLayoutEffect, useRef, useState } from "react";

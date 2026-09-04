@@ -1,15 +1,15 @@
-// プランへのコメント送信を、実ビルド（console/dist）を headless で動かして固定する。
-// CP も Docker も要らない mock 系（editor-mock.spec.ts と同じ骨格）。
+// Pin down sending comments on a plan by driving the real build (console/dist) headless. A mock
+// test that needs neither CP nor Docker (same skeleton as editor-mock.spec.ts).
 //
-// 守りたいのは 2026-08-10 の実障害:
-//   - Agent 側: ExitPlanMode の承認中は status が "permission" に化けるため
-//     /plan-respond が no_plan を返し、Console が /input へ落ちて permission_pending
-//     で弾かれ、コメントがどちらの経路でも届かなかった。
-//   - Console 側: その失敗を見ずにコメントを「送信済み」へ倒していたので、送信ボタン
-//     ごと消えて打ち直せなくなった。
-// deliverPlanComments の単体テストは planComments.test.ts にあるが、そこは「畳むか
-// どうか」しか見ない。カードのボタンが実際に残るか・トーストが出るかという利用者から
-// 見える側は、バンドルを動かさないと確かめられない。
+// The failure it guards against: while an ExitPlanMode approval is pending the Agent reports
+// status "permission", so /plan-respond answers no_plan; the Console then fell back to /input,
+// which rejected it with permission_pending, and the comment reached the agent by neither path.
+// The Console did not look at that failure and marked the comments as sent, which removed the
+// send button so they could not be retyped.
+//
+// planComments.test.ts unit-tests deliverPlanComments, but only decides whether comments are
+// folded away. Whether the card's button survives and a toast appears is user-visible and can
+// only be checked by running the bundle.
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -24,9 +24,10 @@ const SESSION = "s1mock";
 const PLAN = "# ビルド失敗の修正\n\nprebuild を直す。\n";
 const COMMENT = "build-stgが動くようにして";
 
-// planKey / normalizePlan の写し（console/src/features/mirror/planComments.ts）。
-// localStorage を直に仕込んでコメント蓄積 UI（DocView の選択→注釈）を迂回するために
-// 必要。実装とズレたらカードにコメントが出ず、最初の expect で落ちる。
+// A copy of planKey / normalizePlan (console/src/features/mirror/planComments.ts), needed to
+// seed localStorage directly and bypass the comment-collection UI (select then annotate in
+// DocView). If it drifts from the implementation no comment appears on the card and the first
+// expect fails.
 function planKey(session: string, plan: string): string {
   const norm = plan
     .split("\n")
@@ -69,7 +70,7 @@ test.afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-/** 承認待ちのプランを 1 件抱えた claude セッションを 1 つだけ持つ Console を用意する。 */
+/** Set up a Console holding exactly one claude session with one plan awaiting approval. */
 async function openMirrorWithPendingPlan(page: Page, calls: { path: string; body: unknown }[], routes: {
   planRespond: () => { status: number; json: unknown };
   turn: () => { status: number; json: unknown };
@@ -86,8 +87,8 @@ async function openMirrorWithPendingPlan(page: Page, calls: { path: string; body
         json: { sessions: [{ name: SESSION, kind: "claude", alive: true, state: "plan", dir: "/repo", repo: "repo" }] },
       });
     }
-    // ミラーの本体ポーリング。承認待ちのプランは転写ではなく pendingPlan で来る
-    // （claude は解決するまで tool_use を書かないため）。
+    // The mirror's main poll. A plan awaiting approval arrives as pendingPlan rather than in
+    // the transcript, because claude writes no tool_use until it is resolved.
     if (url.pathname === `/api/sessions/${SESSION}/messages`) {
       return route.fulfill({ json: { messages: [], cursor: 1, status: "idle", alive: true, pendingPlan: PLAN } });
     }
@@ -95,12 +96,13 @@ async function openMirrorWithPendingPlan(page: Page, calls: { path: string; body
       const r = routes.planRespond();
       return route.fulfill({ status: r.status, json: r.json });
     }
-    // 自由文は /turn（/input は 404/405 のときだけのレガシー退避 — client.ts sessionTurn）。
+    // Free text goes to /turn; /input is the legacy fallback used only on 404/405 (client.ts
+    // sessionTurn).
     if (url.pathname === `/api/sessions/${SESSION}/turn`) {
       const r = routes.turn();
       return route.fulfill({ status: r.status, json: r.json });
     }
-    // モックしていない API は握り潰さず落とす（path のタイポ／API 変更の検知）。
+    // Fail unmocked APIs instead of swallowing them, to catch a path typo or an API change.
     return route.abort();
   });
   await page.addInitScript(
@@ -119,8 +121,8 @@ async function openMirrorWithPendingPlan(page: Page, calls: { path: string; body
           activeId: "p1",
         }),
       );
-      // レビュー面（DocView）で溜めたコメント 1 件。ストアの実体は localStorage なので、
-      // 選択→注釈の UI を経由せずここから積める。
+      // One comment as collected on the review surface (DocView). The store is localStorage,
+      // so it can be seeded here without going through the select-then-annotate UI.
       localStorage.setItem(
         lsKey as string,
         JSON.stringify({ [key as string]: [{ id: "c1", quote: "prebuild", nth: 0, body: comment as string, ts: 1 }] }),
@@ -131,10 +133,11 @@ async function openMirrorWithPendingPlan(page: Page, calls: { path: string; body
   await page.goto(origin);
 }
 
-test("承認待ちプランへのコメント: 届かなければ送信済みにせずボタンを残す", async ({ page }) => {
+test("comments on a plan awaiting approval: if they do not arrive, keep the button and do not mark them sent", async ({ page }) => {
   const calls: { path: string; body: unknown }[] = [];
-  // 1 回目は実障害の再現（Agent が承認ダイアログを plan と認識できず no_plan → /input も
-  // permission_pending で拒否）、2 回目は修正後（/plan-respond が受理して本文も届く）。
+  // The first round reproduces the failure (the Agent does not recognise the approval dialog as
+  // a plan, so no_plan, and /input is refused with permission_pending); the second is the fixed
+  // behaviour, where /plan-respond accepts and carries the body.
   let planRespondFails = true;
   await openMirrorWithPendingPlan(page, calls, {
     planRespond: () =>
@@ -147,7 +150,7 @@ test("承認待ちプランへのコメント: 届かなければ送信済みに
     }),
   });
 
-  // 承認待ちカードと、未送信 1 件を抱えた送信ボタンが出る。
+  // The awaiting-approval card appears, with a send button carrying one unsent comment.
   const card = page.locator(".mt-plan");
   await expect(card).toBeVisible();
   await expect(card.locator(".mt-plan-comment-body")).toHaveText(COMMENT);
@@ -156,30 +159,32 @@ test("承認待ちプランへのコメント: 届かなければ送信済みに
   await expect(card.locator(".mt-plan-approve")).toContainText("承認して実行");
   await expect(card.locator(".mt-plan-reject")).toContainText("却下");
 
-  // --- 届かなかったとき ---
+  // --- when it does not arrive ---
   await send.click();
-  // 拒否の理由がそのまま利用者に出る（許可カードへ誘導する文言）。汎用の「送信できません
-  // でした」を重ねると具体的な理由が埋もれるので、トーストはちょうど 1 枚であること。
+  // The reason for the refusal reaches the user as-is (wording that points at the permission
+  // card). Stacking a generic "could not send" on top would bury the specific reason, so there
+  // must be exactly one toast.
   await expect(page.getByRole("alert")).toHaveCount(1);
   await expect(page.getByRole("alert")).toContainText("許可の判断待ち");
-  // ここが実障害の芯: 送信済みにせず、ボタンも（1）のまま残っていなければ打ち直せない。
+  // The point: unless the comments stay unsent and the button keeps its count, they cannot be
+  // retyped.
   await expect(card.locator(".mt-plan-comment-sent")).toHaveCount(0);
   await expect(send).toContainText("（1）");
   await expect(card.locator(".mt-plan-comment.sent")).toHaveCount(0);
-  // 承認ダイアログが開いたまま自由文を投げるのは「無言の承認」経路。plan-respond が
-  // 断ったあとのフォールバックとしてしか自由文を送っていないことを固定する。
+  // Sending free text while the approval dialog is open is the silent-approval path. Pin that
+  // free text is only ever sent as a fallback after plan-respond refused.
   expect(calls.map((c) => c.path)).toEqual([
     `/api/sessions/${SESSION}/plan-respond`,
     `/api/sessions/${SESSION}/turn`,
   ]);
 
-  // --- 届いたとき ---
+  // --- when it does arrive ---
   planRespondFails = false;
   calls.length = 0;
   await send.click();
   await expect(card.locator(".mt-plan-comment-sent")).toHaveText("送信済み");
-  await expect(card.locator(".mt-plan-send")).toHaveCount(0); // 未送信ゼロ → ボタンは消える
-  // 受理された経路では自由文を一切使わない（本文はモーダルに飲まれてはならない）。
+  await expect(card.locator(".mt-plan-send")).toHaveCount(0); // nothing unsent -> button is gone
+  // The accepted path uses no free text at all; the body must not be swallowed by the modal.
   expect(calls.map((c) => c.path)).toEqual([`/api/sessions/${SESSION}/plan-respond`]);
   expect((calls[0].body as { decision: string; feedback: string }).decision).toBe("reject");
   expect((calls[0].body as { decision: string; feedback: string }).feedback).toContain(COMMENT);

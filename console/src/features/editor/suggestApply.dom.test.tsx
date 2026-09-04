@@ -62,9 +62,10 @@ describe("CodeEditorHandle.applyEdit", () => {
       expect(ok).toBe(true);
       expect(view.state.doc.toString()).toBe("# concrete title\nbody\n");
       expect(changes.at(-1)).toBe("# concrete title\nbody\n");
-      // カーソルは置換末尾へ。
+      // The cursor lands at the end of the replacement.
       expect(view.state.selection.main.head).toBe("# concrete title".length);
-      // Ctrl+Z 1回で受諾前へ戻る（外部追従と違い、提案の適用は通常の編集）。
+      // One Ctrl+Z returns to the pre-accept state: unlike following an external change,
+      // applying a suggestion is an ordinary edit.
       expect(undoDepth(view.state)).toBe(1);
       await act(async () => {
         undo(view);
@@ -75,9 +76,10 @@ describe("CodeEditorHandle.applyEdit", () => {
     }
   });
 
-  // CR/CRLF は CodeMirror が dispatch 時に LF へ正規化してしまいフィルタに届かない。
-  // 改行契約は適用境界の checkSuggestion が dispatch 前に弾く（suggest.test.ts）。
-  // ここではフィルタが実際に観測する違反（NUL）で第二防衛線を固定する。
+  // CR/CRLF never reaches the filter: CodeMirror normalises it to LF at dispatch time.
+  // The newline contract is enforced earlier, by checkSuggestion at the apply boundary
+  // (suggest.test.ts). This pins the second line of defence with a violation the filter
+  // does observe (NUL).
   it("drops a validator-violating edit via the shared transaction filter", async () => {
     const { handle, view } = await mount("base\n");
     try {

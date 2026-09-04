@@ -3,8 +3,9 @@
 // The handoff proposal used to render AFTER every group, as the scroller's last child.
 // A card that never goes away then permanently owns the mirror's landing position:
 // auto-follow scrolls to the bottom, lands on the card, and the just-sent prompt plus
-// the reply streaming in above it are pushed off-screen — "送信分だけ出ない" (2026-08-04
-// 実障害). Placing it at the moment it was proposed makes it flow with the conversation:
+// the reply streaming in above it are pushed off-screen, so what you just sent never appears
+// (observed in production). Placing it at the moment it was proposed makes it flow with the
+// conversation:
 // it is last only until the next turn, exactly like any other event.
 //
 // Times come from the group's transcript timestamp; a group without one is an

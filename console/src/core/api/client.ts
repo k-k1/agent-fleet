@@ -125,16 +125,17 @@ export type FsResult = { status: number } & Record<string, unknown>;
 
 // Server error messages are language-neutral developer fallbacks. The user-facing text
 // is localized via the i18n catalog under the "err.<code>" key (docs/log/28 / ADR 0016);
-// an unmapped code falls back to the server's message. Go 側の対は
-// control-plane/errcodes.go / workspace/agent/errcodes.go（docs/log/23 P0-3）— コードを増減・
-// 変更するときは必ず両側同時に、対応する "err.<code>" キーを i18n カタログにも足す。
+// an unmapped code falls back to the server's message. The Go counterparts are
+// control-plane/errcodes.go / workspace/agent/errcodes.go (docs/log/23 P0-3) — when a code is
+// added, removed or changed, change both sides together and add the matching "err.<code>"
+// key to the i18n catalog.
 // isTransientErr reports whether an api() result is a backend/transport failure the UI
 // should RETRY rather than treat as real (empty/not-found) data. Two shapes say so:
 //
 //   • `http_<5xx>` — the code api() synthesizes for a non-JSON/empty response, which is
 //     exactly what the CP writes ("workspace agent unreachable", plain-text 502) while
 //     the workspace agent is still booting after a WS start;
-//   • any error body whose HTTP status was 5xx. ★ A JSON body does NOT make a 500 an
+//   • any error body whose HTTP status was 5xx. A JSON body does NOT make a 500 an
 //     application error: the CP answers a DB failure with `{"error":{"code":"internal"}}`
 //     and status 500 (writeAPIErr / internalErr). Judging by the code alone read that as
 //     terminal and the caller stopped retrying — which is how a Console that booted
@@ -155,16 +156,16 @@ export const isTransientErr = (d: unknown): boolean => {
 export const errText = (error: ApiError | string | null | undefined): string => {
   if (error && typeof error === "object") {
     const localized = error.code ? tMaybe("err." + error.code) : undefined;
-    // message も無いオブジェクトを String() すると "[object Object]" になる — 汎用文言へ。
+    // String() on an object without a message yields "[object Object]" — use the generic text.
     return localized ?? error.message ?? t("err.unknown");
   }
   return String(error ?? "");
 };
 
-// errDetail は errText の文言にサーバの生メッセージを併記する。`*_failed` のような
-// 汎用コードは「何に失敗したか」しか表せず、**なぜ**失敗したかは message にしか無い
-// （エージェントメモリの取り込みのように、利用者の環境でしか再現しない失敗はここを
-// 落とすと現地調査の手がかりが消える）。既に同じ文言なら重ねない。
+// errDetail appends the server's raw message to errText's wording. A generic code such as
+// `*_failed` can only say WHAT failed; WHY it failed lives only in the message, and a failure
+// that reproduces on the user's machine alone (agent-memory import, say) loses its only clue
+// if this is dropped. Not appended when it repeats the same text.
 export const errDetail = (error: ApiError | string | null | undefined): string => {
   const head = errText(error);
   const detail = error && typeof error === "object" ? (error.message ?? "").trim() : "";
@@ -327,13 +328,14 @@ export function uploadFiles(
 // --- semantic session turn ops (docs/log/27 P1.5) ---
 // The chat mirror's send / steer / interrupt go through POST /turn, which the
 // Agent adapts to the session's driver: tui = the same tmux typing as before,
-// managed = turn/start・turn/steer・turn/interrupt RPC（P2/P3）. Returns ok.
-// Falls back to the legacy /input body when the Agent predates /turn（フリート
-// 再ビルドのラグで新 Console↔旧 Agent の版ずれが実際に起きる）.
+// managed = the turn/start, turn/steer, turn/interrupt RPCs (P2/P3). Returns ok.
+// Falls back to the legacy /input body when the Agent predates /turn — the lag in
+// rebuilding the fleet really does leave a new Console talking to an old Agent.
 export type TurnOp = "start" | "steer" | "interrupt";
-// TurnResult: ok=false のとき message はユーザーに見せられる却下理由（question_pending
-// 等）。呼び出し側はこれをトーストし、消した楽観 echo / 下書きの復元を判断する —
-// 却下を握りつぶすと「送れたように見えて消えた」になる。
+// TurnResult: when ok=false, `message` is a rejection reason fit to show the user
+// (question_pending and the like). Callers toast it and decide whether to restore the
+// optimistic echo / draft they cleared — swallowing a rejection makes the message look
+// sent and then silently gone.
 export interface TurnResult {
   ok: boolean;
   message?: string;
@@ -342,9 +344,9 @@ export async function sessionTurn(
   session: string,
   op: TurnOp,
   prompt?: string,
-  // attachments: managed セッション専用のファイル添付（保存済み絶対パス）。driver が
-  // API 添付（opencode は v1 file part）へ変換する（docs/log/27 §10.2-3）。tui では
-  // Console が従来どおりパスをプロンプト本文へ織り込むので渡さない。
+  // attachments: file attachments for MANAGED sessions only (saved absolute paths). The
+  // driver converts them into API attachments (a v1 file part for opencode; docs/log/27
+  // §10.2-3). Not passed for tui, where the Console weaves the path into the prompt body.
   attachments?: string[],
 ): Promise<TurnResult> {
   const fail = (e: unknown): TurnResult => ({ ok: false, message: errText(e as ApiError) || t("err.send_failed") });
@@ -397,9 +399,10 @@ export async function sessionPlanRespond(
   return { ok: true, delivered: feedback ? r?.feedback_delivered === true : true, message: r?.hint };
 }
 
-// 持ち越した対話（docs/log/75）— 停止時に画面に出ていた質問 / プラン / 許可。モーダルは
-// 再開しても戻らない（未応答の tool_use は会話木から外れる）ので、これは**キー列で
-// 答えるものではない**: 回答は Agent が再開後に文章として配達する。
+// A carried-over interaction (docs/log/75) — the question / plan / permission that was on
+// screen when the session stopped. The modal does not come back on resume (an unanswered
+// tool_use drops out of the conversation tree), so this is NOT answered with a key sequence:
+// the Agent delivers the answer as prose after resuming.
 import type { Question } from "../../features/mirror/transcript/types.ts";
 
 export interface CarriedInteraction {
@@ -417,8 +420,9 @@ export interface CarriedAnswerInput {
   notes?: string;
 }
 
-// sessionCarriedAnswer は持ち越しへの回答を送る。停止中の Workspace が相手になりうる
-// ので、CP はこの 1 本だけ auto-start を通す（利用者の明示操作＝「今から使う」）。
+// sessionCarriedAnswer sends the answer to a carried-over interaction. The target Workspace
+// may be stopped, so the CP allows auto-start on this one endpoint (an explicit user action
+// means "I am using it now").
 export async function sessionCarriedAnswer(
   session: string,
   body: {
@@ -438,15 +442,16 @@ export async function sessionCarriedAnswer(
 // One question's structured answer inside an Interaction reply (docs/log/27 §5).
 // A multi-question form replies with one entry per question, in order.
 export interface InteractionAnswer {
-  text?: string; // 自由入力
-  options?: number[]; // 選択肢 index（複数選択は複数個）
+  text?: string; // free-form input
+  options?: number[]; // option indices (several of them for a multi-select)
 }
 
 // sessionRespond answers a MANAGED session's pending question by interaction id.
 // TUI sessions keep the keys/seq path — their modal is driven by navigation and
 // has no "answer by id" surface (the Agent answers respond_unsupported for them).
-// 却下理由（id 不明・driver 未実装など）を捨てず TurnResult 形で返す — 呼び出し側が
-// 汎用文言の代わりにトーストできる（sessionTurn と同じ契約）。
+// Rejection reasons (unknown id, driver not implemented, …) are returned in TurnResult shape
+// rather than dropped, so callers can toast them instead of generic wording — the same
+// contract as sessionTurn.
 export const sessionRespond = (
   session: string,
   id: string,
@@ -458,9 +463,9 @@ export const sessionRespond = (
     answers,
   }).then((r) => (r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true }));
 
-// sessionSettings updates a MANAGED session's dynamic thread settings（docs/log/27
-// §9.4-3: 稼働中セッションのモデル / effort / モード変更）。空フィールドは
-// 「変更しない」。TUI セッションはそれぞれの CLI 内の設定操作を使う。
+// sessionSettings updates a MANAGED session's dynamic thread settings (docs/log/27 §9.4-3:
+// changing model / effort / mode on a running session). An empty field means "leave
+// unchanged". TUI sessions use each CLI's own in-session settings instead.
 export interface ManagedThreadSettings {
   model: string;
   effort: string;
@@ -607,15 +612,15 @@ export const chatDelete = (id: string): Promise<Response> =>
 // connection (survives a reload), so aborting the fetch no longer cancels it — this does.
 export const chatStop = (id: string): Promise<Response> =>
   raw(`api/chat/conversations/${encodeURIComponent(id)}/stop`, { method: "POST" });
-// Compact the conversation's context (docs/log/33 第2段): the backend summarizes the current
+// Compact the conversation's context (docs/log/33 stage 2): the backend summarizes the current
 // provider session, resets the resume handles, and carries only the summary into a fresh
 // session on the next turn. Returns the updated conversation (or {error}).
 export const chatCompact = (id: string): Promise<Conversation & { error?: ApiError }> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/compact`, "POST");
-// 作業計画（docs/log/33 第5段）: 圧縮を跨いで原文のまま運ばれる枠。set は手編集（空文字で
-// クリア）、refresh は直近の会話から計画を引き直す一発ヘッドレス（会話のプロバイダ
-// セッションは使わないので、更新のためにコンテキストは増えない）。どちらも更新済みの
-// 会話を返す。
+// Work plan (docs/log/33 stage 5): a slot carried verbatim across compaction. `set` is a
+// manual edit (an empty string clears it); `refresh` re-derives the plan from the recent
+// conversation in a one-shot headless run — it does not use the conversation's provider
+// session, so refreshing adds no context. Both return the updated conversation.
 export const chatSetPlan = (id: string, plan: string): Promise<Conversation & { error?: ApiError }> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/plan`, "PUT", { plan });
 export const chatRefreshPlan = (id: string): Promise<Conversation & { error?: ApiError }> =>
@@ -634,7 +639,7 @@ export const chatSend = (
 export interface ChatStreamHandlers {
   onAgent?: (agent: SessionKind) => void;
   onDelta?: (text: string) => void;
-  onStep?: (step: ChatStep) => void; // a completed 作業過程 item (narration + tools before a tool call)
+  onStep?: (step: ChatStep) => void; // a completed work-step item (narration + tools before a tool call)
   onDone?: (conv: Conversation | undefined) => void;
   onError?: (msg: string) => void;
 }
@@ -713,23 +718,25 @@ export async function chatStream(
   }
 }
 
-// --- 削除ロック（docs/log/45） ---
-// セッション / 作業コピー（worktree 含む）/ アシスタント会話を削除保護に固定・解除する。
-// 保護そのものは Agent の REST 層で効くので、ここを通らない削除（オペレーターの MCP
-// ツール・ブリッジ）も同じ 403 locked で止まる。UI 側は locked を見て削除項目を無効化
-// するだけ — 判定の正は常にサーバー。
+// --- deletion lock (docs/log/45) ---
+// Pin / release a session, working copy (worktrees included) or assistant conversation
+// against deletion. The protection itself lives in the Agent's REST layer, so deletions that
+// never pass through here (the operator's MCP tools, the bridge) are stopped by the same 403
+// locked. The UI only disables the delete item when locked — the server is always the
+// authority.
 export const sessionSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/sessions/${encodeURIComponent(name)}/lock`, "POST", { locked });
-// 操作ビーコン（docs/log/75 P3）: 「人が今 Console を触っている」を Workspace のアイドル時計へ
-// 伝える。応答は見ない（在席の記録が 1 回落ちても次の操作で届く）。auto-start は通らない
-// ので、停止中の Workspace がこれで起き上がることは無い。
+// Attention beacon (docs/log/75 P3): tells the Workspace's idle clock that a person is
+// touching the Console right now. The response is ignored — a dropped presence record is
+// picked up by the next action. auto-start is not allowed, so this never wakes a stopped
+// Workspace.
 export const workspaceAttention = (): Promise<unknown> =>
   apiJSON("api/workspace/attention", "POST", {}).catch(() => null);
 
-// 停止しないピン（docs/log/75）: アイドル自動停止（tier1 のセッション halt / tier2 の
-// Workspace 停止）から、期限付きでこのセッションを守る。hours<=0 で解除。
-// **時刻で切れる**のが本体 — 消し忘れたピンは閉じ忘れた端末タブと同じで、黙って
-// 課金し続けるものになる。延長は押し直す。
+// Keep-awake pin (docs/log/75): protects this session from idle auto-stop (tier1 session
+// halt / tier2 Workspace stop) for a bounded time. hours<=0 releases it. Expiring on a clock
+// is the whole point — a pin nobody removes is a forgotten terminal tab that keeps billing
+// silently. Extending means pressing it again.
 export const sessionKeepAwake = (
   name: string,
   hours: number,
@@ -754,10 +761,10 @@ export const assistantUpdate = (id: string, input: AssistantInput): Promise<Assi
 export const assistantDelete = (id: string): Promise<Response> =>
   raw(`api/assistants/${encodeURIComponent(id)}`, { method: "DELETE" });
 
-// --- launch prompt templates (repo 起動 modal) ---
+// --- launch prompt templates (repo launch modal) ---
 // Aggregated read-only from the working copy: .claude/commands, .claude/skills,
 // .agent-fleet/launch-prompts.md. Bodies are verbatim; the modal does {{repo}}/
-// {{branch}}/{{path}} expansion and adds a client-side 履歴 group (localStorage).
+// {{branch}}/{{path}} expansion and adds a client-side history group (localStorage).
 export interface PromptTemplateItem {
   id: string;
   label: string;
@@ -771,7 +778,7 @@ export interface PromptTemplateGroup {
 export const repoPromptTemplates = (name: string): Promise<{ groups: PromptTemplateGroup[] }> =>
   api(`api/repos/${encodeURIComponent(name)}/prompt-templates`);
 
-// --- session skills (mirror スキルピッカー, docs/log/50 / ADR0034) ---
+// --- session skills (mirror skill picker, docs/log/50 / ADR0034) ---
 // Invocable skills/commands for a RUNNING session. Sources are kind-specific
 // (claude/codex/opencode: filesystem conventions; cursor: the CLI-advertised
 // ACP list) — the Agent resolves them; unsupported kinds answer an empty list.
@@ -852,7 +859,7 @@ export const memoCategoryUpdate = (id: string, patch: MemoCategoryPatch): Promis
 export const memoCategoryDelete = (id: string): Promise<Response> =>
   raw(`api/memo-categories/${encodeURIComponent(id)}`, { method: "DELETE" });
 
-// --- assistant one-shot ask (docs/log/21 メモ整理) ---
+// --- assistant one-shot ask (docs/log/21 memo tidy-up) ---
 // Stateless advisory turn (tools off) used to tidy up + auto-categorize memos. The
 // assistant is asked to return JSON; the caller parses and previews before applying.
 export const askAssistant = (

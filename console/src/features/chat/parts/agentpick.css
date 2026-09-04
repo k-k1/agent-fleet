@@ -1,5 +1,5 @@
-/* エージェント切替（docs/log/19）: ヘッダの kind チップがそのままピッカーのボタンを兼ねる。
-   見た目は .kind-tag のまま、押せることを caret で示す。 */
+/* Agent switching (docs/log/19): the header kind chip doubles as the picker button.
+   It keeps the .kind-tag look; a caret is what signals it is clickable. */
 .chat-agent-pick {
   cursor: pointer;
 }

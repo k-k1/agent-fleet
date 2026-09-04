@@ -103,9 +103,10 @@ function wireWorkspaceRefresh(): () => void {
   });
 }
 
-// スマホの横スワイプ: 稼働中セッションを 1 つ送る（← が次・→ が前）。画面が丸ごと
-// 入れ替わる操作なので、どこへ着地したか（何件中の何番目か）を短いトーストで返す —
-// 空振り（対象が自分だけ／無し）も黙って落とさず、理由を出す。
+// Phone horizontal swipe: advance the running session by one (left = next, right =
+// previous). The whole screen changes, so a short toast reports where it landed (which
+// of how many). A no-op (only this session, or none) says why rather than dropping
+// silently.
 function rotateToSession(delta: number): void {
   const target = rotateRunningSession(delta);
   if (!target) {
@@ -144,7 +145,7 @@ export function App() {
   const [booted, setBooted] = useState(false);
   const notificationSource = useNotificationStore((s) => s.sourceState);
   const workspaceRunning = useWorkspaceStore((s) => s.state) === "running";
-  // Pop-out tab (ペインの別タブ切り離し): "popout" renders minimal chrome below;
+  // Pop-out tab (a pane detached into its own tab): "popout" renders minimal chrome below;
   // "full" is a normal console seeded with the popped pane (no branch needed).
   const popout = usePopoutMode();
   // Pop-out seed descriptor (consumed once at boot) + the identityRev the layout
@@ -206,9 +207,9 @@ export function App() {
   //   - popstate-driven open/close already sits on the right entry → both no-op
   const drawerHistSynced = useRef(false);
   useEffect(() => {
-    // 初回マウントはスキップ — ドロワー entry 上でリロードすると history.state.drawer が
-    // 残っており、閉状態の初期実行が history.back() を誤発火して 1 段戻ってしまう。
-    // 同期するのは実際の open/close 遷移だけでよい。
+    // Skip the first mount: reloading while on a drawer entry leaves history.state.drawer
+    // behind, so the initial closed-state run would fire history.back() and navigate one
+    // step away. Only real open/close transitions need syncing.
     if (!drawerHistSynced.current) {
       drawerHistSynced.current = true;
       return;
@@ -238,8 +239,9 @@ export function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  // 横スワイプ（左ペインの出し入れ／スマホでの稼働中セッションのローテート）。認識規則と
-  // その理由は app/swipeGestures.ts に置き、ここは画面状態の読み取りと副作用の配線だけ。
+  // Horizontal swipes (show/hide the left pane; rotate running sessions on a phone). The
+  // recognition rules and their rationale live in app/swipeGestures.ts; this only wires up
+  // the screen-state reads and the side effects.
   useEffect(() => {
     const mq = window.matchMedia(MOBILE_QUERY);
     return installSwipeGestures(window, {
@@ -252,8 +254,8 @@ export function App() {
       },
       drawerOpen: () => navOpenRef.current,
       railOpen: () => useLeftRail.getState().open,
-      // 切り離しタブ（popout）はペイン 1 枚だけの最小 UI — セッションの持ち替えは
-      // その趣旨から外れるので入れない。
+      // A popped-out tab is a minimal single-pane UI; switching session is outside what
+      // it is for.
       rotatable: () => popoutMode() !== "popout",
       setDrawer: setNavOpen,
       openRailOverlay: () => useLeftRail.getState().openOverlay(),
@@ -284,25 +286,26 @@ export function App() {
     const unHistory = wireLayoutHistory();
     const unKeys = wireKeys();
     const unReconcile = wireTerminalReconcile();
-    // 操作ビーコン（docs/log/75 P3）: 可視のときの実操作を 60 秒に 1 回だけ CP へ。
-    // 「読んでいるだけ」の人が不在に見えてコンテナを止められるのを防ぐ。
+    // Attention beacon (docs/log/75 P3): report real interaction while visible, at most
+    // once every 60s, so someone who is only reading does not look absent and get their
+    // container stopped.
     const unAttention = wireAttentionBeacon();
     const unBrowserReconcile = wireBrowserReconcile();
     const unBrowserAttachmentReconcile = wireBrowserAttachmentReconcile();
     const unWsRefresh = wireWorkspaceRefresh();
-    // セッションが入力待ちに入ったら、その作業コピーのぶんだけ FILES を読み直す。
-    // 一覧はどのみち届いているので追加の通信は無く、発火は作業コピーごとに合流する。
+    // When a session goes idle, re-read FILES for just that working copy. The listing
+    // arrives anyway, so this costs no extra traffic, and firings coalesce per copy.
     const unFilesSessionRefresh = wireFilesSessionRefresh();
-    // 統合 push チャネル（通信量削減 P3）: 配線を先に登録してから接続 — 初回
-    // スナップショットのフレームを取りこぼさない。ポーラーはフォールバックで
-    // そのまま起動する（pushHealthy 中は tick スキップ）。
+    // Unified push channel (traffic reduction P3): register the wiring before connecting
+    // so the first snapshot frame is not dropped. The pollers still start as the fallback
+    // and skip their tick while pushHealthy.
     const unPushApply = wirePushApply();
     const stopPush = startPushChannel();
     const stopWsPoll = startWorkspacePolling();
     const stopSessPoll = startSessionsPolling();
     const stopReposPoll = startReposPolling();
-    // 取り込みジョブ（docs/log/78）: 走行中だけ速く回る。ブラウザを閉じても続く処理なので、
-    // 再読み込み後もここが行を復元する。
+    // Import jobs (docs/log/78): polls fast only while one is running. The work continues
+    // with the browser closed, so this also restores the rows after a reload.
     const stopRepoJobsPoll = startRepoJobsPolling();
     const stopChatPoll = startChatPolling();
     const stopNotificationPoll = startNotificationPolling();
@@ -346,10 +349,11 @@ export function App() {
   // and refetch tenant-scoped data.
   useEffect(() => {
     if (!booted) return;
-    // ui-prefs の累積キー（作業グループ等）は前テナントの持ち主のデータをメモリに
-    // 残したままにしない — 新テナントの ui-prefs.json が空でも「消失事故」として
-    // 書き戻してしまうと、前テナントのデータが漏れる。boot 直後のこの効果の初回実行は
-    // 除く（起動時の hydrateUIPrefs() が既にこのテナント分を読み込み済み）。
+    // Never leave the previous tenant's owner data in memory for the accumulated ui-prefs
+    // keys (working sets and friends): if the new tenant's ui-prefs.json is empty and we
+    // treat that as data loss and write it back, the previous tenant's data leaks. Skip
+    // this effect's first run after boot, where hydrateUIPrefs() already loaded this
+    // tenant's copy.
     if (prefsSyncedTenantRef.current !== null && prefsSyncedTenantRef.current !== tenant) {
       void resyncAccumulatedForIdentitySwitch();
     }
@@ -358,8 +362,8 @@ export function App() {
     // owned by the previous membership into a same-named pane in the next tenant.
     disposeAllBrowsers();
     disposeAllBrowserAttachments();
-    // 旧テナントの push ストリームを先に落としてから通知ストアを reset する —
-    // 逆順だと reset 後に旧テナントのフレームが 1 個滑り込みうる。
+    // Tear down the old tenant's push stream before resetting the notification store; the
+    // other order lets one of its frames slip in after the reset.
     restartPush();
     useNotificationStore.getState().reset();
     void useNotificationStore.getState().refresh();
@@ -413,9 +417,9 @@ export function App() {
   // disposeAllBrowsers() would kill live browser pages, restartPush()+reset()
   // would drop unread notifications, and a pop-out tab (descriptor consumed at
   // boot) would fall through to load() and lose its detached pane.
-  // ui-prefs の累積キーの再同期だけは例外で、ここでも要る — 同一テナント内で
-  // ユーザーだけが切り替わるケース（tenant は変わらないので上の per-tenant sync
-  // effect は発火しない）が、まさにこの identityRev だけの変化として現れるため。
+  // Resyncing the accumulated ui-prefs keys is the one exception that is also needed here:
+  // when only the user changes within the same tenant, the per-tenant sync effect above
+  // does not fire, and the switch shows up as a change in identityRev alone.
   useEffect(() => {
     if (!booted || identityRev === identityRevDoneRef.current) return;
     identityRevDoneRef.current = identityRev;
@@ -434,16 +438,16 @@ export function App() {
   // so a satellite tab would just duplicate every ping.
   useSessionNotifications(notificationSource === "unsupported" && popout !== "popout");
 
-  // ★ 所属ゼロ（招待前）は Console を開かず、そう言う画面に着地させる
-  // （docs/log/61 §61.10.2・P7-2）。招待制が新規インストールの既定になったので、これは
-  // 例外ではなく最初の一歩。開いてしまうと、以後すべてのリクエストが 403 で弾かれて
-  // トーストが 1 つずつ出るだけになる。
-  // popout より前に置く: 所属が無ければ開くべきペインも無い。
+  // With no membership yet (not invited), land on a screen that says so rather than
+  // opening the Console (docs/log/61 §61.10.2, P7-2). Invite-only is the default for a new
+  // install, so this is the first step, not an edge case; opening the Console would just
+  // 403 every request and emit one toast per failure. Placed before the popout branch:
+  // with no membership there is no pane to open either.
   if (notProvisioned) return <NotProvisioned />;
 
   // Minimal pop-out chrome: title bar + the (1-pane) PaneHost, plus the overlay
   // layer (dialogs the reduced command set can still reach + auth/workspace
-  // modals). No rail / TopBar / WsBar — 展開 (PopoutTitleBar) converts in place.
+  // modals). No rail / TopBar / WsBar — expanding (PopoutTitleBar) converts in place.
   if (popout === "popout") {
     return (
       <div className="app-shell popout">
@@ -456,9 +460,10 @@ export function App() {
         {tenantOpen && <TenantDialog />}
         {guideOpen && <GuideModal />}
         <SessionModals />
-        {/* 起動スタック（StartModal / LaunchModal）。target が無いあいだは何も描かないので
-            最小クロームの邪魔にはならず、逆に無いと切り離したペインからの起動——共有ビューの
-            引き継ぎ受諾（docs/log/77）やメモ送信——が押しても何も起きない口になる。 */}
+        {/* The launch stack (StartModal / LaunchModal). It renders nothing while there is
+            no target, so it does not intrude on the minimal chrome; without it, launching
+            from a detached pane (accepting a shared-view handover, docs/log/77, or sending
+            a memo) would be a button that does nothing. */}
         <StartHost />
         <WsStartingDialog />
         <AuthExpiredModal />
@@ -495,7 +500,7 @@ export function App() {
         />
         <nav className="app-rail">
           <LayoutMap />
-          {/* 作業グループ (docs/log/52): pinned OUTSIDE the scroll area so the active
+          {/* Working sets (docs/log/52): pinned OUTSIDE the scroll area so the active
               scope stays visible however far the rail scrolls — rendered for the
               stopped rail too (the switcher works without the agent). */}
           <WorkingSetBar />
@@ -518,8 +523,8 @@ export function App() {
             ) : (
               <>
                 <StoppedRailSection id="assistant" title={tr("ui.assistant")} icon="comment-discussion" />
-                {/* 停止中こそ本番（docs/log/80）: CP のキャッシュを読むので、止まっている
-                    Workspace をチケットから起こす導線がここで成立する。 */}
+                {/* The stopped state is the point (docs/log/80): this reads the CP's cache,
+                    which is what makes waking a stopped Workspace from a ticket work. */}
                 <WorkItemsSection />
                 <MemoQueueSection />
                 {schedulerEnabled && <SchedulesSection />}

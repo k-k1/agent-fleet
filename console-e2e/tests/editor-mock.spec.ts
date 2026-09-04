@@ -36,13 +36,13 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  // beforeAll が listen 前に失敗した場合 server は未生成 — 無条件 close だと
-  // ここで TypeError になり本来の失敗理由（beforeAll 側）が隠れるためガードする。
+  // If beforeAll failed before listen, server was never created; an unconditional close would
+  // throw a TypeError here and hide the real failure from beforeAll.
   if (!server) return;
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-test("CodeMirror保存・競合・dirty navigation guard・ARIA", async ({ page }) => {
+test("CodeMirror save, conflict, dirty navigation guard, ARIA", async ({ page }) => {
   let disk = "base\n";
   let unknownNext = false;
   await page.route("**/api/**", async (route) => {
@@ -94,16 +94,17 @@ test("CodeMirror保存・競合・dirty navigation guard・ARIA", async ({ page 
         json: { path: "mock.txt", size: Buffer.byteLength(disk), revision: revision(disk) },
       });
     }
-    // 明示的にモックした path 以外は空 200 で握り潰さない — abort で失敗させ、
-    // モック側/アプリ側の path タイポや API 変更を検知する。未知 API はアプリの
-    // リトライ経路に乗るだけで、このテストが観測する fileview には影響しない。
+    // Do not swallow anything but the explicitly mocked paths with an empty 200: abort so a
+    // typo in the mock or the app, or an API change, fails visibly. An unknown API only sends
+    // the app down its retry path and does not affect the fileview this test observes.
     return route.abort();
   });
   await page.addInitScript(() => {
-    // キーは実装の LKEY_NEW（console/src/layout/migrate.ts）= "af.layout2.<user>.<slug>"。
-    // 上の whoami モックが auth_mode:"dev"（user 空）・tenants 空（slug 空）を返すため
-    // "af.layout2.." になる。実装側とずれた場合は blank ターミナルにフォールバックし、
-    // 直後の fileview / tablist アサートが fail して検知される。
+    // The key is the implementation's LKEY_NEW (console/src/layout/migrate.ts) =
+    // "af.layout2.<user>.<slug>". The whoami mock above returns auth_mode:"dev" (empty user)
+    // and no tenants (empty slug), so it is "af.layout2..". If it ever drifts from the
+    // implementation the app falls back to a blank terminal and the fileview / tablist
+    // assertions right below fail, which is how the drift is caught.
     sessionStorage.setItem("af.layout2..", JSON.stringify({
       cols: [{
         id: "c1",
@@ -121,14 +122,14 @@ test("CodeMirror保存・競合・dirty navigation guard・ARIA", async ({ page 
   });
   await page.goto(origin);
 
-  // 注入した layout が復元され file pane が開いたこと自体を先に固定する。
+  // Pin down first that the injected layout was restored and the file pane opened at all.
   await expect(page.locator(".fileview")).toBeVisible();
   const tabs = page.getByRole("tablist", { name: /ファイル表示モード|File display mode/ });
   const edit = tabs.getByRole("tab", { name: /編集|Edit/ });
   await expect(edit).toHaveAttribute("aria-selected", "false");
   await page.setViewportSize({ width: 390, height: 844 });
-  // RegExp の name に exact は効かない（Playwright 仕様: 文字列 name 専用）ため、
-  // アンカーで全一致させる（AI提案等の他ボタンとの部分一致を防ぐ意図）。
+  // exact does not apply to a RegExp name (Playwright only honours it for string names), so
+  // anchor the pattern for a full match and avoid matching other buttons such as AI suggestions.
   await expect(page.locator(".fileview").getByRole("button", { name: /^保存$|^Save$/ })).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 720 });
   await edit.click();
@@ -181,11 +182,10 @@ test("CodeMirror保存・競合・dirty navigation guard・ARIA", async ({ page 
     delete (window as unknown as { __afUpdating?: boolean }).__afUpdating;
     return { normal, whileUpdating };
   });
-  // __afUpdating（版更新リロードの印）を読むのはターミナルの beforeunload ガード
-  // （TerminalView）だけで、エディタの dirty ガードは更新中でも未保存編集を守り
-  // 続けるのが仕様（reloadForUpdate は markUpdating の前に dirty guard モーダルで
-  // 決着させる）。whileUpdating: true はその「エディタ側は __afUpdating を無視
-  // する」を固定するアサート。
+  // Only the terminal's beforeunload guard (TerminalView) reads __afUpdating, the marker for a
+  // version-update reload; the editor's dirty guard must keep protecting unsaved edits even
+  // during an update (reloadForUpdate settles the dirty guard modal before markUpdating).
+  // whileUpdating: true is what pins "the editor ignores __afUpdating".
   expect(unloadPrevented).toEqual({ normal: true, whileUpdating: true });
   disk = "remote\n";
   await page.keyboard.press("Control+S");

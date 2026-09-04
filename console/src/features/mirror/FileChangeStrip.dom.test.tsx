@@ -1,9 +1,11 @@
-// 変更ファイル帯（docs/log/68 §68.5）の描画。押さえたいのは見た目ではなく 3 つの約束:
-//   - 材料が無いときは「0 件」ではなく帯ごと出さない（未対応 kind と本当に 0 件は
-//     利用者から区別できない）
-//   - 作業ツリーに差分が無い行も消さない（消すと「さっき直したのに居ない」になる）
-//   - 開閉はセッション毎に憶える（ToDo と同じ作法。ターミナル⇄チャットを往復しても
-//     畳んだままでいてほしい）
+// Rendering of the changed-files strip (docs/log/68 §68.5). What is pinned is not the look
+// but three promises:
+//   - with nothing to show, drop the whole strip rather than render "0 files" (a kind that
+//     records no edits and a session that really changed nothing are indistinguishable)
+//   - keep rows the working tree has no diff for (dropping them reads as "I just edited that
+//     and it is gone")
+//   - remember open/closed per session (same manners as the ToDo strip; it must stay folded
+//     across a terminal/chat round trip)
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -43,8 +45,8 @@ async function render(session: string, files: SessionFile[]) {
   return host;
 }
 
-// 帯は 2 本引く: 作業ツリー（/fs/changes）と、セッション開始以降のコミット
-// （/sessions/{name}/committed）。URL で振り分ける。
+// Two loads back the strip: the working tree (/fs/changes) and the commits made since the
+// session started (/sessions/{name}/committed). Dispatch on the URL.
 const route = (changes: unknown[], committed: string[] = []) => (url: string) =>
   Promise.resolve(url.includes("/committed") ? { committed } : { changes });
 
@@ -62,23 +64,23 @@ afterEach(() => {
 });
 
 describe("FileChangeStrip", () => {
-  it("編集が 1 件も無ければ帯そのものを描かない", async () => {
+  it("renders no strip at all when there is not a single edit", async () => {
     const el = await render("s1", []);
     expect(el.querySelector(".mirror-files")).toBeNull();
   });
 
-  it("既定は畳まれていて、件数と直近のファイル名だけ見える", async () => {
+  it("is folded by default, showing only the count and the most recent file name", async () => {
     const el = await render("s1", [file()]);
     const strip = el.querySelector(".mirror-files");
     expect(strip).not.toBeNull();
     expect(strip!.classList.contains("open")).toBe(false);
     expect(el.querySelector(".mfl-count")!.textContent).toBe("1");
     expect(el.querySelector(".mfl-lead")!.textContent).toBe("a.ts");
-    // 合計の増減は畳んだままでも出す（一目で規模が分かる）
+    // The total +/- shows even while folded, so the scale is readable at a glance.
     expect(el.querySelector(".mfl-stat .dv-add")!.textContent).toBe("+4");
   });
 
-  it("開くと行が出て、状態バッジが git 由来になる", async () => {
+  it("shows the rows once opened, with the state badge coming from git", async () => {
     const el = await render("s1", [file()]);
     await act(async () => {
       (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();
@@ -91,7 +93,7 @@ describe("FileChangeStrip", () => {
     expect(el.querySelector(".mfl-dir")!.textContent).toBe("src");
   });
 
-  it("⚠️ 作業ツリーに差分が無い行も残す（灰色で）", async () => {
+  it("keeps rows the working tree has no diff for, greyed out", async () => {
     apiMock.mockImplementation(route([]));
     const el = await render("s1", [file()]);
     await act(async () => {
@@ -99,11 +101,11 @@ describe("FileChangeStrip", () => {
     });
     const row = el.querySelector(".mfl-item")!;
     expect(row.classList.contains("mfl-clean")).toBe(true);
-    // 開けなくなってはいけない——ファイル自体はまだそこにある
+    // It must stay openable — the file itself is still there.
     expect((row.querySelector(".mfl-row") as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("開閉の選択はセッション毎に憶える", async () => {
+  it("remembers the open/closed choice per session", async () => {
     const el = await render("s1", [file()]);
     await act(async () => {
       (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();
@@ -115,14 +117,14 @@ describe("FileChangeStrip", () => {
     const again = await render("s1", [file()]);
     expect(again.querySelector(".mirror-files")!.classList.contains("open")).toBe(true);
 
-    // 別セッションはその選択を引き継がない
+    // Another session does not inherit that choice.
     act(() => root?.unmount());
     host?.remove();
     const other = await render("s2", [file()]);
     expect(other.querySelector(".mirror-files")!.classList.contains("open")).toBe(false);
   });
 
-  it("差分は無いがコミットに現れた行は「コミット済み」で出す（docs/log/68 P2）", async () => {
+  it("marks a row with no diff but present in a commit as committed (docs/log/68 P2)", async () => {
     apiMock.mockImplementation(route([], ["src/a.ts"]));
     const el = await render("s1", [file()]);
     await act(async () => {
@@ -133,7 +135,7 @@ describe("FileChangeStrip", () => {
     expect(row.classList.contains("mfl-clean")).toBe(false);
   });
 
-  it("コミットの問い合わせが失敗しても帯は出る（refine するだけの情報だから）", async () => {
+  it("still renders the strip when the committed query fails (it only refines rows)", async () => {
     apiMock.mockImplementation((url: string) =>
       url.includes("/committed") ? Promise.reject(new Error("boom")) : Promise.resolve({ changes: [] }),
     );
@@ -145,7 +147,7 @@ describe("FileChangeStrip", () => {
     expect(el.querySelector(".mfl-item")!.classList.contains("mfl-clean")).toBe(true);
   });
 
-  it("消えたファイルの行は開けない", async () => {
+  it("cannot open the row of a deleted file", async () => {
     apiMock.mockImplementation(route([]));
     const el = await render("s1", [file({ verb: "delete" })]);
     await act(async () => {
