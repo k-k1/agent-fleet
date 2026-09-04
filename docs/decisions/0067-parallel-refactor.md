@@ -229,9 +229,12 @@ was never noticed is that `develop` gets its own push trigger, which turns red *
 
 ## Outcome (appended 2026-09-04, on completion)
 
-From the Phase 0 merge `9b0336e7` to `develop = 40c9142a`. **57 PRs**, with nothing from outside
-this track slipping into the board. The figures were re-measured at the completion point; how each
-one was counted is in the developer work journal for the 2026-09 parallel refactor.
+From the Phase 0 merge `9b0336e7` to `develop = 40c9142a`. **That range holds 60 first-parent
+merges** (#294–#353, no gaps), **56 of them this refactor's PRs**; the other four (#301 / #306 /
+#330 / #331) are unrelated work from outside this track. **Phase 0 itself (#293) is the range's
+starting point and is therefore not in that count** (the merge queue's 57 rows do include it). The
+figures were re-measured at the completion point; how each one was counted is in the developer work
+journal for the 2026-09 parallel refactor.
 
 - **`package main` (non-test `.go` directly under a module)**: control-plane 115 files / 48,505
   lines → **96 / 28,321**; workspace/agent 149 / 51,177 → **64 / 15,373**. **−55,988 lines (−56%)
