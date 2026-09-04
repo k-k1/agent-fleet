@@ -58,10 +58,11 @@ func Put(e Event) error {
 	if err := os.WriteFile(filepath.Join(dir(), e.ID+".json"), b, 0o600); err != nil {
 		return err
 	}
-	// docs/log/37 契約4: outbox に書けた直後、チャットブリッジの配送キューにも積む。
-	// Enqueue はファイル 1 枚の書き込みだけ（ネットワークはデーモンの sender 側）で、
-	// エラーも飲む — ブリッジ不達が Console 通知を巻き込むことは構造的にない。
-	body, _ := e.Payload["body"].(string) // 全文ブリッジ: 応答本文（answer-ready のみ載る）
+	// docs/log/37 contract 4: as soon as the outbox write lands, also queue the event for
+	// the chat bridge. Enqueue writes a single file (the network side is the daemon's
+	// sender) and swallows its error, so a bridge outage structurally cannot take the
+	// Console notification down with it.
+	body, _ := e.Payload["body"].(string) // full-text bridge: the answer body (answer-ready only)
 	// P2b: the pending AskUserQuestion payload rides the "question" event so an
 	// interact-capable provider can render option buttons. Stored as raw JSON.
 	var questions json.RawMessage

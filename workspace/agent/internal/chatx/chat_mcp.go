@@ -1,15 +1,16 @@
 package chatx
 
-// アシスタントチャットへの MCP 配線（docs/log/48 P2）。
+// MCP wiring for the assistant chat (docs/log/48 P2).
 //
-// アシスタントが持つ Integrations は「組み込み連携 id」から「実効レジストリ上のサーバー
-// id」へ意味が広がった（組み込み 3 種の id は文字列のままなので既存アシスタントは移行不要）。
-// ここはその id をレジストリ定義へ解決し、各プロバイダの設定形へ渡すまでを担う。
-// 定義 → CLI 設定形のシリアライズ自体は internal/mcpreg/attach.go にあり、本ファイルは
-// 「どのサーバーを・どこへ・どう置くか」だけを持つ。
+// An assistant's Integrations widened from "built-in integration id" to "server id in the
+// effective registry" (the three built-in ids are still the same strings, so existing
+// assistants need no migration). This file resolves such an id against the registry
+// definition and hands it to each provider's configuration shape. Serialising a definition
+// into a CLI's config form lives in internal/mcpreg/attach.go; this file only decides which
+// server goes where, and how.
 //
-// 秘密（env / ヘッダの値）を argv へ出さないことが本ファイルの契約:
-// claude / opencode / agy は 0600 の設定ファイル、codex は環境変数経由で渡す。
+// The contract here is that secrets (env / header values) never reach argv: claude,
+// opencode and agy read them from a 0600 config file, codex gets them via the environment.
 
 import (
 	"encoding/json"

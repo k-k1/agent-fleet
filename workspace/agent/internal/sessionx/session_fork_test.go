@@ -6,8 +6,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// buildProgram のフォークコマンド組み立てテストは internal/agents/claude の
-// program_test.go へ移設（docs/log/23 残① Wave F）。
+// The fork-command assembly tests for buildProgram live in internal/agents/claude/program_test.go.
 
 // forkTitle derives a fork's title from the source: its own title, else the stripped
 // label, always suffixed " (fork)".
@@ -18,9 +17,9 @@ func TestForkTitle(t *testing.T) {
 	if got := forkTitle(session.Meta{Label: "[AF] agent-fleet @0703-1430"}); got != "agent-fleet @0703-1430 (fork)" {
 		t.Fatalf("forkTitle(label) = %q; want %q", got, "agent-fleet @0703-1430 (fork)")
 	}
-	// セッション名入りの新ラベル。**フォーク元の名前をタイトルへ持ち込まない**こと —
-	// 派生したセッションが別セッションの名前を名乗ってしまう。
+	// A label carrying a session name: the source's name must never reach the title, or the
+	// forked session ends up announcing another session's name.
 	if got := forkTitle(session.Meta{Label: "[AF:s6bbilu] agent-fleet @0703-1430"}); got != "agent-fleet @0703-1430 (fork)" {
-		t.Fatalf("forkTitle(名前入りラベル) = %q; want %q", got, "agent-fleet @0703-1430 (fork)")
+		t.Fatalf("forkTitle(label with session name) = %q; want %q", got, "agent-fleet @0703-1430 (fork)")
 	}
 }

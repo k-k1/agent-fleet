@@ -10,7 +10,8 @@ import (
 )
 
 // bitbucketGet retries transient failures (transport error / 429 / 5xx) and succeeds once the
-// provider recovers, so an intermittent blip doesn't surface as "取得に失敗" in the picker.
+// provider recovers, so an intermittent blip doesn't surface as "failed to fetch" in the
+// picker.
 func TestBitbucketGetRetriesTransient(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

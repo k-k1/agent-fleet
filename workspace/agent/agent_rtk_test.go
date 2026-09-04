@@ -4,9 +4,8 @@ import (
 	"testing"
 )
 
-// codex 側の適用（ApplyRTK / stripMarkedBlock）のテストは internal/agents/codex
-// へ移設（docs/log/23 残① Wave E）。ここには main 側に残る durable prefs の
-// 読み書きテストだけを置く。
+// The codex-side application (ApplyRTK / stripMarkedBlock) is tested in internal/agents/codex.
+// Only the read/write tests for the durable prefs that stay in main live here.
 
 func TestAgentRTKPrefsDefaultOn(t *testing.T) {
 	dir := t.TempDir()

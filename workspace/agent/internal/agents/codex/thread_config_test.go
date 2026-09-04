@@ -1,7 +1,7 @@
 package codex
 
-// threadConfig の組み立て。ここが壊れると managed セッションから MCP が消えるか、
-// セッション名が届かず引き継ぎ提案が cwd 推定へ落ちる。
+// threadConfig assembly. When this breaks, MCP disappears from managed sessions, or the
+// session name never arrives and the handoff proposal falls back to guessing from cwd.
 
 import (
 	"errors"

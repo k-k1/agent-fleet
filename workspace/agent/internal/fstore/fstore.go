@@ -1,7 +1,8 @@
-// Package fstore は「キー1件 = 小さな値1ファイル」の汎用ストア（docs/log/23 P1-W2、
-// W5 で internal 化）。<base()>/<subdir>/<key><ext> に置く。base はストア生成時に
-// 注入され、呼び出しの都度解決する — テストが HOME を差し替えるためキャッシュ
-// しない。session-status / pending-* / last-tool / *-sid の 7 家系の共通実装。
+// Package fstore is the generic "one key = one small value file" store (docs/log/23
+// P1-W2). Values live at <base()>/<subdir>/<key><ext>. base is injected when the store
+// is built and resolved on every call — never cached, because tests swap HOME out. It
+// is the shared implementation behind the seven session-status / pending-* / last-tool
+// / *-sid families.
 package fstore
 
 import (
@@ -46,9 +47,9 @@ func (s Store[T]) Read(key string) (T, bool) {
 
 func (s Store[T]) Remove(key string) { _ = os.Remove(s.Path(key)) }
 
-// ModTime は key が最後に書かれた時刻。値そのものではなく「いつ捕まえたか」で
-// 鮮度を判断する呼び出し側のためにある（保留ペイロードが、転写に記録された決着
-// より前に書かれたものかどうか）。missing は ok=false。
+// ModTime is when key was last written. It exists for callers that judge freshness by
+// when a value was captured rather than by the value itself (was this pending payload
+// written before the resolution recorded in the transcript?). Missing gives ok=false.
 func (s Store[T]) ModTime(key string) (time.Time, bool) {
 	fi, err := os.Stat(s.Path(key))
 	if err != nil {

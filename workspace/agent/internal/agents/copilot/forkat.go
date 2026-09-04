@@ -58,7 +58,7 @@ func cutIndexAt(lines [][]byte, anchor string) (int, error) {
 }
 
 // nextPromptID returns the id of the first user.message after anchor — the cut point for
-// "continue from this message" (この発言の続きから). "" (no error) when the anchor is
+// "continue from this message". "" (no error) when the anchor is
 // the last exchange.
 func nextPromptID(lines [][]byte, anchor string) (string, error) {
 	at, err := cutIndexAt(lines, anchor)

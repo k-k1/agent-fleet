@@ -8,10 +8,10 @@ package opencode
 // this — the driver only checked the HTTP status, so a failed turn landed as
 // TurnCompleted / idle, and the read layer dropped any message with no displayable
 // part, so the mirror and get_session_output showed nothing at all. A session that hit
-// e.g. an exhausted opencode Zen balance therefore went silently back to 入力待ち with
-// zero tokens and no trace of why.
+// e.g. an exhausted opencode Zen balance therefore went silently back to waiting for
+// input with zero tokens and no trace of why.
 //
-// 実測（1.18.5、opencode Zen の残高切れ）:
+// Measured (1.18.5, opencode Zen balance exhausted):
 //
 //	{"info":{…,"error":{"name":"APIError","data":{
 //	   "statusCode":401,"isRetryable":false,
@@ -40,9 +40,10 @@ const abortedErrorName = "MessageAbortedError"
 
 // messageError is the wire shape of an assistant message's `error` field.
 //
-// responseBody / responseHeaders / metadata は上限や残高の失敗にだけ現れる付随情報
-// （workspaceid.go）。opencode 本体も同じ場所を読んで「どの枠が・いつ戻るか」を出して
-// いる。載っていない版・載っていない失敗では素直に空になる（全部 optional）。
+// responseBody / responseHeaders / metadata are incidental fields that appear only on
+// limit or balance failures (workspaceid.go). opencode itself reads the same place to
+// show which quota was hit and when it comes back. On versions or failures that do not
+// carry them they simply come out empty (all of them are optional).
 type messageError struct {
 	Name string `json:"name"`
 	Data struct {
@@ -125,8 +126,8 @@ func (w errorEnvelope) pick() (messageError, bool) {
 	if e == nil || !e.ok() {
 		return messageError{}, false
 	}
-	// 失敗はここに必ず集まるので、workspace id と枠情報の採取もここに置く
-	// （workspaceid.go）。採れなければ何もしない。
+	// Every failure funnels through here, so harvesting the workspace id and the quota
+	// info sits here too (workspaceid.go). If nothing can be harvested, do nothing.
 	scanFailure(*e)
 	return *e, true
 }

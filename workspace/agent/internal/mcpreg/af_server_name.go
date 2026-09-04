@@ -1,20 +1,22 @@
 package mcpreg
 
-// af 自身の MCP サーバ名を起動ごとに振り直す（docs/log/48 §8.4）。
+// af's own MCP server name is minted afresh on every boot (docs/log/48 §8.4).
 //
-// なぜ: af が書くのは各 CLI の user/global スコープだが、**リポジトリ側のプロジェクト
-// スコープが同名を定義すると、claude 以外は project が勝つ**（実測・§8.4 の表）。つまり
-// `.mcp.json` や `.codex/config.toml` に `af` という名前のサーバがあるだけで、その
-// リポジトリのセッションでは自己申告・引き継ぎ提案・Chromium attach が黙って死ぬ。
-// `reservedNames` は AF レジストリ側でしか効かず、他人のリポジトリのファイルは止められない。
+// Why: af writes into each CLI's user/global scope, but when a repository's project scope
+// defines the same name, project wins for every CLI except claude (measured; the table in
+// §8.4). A server merely named `af` in a `.mcp.json` or a `.codex/config.toml` is therefore
+// enough to silently kill self-reporting, handoff proposals and Chromium attach for every
+// session in that repository. `reservedNames` only takes effect inside the AF registry and
+// cannot stop a file in someone else's repository.
 //
-// 名前に乱数の接尾辞を付ければ、偶然の衝突は事実上起きなくなる。起動ごとに振り直すのは、
-// 万一衝突しても**再起動で自然に外れる**ようにするため。
+// A random suffix on the name makes an accidental collision practically impossible. The
+// rotation is per boot so that a collision, if one ever happened, clears itself on a restart.
 //
-// 変わるのは各 CLI の設定ファイルに書くキー（＝クライアント側で `mcp__<name>__<tool>` の
-// プレフィックスになる部分）だけで、**ツール名は変わらない**（`af_report` 等）。AF が
-// 注入する指示もツール名で書いてあり、プレフィックスを書いている箇所はコードにも docs にも
-// 無い。レジストリ上の識別子（ID）も `af` のまま — 分岐は全て ID を見ている。
+// What changes is only the key written into each CLI's config file (the part that becomes the
+// `mcp__<name>__<tool>` prefix on the client side); the tool names do not change (`af_report`
+// and the rest). The instructions AF injects are written in terms of tool names, and neither
+// the code nor the docs spell the prefix anywhere. The registry identifier (ID) also stays
+// `af` — every branch looks at the ID.
 
 import (
 	"crypto/rand"

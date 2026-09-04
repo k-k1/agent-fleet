@@ -12,7 +12,7 @@ package bridge
 // (bridge_approval.go), wired through the existing ReceiverDeps.Answer callback (a click
 // with kind "op" is applied by answerInteraction → bridgeApprovalDecision).
 //
-// Provider-scoped (docs/log/37 Slack 追随): the approval posts to whichever provider's
+// Provider-scoped (docs/log/37 Slack follow-up): the approval posts to whichever provider's
 // operator store owns conv — the same conv→provider mapping PostOperatorReply uses.
 
 import (
@@ -26,7 +26,7 @@ import (
 // unattended when there is no channel to approve it through).
 var errNoOperatorApprovalTarget = errors.New("no operator thread to request approval in")
 
-// approvalRow builds the 承認/却下 Discord action row for an approval request id, encoding
+// approvalRow builds the Approve/Reject Discord action row for an approval request id, encoding
 // the decision into each button's custom_id (af|op|approve|<id> / af|op|reject|<id>).
 func approvalRow(id string, en bool) []any {
 	return decisionRow(

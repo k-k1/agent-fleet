@@ -8,16 +8,16 @@ import (
 	"sync"
 )
 
-// trustMu serializes the config.json read-modify-write（同時起動で片方の
-// trustedFolders 追記が失われると trust ダイアログで固まる）。
+// trustMu serializes the config.json read-modify-write: if two concurrent launches lose
+// one of the trustedFolders appends, that session stalls on the trust dialog.
 var trustMu sync.Mutex
 
-// copilot の config.json（$COPILOT_HOME/config.json）への trustedFolders 事前追記。
-// 実測（v1.0.73）: TUI は未信頼フォルダで "Confirm folder trust" ダイアログを出して
-// 止まり、「Yes, and remember」で config.json の trustedFolders[] に保存される —
-// 事前追記で同じ状態を作ればダイアログはスキップされる。ファイルは先頭に //
-// コメント行を持つ JSONC 風（"This file is managed automatically."）なので、
-// コメント行を保存して JSON 本体だけを読み書きする。
+// Pre-appending trustedFolders to copilot's config.json ($COPILOT_HOME/config.json).
+// Measured (v1.0.73): the TUI stops on a "Confirm folder trust" dialog for an untrusted
+// folder, and "Yes, and remember" stores the folder in config.json's trustedFolders[] -
+// writing the same state beforehand skips the dialog. The file is JSONC-ish, with leading
+// // comment lines ("This file is managed automatically."), so we preserve those lines and
+// read/write only the JSON body.
 
 // readConfig parses config.json, returning the leading comment lines verbatim
 // and the JSON object (empty map when absent/corrupt).
@@ -50,8 +50,7 @@ func readConfigAt(path string) (comments []string, m map[string]any) {
 }
 
 // writeConfig persists m atomically, restoring the original comment header.
-// copilot 自身も同じファイルを書くため、未知キーは readConfig の map 経由で保存
-// される。
+// copilot writes the same file itself, so unknown keys survive through readConfig's map.
 func writeConfig(comments []string, m map[string]any) {
 	writeConfigAt(configPath(), comments, m)
 }
@@ -79,8 +78,8 @@ func writeConfigAt(p string, comments []string, m map[string]any) {
 
 // EnsureFolderTrusted pre-accepts copilot's folder-trust gate for dir — exactly
 // what copilot writes when the user answers "Yes, and remember this folder"
-// (実測). Best-effort and idempotent; called on every launch（一回きりの固定は
-// 後で剥がれる — agy 00dacc5 の教訓）。
+// (measured). Best-effort and idempotent; called on every launch - the agy 00dacc5 lesson
+// that a one-time fix peels off later.
 func EnsureFolderTrusted(dir string) {
 	if dir == "" {
 		return

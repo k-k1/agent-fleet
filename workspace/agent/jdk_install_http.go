@@ -1,7 +1,7 @@
 package main
 
 // jdk_install_http.go — the HTTP face of the on-demand Temurin installer, i.e. the
-// Console's one-button "install this JDK" in 設定 → ツールチェーン.
+// Console's one-button "install this JDK" in Settings → Toolchains.
 //
 // Java is the one toolchain the picker could offer without being able to deliver: the
 // list is "installed ∪ installable" (jdk.go javaOptions), and choosing an installable

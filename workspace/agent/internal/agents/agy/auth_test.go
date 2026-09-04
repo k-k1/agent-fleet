@@ -7,7 +7,7 @@ import (
 
 // The TUI renders the authorize URL as an OSC-8 hyperlink: after ANSI
 // stripping the buffer holds the URL twice back-to-back plus a "]8;;"
-// remnant (統合E2E実測). sanitizeAuthURL must return exactly one clean copy.
+// remnant (measured in the integrated E2E). sanitizeAuthURL must return exactly one clean copy.
 func TestSanitizeAuthURL(t *testing.T) {
 	clean := "https://accounts.google.com/o/oauth2/auth?client_id=x&state=4zIlJff6QT"
 	for name, in := range map[string]string{

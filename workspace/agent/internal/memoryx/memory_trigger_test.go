@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// 契機判定は純関数なので、実時間を待たずに全分岐を固定できる（docs/log/39 の
-// 「idle 遷移 + debounce」をポーリングで表現したもの）。
+// The trigger decision is a pure function, so every branch can be pinned down without
+// waiting on real time (docs/log/39's "idle transition + debounce", expressed as polling).
 func TestMemoryShouldSnapshot(t *testing.T) {
 	base := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	in := func(mod func(*memoryTriggerInput)) memoryTriggerInput {
@@ -29,23 +29,23 @@ func TestMemoryShouldSnapshot(t *testing.T) {
 		in   memoryTriggerInput
 		want bool
 	}{
-		{"静穏かつ非稼働なら積む", in(nil), true},
-		{"対象ファイルが無ければ積まない", in(func(v *memoryTriggerInput) { v.NewestChange = time.Time{} }), false},
-		{"前回 snapshot 以降に変更が無ければ積まない",
+		{"quiet and not busy: snapshot", in(nil), true},
+		{"no target file: no snapshot", in(func(v *memoryTriggerInput) { v.NewestChange = time.Time{} }), false},
+		{"no change since the last snapshot: no snapshot",
 			in(func(v *memoryTriggerInput) { v.LastSnapshot = base.Add(time.Second) }), false},
-		{"変更時刻と前回 snapshot が同時刻なら積まない",
+		{"change time equal to the last snapshot: no snapshot",
 			in(func(v *memoryTriggerInput) { v.LastSnapshot = base }), false},
-		{"debounce 未満なら待つ",
+		{"below debounce: wait",
 			in(func(v *memoryTriggerInput) { v.Now = base.Add(4 * time.Minute) }), false},
-		{"debounce ちょうどで積む",
+		{"exactly at debounce: snapshot",
 			in(func(v *memoryTriggerInput) { v.Now = base.Add(5 * time.Minute) }), true},
-		{"初回（snapshot がまだ無い）でも積む",
+		{"first run, no snapshot yet: snapshot",
 			in(func(v *memoryTriggerInput) { v.LastSnapshot = time.Time{} }), true},
-		{"稼働中セッションがあれば待つ",
+		{"a busy session: wait",
 			in(func(v *memoryTriggerInput) { v.Busy = true }), false},
-		{"稼働中でも MaxDefer を超えたら押し切る",
+		{"busy but past MaxDefer: go ahead anyway",
 			in(func(v *memoryTriggerInput) { v.Busy = true; v.Now = base.Add(31 * time.Minute) }), true},
-		{"MaxDefer=0 なら稼働中は永遠に待つ",
+		{"MaxDefer=0: wait forever while busy",
 			in(func(v *memoryTriggerInput) { v.Busy = true; v.MaxDefer = 0; v.Now = base.Add(99 * time.Hour) }), false},
 	}
 	for _, c := range cases {
@@ -57,7 +57,8 @@ func TestMemoryShouldSnapshot(t *testing.T) {
 	}
 }
 
-// AF_MEMORY_SNAPSHOT は既定 ON（docs/log/39 決着 #1）。off 指定だけがループを止める。
+// AF_MEMORY_SNAPSHOT defaults to ON (docs/log/39 decision #1). Only an explicit off
+// stops the loop.
 func TestMemoryAutoEnabledDefaults(t *testing.T) {
 	if !memoryAutoEnabled() {
 		t.Fatal("auto snapshot should default to ON")
@@ -86,14 +87,14 @@ func TestMemoryEnvDurationOverrides(t *testing.T) {
 	if d := memorySnapshotDebounce(); d != memoryDefaultDebounce {
 		t.Fatalf("invalid override should fall back, got %v", d)
 	}
-	t.Setenv("AF_MEMORY_SNAPSHOT_INTERVAL", "1ms") // 下限未満は既定へ
+	t.Setenv("AF_MEMORY_SNAPSHOT_INTERVAL", "1ms") // below the minimum falls back to the default
 	if d := memorySnapshotInterval(); d != memoryDefaultInterval {
 		t.Fatalf("below-minimum interval should fall back, got %v", d)
 	}
 }
 
-// 1 周期分の実行を実データで通す: debounce 前は積まず、静穏後に積み、その直後は
-// 「前回 snapshot 以降に変更なし」で再び積まない。
+// Run one whole cycle against real data: nothing before debounce, a snapshot once quiet,
+// and none immediately after that, because there is no change since the last snapshot.
 func TestMemorySnapshotTick(t *testing.T) {
 	_, cfg, slug := memoryTestEnv(t)
 	mem := filepath.Join(cfg, "projects", slug, "memory", "a.md")
@@ -101,7 +102,8 @@ func TestMemorySnapshotTick(t *testing.T) {
 	if err := os.Chtimes(mem, changed, changed); err != nil {
 		t.Fatal(err)
 	}
-	// 他のメモリも同じ「1 分前」に揃えて、最新 mtime を決定的にする。
+	// Line the other memories up on the same "one minute ago" so the newest mtime is
+	// deterministic.
 	for _, r := range memoryRoots() {
 		for _, f := range memoryCollect(r) {
 			if err := os.Chtimes(f.Abs, changed, changed); err != nil {

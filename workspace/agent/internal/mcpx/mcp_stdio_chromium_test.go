@@ -110,9 +110,11 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 	}
 }
 
-// inputSchema は Configure 後の依存値で組み立てること。tool slice を package 変数に
-// すると、package main の init より先に零値を捕捉し、enum:null が Anthropic API の
-// JSON Schema draft 2020-12 検証で拒否されて Claude の全ターンが止まる。
+// TestMCPSessionToolSchemasUseConfiguredDependencyValues pins that inputSchema is built from
+// dependency values resolved after Configure. Holding the tool slice in a package variable
+// captures zero values before package main's init runs, and the resulting enum:null is
+// rejected by the Anthropic API's JSON Schema draft 2020-12 validation, which stops every
+// Claude turn.
 func TestMCPSessionToolSchemasUseConfiguredDependencyValues(t *testing.T) {
 	withMCPFlags(t, false, true, true)
 	oldPeer := mcpPeerMessagingEnabled

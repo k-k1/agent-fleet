@@ -7,13 +7,13 @@ import (
 	"sync"
 )
 
-// settingsMu serializes the settings.json read-modify-write（同時起動で片方の
-// trustedWorkspaces 追記が失われると trust プロンプトで固まる）。
+// settingsMu serializes the settings.json read-modify-write: if two concurrent launches lose
+// one of the trustedWorkspaces appends, that session hangs on the trust prompt.
 var settingsMu sync.Mutex
 
-// agy の settings.json（~/.gemini/antigravity-cli/settings.json）への書き込み口。
-// trustedWorkspaces の事前追加と enableTelemetry の固定に使う。agy 自身も同じ
-// ファイルを書くため、未知キーは保存し、atomic rename で更新する。
+// The write path into agy's settings.json (~/.gemini/antigravity-cli/settings.json), used to
+// pre-add trustedWorkspaces and to pin enableTelemetry. agy writes the same file itself, so
+// unknown keys are preserved and updates go through an atomic rename.
 
 // readSettings returns the parsed settings.json (empty map when absent/corrupt).
 func readSettings() map[string]any {
@@ -42,8 +42,8 @@ func writeSettings(m map[string]any) {
 
 // EnsureWorkspaceTrusted pre-accepts agy's workspace-trust gate for dir by
 // appending it to trustedWorkspaces in settings.json — exactly what agy writes
-// when the user answers "Yes, I trust this folder" (実測: 事前追加でプロンプト
-// はスキップされ、メイン画面に直行する). Best-effort and idempotent.
+// when the user answers "Yes, I trust this folder" (measured: with the entry pre-added the
+// prompt is skipped and agy goes straight to the main screen). Best-effort and idempotent.
 func EnsureWorkspaceTrusted(dir string) {
 	if dir == "" {
 		return
@@ -63,8 +63,8 @@ func EnsureWorkspaceTrusted(dir string) {
 
 // enforceTelemetryOff pins enableTelemetry=false in settings.json. The auth
 // flow toggles the Interactions data-collection opt-in off on the ToS screen
-// (既定オン — docs/log/32 の採用条件で必ずオフに倒す)。Called at auth completion
-// AND on every agy launch (BuildLaunch / usage・context スクレイプ): a one-shot
+// (on by default; the adoption conditions in docs/log/32 require it off). Called at auth
+// completion AND on every agy launch (BuildLaunch, and the usage/context scrapes): a one-shot
 // pin doesn't survive the key being flipped or dropped later. No-op when
 // already false.
 func enforceTelemetryOff() {

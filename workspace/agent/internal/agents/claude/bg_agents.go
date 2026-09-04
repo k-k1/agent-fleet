@@ -22,8 +22,8 @@ import (
 // subagent writing a long answer appends NOTHING to its own jsonl while it generates.
 // Measured in one session (sf2ykxk, 2026-09-01) the three finished agents had silent
 // stretches of 215s / 342s / 396s against a 90s window, and the live one went quiet for
-// 4m23s — so the badge fell back to a bare 入力待ち in the middle of the run, exactly
-// when the user needs to know work is still going. Pairing does not flap: the agent's
+// 4m23s — so the badge fell back to a bare "awaiting input" in the middle of the run,
+// exactly when the user needs to know work is still going. Pairing does not flap: the agent's
 // close record clears it in the same poll it lands.
 //
 // Sampling 60 recent transcripts (182 launches) found exactly one open agent — the one

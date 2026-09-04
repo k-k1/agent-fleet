@@ -141,11 +141,11 @@ func runSvnAuthedSink(ctx context.Context, sink *repoJobSink, creds *secrets.SVN
 // interrupted/killed op leaves .svn locked — very common under OOM churn). The fix
 // is a local `svn cleanup`; callers auto-heal by running it and retrying once.
 //
-// ★ E155037 を必ず含めること。中断された checkout/update の後始末が要る状態で svn が実際に
-// 出すのは「E155037: Previous operation has not finished; run 'cleanup' if it was interrupted」で、
-// **`svn cleanup` ではなく `cleanup`** と書く。E155004 系の文言だけを見ていた頃、これが素通りして
-// 自動修復が一度も走らず、利用者は毎回 更新 が失敗するのを手動で ロックを解除 するしかなかった
-// （実測: svn 1.14.2 / docs/log/78）。
+// E155037 must stay in the list. What svn actually prints when an interrupted checkout or
+// update needs cleaning up is "E155037: Previous operation has not finished; run 'cleanup' if
+// it was interrupted" — it writes `cleanup`, not `svn cleanup`. Matching only the E155004
+// wording let that case through, the auto-heal never ran once, and the user had to clear the
+// lock by hand every time Update failed (measured: svn 1.14.2 / docs/log/78).
 func svnLocked(out string) bool {
 	s := strings.ToLower(out)
 	return strings.Contains(out, "E155004") ||
@@ -209,10 +209,11 @@ func svnInfo(dir string) (revision, url string) {
 // order of magnitude more files, on EFS, where every stat is a network round trip.
 const svnDirtyTimeout = 20 * time.Second
 
-// svnDirtyScan は「同じ作業コピーの走査は 1 本だけ」にするための相乗り。一覧は 60 秒の
-// ポーリングに加えて画面の操作でも refresh されるので、素直に書くと大きな作業コピーに対して
-// 全走査が重なる（走行中の checkout と wc.db を奪い合ったのと同じ形を、今度は自分で作る）。
-// TTL キャッシュにしないのは、手動の 更新 を押した直後に古い判定を返さないため。
+// svnDirtyScan is the ride-along that keeps one scan per working copy. The list refreshes on
+// UI actions as well as the 60-second poll, so the naive version piles full scans on top of
+// each other for a large working copy — the same wc.db contention a running checkout caused,
+// only self-inflicted this time. It is not a TTL cache, so that a manual Update is never
+// answered with a stale verdict.
 type svnDirtyScan struct {
 	done  chan struct{}
 	dirty bool
@@ -221,7 +222,7 @@ type svnDirtyScan struct {
 var svnDirtyState = struct {
 	mu      sync.Mutex
 	running map[string]*svnDirtyScan
-	last    map[string]bool // 直近の「実際に測れた」答え
+	last    map[string]bool // the most recent answer that was actually measured
 }{running: map[string]*svnDirtyScan{}, last: map[string]bool{}}
 
 // svnDirty reports whether the working copy has local modifications. `svn status`

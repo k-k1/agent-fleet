@@ -9,7 +9,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// envOr は package main の同名ヘルパの複製（極小のため共有せず重複を許容）。
+// envOr is a copy of the identically named helper in package main (too small to be worth
+// sharing).
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -64,7 +65,7 @@ func buildProgram(model, effort, slotSid, codexResumeID, forkFrom string) string
 	parts = append(parts, flags)
 	// request_user_input (codex's AskUserQuestion) is gated OFF in the TUI's Default
 	// mode — the model is told "the tool is unavailable in Default mode" and answers
-	// itself instead of asking. Without this the 質問あり chip / notification on the CLI
+	// itself instead of asking. Without this the "has a question" chip / notification on the CLI
 	// route can never fire: WireLive's HasPendingQuestion probe looks for a pending
 	// request_user_input call in the rollout, and none is ever recorded. Plan mode
 	// enables the tool on its own, so only Default mode needed the opt-in — which is

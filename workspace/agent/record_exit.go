@@ -12,10 +12,10 @@ package main
 // a stop as a crash (verified on tmux 3.3a: kill-session leaves no record; an inner
 // SIGKILL records 137).
 //
-// この pane ラッパー経路は tui ドライバ専用。managed セッション（docs/log/27 §10.2-2）は
-// daemon が supervisor の子プロセスなので cmd.Wait() で直接取れ、判定ロジック
-// （status.ExitReasonFor / status.OOMKillCount — 本ファイルから internal/status へ
-// 移設）を共用する。
+// This pane-wrapper path is for the tui driver only. In a managed session (docs/log/27
+// §10.2-2) the daemon is a child of the supervisor, so its status comes straight from
+// cmd.Wait(); both paths share the same classification logic (status.ExitReasonFor /
+// status.OOMKillCount, in internal/status).
 
 import (
 	"strconv"

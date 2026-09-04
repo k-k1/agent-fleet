@@ -8,15 +8,15 @@ type Route struct {
 	Handler http.HandlerFunc
 }
 
-// Routes は browserx が持つルートの**唯一の表**。
+// Routes is the ONE table of the routes browserx owns.
 //
-// ⚠️ ここが 1 箇所であることが要点。移送の直後は routes.go の browser 節と
-// mux_test.go の表が同じ 15 本を別々に書いており（所有権の都合でウェーブ中は
-// そのままにした）、**写しは黙って腐る** —— 片方に 1 本足しても、もう片方の
-// テストは全部緑のまま通ってしまう。回収（ADR 0067 決定 2）で 1 本にまとめた。
+// Being in a single place is the point: the browser section of routes.go and the table in
+// mux_test.go used to spell the same 15 routes out separately, and a copy rots silently —
+// adding a route to one side leaves every test on the other side green. ADR 0067
+// decision 2 folded them into this one table.
 //
-// routes.go 側で「登録されたこと」自体が落ちていないかは、Phase 0 が撮った
-// testdata/routes.golden と TestBrowserRoutesMatchAgentRouteTable が見る。
+// Whether the registration itself is still there on the routes.go side is watched by
+// testdata/routes.golden and TestBrowserRoutesMatchAgentRouteTable.
 func Routes() []Route {
 	return []Route{
 		// Browser pane — ephemeral BrowserContext + Page ownership and a restricted
@@ -42,7 +42,7 @@ func Routes() []Route {
 	}
 }
 
-// RegisterRoutes は Agent の mux に browserx のルートを登録する。
+// RegisterRoutes registers browserx's routes on the Agent's mux.
 func RegisterRoutes(mux *http.ServeMux) {
 	for _, r := range Routes() {
 		mux.HandleFunc(r.Pattern, r.Handler)

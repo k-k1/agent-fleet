@@ -7,7 +7,7 @@ import (
 )
 
 // writeChat lays out one cursor chat the way the CLI does:
-// projects/<cwdSlug>/agent-transcripts/<chatID>/<chatID>.jsonl（実機の形）。
+// projects/<cwdSlug>/agent-transcripts/<chatID>/<chatID>.jsonl (the real on-disk shape).
 func writeChat(t *testing.T, home, dir, chatID string, withTranscript bool) string {
 	t.Helper()
 	d := filepath.Join(home, ".cursor", "projects", cwdSlug(dir), "agent-transcripts", chatID)
@@ -22,8 +22,9 @@ func writeChat(t *testing.T, home, dir, chatID string, withTranscript bool) stri
 	return d
 }
 
-// cwd はパスに入っているので、帰属はディレクトリを読むだけで足りる。別 cwd のチャットが
-// 混ざらないこと（ここが崩れると他プロジェクトの会話を拾う）。
+// The cwd is part of the path, so attribution needs nothing but reading the directory.
+// Chats from another cwd must not leak in — once that breaks, another project's
+// conversation gets picked up.
 func TestCliSessionsScopedToCwd(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -35,12 +36,13 @@ func TestCliSessionsScopedToCwd(t *testing.T) {
 		t.Fatalf("cliSessions = %+v, want only the /tmp/repo chat", got)
 	}
 	if got[0].Created.IsZero() {
-		t.Fatal("Created が空 — スロット作成時刻との突き合わせができない")
+		t.Fatal("Created is empty - cannot be matched against the slot creation time")
 	}
 }
 
-// 転写ファイルの無いディレクトリは会話として数えない。cursor は起動時に器だけ作るので、
-// これを候補にすると「まだ何も話していないチャット」を掴んで会話を失う。
+// A directory with no transcript file is not a conversation. cursor creates the empty
+// container at launch, so accepting one as a candidate grabs a chat that has said nothing
+// yet and loses the real conversation.
 func TestCliSessionsIgnoresEmptyChatDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -51,8 +53,9 @@ func TestCliSessionsIgnoresEmptyChatDir(t *testing.T) {
 	}
 }
 
-// cwd スラグの規則（先頭/末尾の "/" を除いて残りを "-" に）— transcriptPath と同じ
-// 写像を使っているので、片方だけ変えたら候補が空になる、を固定する。
+// The cwd slug rule (strip leading/trailing "/" and turn the rest into "-") is the same
+// mapping transcriptPath uses; changing only one side empties the candidate list, so pin
+// them together.
 func TestCliSessionsUsesTranscriptPathSlug(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -63,10 +66,11 @@ func TestCliSessionsUsesTranscriptPathSlug(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("cliSessions = %+v, want 1", got)
 	}
-	// 同じ id を transcriptPath でも引けること（読み経路と探索経路の写像が一致）。
+	// The same id must resolve through transcriptPath too (read path and discovery path
+	// share one mapping).
 	if p := transcriptPath("/home/dev/repos/proj", chat); filepath.Base(p) != chat+".jsonl" {
 		t.Fatalf("transcriptPath = %q", p)
 	} else if _, err := os.Stat(p); err != nil {
-		t.Fatalf("transcriptPath が実ファイルを指していない: %v", err)
+		t.Fatalf("transcriptPath does not point at a real file: %v", err)
 	}
 }

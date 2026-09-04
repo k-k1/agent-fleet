@@ -600,7 +600,7 @@ func MaybePruneWorktree(dir string) {
 		return
 	}
 	if repoLocked(dir) {
-		return // 削除ロック（docs/log/45）は自動 prune にも効く
+		return // the deletion lock (docs/log/45) applies to auto-prune too
 	}
 	if st, err := GitStatus(dir); err != nil || st.Dirty || st.Ahead > 0 {
 		return // keep dirty/unpushed worktrees; the user force-deletes those explicitly
@@ -1540,8 +1540,9 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 				len(running), strings.Join(running, ", ")))
 		return
 	}
-	// 削除ロック（docs/log/45）: 作業コピー自身のロックと、そこに住むロック済みセッションの
-	// 巻き添え。どちらも force=true では越えられない — ロック解除が唯一の道。
+	// Deletion lock (docs/log/45): the working copy's own lock, and locked sessions living
+	// in it being taken down with it. Neither is passable with force=true — unlocking is the
+	// only way through.
 	if repoLocked(dir) {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
 			"working copy is locked against deletion; unlock it first")
@@ -1642,15 +1643,16 @@ func forgetNonLiveMetasUnder(dir string) {
 			continue
 		}
 		if m.Locked {
-			continue // 削除ロック（docs/log/45）— 掃除の巻き添えでも消さない
+			continue // deletion lock (docs/log/45) — not removed as collateral of a cleanup either
 		}
 		if m.Archived {
-			// アーカイブは「棚」— WT を消しても会話は棚に残し、回収は棚側の削除
-			// （delete_session の gz 退避付き）に任せる。ここで忘れると、①一括アーカイブ
-			// →②WT削除 の段階を踏んだ人の棚が黙って消える。行は「フォルダ無し」表示になる。
+			// An archived session sits on the shelf: removing the worktree leaves the
+			// conversation there, and reclaiming it is the shelf's own deletion (delete_session,
+			// with its gz stash). Forgetting it here silently empties the shelf of anyone who
+			// went 1) archive in bulk, 2) delete the worktree. The row renders as "no folder".
 			continue
 		}
-		finalizeSessionUsage(m) // 使用量台帳へ確定してから忘れる（docs/log/46 §3-b）
+		finalizeSessionUsage(m) // settle into the usage ledger before forgetting (docs/log/46 §3-b)
 		session.RemoveMeta(m.Name)
 	}
 }

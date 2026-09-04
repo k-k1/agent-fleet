@@ -104,8 +104,8 @@ var spinnerRe = regexp.MustCompile(`(?m)` + spinnerHead + `[^)\n]*[0-9]+(?:h|m|s
 //
 //	✳ Calculating… (almost done thinking with high effort)
 //
-// (real 60-column capture, claude_s36uuiv — the Console badged that session 入力待ち for
-// the whole "almost done thinking" window of a 14-minute turn).
+// (real 60-column capture, claude_s36uuiv — the Console badged that session "waiting for
+// input" for the whole "almost done thinking" window of a 14-minute turn).
 //
 // The parenthesised segments are NOT a fixed set that merely gains and loses members with
 // the turn's phase — they are laid out against the pane width, and the status phrase wins.
@@ -125,7 +125,7 @@ var spinnerRe = regexp.MustCompile(`(?m)` + spinnerHead + `[^)\n]*[0-9]+(?:h|m|s
 //
 // Tightened with a ")" end-of-line anchor that spinnerRe does not need: without a timer to
 // vouch for it, "…" + "(thinking" is weak enough that col-0 prose could reach it, and the
-// cost of a false positive here is a session stuck badged 実行中 (the transcript line does
+// cost of a false positive here is a session stuck badged running (the transcript line does
 // not scroll away by itself). The real spinner always ends its line at the closing paren.
 var spinnerThinkingRe = regexp.MustCompile(`(?m)` + spinnerHead + `[^)\n]*\bthinking\b[^)\n]*\)[ \t]*$`)
 
@@ -149,7 +149,7 @@ func spinnerActive(s string) bool {
 // ← for agents"). "? for shortcuts", which used to stand in as the default-mode footer,
 // is gone from that strip too. Keying idle off those hints (as we did) false-negatives on
 // every default-mode session — the stale-status→idle self-heal then never fires and a
-// session that is plainly at its prompt stays badged 実行中 with a 停止 bar.
+// session that is plainly at its prompt stays badged running with a stop bar.
 //
 // Anchored at line start so prose in the transcript that merely quotes a mode name can't
 // match. Both symbols are matched: ⏵⏵ (U+23F5 ×2) for the go-ahead modes, ⏸ (U+23F8) for
@@ -492,8 +492,8 @@ var rateLimitOptionRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?\d+\.\s+(?:Sto
 // not fire the Stop hook, so status stays "working" (docs/log/47). The one route that repairs
 // that is "HealIdle once the pane is back at the ready prompt", but this menu always contains
 // "Esc to cancel" (modalMarkers) and replaces the input box's mode footer wholesale, so
-// AtIdlePrompt returns false forever. The session then sticks on 進行中 permanently (measured
-// 2026-07-31: about 16 hours, claude 2.1.220).
+// AtIdlePrompt returns false forever. The session then sticks on "in progress"
+// permanently (measured 2026-07-31: about 16 hours, claude 2.1.220).
 //
 // A best-effort TUI read like the other detections. Missing it only costs the original
 // sticking behaviour, and a false positive is bounded because HealIdle still decides from the
@@ -612,8 +612,8 @@ func ReadPane(name string) PaneRead {
 // the pane is plainly working: the "working" status file can go missing (never written,
 // or removed by the working→idle self-heal during a transient prompt frame) and then no
 // mid-turn hook rewrites it — in bypass mode MessageDisplay/permtool don't touch status
-// — so a busy session would wrongly badge 入力待ち with no stop button until the next
-// Stop. Best-effort TUI read; false when the pane can't be read.
+// — so a busy session would wrongly badge "waiting for input" with no stop button until
+// the next Stop. Best-effort TUI read; false when the pane can't be read.
 func IsBusy(name string) bool {
 	pane := SessionPaneID(session.TmuxName(name))
 	if pane == "" {

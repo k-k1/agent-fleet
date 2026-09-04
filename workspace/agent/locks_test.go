@@ -34,7 +34,7 @@ func lockMux() *http.ServeMux {
 }
 
 // TestSessionLockRefusesDeletion: a locked session survives BOTH manual delete paths
-// — /stop (the Console's 削除, which forgets the meta) and DELETE ?reclaim=1 (jsonl
+// — /stop (the Console's Delete, which forgets the meta) and DELETE ?reclaim=1 (jsonl
 // reclaim) — while archive (reversible) still works. Unlocking restores deletability.
 func TestSessionLockRefusesDeletion(t *testing.T) {
 	home := t.TempDir()

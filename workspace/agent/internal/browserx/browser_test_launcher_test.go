@@ -7,16 +7,16 @@ import (
 	"time"
 )
 
-// Chromium の起動方法をテスト環境ごとに決める。以前は「パスに
-// /.cache/ms-playwright/ を含むなら --no-sandbox」というパス由来の推測だったが、
-// サンドボックスが使えるかどうかは**バイナリの置き場所ではなくホストの設定**で
-// 決まる。実例が GitHub の ubuntu ランナーで、PATH に居る通常の Chrome を掴んで
-// サンドボックス付きで起動 → 即死 → CDP が EOF になり、ci の workspace-agent が
-// 恒常的に赤かった（Ubuntu 24.04 は非特権 user namespace を AppArmor で塞ぐ）。
+// Picks how to launch Chromium per test environment. Whether the sandbox works is decided by
+// the HOST configuration, not by where the binary sits, so guessing from the path (such as
+// "--no-sandbox when the path contains /.cache/ms-playwright/") is wrong: on GitHub's ubuntu
+// runner it picked the ordinary Chrome on PATH, launched it sandboxed, and the browser died at
+// once, leaving CDP at EOF and the ci workspace-agent permanently red (Ubuntu 24.04 blocks
+// unprivileged user namespaces via AppArmor).
 //
-// そこで推測をやめ、**実際に 1 回起動して CDP が応答するか**で選ぶ。順番は
-// 本番と同じサンドボックス付きが先で、それが駄目なときだけ --no-sandbox。
-// どちらも駄目なら Chromium が動かない環境なので Skip する。
+// So instead of guessing, launch once and see whether CDP answers. Sandboxed first, the same as
+// production, and --no-sandbox only when that fails. When neither works Chromium cannot run
+// here at all, so the test skips.
 var (
 	browserTestFactoryOnce sync.Once
 	browserTestFactoryVal  browserCDPFactory

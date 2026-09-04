@@ -73,8 +73,8 @@ func TestLastConversationFor(t *testing.T) {
 	}
 }
 
-// 権限確認あり（docs/log/76: 利用者がスキップをオフにした通常起動）。plan ではないので
-// --mode plan は付かず、bypass だけが消える。
+// Permission prompts on (docs/log/76: an ordinary launch by a user who turned the skip off).
+// Not plan mode, so --mode plan is not added and only bypass disappears.
 func TestBuildProgramPermissionsOn(t *testing.T) {
 	t.Setenv("AGENT_AGY_CMD", "")
 	t.Setenv("AGENT_AGY_FLAGS", "")

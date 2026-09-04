@@ -1,6 +1,7 @@
 package main
 
-// Chat-bridge P3先取り (docs/log/37): @メンション→フリート・オペレーター会話. A reply the
+// Chat-bridge P3, brought forward (docs/log/37): @mention → the fleet-operator
+// conversation. A reply the
 // bound user posts in the dedicated Discord operator thread is delivered here as a user
 // turn on the built-in operator assistant conversation (assistants.go ID "operator"),
 // which can inspect and drive the fleet (af_write MCP). The reply is posted back into
@@ -72,11 +73,12 @@ func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
 	// human approval (bridgeApprovalTimeout), which must fit inside the turn.
 	ctx, cancel := context.WithTimeout(context.Background(), sessionx.OperatorTurnTimeout)
 	defer cancel()
-	ctx = usagex.WithTag(ctx, tag)                     // 使用量台帳（ADR 0029 §3）
+	ctx = usagex.WithTag(ctx, tag)                     // usage ledger (ADR 0029 §3)
 	deregister := chatx.RegisterLiveTurn(conv, cancel) // Stop button / in_progress work as usual
 	defer deregister()
 
-	// docs/log/33 第4段: 閾値超過のまま新ターンに入るなら先に予防的自動圧縮。
+	// docs/log/33 stage 4: entering a new turn while still over the threshold means a
+	// pre-emptive auto-compaction first.
 	chatx.MaybeAutoCompact(ctx, c, prov)
 	// docs/log/30: undelivered session reports ride this prompt; docs/log/33: a compaction
 	// summary rides the new session's first prompt, outermost.
@@ -86,7 +88,7 @@ func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
 
 	reply, err := prov.Send(ctx, c, prompt)
 	if err != nil && chatx.RecoverForRetry(ctx, c, prov, err) {
-		// docs/log/33 第3段: 超過検知 → 要約して畳み新セッションでリトライ。
+		// docs/log/33 stage 3: overflow detected → summarize, fold, and retry in a new session.
 		prompt, pendingReports = chatx.InjectPendingReports(c, text)
 		prompt, handoff = chatx.InjectCarryover(c, actualAgent, prompt)
 		prompt = chatx.SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
@@ -137,8 +139,8 @@ func createOperatorConversation() (string, error) {
 }
 
 // provisionDiscordOperator ensures a standing operator thread + conversation exist for
-// the connection (docs/log/37 P3先取り), reusing both across reconnects. Best-effort: any
-// step failing just logs — a missing operator thread degrades to "no @mention route",
+// the connection (docs/log/37, P3 brought forward), reusing both across reconnects.
+// Best-effort: any step failing just logs — a missing operator thread degrades to "no @mention route",
 // never a failed connect. Called async from handlePutDiscordConn (channel + receive).
 func provisionDiscordOperator(token, channelID, lang string) {
 	ref, _ := bridge.OperatorState()
@@ -155,7 +157,7 @@ func provisionDiscordOperator(token, channelID, lang string) {
 	}
 	thread := ref.Thread
 	// Reuse the thread only if it targets the current channel; a channel change (or a
-	// prior disconnect that cleared it) means re-起票.
+	// prior disconnect that cleared it) means opening a new one.
 	if thread == "" || ref.Channel != channelID {
 		t, err := bridge.CreateOperatorThread(token, channelID, operatorThreadName(lang), operatorThreadSeed(lang))
 		if err != nil {
@@ -167,7 +169,8 @@ func provisionDiscordOperator(token, channelID, lang string) {
 	bridge.SaveOperatorState(channelID, thread, conv)
 }
 
-// provisionSlackOperator is the Slack twin of provisionDiscordOperator (docs/log/37 Slack 追随):
+// provisionSlackOperator is the Slack twin of provisionDiscordOperator (docs/log/37,
+// the Slack follow-up):
 // ensure a standing operator thread + conversation for the Slack connection, reusing both
 // across reconnects. Slack threads carry no name (the seed message titles it) and are keyed
 // by the seed's ts. Best-effort + async, called from handlePutSlackConn.
@@ -214,8 +217,8 @@ func maybePushOperatorReply(conv, reply string) {
 	}()
 }
 
-// operatorThreadName / operatorThreadSeed are the localized 起票 strings for the standing
-// operator thread. The 🛰 glyph mirrors the Console's operator assistant icon vibe.
+// operatorThreadName / operatorThreadSeed are the localized strings used to open the
+// standing operator thread. The 🛰 glyph mirrors the Console's operator assistant icon vibe.
 func operatorThreadName(lang string) string {
 	if lang == "en" {
 		return "🛰 Fleet Operator"

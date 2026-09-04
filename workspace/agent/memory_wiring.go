@@ -1,21 +1,24 @@
 package main
 
-// memory_wiring.go — `internal/memoryx` の外向き依存（memoryx → main）を 1 箇所で配線する。
+// memory_wiring.go — wires `internal/memoryx`'s outward dependencies (memoryx → main) in
+// one place.
 //
-// 逆向き（main → memoryx）は別名として alias_memory.go にある。**2 枚に分けてある**のは、
-// エイリアスがウェーブ境界で丸ごと剥がれて消えるのに対し、配線は残るため
-// （memoryx が errcodes.go を引く関係そのものは回収しても消えない）。
+// The opposite direction (main → memoryx) lives as aliases in alias_memory.go. They are two
+// files because aliases are peeled off wholesale at a wave boundary while the wiring stays
+// (memoryx reaching for errcodes.go is a relationship a reclaim does not remove).
 //
-// 🔥 **配線に既定値を置かない。** 未配線は `memoryx.Configure` が panic で落とす。
-// ここは全部が文字列なので、零値を許すと Console へ `""` というコードが届き、
-// i18n が解決できずに生の developer メッセージが露出する（静かに壊れる形）。
+// Never give the wiring defaults. `memoryx.Configure` panics on anything left unwired.
+// Everything here is a string, so an accepted zero value would send the code `""` to the
+// Console, i18n could not resolve it, and the raw developer message would be exposed — a
+// silent breakage.
 
 import "github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 
 func init() { memoryx.Configure(memoryDeps()) }
 
-// memoryDeps は本番の配線一式。**memoryx 側の網羅検査（internal/memoryx/deps_test.go）は
-// 作り物を使う**ので、ここが唯一「本物の値」を書く場所である。
+// memoryDeps is the production wiring. memoryx's own exhaustiveness check
+// (internal/memoryx/deps_test.go) uses fakes, so this is the only place the real values are
+// written.
 func memoryDeps() memoryx.Deps {
 	return memoryx.Deps{
 		ErrCodeBadRequest:     errCodeMemoryBadRequest,

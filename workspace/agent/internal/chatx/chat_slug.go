@@ -1,12 +1,13 @@
 package chatx
 
-// アシスタント会話の slug（docs/log/38 アシスタント発火）。
+// Slugs for assistant conversations (docs/log/38 §assistant triggering).
 //
-// セッションが "s"+base32 6字の slug で呼べるのと対称に、会話にも "a"+base32 6字の
-// 短い不変 ID を与える。UUID は保存ファイル名と provider 連携の正だが、人間や自動化
-// （スケジュールの発火先・operator ツール）が会話を指すには長すぎる。slug は作成時に
-// 採番し、フィールド導入前の既存会話は agent 起動時に backfillConvSlugs が一度だけ
-// 補完する。
+// Symmetrically to a session, which can be addressed by an "s" + 6 base32 chars slug, a
+// conversation gets a short immutable "a" + 6 base32 chars id too. The UUID stays
+// canonical for the storage file name and the provider integration, but it is too long
+// for a human or an automation (a schedule's trigger target, an operator tool) to point
+// at a conversation with. A slug is assigned at creation; conversations older than the
+// field are filled in once by backfillConvSlugs at agent startup.
 
 import (
 	"crypto/rand"

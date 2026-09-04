@@ -73,7 +73,7 @@ func emptyPref(v any) bool {
 }
 
 // ShrunkKeys returns the accumulated keys that held content before and become empty (or
-// missing) with this PUT. The user may be clearing them deliberately (設定 > キー, "erase
+// missing) with this PUT. The user may be clearing them deliberately (Settings > Keys, "erase
 // every learned suggestion"), so the write is not rejected — rejecting would break a
 // legitimate operation. Instead the previous version is parked in .prev and what shrank is
 // logged; without that trace, finding the cause took cross-checking transcripts against
@@ -109,8 +109,8 @@ func Read() map[string]any {
 }
 
 // AutoTitleSuggest is the ON/OFF for SESSION title suggestion — the automatic banner
-// plus the manual title-suggest endpoint (設定 > AI補助). The chat side gates on
-// AssistantTitleSuggest and branch names on BranchSuggest: one AI 補助 feature, one key.
+// plus the manual title-suggest endpoint (Settings > AI assistance). The chat side gates on
+// AssistantTitleSuggest and branch names on BranchSuggest: one AI-assistance feature, one key.
 // Branch names used to ride on THIS key, which no label or note ever mentioned
 // (docs/log/84). Missing/invalid key ⇒ true, matching the frontend's
 // DEFAULTS.autoTitleSuggest (settings.ts) so pre-feature clients get it without an
@@ -120,7 +120,7 @@ func AutoTitleSuggest() bool {
 	return !ok || v
 }
 
-// BranchSuggest is the ON/OFF for the branch-name AI suggestion (設定 > AI補助).
+// BranchSuggest is the ON/OFF for the branch-name AI suggestion (Settings > AI assistance).
 // Falls back to AutoTitleSuggest when the key is absent — that is where this gate
 // used to live, so a client that explicitly turned title suggestions off keeps
 // branch names off too until it writes the new key.
@@ -131,7 +131,7 @@ func BranchSuggest() bool {
 	return AutoTitleSuggest()
 }
 
-// EditSuggest is the ON/OFF for the File pane's AI edit suggestion (設定 > AI補助).
+// EditSuggest is the ON/OFF for the File pane's AI edit suggestion (Settings > AI assistance).
 // Missing/invalid ⇒ true: the feature shipped before it had a setting at all, so the
 // absent key means "the historical behaviour", not "off".
 func EditSuggest() bool {
@@ -139,8 +139,8 @@ func EditSuggest() bool {
 	return !ok || v
 }
 
-// OpencodeCatalog is how the opencode launch-model list is shaped (設定 >
-// エージェント > opencode, ui-prefs opencodeCatalog). One key serves both opencode.ai
+// OpencodeCatalog is how the opencode launch-model list is shaped (Settings >
+// Agents > opencode, ui-prefs opencodeCatalog). One key serves both opencode.ai
 // billing routes, so the same model can appear as opencode/… (Zen, metered) and
 // opencode-go/… (the Go subscription); a Go subscriber rarely wants the metered twins
 // in the list at all. Read live per request — the Console picker and the MCP
@@ -220,16 +220,16 @@ func AssistantTitleSuggest() bool {
 }
 
 // ChatAutoTurn is the global ON/OFF for the operator's automatic turn on a
-// session report (docs/log/30, 設定 > アシスタント「セッション報告への自動応答」). Missing/invalid
-// key ⇒ true, matching the frontend default — the feature ships ON, with the
+// session report (docs/log/30, Settings > Assistant, "auto-respond to session reports").
+// Missing/invalid key ⇒ true, matching the frontend default — the feature ships ON, with the
 // per-conversation maxAutoTurns cap as the safety stop.
 func ChatAutoTurn() bool {
 	v, ok := Read()["assistantAutoTurn"].(bool)
 	return !ok || v
 }
 
-// ChatQuietCompletion is the global ON/OFF for 静かな完了報告 (設定 > アシスタント). When
-// ON, a normal completion report runs no automatic turn: it only produces the report card and
+// ChatQuietCompletion is the global ON/OFF for quiet completion reports (Settings > Assistant).
+// When ON, a normal completion report runs no automatic turn: it only produces the report card and
 // the delivery to the notification centre (the report stays undelivered and rides along with
 // the next turn — injectPendingReports). Missing/invalid key ⇒ FALSE: the follow-up and
 // summary on completion stay the default experience, and only a user who wants to hold costs
@@ -239,8 +239,8 @@ func ChatQuietCompletion() bool {
 	return ok && v
 }
 
-// ChatAutoPilot is the global ON/OFF for 自動走行 (docs/log/30, 設定 >
-// アシスタント「自動走行」): the operator autonomously answers a session's
+// ChatAutoPilot is the global ON/OFF for auto-pilot (docs/log/30, Settings >
+// Assistant, "auto-pilot"): the operator autonomously answers a session's
 // AskUserQuestion with the session's own recommendation, and drives a presented plan
 // through review-by-another-session → feedback → approval. Missing/invalid key ⇒
 // FALSE — acting in the user's stead is consequential, so unlike auto-turn this mode
@@ -252,8 +252,8 @@ func ChatAutoPilot() bool {
 	return ok && v
 }
 
-// ChatAutoResume is the global ON/OFF for 中断時の自動再開 (docs/log/47, 設定 >
-// アシスタント): on an aborted turn (a dropped connection or a transient rate limit — an
+// ChatAutoResume is the global ON/OFF for auto-resuming interrupted turns (docs/log/47,
+// Settings > Assistant): on an aborted turn (a dropped connection or a transient rate limit — an
 // abort whose cause clears by itself) the operator is told to nudge the session to continue
 // instead of only relaying to the user. Missing/invalid key ⇒ TRUE, unlike ChatAutoPilot:
 // the nudge carries no decision of the user's — it re-runs work the user already asked for,
@@ -264,8 +264,8 @@ func ChatAutoResume() bool {
 	return !ok || v
 }
 
-// RateLimitAutoResume is the ON/OFF for 利用上限リセット後の自動再開 (docs/log/47
-// §4-4, 設定 > エージェント > Claude > 動作設定): when a claude session is cut off by
+// RateLimitAutoResume is the ON/OFF for auto-resume after a usage limit resets (docs/log/47
+// §4-4, Settings > Agents > Claude > Behavior): when a claude session is cut off by
 // its usage limit, book a one-shot schedule at the reset instant that tells the session
 // to continue. Missing/invalid key ⇒ TRUE, like ChatAutoResume and for the same
 // reason — the nudge re-runs work the user already asked for and carries no decision of theirs.
@@ -280,14 +280,15 @@ func RateLimitAutoResume() bool {
 	return !ok || v
 }
 
-// AbortAutoResume is the ON/OFF for 中断からの自動再開 (docs/log/47 §4-6, 設定 >
-// エージェント > Claude > 動作設定): when a claude turn is cut off by something that
+// AbortAutoResume is the ON/OFF for auto-resuming a cut-off turn (docs/log/47 §4-6, Settings >
+// Agents > Claude > Behavior): when a claude turn is cut off by something that
 // clears on its own (a dropped connection, a transient rate limit, the stream watchdog), the
-// Agent itself re-sends「続けて」instead of routing the resume through the operator assistant.
+// Agent re-sends the resume prompt ("続けて") itself instead of routing the resume through the
+// operator assistant.
 // Missing/invalid key ⇒ TRUE, for the same reason as the two toggles above — a resume only
 // re-runs work the user already asked for and carries no new decision.
 //
-// It sits apart from ChatAutoResume (設定 > アシスタント) because its reach differs: this one
+// It sits apart from ChatAutoResume (Settings > Assistant) because its reach differs: this one
 // applies to every claude TUI session, whether or not it has an assistant conversation (the
 // same standing as rateLimitAutoResume). Turned OFF, an abort is reported immediately as
 // before and only a session that has a conversation is resumed under the operator's lead
@@ -298,8 +299,8 @@ func AbortAutoResume() bool {
 }
 
 // ChatAutoCompact is the global ON/OFF for the assistant chat's preventive
-// auto-compaction at the context threshold (docs/log/33 stage 4, 設定 > アシスタント
-// 「コンテキストの自動圧縮」). Missing/invalid key ⇒ true, matching the frontend
+// auto-compaction at the context threshold (docs/log/33 stage 4, Settings > Assistant,
+// "auto-compact chat context"). Missing/invalid key ⇒ true, matching the frontend
 // default — the 80% notice gives the user a manual window first, and the summary
 // handoff keeps the stored thread intact, so ON is the safe default.
 func ChatAutoCompact() bool {
@@ -320,7 +321,7 @@ func ChatOutputLanguage() string {
 	}
 }
 
-// Locale returns the Console display language the user picked (設定 > 表示言語,
+// Locale returns the Console display language the user picked (Settings > Display language,
 // ADR 0016). The frontend keeps `locale` server-synced precisely because language is a
 // per-person setting rather than a per-device one, so the Agent can read it for text it
 // generates FOR that person — currently the title suggestion. Unknown/missing ⇒ "ja",

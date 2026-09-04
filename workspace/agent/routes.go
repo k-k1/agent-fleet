@@ -275,7 +275,7 @@ func buildMux() *http.ServeMux {
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.
 	mux.HandleFunc("GET /agents/rtk", handleAgentRTKGet)
 	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)
-	// rtk token-savings history (rtk gain) for the WsBar "rtk 効果" chip.
+	// rtk token-savings history (rtk gain) for the WsBar rtk-effect chip.
 	mux.HandleFunc("GET /agents/rtk/gain", handleAgentRTKGain)
 	// User instructions (docs/log/60) — the layer between fleet policy and project instructions.
 	mux.HandleFunc("GET /user-notes", handleUserNotesGet)
@@ -413,7 +413,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /connections/discord", handleDeleteDiscordConn)
 	mux.HandleFunc("POST /connections/discord/inspect", handleDiscordInspect)
 	mux.HandleFunc("POST /connections/discord/guilds", handleDiscordGuilds)
-	// Chat bridge Slack (docs/log/37, Slack parity): bot xoxb- plus app-level xapp- token,
+	// Chat bridge Slack (docs/log/37, Slack follow-up): bot xoxb- plus app-level xapp- token,
 	// plus the destination. inspect/channels serve the setup wizard (token validation ->
 	// channel picker + email resolution).
 	mux.HandleFunc("PUT /connections/slack", handlePutSlackConn)

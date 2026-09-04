@@ -58,7 +58,7 @@ var (
 )
 
 // Plan verdicts. "unknown" = readable as neither approved nor rejected, and the Console
-// falls back to a neutral "decided" (決定済み) badge. Harmless next to a wrong badge, but if
+// falls back to a neutral "decided" badge. Harmless next to a wrong badge, but if
 // it keeps happening a drift is under way.
 const (
 	PlanApproved = "approved"

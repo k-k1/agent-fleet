@@ -2,10 +2,12 @@
 
 package main
 
-// 実対話 TUI とミラーの最小 contract 共通骨格。各 CLI 固有のテストが本番の
-// BuildLaunch を渡し、ここは「composer readiness → 実ターン → 転写 → idle」を
-// 同じ観測順で検証する。単に CLI を直接起動するのでなく production の Agent
-// interface を通すため、起動フラグ・trust 準備・sid 採番/発見も本番経路になる。
+// The shared skeleton of the minimal contract between a real interactive TUI and the mirror.
+// Each CLI-specific test hands in the production BuildLaunch, and this file checks composer
+// readiness -> a real turn -> the transcript -> idle, always in that observation order. Going
+// through the production Agent interface rather than launching the CLI directly means the
+// launch flags, the trust preparation and sid assignment/discovery are the production paths
+// too.
 
 import (
 	"fmt"
@@ -51,7 +53,7 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	t.Helper()
 	for _, bin := range []string{"tmux"} {
 		if _, err := exec.LookPath(bin); err != nil {
-			requireTUIContract(t, false, fmt.Sprintf("%s が PATH にありません: %v", bin, err))
+			requireTUIContract(t, false, fmt.Sprintf("%s is not on PATH: %v", bin, err))
 		}
 	}
 
@@ -84,8 +86,8 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 		t.Fatalf("tmux new-session: %v: %s", err, out)
 	}
 
-	// paneMode は Console の launch-seed readiness gate そのもの。ここで composer
-	// を認識できない場合は、最初のミラープロンプトが起動画面に食われる。
+	// paneMode IS the Console's launch-seed readiness gate. When the composer cannot be
+	// recognised here, the first mirror prompt is swallowed by the startup screen.
 	deadline := time.Now().Add(tuiContractReadyWait)
 	for time.Now().Before(deadline) {
 		if got := sessionx.PaneMode(spec.kind, tn); got != "" {
@@ -113,8 +115,9 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	}
 	seenWorking := submitPrompt(t, spec, meta, tn, marker)
 
-	// 毎回 production の Transcript/WireLive を読む。これは /messages と sessions
-	// poll が使う経路なので、TUI に返答が見えるだけの false green を避けられる。
+	// Always read production's Transcript/WireLive: that is the path /messages and the
+	// sessions poll use, so an answer that is merely visible in the TUI cannot produce a
+	// false green.
 	deadline = time.Now().Add(tuiContractTurnWait)
 	for time.Now().Before(deadline) {
 		live := spec.agent.WireLive(meta, true)

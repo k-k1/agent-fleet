@@ -17,9 +17,10 @@ func TestWorkspaceStatsRouteRegistered(t *testing.T) {
 	}
 }
 
-// CP はここで返るキーをそのままメンバー詳細と WS バーへ載せる（docs/log/63 §63.9）。
-// キー名が docker 経路（control-plane/metrics.go）と一致していることが契約で、
-// ずれても例外は出ない——タイルが黙って「–」に戻るだけなので、ここで固定する。
+// The CP puts the keys returned here straight onto the member detail and the WS bar
+// (docs/log/63 §63.9). The contract is that these key names match the docker path
+// (control-plane/metrics.go); a mismatch raises nothing, the tiles just quietly fall back to
+// "-", so pin them here.
 func TestWorkspaceStatsWireKeys(t *testing.T) {
 	dir := t.TempDir()
 	for name, body := range map[string]string{
@@ -48,7 +49,7 @@ func TestWorkspaceStatsWireKeys(t *testing.T) {
 	if v, ok := out["oom_kill_total"]; !ok || v != float64(0) {
 		t.Errorf("oom_kill_total = %v (present=%v), want a present 0", v, ok)
 	}
-	// cpu.stat を置いていないので CPU は測れない = キーごと出ない。
+	// No cpu.stat was written, so CPU is unmeasurable and the key is omitted entirely.
 	if v, ok := out["cpu_pct"]; ok {
 		t.Errorf("cpu_pct = %v, want the key absent when unreadable", v)
 	}

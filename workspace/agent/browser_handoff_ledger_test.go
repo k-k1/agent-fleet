@@ -1,14 +1,16 @@
-// browser_handoff_ledger_test.go — 台帳の記録/解決/配達を **package main で** 検査する。
+// browser_handoff_ledger_test.go exercises ledger record/resolve/deliver from package main.
 //
-// 実装は internal/browserx に在る（ADR 0067 WP-A3 / AG-BROWSER）。テストだけがここに
-// 残っているのは、配達段が mcp_stdio.go の agentSendToSession（状態確認 → /input、
-// 停止中セッションなら再開して再送）を通るからである。browserx はそれを関数変数で
-// 借りており、結線するのは package main の alias_browser.go の init なので、**実配線を
-// 通せるのはこのパッケージのテストバイナリだけ**。browserx 側へ移してダブルに差し替えた
-// 瞬間、agentSendToSession が壊れてもここは緑のまま通る。
+// The implementation lives in internal/browserx (ADR 0067 WP-A3 / AG-BROWSER); only the tests
+// stay here, because the delivery stage runs through mcp_stdio.go's agentSendToSession (check
+// the state, POST /input, and resume a stopped session before re-sending). browserx borrows
+// that through a function variable, and the wiring is done by package main's
+// alias_browser.go init, so this package's test binary is the only place the REAL wiring can
+// be driven. Move these to browserx and swap in a double, and a broken agentSendToSession
+// would still leave them green.
 //
-// browserx 内部の fake（newFakeBrowserCDP / fakeAttachmentManager）に依存する 2 本だけは
-// 移せないので internal/browserx/browser_handoff_ledger_test.go に残してある。
+// The two tests that depend on browserx-internal fakes (newFakeBrowserCDP /
+// fakeAttachmentManager) cannot move, so they stay in
+// internal/browserx/browser_handoff_ledger_test.go.
 
 package main
 

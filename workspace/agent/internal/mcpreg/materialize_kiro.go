@@ -20,7 +20,7 @@ package mcpreg
 // confirmed END TO END: a hand-written entry pointed at a header-logging listener, and
 // a real `kiro-cli chat --no-interactive` turn arrived carrying both headers plus
 // `MCP-Protocol-Version: 2025-06-18`. That matters because tenant-distributed servers
-// are remote-only (ADR0031 決定 2) and authenticate with a header — a kiro that
+// are remote-only (ADR0031 decision 2) and authenticate with a header — a kiro that
 // dropped headers would take exactly the servers an admin distributes and nothing else.
 //
 // `timeout` is in milliseconds, like copilot's.

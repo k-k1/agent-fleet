@@ -296,7 +296,7 @@ func TestClaudeCapsAdvertiseForkAt(t *testing.T) {
 	// claude has no managed driver, so it must never refuse on the grounds of the route.
 	m := session.Meta{Dir: t.TempDir(), Name: "n", Kind: session.KindClaude, Driver: session.DriverTUI}
 	if !(agentImpl{}).Caps().CanForkAt {
-		t.Fatal("CanForkAt is false — the mirror would never offer 「ここから分岐」")
+		t.Fatal(`CanForkAt is false — the mirror would never offer "Branch here"`)
 	}
 	_, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: "u2"})
 	if err == nil {

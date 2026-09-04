@@ -392,7 +392,7 @@ func TestHasConversation(t *testing.T) {
 // mid-line; counting the fragment would advance /messages' cursor (= line count) past a
 // line the parser can't read, and the client — which only ever asks for lines AFTER its
 // cursor — would never receive that turn (the bug that lost a session's first prompt and
-// left its optimistic echo stuck in the mirror's pending state, 「反映待ち」).
+// left its optimistic echo stuck in the mirror's "awaiting sync" pending state).
 func TestReadJSONLLinesPartialTail(t *testing.T) {
 	write := func(t *testing.T, body string) string {
 		t.Helper()

@@ -30,9 +30,10 @@ func postInitRepo(t *testing.T, name string) (int, gitx.Repo, string) {
 	return rec.Code, env.Repo, env.Error.Code
 }
 
-// 取り込み元が無いところから始める導線の背骨: フォルダを作り、git init まで済ませ、
-// GET /repos に**載る**こと。ここが載らないと「ディスクにはあるが左ペインに無い」
-// 作業コピーになり、起動はできるのに行も差分も削除も付かない。
+// The backbone of starting where there is nothing to import from: create the folder, run
+// git init, and appear in GET /repos. Miss that last step and the working copy is on disk but
+// absent from the left pane — a session can still be launched in it, yet it gets no row, no
+// diff and no delete.
 func TestInitRepoCreatesListedWorkingCopy(t *testing.T) {
 	resetRepoJobs(t)
 	t.Setenv("HOME", t.TempDir())
@@ -48,8 +49,8 @@ func TestInitRepoCreatesListedWorkingCopy(t *testing.T) {
 	if !gitx.IsGitRepo(dir) {
 		t.Fatalf("%s is not a git repository after init", dir)
 	}
-	// コミットが無い＝unborn。worktree はここでは作れないので、UI がその選択肢を
-	// 出さないための旗が要る（`git worktree add` は "not a valid object name: HEAD"）。
+	// No commits means unborn. A worktree cannot be created here, so the UI needs a flag that
+	// stops it offering the option (`git worktree add` fails "not a valid object name: HEAD").
 	if !repo.Unborn {
 		t.Error("unborn = false on a freshly initialized repository")
 	}
@@ -76,9 +77,9 @@ func TestInitRepoCreatesListedWorkingCopy(t *testing.T) {
 	}
 }
 
-// 「まだ履歴が無い」は失敗ではない。`git log` は unborn を fatal 扱いにするので、
-// そのまま通すと作った直後の作業コピーで履歴ビューが毎回エラーになる（グラフ側は
-// `git log --all` が 0 で返るので既に空一覧で応じている）。
+// "No history yet" is not a failure. `git log` treats an unborn repository as fatal, so
+// passing that through makes the history view error out on every freshly created working copy
+// (the graph side already answers with an empty list, because `git log --all` returns 0).
 func TestRepoLogOnUnbornRepoIsEmptyNotError(t *testing.T) {
 	resetRepoJobs(t)
 	t.Setenv("HOME", t.TempDir())
@@ -104,7 +105,8 @@ func TestRepoLogOnUnbornRepoIsEmptyNotError(t *testing.T) {
 	}
 }
 
-// 既存フォルダを黙って壊さないこと。クローンと同じ 409 exists で断る。
+// An existing folder must never be clobbered silently; it is refused with the same 409 exists
+// a clone uses.
 func TestInitRepoRefusesExistingFolder(t *testing.T) {
 	resetRepoJobs(t)
 	t.Setenv("HOME", t.TempDir())
@@ -129,7 +131,7 @@ func TestInitRepoRefusesExistingFolder(t *testing.T) {
 	}
 }
 
-// 名前は repoNameRe（パストラバーサル防御を兼ねる）で弾く。
+// Names are rejected by repoNameRe, which doubles as the path-traversal guard.
 func TestInitRepoRejectsBadName(t *testing.T) {
 	resetRepoJobs(t)
 	home := t.TempDir()
@@ -141,7 +143,7 @@ func TestInitRepoRejectsBadName(t *testing.T) {
 			t.Errorf("name %q: status = %d code = %q, want 400/bad_name", name, code, errCode)
 		}
 	}
-	// 何も作られていないこと（reposRoot ごと存在しないのが正常）。
+	// Nothing must have been created; reposRoot itself being absent is the normal case.
 	if entries, err := os.ReadDir(gitx.ReposRoot()); err == nil && len(entries) > 0 {
 		t.Errorf("a rejected name still created %d entries under ~/repos", len(entries))
 	}

@@ -8,13 +8,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// rtk (token-saving CLI proxy) — codex 側の適用 artifact（docs/log/23 残① Wave E で
-// package main の agent_rtk.go から移設）。codex には command-rewrite hook が無い
-// ので、on/off の実体は ~/.codex/AGENTS.md 末尾のマーカー付き rtk 案内ブロックの
-// 有無（instruction-based / best-effort）。durable な設定と起動時 reconcile は
-// package main（agent_rtk.go）に残る。
+// rtk (token-saving CLI proxy) — the codex-side apply artifact. codex has no
+// command-rewrite hook, so on/off is nothing but the presence of the marked rtk
+// instruction block at the end of ~/.codex/AGENTS.md (instruction-based,
+// best-effort). The durable setting and the reconcile at startup stay in package
+// main (agent_rtk.go).
 
-// マーカーの綴りは mdblock が持つ（codex/agy/ユーザー指示で共通）。
+// mdblock owns the marker spelling (shared by codex, agy and the user instructions).
 var rtkMarkerStart, rtkMarkerEnd = mdblock.Markers("rtk")
 
 // rtkBlock is the instruction appended to codex's AGENTS.md when rtk is on.
@@ -48,8 +48,8 @@ func ApplyRTK(on bool) {
 
 // editAgents is the single read-modify-write for AGENTS.md — the fleet guide, the
 // user's instructions and the rtk block all go through it, so the three writers
-// cannot race each other into a half-written file (docs/log/60 §60.7「1 ファイル 1 ライター」).
-// Everything outside agent-fleet's markers is preserved.
+// cannot race each other into a half-written file (docs/log/60 §60.7, "one file, one
+// writer"). Everything outside agent-fleet's markers is preserved.
 func editAgents(edit func(string) string) error {
 	path := AgentsPath()
 	orig := ""

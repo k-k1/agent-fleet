@@ -77,5 +77,6 @@ func TestApplyCodexRTKNoBaseFile(t *testing.T) {
 	}
 }
 
-// マーカーの strip/append そのものの単体試験は internal/mdblock へ移した
-// （codex/agy/ユーザー指示の共通実装になったため）。ここは AGENTS.md への適用側だけを見る。
+// Stripping/appending the marker itself is unit-tested in internal/mdblock, which holds the
+// shared implementation for codex / agy / user instructions. Here only the AGENTS.md
+// application side is covered.

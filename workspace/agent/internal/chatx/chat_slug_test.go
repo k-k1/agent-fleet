@@ -1,6 +1,7 @@
 package chatx
 
-// アシスタント会話 slug（docs/log/38 アシスタント発火）: 形式・採番・解決・バックフィル。
+// Assistant conversation slugs (docs/log/38 assistant triggering): format, numbering,
+// resolution and backfill.
 
 import "testing"
 

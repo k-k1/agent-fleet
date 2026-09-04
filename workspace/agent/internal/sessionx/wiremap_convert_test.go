@@ -1,4 +1,5 @@
-// wiremap_convert_test.go — sessionx で変換した map サイトの等価証明（CONTRACT-MAP / 脚③）。
+// wiremap_convert_test.go — equivalence proofs for the map sites converted in sessionx
+// (CONTRACT-MAP / leg 3).
 package sessionx
 
 import (
@@ -16,11 +17,11 @@ func TestWireEquivManagedThreadSettings(t *testing.T) {
 	inputs := []threadSettingsIn{
 		{Model: "opus", Effort: "high", Mode: "plan",
 			DynamicModel: true, DynamicEffort: true, DynamicMode: false},
-		// 未設定＝空文字。**キーは出続けなければならない**（omitempty を付けると消える）。
+		// Unset means the empty string; the keys must still be emitted (omitempty would drop them).
 		{Model: "", Effort: "", Mode: "", DynamicModel: false, DynamicEffort: true, DynamicMode: true},
 	}
 	got := wiretest.AssertEquiv(t, "HandleSessionSettingsGet", inputs,
-		func(in threadSettingsIn) any { // 旧（session_turn.go の map リテラルの写し）
+		func(in threadSettingsIn) any { // old shape (a copy of the map literal in session_turn.go)
 			return map[string]any{
 				"model": in.Model, "effort": in.Effort, "mode": in.Mode,
 				"dynamicModel": in.DynamicModel, "dynamicEffort": in.DynamicEffort,
@@ -34,5 +35,5 @@ func TestWireEquivManagedThreadSettings(t *testing.T) {
 				DynamicMode: in.DynamicMode,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }

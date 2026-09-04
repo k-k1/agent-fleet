@@ -7,7 +7,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// envOr は package main の同名ヘルパの複製（極小のため共有せず重複を許容）。
+// envOr is a copy of the identically named helper in package main (too small to be worth
+// sharing).
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

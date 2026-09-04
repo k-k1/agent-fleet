@@ -1,8 +1,9 @@
 package chatx
 
-// 返信サジェスト v2 のチャット版。session_suggest_reply.go の persona / モデル / 整形
-// （cleanSuggestedReplies）をそのまま流用し、文脈だけ chatMessage 配列（report・空を除く
-// 直近数件）から組む。chat_title.go と同じく conv は書き換えない preview 専用。
+// The chat side of reply suggestions v2. The persona, model and formatting
+// (cleanSuggestedReplies) come from session_suggest_reply.go unchanged; only the context is
+// built from the ChatMessage slice (the last few, minus report and empty ones). Like
+// chat_title.go this is preview only and never rewrites the conversation.
 
 import (
 	"context"
@@ -16,11 +17,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// chatReplySuggestPrompt は直近メッセージ（末尾窓）を文脈に、返信候補の生成を指示する。
-// report と notice は会話の話題ではない（notice 本文は表示用カタログの正本言語
-// フォールバックにすぎない — ADR 0033）ので窓から外す。
-// 窓の切り出し（畳み込み・文字予算・行単位の末尾）はセッション版と完全に共通。チャットは
-// 1 メッセージが最初から 1 発言なので畳み込みは基本 no-op だが、予算窓の効き方は同じ。
+// ChatReplySuggestPrompt asks for reply candidates using the most recent messages (a
+// trailing window) as context. report and notice are not topics of the conversation (a
+// notice body is only the source-language fallback of the display catalogue, ADR 0033), so
+// they stay out of the window.
+// Cutting that window (folding, character budget, line-aligned tail) is shared with the
+// session version. In chat one message is already one utterance, so folding is mostly a
+// no-op, but the budget window behaves identically.
 func ChatReplySuggestPrompt(msgs []ChatMessage, lang string) string {
 	real := make([]ReplyMsg, 0, len(msgs))
 	for _, m := range msgs {
@@ -45,8 +48,8 @@ func runChatReplySuggestLLM(ctx context.Context, msgs []ChatMessage) ([]string, 
 	return cleanSuggestedReplies(reply), nil
 }
 
-// handleChatSuggestReplies は preview 専用。Console のチャット✨ボタンが叩き、返ってきた候補を
-// コンポーサー上のチップ列にマージする。
+// HandleChatSuggestReplies is preview only. The Console's chat sparkle button calls it and
+// merges the returned candidates into the chip row above the composer.
 func HandleChatSuggestReplies(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !paths.ValidIDSegment(id) {

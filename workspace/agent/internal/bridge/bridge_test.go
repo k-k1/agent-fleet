@@ -141,7 +141,7 @@ func TestDiscordBotNameUnauthorized(t *testing.T) {
 	}
 }
 
-// The setup-wizard REST shapes (docs/log/37 P1 追補): app info → invite URL,
+// The setup-wizard REST shapes (docs/log/37 P1 addendum): app info → invite URL,
 // guild list, and text-channel filtering for the picker.
 func TestDiscordWizardEndpoints(t *testing.T) {
 	srv, _ := fakeDiscord(t, "tok")
@@ -356,7 +356,7 @@ func TestDrainClearsQueueWhenUnconfigured(t *testing.T) {
 }
 
 // TestDiscord429RetriesInline: a 429 is retried inline (respecting retry_after)
-// instead of failing the post — the fix that stops a duplicate storm (docs/log/37 重複対策).
+// instead of failing the post — the fix that stops a duplicate storm (docs/log/37 de-duplication).
 func TestDiscord429RetriesInline(t *testing.T) {
 	oldCap, oldN := discordRetryCap, discordRateRetries
 	discordRetryCap, discordRateRetries = 20*time.Millisecond, 3
@@ -413,7 +413,7 @@ func (r *resumableFake) SendFrom(m Message, from int) (int, error) {
 }
 
 // TestDrainResumesWithoutDuplicate: a partial failure persists the delivery cursor,
-// so the retry tick posts only the undelivered tail — no sub-message twice (docs/log/37 重複対策).
+// so the retry tick posts only the undelivered tail — no sub-message twice (docs/log/37 de-duplication).
 func TestDrainResumesWithoutDuplicate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	Enqueue(Message{Kind: "answer-ready", DisplayName: "A"})
@@ -574,7 +574,7 @@ func TestMentionTimeGate(t *testing.T) {
 }
 
 // TestFullTextBodyOnly: full-text mode posts the scrubbed answer body alone — no
-// headline/link preface (docs/log/37 全文整理 2026-07-22).
+// headline/link preface (docs/log/37 §full-text cleanup).
 func TestFullTextBodyOnly(t *testing.T) {
 	srv, sent := fakeDiscord(t, "tok")
 	oldBase := discordAPIBase

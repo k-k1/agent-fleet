@@ -84,8 +84,8 @@ func TestInspectNovelLabMotivatingExample(t *testing.T) {
 	if !oc.Exists || !oc.Parsable || !oc.Tracked || len(oc.Servers) != 1 {
 		t.Fatalf("opencode.json: %+v", oc)
 	}
-	// Files that don't exist here must still be listed (docs/log/57 憲章「無いものが
-	// 消えると分からない」), just Exists=false.
+	// Files that don't exist here must still be listed (docs/log/57 charter, "something
+	// absent that disappears cannot be told apart"), just Exists=false.
 	cx := byPath[".codex/config.toml"]
 	if cx.Exists {
 		t.Fatalf("codex file should not exist: %+v", cx)
@@ -191,7 +191,7 @@ func TestInspectSecretNeverOnWire(t *testing.T) {
 }
 
 // TestInspectUnparsableFileUntouched: an unreadable file is reported, not rewritten
-// or skipped-silently, and other files are still processed (docs/log/57 憲章3).
+// or skipped-silently, and other files are still processed (docs/log/57 charter 3).
 func TestInspectUnparsableFileUntouched(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
@@ -239,7 +239,7 @@ func TestInspectUnparsableFileUntouched(t *testing.T) {
 
 // TestInspectNoVCSMarksUncertainNotFalse: outside git entirely, secret-looking
 // values must still warn (as "cannot determine", not silently "safe") — docs/log/56
-// §7.2's VCS-not-git row, docs/log/57 憲章6.
+// §7.2's VCS-not-git row, docs/log/57 charter 6.
 func TestInspectNoVCSMarksUncertain(t *testing.T) {
 	dir := t.TempDir() // no git init
 	const secret = "af-test-fixture-9f8e7d6c5b4a3210x"

@@ -1,8 +1,9 @@
 package agy
 
-// agy の起動コマンド組み立てと、状態ファイル（~/.gemini/antigravity-cli 配下）の
-// 読み口。resume は claude 型の自己 sid 固定ができない（--session-id 相当なし）
-// ため、codex 同様スロット毎に会話 UUID を保持して `--conversation` で再開する。
+// Building agy's launch command, and reading its state files (under
+// ~/.gemini/antigravity-cli). agy cannot pin its own sid the way claude does (there is no
+// --session-id equivalent), so resume keeps a conversation UUID per slot and restarts with
+// `--conversation`, as codex does.
 
 import (
 	"encoding/json"
@@ -14,7 +15,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// envOr は package main の同名ヘルパの複製（極小のため共有せず重複を許容）。
+// envOr duplicates the helper of the same name in package main; it is small enough that the
+// duplication costs less than sharing it.
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -23,10 +25,10 @@ func envOr(key, def string) string {
 }
 
 // stateDir is agy's own state root: token, settings, caches, conversation DBs.
-// agy hardcodes ~/.gemini (旧 gemini-cli 系の流儀) — the whole ~/.gemini tree is
+// agy hardcodes ~/.gemini (the old gemini-cli convention) — the whole ~/.gemini tree is
 // denylisted from the file browser (fs.go) because the OAuth token persists in
-// plaintext under it when no keyring is present (docs/decisions/0008 再PoC).
-// (tokenPath / SignedIn live in usage.go — Track C 側の定義を正とする。)
+// plaintext under it when no keyring is present (docs/decisions/0008 re-PoC).
+// (tokenPath / SignedIn live in usage.go — that Track C definition is the canonical one.)
 func stateDir() string { return filepath.Join(paths.GeminiHome(), "antigravity-cli") }
 
 func settingsPath() string { return filepath.Join(stateDir(), "settings.json") }
@@ -60,8 +62,9 @@ func LastConversationIn(stateRoot, dir string) string {
 // NOT `--continue`, whose cwd→last mapping any other agy run in the dir
 // overwrites (docs/log/32 Track D-3). --model stays at agy's default in M1 unless
 // the create request pinned one.
-// bypass=false は「権限確認をスキップしない」（docs/log/76 の利用者選択、または plan 起動）。
-// 承認待ちは pending.go が "permission" として拾い、Console の許可カードで答えられる。
+// bypass=false means "do not skip the permission prompts" (the user's choice per docs/log/76,
+// or a plan launch). pending.go picks a waiting approval up as "permission", so it can be
+// answered from the Console's permission card.
 func buildProgram(model, mode, resumeID string, bypass bool) string {
 	if override := os.Getenv("AGENT_AGY_CMD"); override != "" {
 		return override
@@ -71,8 +74,8 @@ func buildProgram(model, mode, resumeID string, bypass bool) string {
 		flags = strings.TrimSpace(strings.ReplaceAll(flags, "--dangerously-skip-permissions", ""))
 	}
 	if mode == "plan" {
-		// agy has a native execution-mode flag（bypass は上で外れている — 全ツールを
-		// 自動承認しては plan で始める意味が無い）。
+		// agy has a native execution-mode flag (bypass has already been stripped above —
+		// auto-approving every tool would defeat starting in plan).
 		flags = strings.TrimSpace(flags + " --mode plan")
 	}
 	if model != "" {

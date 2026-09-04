@@ -7,9 +7,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// session.ContextUsage（claude セッションの現在のコンテキスト充填率、ワイヤ型）は
-// internal/session（docs/log/23 残① Wave A）。ここには jsonl の解析と mtime
-// キャッシュだけを置く（旧 package main session_context.go — 同 Wave F で移設）。
+// session.ContextUsage — the wire type for how full a claude session's context currently is
+// — lives in internal/session. Only the jsonl parsing and the mtime cache live here.
 
 // ctxCache memoizes the parsed context per sid, keyed by the transcript's mtime, so
 // repeated sessions-list polls don't re-read and re-parse an unchanged jsonl. A new

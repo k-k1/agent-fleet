@@ -1,16 +1,18 @@
 package mcpx
 
-// セッションへの MCP 配線（docs/log/48 P3 → P5 で全 kind）。実効レジストリのうち `targets.session` の
-// 定義を、各 CLI 自身のグローバル設定へ書き出す（materialize）。書き出しの中身は
-// internal/mcpreg/materialize_*.go にあり、本ファイルは「いつ書くか」だけを持つ。
+// MCP wiring for sessions (docs/log/48 P3, extended to every kind in P5). Materializes the
+// `targets.session` definitions of the effective registry into each CLI's own global config.
+// What gets written lives in internal/mcpreg/materialize_*.go; this file only owns WHEN it is
+// written.
 //
-// 契機は 3 つ（docs/log/48 §8.3）:
-//   - agent 起動時（コンテナを起こした直後から、手で叩く CLI にも効くように）
-//   - セッション起動直前（登録 → 新規セッション が最短で通る）
-//   - レジストリ変更時（CRUD）
+// Three triggers (docs/log/48 §8.3):
+//   - agent startup (so a hand-run CLI is covered from the moment the container wakes)
+//   - just before a session launches (register -> new session is the shortest path)
+//   - on a registry change (CRUD)
 //
-// **既に走っているセッションには効かない** — どの CLI も起動時に設定を読む。Console は
-// 「新規セッションから有効」と明示している（mcp.session_restart_note）。
+// It does not affect sessions that are already running: every CLI reads its config at startup.
+// The Console says so explicitly ("takes effect from the next session",
+// mcp.session_restart_note).
 
 import (
 	"log"

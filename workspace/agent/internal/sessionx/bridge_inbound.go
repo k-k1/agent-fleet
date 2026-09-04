@@ -23,7 +23,7 @@ var (
 	errInjectNotRunning      = errors.New("session is not running")
 	errInjectQuestionPending = errors.New("a question is awaiting an answer; it can't be free-texted")
 	// A plan approval / permission prompt is a DECISION menu: free text would be
-	// swallowed and its Enter would confirm the highlighted row (= 承認 / 許可).
+	// swallowed and its Enter would confirm the highlighted row (= approve / allow).
 	errInjectDecisionPending = errors.New("a decision is awaiting an answer; it can't be free-texted")
 )
 
@@ -33,7 +33,7 @@ var (
 // an HTTP response, and reuses the same primitives (typeLineAndSubmit / driver Send /
 // markSessionWorking) so behavior can't drift. It refuses to free-text a session with a
 // pending interaction — typed text mis-answers an AUQ, and in the plan / permission
-// dialogs it is swallowed while the Enter confirms 承認 / 許可 (same guard as
+// dialogs it is swallowed while the Enter confirms approve / allow (same guard as
 // submitPromptTUI); P2b will map such answers to buttons instead.
 func injectSessionPrompt(name, prompt string) error {
 	prompt = strings.TrimSpace(prompt)
@@ -90,7 +90,7 @@ func injectManagedPrompt(meta session.Meta, prompt string) error {
 
 // StartBridgeReceiver wires chat-bridge inbound to the injection primitive and starts the
 // Gateway supervisor. Each injected message is recorded with its origin so the mirror badges
-// the resulting user turn distinctly from self-typed input (docs/log/37 追加要件, docs/log/30 ②).
+// the resulting user turn distinctly from self-typed input (docs/log/37 additional requirements, docs/log/30 ②).
 func StartBridgeReceiver() {
 	bridge.StartReceiver(bridge.ReceiverDeps{
 		Inject: func(sessionName, text, source string) (string, error) {
@@ -101,9 +101,9 @@ func StartBridgeReceiver() {
 			return "", nil
 		},
 		// P2b: a button click (AskUserQuestion pick / permission / plan decision) is
-		// applied structurally (bridge_answer.go), never as free text (契約6).
+		// applied structurally (bridge_answer.go), never as free text (contract 6).
 		Answer: answerInteraction,
-		// P3先取り: a reply in the dedicated operator thread runs a turn on the built-in
+		// P3, brought forward: a reply in the dedicated operator thread runs a turn on the built-in
 		// operator assistant conversation (bridge_operator.go); the reply is posted back.
 		Operator: runOperatorTurn,
 	})

@@ -18,7 +18,7 @@ import (
 // so the Console can toggle them. Changes take effect for NEW claude sessions
 // (claude reads settings at startup). Unknown keys in the file are preserved.
 
-// ConfigDir resolves where claude reads/writes its state. P3-5 段2 relocates
+// ConfigDir resolves where claude reads/writes its state. P3-5 stage 2 relocates
 // plaintext claude state out of home via CLAUDE_CONFIG_DIR; when unset it is the
 // classic ~/.claude. Both settings.json and projects/*.jsonl live under this dir,
 // so session resume detection must agree with it (see SessionJSONLExists).
@@ -97,9 +97,9 @@ func ensureFolderTrusted(dir string) {
 	}
 }
 
-// settingsMu serializes read-modify-write cycles on settings.json inside this
-// process（同時 PUT で片方の変更が消えるのを防ぐ）。claude 自身の書き込みとの競合は
-// writeSettings の tmp+rename が壊れた JSON を防ぐ。
+// settingsMu serializes read-modify-write cycles on settings.json inside this process, so
+// concurrent PUTs cannot drop one side's change. Against claude's own writes the defence is
+// writeSettings' tmp+rename, which keeps a torn JSON file from ever appearing.
 var settingsMu sync.Mutex
 
 func readSettings() map[string]any {
@@ -119,7 +119,7 @@ func writeSettings(m map[string]any) error {
 	if err != nil {
 		return err
 	}
-	// tmp+rename（ensureFolderTrusted と同じ作法）— 途中で落ちても半端な JSON を残さない。
+	// tmp+rename, the same practice as ensureFolderTrusted: dying halfway leaves no partial JSON.
 	tmp := p + ".af-tmp"
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
 		return err

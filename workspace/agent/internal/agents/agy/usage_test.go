@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// A cleaned capture of the real v1.1.4 /usage panel (2026-07-20 実測, tmux probe),
+// A cleaned capture of the real v1.1.4 /usage panel (measured 2026-07-20 with a tmux probe),
 // prefixed with an earlier partial frame to exercise the last-render cut.
 const usagePanel = `
 ? for shortcuts
@@ -67,7 +67,7 @@ func TestParseUsage(t *testing.T) {
 	}
 }
 
-// A cleaned capture of the real v1.1.4 /usage panel on AI Pro (2026-07-20 実測,
+// A cleaned capture of the real v1.1.4 /usage panel on AI Pro (measured 2026-07-20 with a
 // PTY probe after the D-4 upgrade): each group carries a Weekly Limit AND a
 // Five Hour Limit bar, and the startup header no longer shows a plan suffix.
 const usagePanelPro = `

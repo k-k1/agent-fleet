@@ -7,11 +7,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// rtk (token-saving CLI proxy) — opencode 側の適用artifact。on/off の実体は
-// ~/.config/opencode/plugin/rtk.ts の有無（bash/shell ツール呼び出しを
-// `rtk rewrite` に横取りするプラグイン）。durable な設定と起動時 reconcile、
-// codex 側（AGENTS.md のマーカーブロック）は package main の agent_rtk.go 側に
-// 残る（Wave E で codex 縦割りへ）。
+// rtk (token-saving CLI proxy) — the artifact that applies it on the opencode side. On/off is
+// really the presence of ~/.config/opencode/plugin/rtk.ts, a plugin that intercepts bash/shell
+// tool calls into `rtk rewrite`. The durable setting, the reconcile at startup and the codex
+// side (a marker block in AGENTS.md) stay in package main (agent_rtk.go).
 
 const rtkPluginSrc = "/usr/local/share/agent-fleet/opencode-plugin/rtk.ts"
 

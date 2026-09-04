@@ -12,7 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// TestDiscordLiveSend is the live contract test of docs/log/37 検証方針: it talks to
+// TestDiscordLiveSend is the live contract test of docs/log/37 §verification policy: it talks to
 // the real Discord API and posts one message. Skipped unless AF_DISCORD_LIVE=1;
 // credentials come from env (never committed):
 //
@@ -72,7 +72,7 @@ func TestDiscordLiveSend(t *testing.T) {
 				t.Fatalf("permission buttons send: %v", err)
 			}
 		}
-		// 全文ブリッジ (docs/log/37 将来の方向): with AF_DISCORD_FULLTEXT=1, post an
+		// Full-text bridge (docs/log/37, the future direction): with AF_DISCORD_FULLTEXT=1, post an
 		// answer-ready whose body exceeds one message so chunking + the scrubber
 		// can be eyeballed in the thread (mention on the first chunk only).
 		if os.Getenv("AF_DISCORD_FULLTEXT") == "1" {
@@ -88,7 +88,7 @@ func TestDiscordLiveSend(t *testing.T) {
 			}
 		}
 
-		// P3先取り (docs/log/37): with AF_DISCORD_OPERATOR=1, 起票 the standing operator
+		// P3, brought forward (docs/log/37): with AF_DISCORD_OPERATOR=1, open the standing operator
 		// thread and post a reply into it, so the create-thread + return-leg (chunk +
 		// scrub) can be eyeballed. Uses a throwaway conv id — no turn is run here.
 		if os.Getenv("AF_DISCORD_OPERATOR") == "1" {
@@ -101,7 +101,7 @@ func TestDiscordLiveSend(t *testing.T) {
 			if err := postOperatorChunks(token, thread, "オペレーターの応答（ライブ確認）: フリートは正常です。"); err != nil {
 				t.Fatalf("operator reply post: %v", err)
 			}
-			// P3 承認ゲート (docs/log/37): with AF_DISCORD_APPROVAL=1, post an approve/reject
+			// P3 approval gate (docs/log/37): with AF_DISCORD_APPROVAL=1, post an approve/reject
 			// button into the operator thread so the gate's buttons render and a click
 			// round-trips through TestDiscordLiveReceive (which logs the parsed "op" id).
 			if os.Getenv("AF_DISCORD_APPROVAL") == "1" {

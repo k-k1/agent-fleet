@@ -30,7 +30,8 @@ func TestAutoTurnSchedulerBundlesWithinWindow(t *testing.T) {
 		func(conv string) { done <- conv },
 	)
 
-	// 同じ会話への連打は1回に畳まれ、別会話は独立に発火する。
+	// Repeated calls for the same conversation fold into one; a different conversation
+	// fires independently.
 	s.schedule("c1")
 	s.schedule("c1")
 	s.schedule("c1")
@@ -45,7 +46,8 @@ func TestAutoTurnSchedulerBundlesWithinWindow(t *testing.T) {
 	case <-time.After(150 * time.Millisecond):
 	}
 
-	// 発火済みの窓は閉じている — 次の schedule は新しい窓を開いて再び発火する。
+	// A window that has already fired is closed — the next schedule opens a new one and
+	// fires again.
 	s.schedule("c1")
 	if got := collectRuns(t, done, 1); got["c1"] != 1 {
 		t.Fatalf("second window runs = %v", got)
@@ -58,7 +60,8 @@ func TestAutoTurnSchedulerZeroDelayRunsImmediately(t *testing.T) {
 		func() time.Duration { return 0 },
 		func(conv string) { done <- conv },
 	)
-	// 遅延 0 = 従来挙動（即時・非同期）。窓を持たないので連打はそのまま複数回走る。
+	// Delay 0 = the old behaviour (immediate, asynchronous). With no window, repeated
+	// calls really do run several times.
 	s.schedule("c1")
 	s.schedule("c1")
 	if got := collectRuns(t, done, 2); got["c1"] != 2 {
@@ -92,12 +95,13 @@ func TestAutoTurnSchedulerConcurrentScheduleIsSingleFire(t *testing.T) {
 }
 
 func TestQuietReport(t *testing.T) {
-	// 既定 OFF: 何も抑止しない。
+	// Default OFF: nothing is suppressed.
 	writeUIPrefs(t, `{}`)
 	if quietReport(ReportKindAnswerReady, "") {
 		t.Fatal("quiet while the setting is OFF")
 	}
-	// ON: 静かになるのは正常完了とその訂正だけ。異常系・打ち切りは従来どおり回す。
+	// ON: only a normal completion and its correction go quiet. Failures and aborts still
+	// run as before.
 	writeUIPrefs(t, `{"assistantQuietCompletion":true}`)
 	tests := []struct {
 		kind, reason string
@@ -118,7 +122,7 @@ func TestQuietReport(t *testing.T) {
 }
 
 func TestChatAutoTurnDelayEnvOverride(t *testing.T) {
-	writeUIPrefs(t, `{}`) // HOME を隔離（実環境の ui-prefs を読ませない）
+	writeUIPrefs(t, `{}`) // isolate HOME so the real ui-prefs are not read
 	if got := ChatAutoTurnDelay(); got != ChatAutoTurnDelayDefault {
 		t.Fatalf("default delay = %v", got)
 	}

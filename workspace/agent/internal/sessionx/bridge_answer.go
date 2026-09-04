@@ -2,7 +2,7 @@ package sessionx
 
 // Chat-bridge P2b inbound (docs/log/37): apply a Discord button click to a session's
 // pending AskUserQuestion / plan / permission — structurally, never via free text
-// (ADR0020 契約6). The Gateway supervisor decodes the click and hands it here as a
+// (ADR0020 contract 6). The Gateway supervisor decodes the click and hands it here as a
 // bridge.ParsedInteraction; this is the package-main half (session mutation) wired
 // into bridge via ReceiverDeps.Answer, the same import-cycle dodge as Inject.
 //

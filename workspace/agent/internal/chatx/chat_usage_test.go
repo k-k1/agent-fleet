@@ -7,8 +7,9 @@ import (
 	"testing"
 )
 
-// claude -p --output-format json の result（実測 2026-07・claude-code 2.1.x を要約した
-// フィクスチャ）: usage.iterations 末尾が最終スナップショット、modelUsage が実ウィンドウ。
+// The result of `claude -p --output-format json` (a fixture abridged from claude-code 2.1.x,
+// measured 2026-07): the last entry of usage.iterations is the final snapshot, and modelUsage
+// carries the real window.
 const claudeResultFixture = `{
   "type": "result", "subtype": "success", "is_error": false, "num_turns": 2,
   "result": "2", "session_id": "2abf80ca-0cfe-4ca5-a89d-17248cba29de",
@@ -37,7 +38,7 @@ func TestClaudeCtxObserveResultUsesLastIteration(t *testing.T) {
 	if c.Context == nil {
 		t.Fatal("no context captured")
 	}
-	// 末尾 iteration（9 + 28656 + 120）— トップレベルの合算値ではない。
+	// The last iteration (9 + 28656 + 120), not the top-level total.
 	if got, want := c.Context.Tokens, 9+28656+120; got != want {
 		t.Fatalf("tokens = %d, want %d (last iteration)", got, want)
 	}
@@ -50,8 +51,8 @@ func TestClaudeCtxObserveResultUsesLastIteration(t *testing.T) {
 }
 
 func TestClaudeCtxStreamAssistantEvents(t *testing.T) {
-	// stream-json: assistant イベントの message.usage が per-message スナップショット。
-	// 最後のイベントが勝ち、result（iterations なし）はそれを上書きしない。
+	// stream-json: message.usage on an assistant event is a per-message snapshot. The last
+	// event wins, and a result without iterations does not overwrite it.
 	lines := []string{
 		`{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","usage":{"input_tokens":9,"cache_creation_input_tokens":7064,"cache_read_input_tokens":21592,"output_tokens":5}}}`,
 		`{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","usage":{"input_tokens":12,"cache_creation_input_tokens":100,"cache_read_input_tokens":28700,"output_tokens":9}}}`,
@@ -96,7 +97,7 @@ func TestParseCodexExecEventsUsage(t *testing.T) {
 	if usage.InputTokens != 14502 || usage.CachedInputTokens != 8960 {
 		t.Fatalf("usage = %+v", usage)
 	}
-	// input は cached を含む → fresh は差分、合計は input のまま。
+	// input includes cached, so fresh is the difference and the total stays input.
 	c := &ChatConversation{Agent: "codex", Model: "gpt-5.6-luna"}
 	setChatContext(c, usage.InputTokens-usage.CachedInputTokens, usage.CachedInputTokens, 0, 0, chatCtxModelFor(c, "codex"))
 	if c.Context.Tokens != 14502 || c.Context.Read != 8960 || c.Context.Fresh != 14502-8960 {
@@ -120,7 +121,7 @@ func TestParseOpencodeRunEventsUsage(t *testing.T) {
 	if usage.Input != 11887 || usage.Cache.Read != 40 || usage.Cache.Write != 30 {
 		t.Fatalf("usage = %+v", usage)
 	}
-	// 使用量台帳向け（docs/log/46 §2）: output も同じ part から拾う。
+	// For the usage ledger (docs/log/46 §2): output comes from the same part.
 	if usage.Output != 2 {
 		t.Fatalf("output = %d, want 2", usage.Output)
 	}
@@ -133,7 +134,7 @@ func TestSetChatContextKeepsPreviousOnEmpty(t *testing.T) {
 		t.Fatal("no context captured")
 	}
 	prev := c.Context
-	// usage の取れなかったターン（全ゼロ）は前回値を消さない。
+	// A turn with no usage (all zeros) must not erase the previous value.
 	setChatContext(c, 0, 0, 0, 0, "claude-sonnet-5")
 	if c.Context != prev {
 		t.Fatal("empty usage overwrote the previous snapshot")
@@ -154,20 +155,20 @@ func TestNoteContextPressureOncePerCrossing(t *testing.T) {
 		return n
 	}
 
-	// 閾値未満: 何も追記しない。
+	// Below the threshold: nothing is appended.
 	setChatContext(c, 1000, 0, 0, 200000, "claude-sonnet-5")
 	NoteContextPressure(c)
 	if notices() != 0 || c.CtxWarned {
 		t.Fatal("warned below the threshold")
 	}
-	// 超過: 1回だけ追記。
+	// Over it: appended exactly once.
 	setChatContext(c, 170000, 0, 0, 200000, "claude-sonnet-5")
 	NoteContextPressure(c)
 	NoteContextPressure(c)
 	if notices() != 1 || !c.CtxWarned {
 		t.Fatalf("notices = %d (CtxWarned=%v), want exactly 1", notices(), c.CtxWarned)
 	}
-	// コンパクション等で下回る → フラグが戻る → 再超過でもう1回。
+	// Falling back under (compaction, say) resets the flag, so crossing again warns once more.
 	setChatContext(c, 50000, 0, 0, 200000, "claude-sonnet-5")
 	NoteContextPressure(c)
 	if c.CtxWarned {

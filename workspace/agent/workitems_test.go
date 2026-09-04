@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// docs/log/80 / ADR 0061 — 一覧に載るのは provider の応答をどう写したかで決まる。
-// ここが本体なので、ネットワーク無しで固定する。
+// docs/log/80 / ADR 0061 — what shows up in the list is decided by how a provider's response
+// is mapped. That mapping is the substance, so it is pinned here without a network.
 
 func TestParseGitHubSearchItems(t *testing.T) {
 	body := []byte(`{"items":[
@@ -48,7 +48,7 @@ func TestParseGitHubSearchItems(t *testing.T) {
 	if got.Kind != "issue" || got.State != "open" {
 		t.Errorf("kind/state = %q/%q", got.Kind, got.State)
 	}
-	// 担当者は先頭 1 人だけ（行は 1 行で、全員は入らない）。
+	// Only the first assignee: a row is one line and cannot hold all of them.
 	if got.Assignee != "taro" {
 		t.Errorf("assignee = %q, want taro", got.Assignee)
 	}
@@ -61,8 +61,9 @@ func TestParseGitHubSearchItems(t *testing.T) {
 	if rows[2].State != "done" {
 		t.Errorf("closed = %q, want done", rows[2].State)
 	}
-	// ★ 本文・コメントは返さない（ADR 0061 決定 2）。応答に body が現れないことを
-	// 構造ではなく実際の JSON で確かめる —— フィールドを足した瞬間にここが落ちる。
+	// Bodies and comments are never returned (ADR 0061 decision 2). That no body appears in
+	// the response is checked against the actual JSON rather than the struct, so the moment a
+	// field is added this fails.
 	enc, _ := json.Marshal(rows)
 	for _, forbidden := range []string{`"body"`, `"comments"`, `"description"`} {
 		if strings.Contains(string(enc), forbidden) {
@@ -105,8 +106,9 @@ func TestRepoFromGitHubAPIURL(t *testing.T) {
 	}
 }
 
-// 未接続・未知の provider は「その 1 本のクエリのエラー」として返り、リクエスト全体は
-// 200 で通る —— 1 本の失敗で棚全体が空になってはいけない（docs/log/80 §80.6）。
+// A provider that is unconnected or unknown comes back as an error on that one query while the
+// request as a whole still returns 200: one failing query must not empty the whole shelf
+// (docs/log/80 §80.6).
 func TestWorkItemsFetchPerQueryErrors(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	body := `{"queries":[{"id":"q1","provider":"github","query":"assignee:@me"},
@@ -136,8 +138,8 @@ func TestWorkItemsFetchPerQueryErrors(t *testing.T) {
 	if !strings.Contains(byID["q1"], "not connected") {
 		t.Errorf("q1 (no GitHub connection) = %q", byID["q1"])
 	}
-	// jira は P1 で対応済み。未接続は「未接続」と言う —— ここが "unsupported" のままだと、
-	// 接続すれば直る話を「af が Jira に対応していない」と読ませてしまう。
+	// Jira is supported, so an unconnected Jira has to say "not connected": leaving
+	// "unsupported" here reads as "af does not support Jira" when connecting would fix it.
 	if !strings.Contains(byID["q2"], "Jira is not connected") {
 		t.Errorf("q2 (jira, no connection) = %q", byID["q2"])
 	}
@@ -156,7 +158,7 @@ func TestWorkItemsFetchEmptyRequest(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
-	// 空でも配列を返す（null は Console 側で「壊れている」と見分けがつかない）。
+	// An array is returned even when empty: the Console cannot tell null apart from broken.
 	if got := strings.TrimSpace(w.Body.String()); !strings.Contains(got, `"items":[]`) {
 		t.Errorf("body = %s, want an empty items array", got)
 	}

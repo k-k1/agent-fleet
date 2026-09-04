@@ -53,8 +53,9 @@ func HandleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	// fold-on-read（docs/log/46 §3-b）: 使用量が読まれたこの機会に、セッション本体の消費を
-	// 台帳へ折り込む（60 秒スロットル）。常駐タイマーを増やさないための間借り。
+	// fold-on-read (docs/log/46 §3-b): now that usage is being read, fold the session's own
+	// consumption into the ledger (throttled to 60s). Piggybacking here rather than adding
+	// another resident timer.
 	maybeFoldSessionUsage()
 	out := []sessionUsage{}
 	for _, m := range session.ListMetas() {

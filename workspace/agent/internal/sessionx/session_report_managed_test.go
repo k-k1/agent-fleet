@@ -144,9 +144,9 @@ func TestManagedRuntimeLossDoesNotReport(t *testing.T) {
 }
 
 // A turn that FAILED (provider error) is terminal too — the report must fire and consume
-// the arm exactly like a completion — but it must say the turn errored. Reporting
-// 応答が完了 for a turn that produced nothing is what let an exhausted opencode Zen
-// balance look like a finished task to the operator.
+// the arm exactly like a completion — but it must say the turn errored. Reporting a
+// completed response ("応答が完了") for a turn that produced nothing is what let an
+// exhausted opencode Zen balance look like a finished task to the operator.
 func TestManagedTurnFailureReportsAsError(t *testing.T) {
 	m, sid, convID := managedReportFixture(t)
 

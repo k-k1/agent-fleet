@@ -1,7 +1,7 @@
 package chatx
 
-// アシスタントチャットの永続化層：会話 JSON の保存/読込・ID 生成・会話単位ロック。
-// chat.go からの機械的分割（docs/log/23 残②）。
+// Persistence layer for assistant chat: saving/loading the conversation JSON, id generation
+// and the per-conversation lock.
 
 import (
 	"crypto/rand"

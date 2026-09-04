@@ -31,8 +31,9 @@ import (
 // can put the weekly window in primary and omit the 5h window. window_minutes is the
 // semantic discriminator (300 = ~5h, 10080 = ~7d).
 
-// usageWindow は internal/agents/claude（usage.go）の同名 struct の複製（極小の
-// ため共有せず重複を許容）: percent used (0–100) + the ISO reset instant.
+// usageWindow is a copy of the struct of the same name in internal/agents/claude (usage.go);
+// it is small enough that the duplication is preferred to sharing. Percent used (0–100) plus
+// the ISO reset instant.
 type usageWindow struct {
 	Pct      float64 `json:"pct"`
 	ResetsAt string  `json:"resetsAt"`
@@ -210,10 +211,11 @@ var observedRateLimits struct {
 // app-server observer. Not cleared on observer disconnect: readUsage compares
 // ages, so a stale observation simply loses to a fresher rollout reading.
 //
-// The push is a SPARSE rolling update（0.144.4 スキーマの記述どおり、nullable は
-// 「変化なし」であって「消えた」ではない）: 欠けた窓・plan は前回観測値を保持し、
-// non-nil だけ取り込む。丸ごと上書きすると primary だけの push が weekly 窓と
-// planType を消し、WsBar の 7d バーが次のフル読みまで欠ける。
+// The push is a SPARSE rolling update: as the 0.144.4 schema states, nullable means
+// "unchanged", not "gone". A missing window or plan keeps the previously observed value and
+// only non-nil fields are taken in. Overwriting wholesale would let a primary-only push erase
+// the weekly window and planType, and WsBar's 7d bar would go missing until the next full
+// read.
 func SetObservedRateLimits(primary, secondary *RateLimitWindow, planType string) {
 	observedRateLimits.Lock()
 	defer observedRateLimits.Unlock()
@@ -251,9 +253,10 @@ func observedUsage() (usage, bool) {
 	return u, true
 }
 
-// observedFreshSkipSec: push がこれより新しければ rollout の glob/スキャンを丸ごと
-// 省く。両ソースは同一口座の同一値なので、この窓内に rollout がより新しい読みを
-// 持っていても実質同値 — チップのポーリング毎に全 rollout を stat する必要はない。
+// observedFreshSkipSec: when the push is newer than this, the rollout glob/scan is skipped
+// entirely. Both sources carry the same value for the same account, so even if a rollout held
+// a fresher reading inside this window it would be equivalent — no need to stat every rollout
+// on each poll of the chip.
 const observedFreshSkipSec = 10
 
 // readUsage returns the fresher of the two sources of the same account-wide

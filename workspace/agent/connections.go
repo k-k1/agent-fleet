@@ -104,7 +104,7 @@ func discordStatus(s *secrets.Data) map[string]any {
 	if d.FullText {
 		m["fullText"] = true
 	}
-	// docs/log/37 P3, taken early: signal that the standing fleet-operator thread is provisioned so
+	// docs/log/37 P3, brought forward: signal that the standing fleet-operator thread is provisioned so
 	// the card can show an "operator" pill (present only once the thread was actually opened).
 	if ref, ok := bridge.OperatorState(); ok && ref.Thread != "" {
 		m["operator"] = true
@@ -358,7 +358,7 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	// docs/log/37 P3, taken early: with receive + channel mode, stand up (or reuse) the dedicated
+	// docs/log/37 P3, brought forward: with receive + channel mode, stand up (or reuse) the dedicated
 	// fleet-operator thread + conversation so @mentions route to the operator assistant.
 	// Async + best-effort — it does its own Discord round-trips, so it must not slow the
 	// PUT or fail the connect (reuse across reconnects avoids duplicate threads).

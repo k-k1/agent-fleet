@@ -1,7 +1,8 @@
-// wiremap_convert_test.go — mcpx で変換した map サイトの等価証明（CONTRACT-MAP / 脚③）。
+// wiremap_convert_test.go — equivalence proofs for the map sites converted in mcpx
+// (CONTRACT-MAP / leg 3).
 //
-// 🔴 wire 型は非公開なので、等価はこのパッケージの中でしか測れない。
-// ハーネスは internal/wiretest（テストからしか import されない共有機構）。
+// The wire types are unexported, so equivalence can only be measured from inside this
+// package. The harness is internal/wiretest, shared machinery imported only by tests.
 package mcpx
 
 import (
@@ -19,14 +20,14 @@ type mcpRegistryIn struct {
 func TestWireEquivMCPRegistry(t *testing.T) {
 	inputs := []mcpRegistryIn{
 		{Servers: []mcpServerWire{}, TenantFetchedAt: 1756800000, Shadowed: []string{"Tickets"}},
-		// 🔴 Shadowed は nil を取りうる（`null`）。空スライスへ正規化すると `[]` になり別物。
-		// ゼロ値ケース（全部 nil）はハーネスが先頭に足すので、ここでは
-		// 「nil と空が混在する形」を測る。
+		// Shadowed can be nil (`null`); normalising it to an empty slice would make it `[]`,
+		// which is a different value. The harness prepends the all-nil zero case itself, so
+		// what these measure is the shapes where nil and empty are mixed.
 		{Servers: []mcpServerWire{}, TenantFetchedAt: 0, Shadowed: nil},
 		{Servers: nil, TenantFetchedAt: 0, Shadowed: []string{}},
 	}
 	got := wiretest.AssertEquiv(t, "HandleServersGet", inputs,
-		func(in mcpRegistryIn) any { // 旧（mcp_servers.go の map リテラルの写し）
+		func(in mcpRegistryIn) any { // old (a copy of the map literal in mcp_servers.go)
 			return map[string]any{
 				"servers":         in.Servers,
 				"tenantFetchedAt": in.TenantFetchedAt,
@@ -38,5 +39,5 @@ func TestWireEquivMCPRegistry(t *testing.T) {
 				Servers: in.Servers, TenantFetchedAt: in.TenantFetchedAt, Shadowed: in.Shadowed,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }

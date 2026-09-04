@@ -80,11 +80,11 @@ func providerHasResume(c *ChatConversation, agent string) bool {
 	return false
 }
 
-// providerResumeKinds は resume ハンドルを持つ全バックエンド。ハンドルの一括操作
-// （anyProviderResume / clearProviderSessions）をこの1本の列挙から回すのは、種別を
-// 足すたびに「4つ書いてある条件式」の写し漏れが起きるため。実際 cursor（docs/log/40）は
-// providerHasResume には入ったが圧縮側の並び（4項目の代入と判定）から漏れており、
-// cursor 会話は圧縮してもハンドルが残っていた。
+// providerResumeKinds lists every backend that holds a resume handle. The bulk operations
+// over those handles (anyProviderResume / clearProviderSessions) all iterate this one list
+// because a hand-written condition repeated per kind loses an entry every time a kind is
+// added: cursor (docs/log/40) reached providerHasResume but was missed by the compaction
+// side, so compacting a cursor conversation left its handle behind.
 var providerResumeKinds = []string{"claude", "codex", "opencode", "agy", "cursor"}
 
 // anyProviderResume reports whether ANY backend still holds a native session to summarize.

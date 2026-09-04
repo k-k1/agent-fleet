@@ -30,7 +30,7 @@ import (
 //   - agy: `agy models` — display names, accepted verbatim by `agy --model`
 //
 // An empty list is a valid answer (CLI absent / offline) — the Console picker then
-// offers only the default entry (既定).
+// offers only the default entry.
 //
 // The order is whatever the upstream of each kind recommends, passed through as is
 // (codex's priority order; the enumeration order of cursor / kiro / copilot / agy means

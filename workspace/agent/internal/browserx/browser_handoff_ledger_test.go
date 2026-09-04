@@ -8,20 +8,22 @@ import (
 	"time"
 )
 
-// browser_handoff_ledger_test.go — SetHandoffResult が台帳の行を解決し、正しいプロンプトを
-// 配達段へ渡すところまでを検査する。
+// Checks that SetHandoffResult resolves the ledger row and hands the right prompt to the
+// delivery stage.
 //
-// 台帳そのものの記録/解決/配達は package main 側の同名ファイルに在る（実 agentSendToSession
-// を通せるのはあちらだけ）。ここに残っているのは newFakeBrowserCDP / fakeAttachmentManager
-// という **このパッケージ内の fake** に依存していて動かせない 2 本で、配達段は下のダブルで
-// 受ける。したがってここが証明するのは「解決してこの本文を配達に渡した」までであり、
-// 「セッションの入力に着弾した」までは package main 側が持っている。
+// Recording, resolving and delivering the ledger itself is covered by the file of the same
+// name in package main - only that side can drive the real agentSendToSession. What stays
+// here are the two cases that cannot move, because they depend on newFakeBrowserCDP and
+// fakeAttachmentManager, fakes that live in this package; the delivery stage is taken by the
+// double below. So what this file proves stops at "resolved and passed this body to
+// delivery"; that it lands in the session's input is package main's to prove.
 //
-// ⚠️ ダブルに差し替えている以上、agentSendToSession 自体の退行はここでは赤くならない。
-// 実配線の担保を package main 側から消さないこと。
+// Because delivery is a double here, a regression in agentSendToSession itself does not turn
+// this file red. Do not remove the real-wiring coverage from package main.
 
-// stubAgentInputServer は配達段（agentSendToSession）を差し替え、渡されたプロンプトを
-// 記録する。DeliverBrowserHandoff は自前の goroutine で走るので並行に呼ばれる。
+// stubAgentInputServer replaces the delivery stage (agentSendToSession) and records the
+// prompts handed to it. DeliverBrowserHandoff runs on its own goroutine, so it is called
+// concurrently.
 func stubAgentInputServer(t *testing.T) (prompts func() []string) {
 	t.Helper()
 	var mu sync.Mutex

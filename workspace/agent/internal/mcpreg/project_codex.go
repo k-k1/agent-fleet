@@ -8,7 +8,7 @@ package mcpreg
 // These are pure syntax helpers (TOML string/array/table escaping, table-name
 // stripping by NAME predicate) with no ServerDef in their signature, so exporting
 // them does not risk mcpproj's project-scope entries leaking into the registry's
-// own composition (ADR0040 決定15) — only the *spelling* is shared, same as
+// own composition (ADR0040 decision 15) — only the *spelling* is shared, same as
 // project_spelling.go's JSON-side table.
 
 // StripCodexServers is stripCodexServers (materialize_codex.go): removes every

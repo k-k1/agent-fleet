@@ -2,21 +2,21 @@ package session
 
 import "testing"
 
-// TestLabelRoundTrip — ラベルの組み立てと読み戻し。
+// TestLabelRoundTrip covers building a label and reading it back.
 //
-// 一番効くのは**旧形式 `[AF] <title>` も剥がせる**こと: ラベルは作成時に meta へ焼かれる
-// ので、この変更を入れても既存セッションは古い形のまま残り、新旧が同時に画面に並ぶ。
-// 新形式だけ剥がす strip を書くと、古いセッションの行にだけタグが残る。
+// What matters most is that the old `[AF] <title>` form is stripped too: a label is baked
+// into meta at creation, so existing sessions keep the old form and both shapes appear on
+// screen at once. A strip that only handles the new form leaves the tag on old rows.
 func TestLabelRoundTrip(t *testing.T) {
 	for _, c := range []struct{ label, strip, name string }{
 		{"[AF:s6bbilu] 94-freeze 試走2本", "94-freeze 試走2本", "s6bbilu"},
 		{"[AF:s6bbilu] agent-fleet @0831-1922", "agent-fleet @0831-1922", "s6bbilu"},
 		{"[AF] 旧形式のまま残ったラベル", "旧形式のまま残ったラベル", ""},
-		{"[AF]タイトル", "タイトル", ""}, // 空白なしも一応剥がす
+		{"[AF]タイトル", "タイトル", ""}, // stripped without the space too
 		{"どこか他所で付いた --name", "どこか他所で付いた --name", ""},
 		{"", "", ""},
-		// タイトルが "[AF:" で始まっていても、名前として通るのは ValidName の字種だけ。
-		// ここを緩めると、利用者のタイトルの一部を送信者名として表示しかねない。
+		// Even when a title starts with "[AF:", only ValidName's character set is accepted as
+		// a name. Loosen this and part of a user's title could be shown as the sender name.
 		{"[AF:日本語] t", "[AF:日本語] t", ""},
 	} {
 		if got := StripLabel(c.label); got != c.strip {
@@ -27,24 +27,26 @@ func TestLabelRoundTrip(t *testing.T) {
 		}
 	}
 
-	// 組み立て → 読み戻しが一致すること。名前が不正なら旧タグへ落ちる（起動は止めない）。
+	// Build then read back must agree. An invalid name falls back to the old tag rather than
+	// blocking the launch.
 	if got := LabelPrefix("s6bbilu"); got != "[AF:s6bbilu] " {
 		t.Errorf("LabelPrefix = %q", got)
 	}
 	if got := LabelPrefix("../etc"); got != "[AF] " {
-		t.Errorf("LabelPrefix(不正な名前) = %q, want %q", got, "[AF] ")
+		t.Errorf("LabelPrefix(invalid name) = %q, want %q", got, "[AF] ")
 	}
 	if got := LabelSessionName(LabelPrefix("sabc123") + "タイトル"); got != "sabc123" {
 		t.Errorf("round trip = %q", got)
 	}
 }
 
-// TestDisplayStripsLabelTag — 表示名がタグを剥がしたラベルになること（タイトル未設定時）。
+// TestDisplayStripsLabelTag pins that with no title set the display name is the label with
+// its tag stripped.
 func TestDisplayStripsLabelTag(t *testing.T) {
 	if got := Display(Meta{Label: "[AF:s6bbilu] agent-fleet @0831-1922"}); got != "agent-fleet @0831-1922" {
 		t.Errorf("Display = %q", got)
 	}
 	if got := Display(Meta{Title: "題", Label: "[AF:s6bbilu] 別"}); got != "題" {
-		t.Errorf("Display（タイトル優先） = %q", got)
+		t.Errorf("Display (title wins) = %q", got)
 	}
 }

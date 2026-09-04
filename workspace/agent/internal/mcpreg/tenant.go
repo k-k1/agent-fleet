@@ -16,7 +16,7 @@ package mcpreg
 //     show HOW stale (docs/log/48 §6).
 //   - **the tenant cannot ship a command.** Every incoming definition is re-validated
 //     locally and anything that is not a well-formed remote server is dropped. ADR0031
-//     決定 2 is enforced three times over — the CP table has no command columns, the CP
+//     decision 2 is enforced three times over — the CP table has no command columns, the CP
 //     API refuses stdio, and this drops it if it ever arrives anyway. The last one is the
 //     only check that runs on the machine that would execute the command.
 //   - **the member's own values survive.** For a user_secret definition the CP sends
@@ -106,7 +106,7 @@ func FetchTenant() (TenantFetchResult, error) {
 
 // acceptTenant filters a distributed set down to what is safe to use here. A definition
 // is dropped when it is not a valid remote server — most importantly a stdio one, which
-// would be an admin executing a command inside this container (ADR0031 決定 2).
+// would be an admin executing a command inside this container (ADR0031 decision 2).
 //
 // A user_secret definition arrives with empty header values, which Validate allows (it
 // checks shape, not completeness) and Ready() later refuses until the member fills them

@@ -1,19 +1,20 @@
 package claude
 
-// ユーザー指示（docs/log/60）の claude 側 artifact。
+// The claude-side artifact of the user instructions layer (docs/log/60).
 //
-// claude だけは**合成が要らない**。フリート方針は managed policy
-// /etc/claude-code/CLAUDE.md（root 所有・イメージ焼き込み・そもそも dev では書けない）
-// として別レイヤに載っており、その下に CLI ネイティブの user memory 層があるので、
-// AF はそこへ独立したファイルとして書ける。
+// claude alone needs no merging: the fleet policy rides on a separate layer as the managed
+// policy /etc/claude-code/CLAUDE.md (root-owned, baked into the image, not writable as dev in
+// the first place), and the CLI's native user-memory layer sits below it, so AF can write a
+// file of its own there.
 //
-// 置き場は **$CLAUDE_CONFIG_DIR/CLAUDE.md**（実測 2026-08-13・claude 2.1.229）。
-// ⚠️ ~/.claude/CLAUDE.md ではない: AF は CLAUDE_CONFIG_DIR=/var/lib/af/claude を
-// 渡しているので、~/.claude/CLAUDE.md に書いても **claude には届かない**
-// （opencode も本環境では拾わなかった＝どの kind にも効かない）。docs/log/60 §60.4-A。
+// That file is $CLAUDE_CONFIG_DIR/CLAUDE.md (measured 2026-08-13, claude 2.1.229) — not
+// ~/.claude/CLAUDE.md: AF passes CLAUDE_CONFIG_DIR=/var/lib/af/claude, so anything written to
+// ~/.claude/CLAUDE.md never reaches claude (opencode did not pick it up in this environment
+// either, so it reaches no kind at all). docs/log/60 §60.4-A.
 //
-// 既定では存在しないファイルなので AF が単独所有できるが、それでも本文全体を
-// 上書きせずマーカーで囲む — 利用者が手で書いていた場合にそれを消さないため。
+// The file does not exist by default, so AF could own it outright; the body is still fenced
+// with markers rather than overwritten wholesale, so that anything the user wrote by hand
+// survives.
 
 import (
 	"os"

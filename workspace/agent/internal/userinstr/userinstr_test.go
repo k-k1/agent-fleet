@@ -37,7 +37,7 @@ func TestSaveTextRejectsOverLimitAndKeepsPrevious(t *testing.T) {
 	}
 }
 
-// 空にしたら残骸を残さない（「消したのにまだ効いている」を作らない）。
+// Clearing it must leave no remnant behind, so no "deleted but still in effect".
 func TestSaveEmptyRemovesFile(t *testing.T) {
 	isolate(t)
 	if err := SaveText("something\n"); err != nil {

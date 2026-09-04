@@ -1,7 +1,8 @@
 package claude
 
-// 配達検証（docs/log/38）の一次記録チェック: 「snapshot 以降に user ターンが追記された」
-// だけを真とし、既存の user 行・assistant 行の追記・別 sid では偽のままであること。
+// The primary-record check of delivery verification (docs/log/38): only "a user turn was
+// appended after the snapshot" counts as true; pre-existing user lines, appended assistant
+// lines and a different sid must all stay false.
 
 import (
 	"encoding/json"
@@ -71,7 +72,7 @@ func TestUserTurnAppendedSinceNewFile(t *testing.T) {
 
 	snap := TranscriptSnapshot(sid) // no file yet → empty (but non-nil) baseline
 	if snap == nil {
-		t.Fatal("TranscriptSnapshot must never return nil (nil means 検証手段なし)")
+		t.Fatal("TranscriptSnapshot must never return nil (nil means there is no way to verify)")
 	}
 	if UserTurnAppendedSince(sid, snap) {
 		t.Fatal("no log at all — no evidence")

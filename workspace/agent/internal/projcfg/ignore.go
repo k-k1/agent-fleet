@@ -1,9 +1,10 @@
 package projcfg
 
-// ignore.go — docs/log/56 §7.5 操作A（「無視に追加」の安全・取り返しがつく方；「追跡から
-// 外す」は操作B・P2）。Idempotent line append to .git/info/exclude (default — not
-// committed, "取り返しがつく") or .gitignore (committed, affects every colleague).
-// No marker comment (docs/log/57 憲章2) and no commit (憲章9) — this only ever touches
+// ignore.go — docs/log/56 §7.5 operation A ("add to ignore", the safe and reversible
+// one; "stop tracking" is operation B, P2). Idempotent line append to
+// .git/info/exclude (default — not committed, reversible) or .gitignore (committed,
+// affects every colleague). No marker comment (docs/log/57 charter 2) and no commit
+// (charter 9) — this only ever touches
 // the ignore file itself.
 
 import (
@@ -17,7 +18,7 @@ import (
 
 // Ignore targets (docs/log/56 §7.5's table).
 const (
-	IgnoreExclude   = "exclude"   // .git/info/exclude — uncommitted; common dir, so it affects the parent clone AND every linked worktree (docs/log/56 §2.4 実測)
+	IgnoreExclude   = "exclude"   // .git/info/exclude — uncommitted; common dir, so it affects the parent clone AND every linked worktree (docs/log/56 §2.4, measured)
 	IgnoreGitignore = "gitignore" // .gitignore — committed; the whole team
 )
 
@@ -30,9 +31,9 @@ func GitCommonDir(dir string) (string, error) {
 
 // AddIgnorePattern appends pattern (a repo-relative path, e.g. ".mcp.json") to
 // dir's ignore file for where, unless an identical line is already present
-// (docs/log/56 §7.5: "既に同じパターンがあれば足さない"). Creates the file if it does
-// not exist yet; preserves everything else in it, including a missing trailing
-// newline convention becoming present (never removed).
+// (docs/log/56 §7.5: "if the same pattern is already there, do not add it"). Creates
+// the file if it does not exist yet; preserves everything else in it, including a
+// missing trailing newline convention becoming present (never removed).
 func AddIgnorePattern(dir, where, pattern string) error {
 	path, err := IgnoreFilePath(dir, where)
 	if err != nil {

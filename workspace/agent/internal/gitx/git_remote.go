@@ -473,7 +473,7 @@ var (
 )
 
 // BitbucketConnectCheck validates an email+API-token credential the moment the user hits
-// 接続, so a scopeless token / wrong email / missing scope surfaces immediately instead of
+// Connect, so a scopeless token / wrong email / missing scope surfaces immediately instead of
 // as a later opaque list or clone failure. It probes the endpoint the repo picker starts
 // from and inspects the granted scopes (X-OAuth-Scopes). Returns a non-empty warn code for
 // a non-fatal gap (currently "no_write": clone works but push won't); a nil error with an
@@ -518,10 +518,10 @@ func bitbucketConnectCheckAt(base, user, token string) (warn string, err error) 
 // BitbucketGetStatus does an authorized GET and returns the body AND the HTTP status
 // without interpreting it. Transient failures — a transport error, HTTP 429, or a 5xx —
 // are retried a few times with a short backoff. Without this, the Console's repo/branch
-// pickers surface an intermittent "取得に失敗" that a manual re-open (or switching provider
-// away and back) merely papers over.
+// pickers surface an intermittent "failed to fetch" that a manual re-open (or switching the
+// provider away and back) merely papers over.
 //
-// ★ Split from bitbucketGet so callers can differ on what a status MEANS: a 403 is "that
+// Kept apart from bitbucketGet so callers can differ on what a status MEANS: a 403 is "that
 // repo is private" to the picker and "this connection has no pull request permission" to
 // the work item rail (workitems_bitbucket.go). Same split as jiraRequest / jiraGet.
 func BitbucketGetStatus(client *http.Client, auth, url string) ([]byte, int, error) {

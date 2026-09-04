@@ -53,10 +53,10 @@ func TestResolveLiveModelPrefersExactMatchOverPrefixCollision(t *testing.T) {
 }
 
 // The rejection message lands in a Console toast and a phone notification, so it must
-// stay readable when the live catalog is large. 実例: opencode の Go プランで退役した
-// opencode-go/ox-alpha-free を指定した起動失敗が、利用可能な約 60 件を全部並べたせいで
-// 通知から理由が読めなくなった（models.dev が status=deprecated を付けた時点で、CLI の
-// `opencode models` からも消える）。近い候補だけ挙げて残りは件数で示す。
+// stay readable when the live catalog is large. Seen in practice: a launch that named the
+// retired opencode-go/ox-alpha-free listed all ~60 available ids, and the reason was no
+// longer readable in the notification (once models.dev marks status=deprecated the id also
+// disappears from `opencode models`). Name only the nearest candidates and count the rest.
 func TestResolveLiveModelUnavailableNamesOnlyNearestIDs(t *testing.T) {
 	var choices []agents.ModelChoice
 	for _, id := range []string{
@@ -72,12 +72,12 @@ func TestResolveLiveModelUnavailableNamesOnlyNearestIDs(t *testing.T) {
 		t.Fatal("resolveLiveModel accepted a retired model id")
 	}
 	msg := err.Error()
-	// 近い候補は同じ課金経路（opencode-go/…）から出す。無関係な Zen の id で 5 枠を
-	// 埋めてしまうと、候補として役に立たない。
+	// The nearest candidates must come from the same billing route (opencode-go/…). Filling
+	// the 5 slots with unrelated Zen ids makes them useless as suggestions.
 	if !strings.Contains(msg, "opencode-go/") {
 		t.Fatalf("message names no opencode-go candidate: %s", msg)
 	}
-	// 全件は出さない: 打ち切った分は件数で示す。
+	// Never dump the whole list: what was cut off is reported as a count.
 	if strings.Contains(msg, "opencode/big-pickle") {
 		t.Fatalf("message dumped the whole catalog: %s", msg)
 	}
@@ -89,7 +89,8 @@ func TestResolveLiveModelUnavailableNamesOnlyNearestIDs(t *testing.T) {
 	}
 }
 
-// 曖昧な指定は「この中から選ぶ」ための一覧なので、不明なモデルより多めに出す。
+// An ambiguous request lists what to pick from, so it keeps more candidates than an
+// unknown model does.
 func TestResolveLiveModelAmbiguousKeepsMoreCandidates(t *testing.T) {
 	var choices []agents.ModelChoice
 	for _, suffix := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"} {
@@ -104,8 +105,9 @@ func TestResolveLiveModelAmbiguousKeepsMoreCandidates(t *testing.T) {
 	}
 }
 
-// 退役したモデルは「打ち間違い」と別の文言にする — id も課金経路も合っているのに
-// 「利用できません」とだけ言われると、利用者は綴りを疑って同じ指定を繰り返す。
+// A retired model needs different wording from a typo: told only "not available" when the
+// id and the billing route are both right, the user suspects a misspelling and retries the
+// same request.
 func TestRetiredModelErrorSaysWhy(t *testing.T) {
 	choices := []agents.ModelChoice{
 		{ID: "opencode-go/glm-5.3"}, {ID: "opencode-go/kimi-k3"}, {ID: "opencode/big-pickle"},

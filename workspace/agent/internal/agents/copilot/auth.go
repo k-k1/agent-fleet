@@ -8,17 +8,18 @@ import (
 	"time"
 )
 
-// copilot の認証は GitHub 連携相乗り（docs/log/36 契約）: Copilot CLI は
-// COPILOT_GITHUB_TOKEN > GH_TOKEN > GITHUB_TOKEN と「gh CLI アプリの OAuth
-// トークン」を公式サポートし、実測ではこの Workspace の gh 透過認証だけで
-// 追加ログインなしに動いた。専用の start/complete フローは持たず、Status()
-// は gh のトークン有無（＝GitHub 連携の有無）と CLI バイナリの有無を返す。
+// copilot rides on the GitHub connection for authentication (docs/log/36 contract): the
+// Copilot CLI officially supports COPILOT_GITHUB_TOKEN > GH_TOKEN > GITHUB_TOKEN plus the
+// gh CLI app's OAuth token, and measured, this Workspace's gh transparent auth alone was
+// enough to run it with no extra sign-in. There is no dedicated start/complete flow;
+// Status() reports whether gh has a token (i.e. whether the GitHub connection exists) and
+// whether the CLI binary is present.
 
 // Status is the `copilot` field of GET /connections. githubConnected is the
 // caller's (connections.go) view of the GitHub git connection — the same store
 // the gh transparent-auth wrapper serves tokens from. supported=false hides the
-// kind in the Console (registry の available ゲート — agy と同じ配線):
-// バイナリ無し = 旧イメージ。
+// kind in the Console (the registry's available gate, wired like agy): no binary means an
+// old image.
 func Status(githubConnected bool) map[string]any {
 	m := map[string]any{"connected": githubConnected}
 	if _, err := exec.LookPath("copilot"); err != nil {
@@ -31,8 +32,8 @@ func Status(githubConnected bool) map[string]any {
 }
 
 // Token returns the gh transparent-auth OAuth token for explicit injection into
-// the managed child's env（COPILOT_GITHUB_TOKEN）. The TUI route relies on
-// copilot's own gh fallback（実測で動作）— this is for the ACP child, whose env
+// the managed child's env (COPILOT_GITHUB_TOKEN). The TUI route relies on
+// copilot's own gh fallback (measured to work) — this is for the ACP child, whose env
 // we control deterministically. Cached briefly: Resume/reconcile bursts
 // shouldn't spawn a gh process per session. "" when gh has no token.
 var tokenMu sync.Mutex

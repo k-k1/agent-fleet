@@ -1,7 +1,7 @@
 package main
 
-// Slack chat-bridge connection handlers (docs/log/37 Slack 追随) — the Socket-Mode twin of the
-// Discord connection code in connections.go. Same three-point set (agent routes + CP proxy
+// Slack chat-bridge connection handlers (docs/log/37 Slack follow-up) — the Socket-Mode twin of
+// the Discord connection code in connections.go. Same three-point set (agent routes + CP proxy
 // allowlist + Console card) and the same secrets-store discipline: two of the user's OWN
 // tokens (bot xoxb- + app-level xapp-) are stored encrypted, never held by the CP.
 
@@ -23,14 +23,14 @@ var (
 	slackUserRe    = regexp.MustCompile(`^[UW][A-Z0-9]{6,}$`)
 )
 
-// slackStatus reports the chat-bridge Slack connection (docs/log/37 Slack 追随) — never a token.
+// slackStatus reports the chat-bridge Slack connection (docs/log/37 Slack follow-up) — never a token.
 func slackStatus(s *secrets.Data) map[string]any {
 	sl := s.Slack
 	if sl == nil || sl.BotToken == "" {
 		return map[string]any{"connected": false}
 	}
 	m := map[string]any{"connected": true}
-	m["notify"] = !sl.NotifyOff // master mute state (default on) for the 通知 toggle
+	m["notify"] = !sl.NotifyOff // master mute state (default on) for the notification toggle
 	if sl.BotName != "" {
 		m["botName"] = sl.BotName
 	}
@@ -152,13 +152,13 @@ type slackConnReq struct {
 	Receive     bool     `json:"receive"`
 	FullText    bool     `json:"fullText"`
 	MirrorInput *bool    `json:"mirrorInput"`
-	NotifyOff   *bool    `json:"notifyOff"` // master mute (通知 ON/OFF); pointer = preserve on edit
+	NotifyOff   *bool    `json:"notifyOff"` // master mute (notifications on/off); pointer = preserve on edit
 	Lang        string   `json:"lang"`
 }
 
 // handlePutSlackConn stores the user's Slack tokens + destination in the encrypted store
-// (docs/log/37 Slack 追随), mirroring handlePutDiscordConn. Exactly one destination: a channel id
-// or the bound user id (DM); the bound user id is required in channel mode too (it is the
+// (docs/log/37 Slack follow-up), mirroring handlePutDiscordConn. Exactly one destination: a channel
+// id or the bound user id (DM); the bound user id is required in channel mode too (it is the
 // mention + identity binding). Edit-after-connect: an omitted bot token patches the existing
 // connection (tokens + destination reused).
 func handlePutSlackConn(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +206,7 @@ func handlePutSlackConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnSlackDestInvalid, "user must be a Slack user id (U…)")
 		return
 	}
-	// Receive (Socket Mode) needs the app token and a bound user to verify against (契約5).
+	// Receive (Socket Mode) needs the app token and a bound user to verify against (contract 5).
 	if req.Receive && channelID != "" {
 		if app == "" {
 			httpx.WriteErr(w, http.StatusBadRequest, errCodeConnSlackAppTokenRequired, "receive needs an app-level token (xapp-)")

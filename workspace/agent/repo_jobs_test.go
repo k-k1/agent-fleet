@@ -41,9 +41,9 @@ func waitRepoJob(t *testing.T, id string) RepoJob {
 	return RepoJob{}
 }
 
-// ★ 取り込み中のフォルダは「作業コピー」ではない。ここを一覧に出していたせいで、
-// 走行中の checkout に対して 起動 / 更新 / svn status が掛かり、E155037・E200033 に
-// なっていた（docs/log/78）。
+// A folder still being imported is not a working copy. Listing one made launch / update /
+// svn status run against a checkout in flight, which produced E155037 and E200033
+// (docs/log/78).
 func TestRepoJobHidesWorkingCopyWhileRunning(t *testing.T) {
 	resetRepoJobs(t)
 	home := t.TempDir()
@@ -64,7 +64,7 @@ func TestRepoJobHidesWorkingCopyWhileRunning(t *testing.T) {
 		t.Fatal("repoJobActive = false while the job runs")
 	}
 	if n := repoJobsRunning(); n != 1 {
-		t.Fatalf("repoJobsRunning = %d, want 1 (CP はこれで idle-stop を止める)", n)
+		t.Fatalf("repoJobsRunning = %d, want 1 (this is what holds off CP's idle-stop)", n)
 	}
 	if names := listedRepoNames(t); len(names) != 0 {
 		t.Errorf("GET /repos listed %v while importing; want none", names)
@@ -130,7 +130,8 @@ func TestRepoJobCancelAndDismiss(t *testing.T) {
 	if got.State != repoJobCanceled {
 		t.Fatalf("state = %q, want %q", got.State, repoJobCanceled)
 	}
-	// 中止したジョブは記録として残る（結末を読む前に消えると、また「黙って失敗した」になる）。
+	// A canceled job stays on the list as a record: vanishing before anyone reads its outcome
+	// is how it becomes "it just silently failed" again.
 	if len(listRepoJobs()) != 1 {
 		t.Fatalf("canceled job disappeared from the list: %+v", listRepoJobs())
 	}
@@ -146,8 +147,9 @@ func TestRepoJobCancelAndDismiss(t *testing.T) {
 	}
 }
 
-// ★ Agent は取り込みの途中で死ぬ（ECS のタスク入れ替え・idle-stop）。marker を残さないと
-// 半端な作業コピーだけが普通のリポジトリ顔で一覧に戻る＝元の事故と同じ状態になる。
+// The Agent does die mid-import (an ECS task replacement, idle-stop). Without the marker,
+// only a half-finished working copy comes back to the list wearing an ordinary repository
+// face - the original incident all over again.
 func TestRepoJobMarkerSurvivesRestart(t *testing.T) {
 	resetRepoJobs(t)
 	home := t.TempDir()
@@ -170,7 +172,8 @@ func TestRepoJobMarkerSurvivesRestart(t *testing.T) {
 	if _, err := os.Stat(repoJobMarkerPath("halfway")); !os.IsNotExist(err) {
 		t.Error("marker not cleared after the sweep (it would report the same interruption forever)")
 	}
-	// 中断は「走行中」ではない: 作業コピーとしては一覧に戻り、更新 / 削除できる。
+	// Interrupted is not running: as a working copy it comes back to the list and can be
+	// updated or deleted.
 	if repoJobActive("halfway") {
 		t.Error("an interrupted job must not block the folder")
 	}
@@ -178,7 +181,8 @@ func TestRepoJobMarkerSurvivesRestart(t *testing.T) {
 
 func TestRepoJobSinkCountsLines(t *testing.T) {
 	s := &repoJobSink{}
-	// git は \r で進捗を上書きする。行として数えないと、clone の進捗が 1 件のまま動かない。
+	// git overwrites progress with \r. Unless those count as lines, a clone's progress sits at
+	// one item and never moves.
 	_, _ = s.Write([]byte("A  a/b.txt\nA  a/c.txt\nReceiving objects:  10%\rReceiving objects:  90%\r"))
 	items, progress := s.snapshot()
 	if items != 4 {

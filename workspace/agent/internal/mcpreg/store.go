@@ -2,7 +2,7 @@ package mcpreg
 
 // User-scope CRUD and the effective-registry composition (docs/log/48 §3〜§4).
 //
-//	effective = builtin(接続済み) ∪ tenant(配布・opt-out を除く) ∪ user
+//	effective = builtin(connected) ∪ tenant(distributed, minus opt-out) ∪ user
 //
 // Name collisions resolve to TENANT: an admin-distributed definition must not be
 // shadowable by a local one, or "everyone has X" stops being true. A user row that

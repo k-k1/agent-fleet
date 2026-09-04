@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// A cleaned capture of the real v1.1.4 /context panel (2026-07-20 実測, tmux
+// A cleaned capture of the real v1.1.4 /context panel (2026-07-20, measured with a tmux
 // probe on a resumed conversation), prefixed with an earlier stale panel to
 // exercise the last-render cut — a resumed conversation replays its history,
 // which can itself contain a rendered /context panel.

@@ -81,7 +81,7 @@ func TestScheduleInjectionTaggingCommandForm(t *testing.T) {
 	recordInjection("slot04", "/review 今日の差分", TurnSourceScheduleManual)
 
 	turns := []transcript.Turn{
-		// Skill invocation (2.1.215 実測): <command-message> FIRST.
+		// Skill invocation (measured on 2.1.215): <command-message> FIRST.
 		{Role: "user", Text: "<command-message>scout</command-message>\n<command-name>/scout</command-name>"},
 		// Built-in style: <command-name> first, args carried separately.
 		{Role: "user", Text: "<command-name>/review</command-name><command-message>review</command-message><command-args>今日の差分</command-args>"},
@@ -116,20 +116,20 @@ func TestScheduleInjectionSource(t *testing.T) {
 	}
 }
 
-// badgeOriginOf は投入1件をミラーのバッジ1つへ対応させる唯一の場所。TUI と managed で
-// 別々に switch を書いていたときの取りこぼし（片方だけ由来を落とす）を作らないための表。
-// "" は「利用者が自分で打った入力＝バッジ無し」で、ここだけは決して埋めてはいけない
-// — 埋めると素の入力が operator バッジになる。
+// badgeOriginOf is the only place that maps one injection to one mirror badge. This table
+// exists so TUI and managed cannot drift the way two separately written switches did, where
+// one side dropped an origin. "" means "the user typed it themselves = no badge" and must
+// never be filled in here — fill it and plain input starts wearing an operator badge.
 func TestBadgeOriginOf(t *testing.T) {
 	cases := []struct{ peerFrom, reportTo, source, want string }{
 		{peerFrom: "sender", want: turnSourcePeer},
-		{peerFrom: "sender", source: "schedule", want: turnSourcePeer}, // peer が最優先
+		{peerFrom: "sender", source: "schedule", want: turnSourcePeer}, // peer wins
 		{reportTo: "conv1", want: TurnSourceOperator},
 		{reportTo: "conv1", source: "schedule", want: TurnSourceSchedule},
-		{source: "schedule", want: TurnSourceSchedule},              // 完了報告 OFF の定時実行
-		{source: "schedule-manual", want: TurnSourceScheduleManual}, // 手動発火
-		{want: ""},                       // 素の Console 入力
-		{source: "evil-badge", want: ""}, // report_to 無しの未知は素の入力扱い
+		{source: "schedule", want: TurnSourceSchedule},              // scheduled run with report OFF
+		{source: "schedule-manual", want: TurnSourceScheduleManual}, // fired by hand
+		{want: ""},                       // plain Console input
+		{source: "evil-badge", want: ""}, // unknown without report_to counts as plain input
 	}
 	for _, c := range cases {
 		if got := badgeOriginOf(c.peerFrom, c.reportTo, c.source); got != c.want {

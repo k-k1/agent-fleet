@@ -38,7 +38,8 @@ import (
 // — noise, dropped. function_call becomes a faint tool trace on the assistant side
 // (the Console merges it into the adjacent assistant block, like claude's tool_use).
 
-// jsonlMtime は package main の同名ヘルパの複製（極小のため共有せず重複を許容）。
+// jsonlMtime is a copy of the helper of the same name in package main; it is small enough
+// that the duplication is preferred to sharing.
 func jsonlMtime(p string) time.Time {
 	fi, err := os.Stat(p)
 	if err != nil {
@@ -127,7 +128,7 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 		case "turn_context":
 			// turn_context also carries turn_id, and it can appear WITHOUT a task_started
 			// (settings applied between turns), so it is the fallback anchor source — but
-			// never the primary: it repeats more often than turns do (実測: 19 turn_context
+			// never the primary: it repeats more often than turns do (measured: 19 turn_context
 			// vs 15 task_started in one rollout).
 			if id := payloadTurnID(ev.Payload); id != "" && curTurn == "" {
 				curTurn = id
@@ -144,7 +145,7 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 			}
 		case "compacted":
 			// codex compacted its history (auto or /compact) and wrote the replacement
-			// summary; shown as claude's collapsible 圧縮されました block.
+			// summary; shown as claude's collapsible "Context was compacted" block.
 			turns = append(turns, transcript.Turn{
 				Role: "user", Compact: true, Text: compactedText(ev.Payload),
 				Idx: i, TS: ev.Timestamp, Cwd: cwd, Branch: branch,
@@ -183,7 +184,7 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 						turns[ti].Parts[0].Output = out
 					}
 					// A generated image (imagegen): surface its saved file as a userfile
-					// part — the same 共有ファイル panel claude's SendUserFile gets, so the
+					// part — the same shared-files panel claude's SendUserFile gets, so the
 					// user can open the image from the chat instead of digging the path out
 					// of a tool trace.
 					if len(gen) > 0 {
@@ -198,7 +199,7 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 				}
 			}
 		case "event_msg":
-			// task_started opens the turn every following item belongs to (実測: it
+			// task_started opens the turn every following item belongs to (measured: it
 			// precedes the user prompt's response_item), so the anchor is set here and
 			// stays until the next one.
 			if id := taskStartedTurnID(ev.Payload); id != "" {
@@ -385,7 +386,7 @@ func parseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch 
 		// composer's ＋/paste with the text box left empty) — turn/start's localImage
 		// item then has no accompanying "text" content, so the loop below never writes
 		// anything to sb. That must not make this look like a droppable non-prompt: the
-		// pending 反映待ち echo (pendingEcho.ts) can only resolve against a real user
+		// pending echo (pendingEcho.ts) can only resolve against a real user
 		// turn, and one that never lands (because we dropped it here) leaves it stuck
 		// forever — recoverable only by a page reload that wipes the client's in-memory
 		// echo state, not by anything server-side. If Codex preserves the path, fold it
@@ -792,9 +793,9 @@ func writeFileAtomic(dir, dest string, data []byte) error {
 //
 // For MULTIPLE questions in one call, flattening loses which label belongs to which
 // question: every card ends up showing every question's combined picks (reported
-// 2026-08-12 — a 3-question AUQ where each card's "自由入力" box showed the OTHER two
+// 2026-08-12 — a 3-question AUQ where each card's free-text box showed the OTHER two
 // questions' selections). codex's per-question "id" (request_user_input's
-// questions[].id) reappears verbatim as the answers map's key (実測 against a live
+// questions[].id) reappears verbatim as the answers map's key (measured against a live
 // rollout: {"answers":{"switch_behavior":{...},"new_open_behavior":{...},...}} keyed
 // by the same ids the request's questions[] carried), so when `questions` carries
 // those ids we render the same anchored `"<question>"="<answer>"[, ...]` prose claude's
@@ -1295,7 +1296,7 @@ func tokenUsage(payload json.RawMessage) (in, out, read, window int, ok bool) {
 
 // HasPendingQuestion reports whether the slot's rollout currently ends in an
 // unanswered request_user_input — codex is sitting on its question dialog. Used by
-// WireLive to surface the "question" state (the 質問あり chip + notification) that
+// WireLive to surface the "question" state (the question chip + notification) that
 // codex's injected hooks can't report (no notification hook fires for it). Light
 // tail probe: only the last chunk of the rollout is scanned, so it stays cheap on
 // the sessions-list poll even for a long conversation.

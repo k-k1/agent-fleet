@@ -3,7 +3,7 @@ package main
 // Role-scoped docs, pulled from the CP when nothing was mounted (docs/build/04 §4.9).
 //
 // The agent-fleet docs under /usr/local/share/agent-fleet/docs are what the Console's
-// 利用ガイド opens and what the in-container agents grep to answer questions about this
+// user guide opens and what the in-container agents grep to answer questions about this
 // environment. They are NOT baked into the workspace image on purpose: a shared image
 // cannot enforce "a member must not read the internal docs", so the CP bakes them and
 // hands each container only the subset its member's role may see.
@@ -69,7 +69,7 @@ func syncWorkspaceDocs(why string) {
 	case errors.Is(err, errDocsBridgeOff):
 		return // not configured here; stay quiet
 	case err != nil:
-		// Worth one line: without it, "the 利用ガイド does not open" has no trace anywhere.
+		// Worth one line: without it, "the user guide does not open" has no trace anywhere.
 		log.Printf("docs sync (%s): %v (docs stay unavailable in this container)", why, err)
 	default:
 		log.Printf("docs sync (%s): installed %d file(s) into %s", why, n, root)

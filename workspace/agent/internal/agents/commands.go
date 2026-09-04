@@ -2,17 +2,18 @@ package agents
 
 import "sync"
 
-// CLI 広告コマンドの共有ストア（docs/log/50 v2）。ACP 系 kind（cursor 等）は CLI 自身が
-// session/update の available_commands_update でスキル/コマンド一覧を流してくる —
-// これがその kind の唯一の完全なソース（builtin skill ＋ global ＋ project 全部入り、
-// cursor 実測 2026-07-28）。driver の onNotify が受信のたびにここへ publish し、
-// REST の skills handler が読む。in-memory で十分: 一覧は runtime の spawn/load の
-// たびに再到着するし、消えている間（agent 再起動直後など）は FS フォールバックが
-// 受け持つ。driver 側から消す義務も無し（多少の stale は空より役に立つ）。
+// Shared store for CLI-advertised commands (docs/log/50 v2). On ACP kinds (cursor and the
+// like) the CLI itself streams the skill/command list through session/update's
+// available_commands_update, and that is the only complete source for such a kind: builtin
+// skills plus global plus project, all in one (measured on cursor). The driver's onNotify
+// publishes here on every arrival and the REST skills handler reads it. In-memory is
+// enough: the list arrives again on every runtime spawn/load, and while it is missing (just
+// after an agent restart, say) the FS fallback covers it. The driver has no duty to clear
+// it either — slightly stale beats empty.
 
 // AdvertisedCommand is one entry of a CLI-advertised command/skill list.
 type AdvertisedCommand struct {
-	Name        string // 起動名（先頭の "/" は正規化して剥がす）
+	Name        string // invocation name (a leading "/" is normalised away)
 	Description string
 }
 

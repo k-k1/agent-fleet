@@ -204,8 +204,9 @@ func TestReadCodexUsageFromDir(t *testing.T) {
 	}
 }
 
-// account/rateLimits/updated はスパースな rolling update — primary だけの push が
-// 直前に観測した weekly 窓や planType を消してはならない（欠けた field は「変化なし」）。
+// account/rateLimits/updated is a sparse rolling update: a push carrying only primary must
+// not erase the weekly window or planType observed just before it (a missing field means
+// "unchanged", not "gone").
 func TestCodexObservedRateLimitsSparseMerge(t *testing.T) {
 	resetObservedRateLimits()
 	t.Cleanup(resetObservedRateLimits)
@@ -215,7 +216,7 @@ func TestCodexObservedRateLimitsSparseMerge(t *testing.T) {
 		&RateLimitWindow{UsedPercent: 10, WindowMinutes: 300, ResetsAt: now.Add(time.Hour).Unix()},
 		&RateLimitWindow{UsedPercent: 40, WindowMinutes: 10080, ResetsAt: now.Add(48 * time.Hour).Unix()},
 		"plus")
-	// 5h 窓だけのスパース push（secondary / planType は届かない＝変化なし）。
+	// Sparse push carrying only the 5h window (no secondary, no planType = unchanged).
 	SetObservedRateLimits(&RateLimitWindow{
 		UsedPercent: 12, WindowMinutes: 300, ResetsAt: now.Add(time.Hour).Unix(),
 	}, nil, "")

@@ -6,8 +6,8 @@
 //   - Enqueue — a plain file write into an on-disk queue. notice.Put and
 //     record-exit run in short-lived hook SUBPROCESSES (session-status /
 //     record-exit), so the write path must not do network I/O, must never
-//     block, and must never fail the outbox (docs/log/37 契約4: the outbox is the
-//     source of truth, the chat side is a 写し).
+//     block, and must never fail the outbox (docs/log/37 contract 4: the outbox is
+//     the source of truth, the chat side is a copy).
 //   - StartSender — a single goroutine in the long-running Agent daemon that
 //     drains the queue, formats the message, and sends through every
 //     send-capable provider with bounded retries (drop + log beyond that).
@@ -15,7 +15,7 @@ package bridge
 
 import "encoding/json"
 
-// Caps are a provider's capability flags (docs/log/37 契約1). P1 providers are
+// Caps are a provider's capability flags (docs/log/37 contract 1). P1 providers are
 // send-only in practice (only Send is wired); CanReceive/CanInteract exist so
 // the Console and P2's inbound routing can discriminate without a type switch
 // — a future Teams provider is CanSend-only by design.
@@ -39,9 +39,9 @@ type Provider interface {
 // ResumableSender is an optional Provider capability: deliver a message starting
 // at a sub-message index and report how many sub-messages have been delivered so
 // far, so the sender can RESUME a partial delivery across ticks WITHOUT re-posting
-// what already landed (docs/log/37 重複対策 = idempotent delivery). One notification
-// fans into several posts (mention chunk + body chunks + P2b buttons + a thread
-// starter); a failure after some succeed — a 429 that slips discordDo's inline
+// what already landed (docs/log/37 §duplicate suppression = idempotent delivery).
+// One notification fans into several posts (mention chunk + body chunks + P2b buttons +
+// a thread starter); a failure after some succeed — a 429 that slips discordDo's inline
 // retry, a dropped connection mid-batch — used to re-post the whole entry on the
 // next tick and duplicate. A provider implementing this returns the count reached
 // and the error; the sender persists it and calls SendFrom again with that count as
@@ -51,7 +51,7 @@ type ResumableSender interface {
 }
 
 // Message is the provider-independent notification payload. It carries only
-// display data — never tokens, keys, or raw logs (docs/log/37 「秘密の露出」).
+// display data — never tokens, keys, or raw logs (docs/log/37 §secret exposure).
 type Message struct {
 	Kind        string `json:"kind"`        // notice kind or "exit"
 	SessionName string `json:"sessionName"` // slug ("" for chat-scoped events)
@@ -59,9 +59,9 @@ type Message struct {
 	DisplayName string `json:"displayName"`
 	Detail      string `json:"detail,omitempty"` // e.g. exit reason (oom/crashed/killed)
 	CreatedAt   string `json:"createdAt"`
-	// Body is the final assistant turn prose for the 全文ブリッジ (docs/log/37 将来の
-	// 方向). Populated only for answer-ready; rendered only when the provider's
-	// creds opt into full-text mode. Still display data — never tool logs,
+	// Body is the final assistant turn prose for the full-text bridge (docs/log/37
+	// §future direction). Populated only for answer-ready; rendered only when the
+	// provider's creds opt into full-text mode. Still display data — never tool logs,
 	// thinking, or raw transcripts, and secret-scrubbed before it reaches a wire.
 	Body string `json:"body,omitempty"`
 	// Questions is the pending AskUserQuestion payload (claude's tool_input.questions

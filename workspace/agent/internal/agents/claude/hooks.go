@@ -12,14 +12,15 @@ import (
 // `workspace-agent session-status <state>`, which records {state, ts} keyed by our
 // deterministic slot sid (claude's hook session_id, normalized — sid.go).
 // wireSession surfaces the state so
-// the Console can badge 進行中 / 応答あり and notify on arrival. Robust and cheap:
+// the Console can badge in-progress / response-ready and notify on arrival. Robust and cheap:
 // driven by claude's own events, no TUI parsing or transcript polling. With
 // --dangerously-skip-permissions there is no tool-approval QA state, so the two
 // meaningful states are working and idle(=response ready / awaiting input).
 //
-// 状態と pending ペイロードのストア本体は internal/status（docs/log/23 残① Wave A）;
-// このファイルは claude settings への hook 配線だけを持つ。session-status
-// サブコマンドの入口（hook stdin の解読）は package main の session_status.go。
+// The store for the state and the pending payload lives in internal/status
+// (docs/log/23 remaining item 1, Wave A); this file only wires the hooks into claude's
+// settings. The entry point of the session-status subcommand (decoding the hook's stdin)
+// is session_status.go in package main.
 
 // statusHookCmd is the absolute command claude runs for an event (absolute so it
 // resolves in claude's hook context regardless of PATH — and never a volatile path,
@@ -39,7 +40,7 @@ const permToolMatcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
 //	UserPromptSubmit → working   (user sent a prompt)
 //	Stop             → idle      (response done / awaiting user)
 //	SessionStart     → boot      (fresh/resumed → idle; skips auto-compact)
-//	PreToolUse(AskUserQuestion)  → question (claude is asking the user; QA来た)
+//	PreToolUse(AskUserQuestion)  → question (claude is asking the user)
 //	PostToolUse(*)   → working   (every completed tool re-asserts working — heartbeat)
 func EnsureStatusHooks() {
 	m := readSettings()
@@ -86,11 +87,11 @@ func EnsureStatusHooks() {
 	// AskUserQuestion / approved ExitPlanMode / granted permission all fire their tool's
 	// PostToolUse on resolution, landing back on working. Empty matcher matches all tools.
 	// Migrate older settings that carried the two specific matchers instead.
-	// 判定は「自コマンド入りの matcher 無しエントリの有無」で行う: `"matcher":""`
-	// の有無だけ見ると、ユーザー自身の matcher 無しエントリを自分のものと誤認して
-	// ハートビートが永久に未インストールのままになる（false-idle 対策が黙って欠落）。
-	// インストール時は自コマンド入りの旧エントリ（レガシー個別 matcher 形）だけを
-	// 除去し、ユーザーのエントリは保持する。
+	// The check is "is there a matcher-less entry running OUR command": looking only for
+	// `"matcher":""` mistakes the user's own matcher-less entry for ours, and the heartbeat
+	// then stays uninstalled forever, silently losing the false-idle guard. When installing,
+	// only our own older entries (the legacy per-tool matcher form) are removed; the user's
+	// stay.
 	if !postToolUseHasAF(hooks) {
 		hooks["PostToolUse"] = append(stripSessionStatusEntries(hooks["PostToolUse"]),
 			map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}})

@@ -221,7 +221,7 @@ internal policy
 // the prompt is non-empty), so a user message whose content is purely an attachment
 // (no input_text) must still produce a turn. Previously it was silently dropped
 // (text == "" was treated as "not a real prompt" for every content shape), which
-// left the Console's optimistic 反映待ち echo with no real user turn to reconcile
+// left the Console's optimistic "awaiting sync" echo with no real user turn to reconcile
 // against — stuck until a page reload wiped the client's in-memory echo state.
 func TestCodexImageOnlyUserTurnNotDropped(t *testing.T) {
 	item := wrapItem(t, map[string]any{
@@ -430,8 +430,8 @@ func TestCodexQuestionAnswerFromRollout(t *testing.T) {
 // TestCodexQuestionAnswerFromRollout: one request_user_input call asking several
 // questions must resolve to an answer per question, each attributed to its own id —
 // not one flattened string that (via the Console's byAnchors fallback) shows every
-// question's combined picks on every card. Shape taken from a real rollout (実測
-// 2026-08-12): each questions[].id reappears verbatim as the answers map's key.
+// question's combined picks on every card. Shape taken from a real rollout (measured): each
+// questions[].id reappears verbatim as the answers map's key.
 func TestCodexQuestionAnswerFromRolloutMultiQuestion(t *testing.T) {
 	lines := [][]byte{
 		[]byte(`{"type":"response_item","payload":{"type":"function_call","call_id":"c1","name":"request_user_input","arguments":"{\"questions\":[{\"id\":\"switch_behavior\",\"question\":\"切替時どうする？\",\"options\":[{\"label\":\"方式ごとに保持\"}]},{\"id\":\"tab_capacity\",\"question\":\"上限は？\",\"options\":[{\"label\":\"全体24件まで\"}]}]}"}}`),
@@ -545,7 +545,7 @@ image(r.image_url);`
 // TestCodexImageGenUserFile runs the end-to-end imagegen shape from a real 0.144.1
 // rollout: the exec(image_gen) call, then the wait call whose output announces the
 // saved file and re-embeds the image as base64 noise. The saved path must surface as
-// a userfile part (the Console's 共有ファイル panel) and the noise must not leak into
+// a userfile part (the Console's shared-files panel) and the noise must not leak into
 // the wait trace's output.
 func TestCodexImageGenUserFile(t *testing.T) {
 	genPath := "/home/u/.codex/generated_images/abc/exec-123.png"

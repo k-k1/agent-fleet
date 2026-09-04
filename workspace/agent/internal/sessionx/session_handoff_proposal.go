@@ -34,11 +34,11 @@ type sessionHandoffProposal struct {
 	// CreatedAt is when the SESSION proposed the handoff, and it is stable across edits
 	// on purpose: the mirror places the card at this point in the conversation. Re-stamping
 	// it on every edit would slide the card back to the bottom of the transcript — the
-	// layout that hid every later message (2026-08-04 実障害).
+	// layout that hid every later message (a real incident).
 	CreatedAt int64 `json:"created_at"`
 	// LaunchedAt marks that a session was actually created from this proposal. The
 	// proposal is NOT deleted then — a handoff is worth re-reading, and discarding is
-	// the user's call — so the card only gets a 起動済み badge.
+	// the user's call — so the card only gets a "launched" badge.
 	LaunchedAt int64 `json:"launched_at,omitempty"`
 }
 
@@ -165,8 +165,9 @@ func markHandoffProposalLaunched(name, id string) (*sessionHandoffProposal, erro
 	return nil, os.ErrNotExist
 }
 
-// RemoveHandoffProposals はセッションが消えた（＝スロット名が再利用され得る）ときの後片付け。
-// 残すと、次にそのスロットへ入った別のセッションの会話に前のセッションの提案カードが出る。
+// RemoveHandoffProposals cleans up after a session is gone, i.e. once its slot name can be
+// reused. Left behind, the previous session's proposal cards show up in the conversation of
+// whatever session takes that slot next.
 func RemoveHandoffProposals(name string) {
 	_ = os.Remove(HandoffProposalPath(name))
 }
@@ -266,10 +267,11 @@ func HandleSessionHandoffProposal(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusBadRequest, "handoff_title_empty", "title is empty")
 			return
 		}
-		// この title は「起動したら**そのままセッション表示名になる**」値なので、検査は
-		// 作成 API と同じ CleanTitle に揃える。ここが緩いと、提案は保存も編集もできるのに
-		// 起動の瞬間だけ bad_title で落ちる — 利用者には「worktree 起動に失敗」としか
-		// 見えない実障害（提案側は 512 バイト、作成側は 80 runes だった）。
+		// This title becomes the session's display name verbatim once launched, so the
+		// check goes through the same CleanTitle the create API uses. Looser here and the
+		// proposal can be saved and edited but fails with bad_title at the moment of
+		// launch, which the user only sees as "worktree launch failed" — a real incident
+		// (the proposal side allowed 512 bytes, the create side 80 runes).
 		title, ok := CleanTitle(title)
 		if !ok {
 			httpx.WriteErr(w, http.StatusBadRequest, "handoff_title_too_large",

@@ -13,9 +13,9 @@ import (
 // setMcpConv sets the subprocess-global conv id for the test's duration.
 func setMcpConv(t *testing.T, conv string) {
 	t.Helper()
-	// mcpConvID は移送で「var の読み」から「継ぎ目の呼び出し」になったので、
-	// 差し替えるのは配線側（deps.MCPConvID）である。**テスト用の別経路を作らない**
-	// —— 本番と同じ 1 本の口を通しておかないと、配線を壊した変異がここで素通りする。
+	// mcpConvID is now read through a seam rather than a var, so what a test substitutes is the
+	// wiring itself (deps.MCPConvID). Never add a test-only path around it: unless this goes
+	// through the single opening production uses, a mutation that breaks the wiring passes here.
 	old := deps.MCPConvID
 	deps.MCPConvID = func() string { return conv }
 	t.Cleanup(func() { deps.MCPConvID = old })

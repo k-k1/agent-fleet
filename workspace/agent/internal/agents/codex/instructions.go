@@ -1,17 +1,19 @@
 package codex
 
-// 指示ファイル（docs/log/60）の codex 側 artifact。
+// The codex-side artifact of the instruction files (docs/log/60).
 //
-// codex は「追加の指示ファイルを指す設定」を持たない（0.147.0 のキー一覧を実測 —
-// project_doc_max_bytes / project_doc_fallback_filenames はあるが instructions_file 系は無い）。
-// よってフリート方針もユーザー指示も **$CODEX_HOME/AGENTS.md 1 枚を合成する**しかない。
-// マーカーで囲むので、利用者が同じファイルへ書いた文章は残る（cp -f 時代との違い）。
+// codex has no setting that points at an additional instruction file (measured against the
+// 0.147.0 key list: project_doc_max_bytes and project_doc_fallback_filenames exist, nothing of
+// the instructions_file kind). So both the fleet policy and the user instructions have to be
+// composed into the single $CODEX_HOME/AGENTS.md. They are fenced by markers, so text the user
+// wrote into the same file survives.
 //
-// ファイル内の並びは reconcile の呼び出し順どおり fleet → user-notes → rtk。
+// The order inside the file follows reconcile's call order: fleet -> user-notes -> rtk.
 //
-// サイズは気にしなくてよい（実測 2026-08-13）: project_doc_max_bytes（既定 32KiB）は
-// **プロジェクト文書チェーンの合計**にのみ効き、$CODEX_HOME/AGENTS.md は予算外で
-// 上限が無い（42KB の global が無傷で通ることを codex debug prompt-input で確認）。
+// Size is not a concern (measured): project_doc_max_bytes (32KiB by default) applies only to
+// the TOTAL of the project document chain, and $CODEX_HOME/AGENTS.md is outside that budget
+// with no cap of its own (a 42KB global was confirmed to arrive intact via
+// `codex debug prompt-input`).
 
 import "github.com/k-k1/agent-fleet/workspace/agent/internal/mdblock"
 

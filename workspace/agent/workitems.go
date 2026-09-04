@@ -22,10 +22,10 @@ import (
 // leaves the container and no description or comment is returned — those are read inside
 // the session, where the agent can use `gh` or the Jira MCP.
 //
-// ★ Deliberately NOT via the `gh` CLI (ADR 0061 decision 3). This process is the very
+// Deliberately NOT via the `gh` CLI (ADR 0061 decision 3). This process is the very
 // credential helper that hands `gh` its GH_TOKEN, so shelling out would be a round trip
-// through our own wrapper; and a 5-minute自走 job must not depend on `gh --json` field
-// names, which move with the binary's version.
+// through our own wrapper; and an unattended job running every 5 minutes must not depend on
+// `gh --json` field names, which move with the binary's version.
 //
 // This feature stores nothing in the container: no cache, no state, no config.
 
@@ -124,8 +124,8 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, erro
 		}
 		return jiraSearchWorkItems(s.Jira, q.ID, query)
 	case "bitbucket":
-		// ★ 接続の有無は bitbucketAuthHeader が見る（OAuth と API トークンの 2 経路が
-		// あり、「接続済み」の定義がそこにしかない）。
+		// bitbucketAuthHeader is what decides whether we are connected: there are two paths
+		// (OAuth and an API token), and "connected" is defined nowhere else.
 		return bitbucketSearchWorkItems(s, q.ID, query)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", q.Provider)
@@ -136,7 +136,7 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, erro
 // covers issues and pull requests in one call and is what the GitHub UI's own "assigned
 // to me" view is built on. One page only — see workItemFetchPerQuery.
 //
-// ⚠️ The token is the Connections one, whose scope is `repo` (no `read:org`), and the
+// The token is the Connections one, whose scope is `repo` (no `read:org`), and the
 // host is fixed to github.com: GitHub Enterprise Server is out of scope for v1, exactly
 // as for the `gh` wrapper (docs/build/08 §8.3).
 func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, error) {
@@ -156,8 +156,8 @@ func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, error) 
 	if resp.StatusCode != http.StatusOK {
 		switch resp.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:
-			// 403 は権限だけでなくレート制限でも返る。どちらなのかを言い分けないと
-			// 「再接続しろ」と言われた利用者が無駄に再認証する。
+			// 403 covers rate limiting as well as permissions. Without telling the two apart, a
+			// user told to re-connect re-authenticates for nothing.
 			if strings.Contains(strings.ToLower(string(body)), "rate limit") {
 				return nil, fmt.Errorf("github rate limit reached")
 			}

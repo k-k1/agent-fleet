@@ -20,12 +20,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// The /usage panel is model-group based (ADR 0008 実測): two pools ("GEMINI
+// The /usage panel is model-group based (ADR 0008, measured): two pools ("GEMINI
 // MODELS" and "CLAUDE AND GPT MODELS") that each show REMAINING percentage
 // bars and a "Refreshes in 167h 27m" line ("Quota available" at 100%). Starter
-// shows one "Weekly Limit" bar per group; paid tiers (AI Pro 実測, docs/log/32
+// shows one "Weekly Limit" bar per group; paid tiers (AI Pro, measured, docs/log/32
 // D-4) add a "Five Hour Limit" bar — 2 groups × 2 limits = the AgyCard's four
-// gauges. The scrape is the Console's only source for the 残量% display.
+// gauges. The scrape is the Console's only source for the remaining-quota % display.
 
 // UsageLimit is one remaining-quota bar within a group ("Five Hour Limit").
 type UsageLimit struct {
@@ -61,7 +61,7 @@ var (
 )
 
 // tokenPath is where agy persists its OAuth token when no keyring exists
-// (ADR 0008 再PoC: plaintext under home — also on the fs denylist).
+// (ADR 0008: plaintext under home — also on the fs denylist).
 func tokenPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token")
@@ -115,14 +115,14 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 var (
-	// trustRe（workspace trust 画面）は trustprompt.go 側で質問文から組む。
+	// trustRe (the workspace-trust screen) is built from the question text in trustprompt.go.
 	readyRe = regexp.MustCompile(`\? for shortcuts`)
 	// The quota panel's footer — once it renders, both group sections are on screen.
 	panelRe = regexp.MustCompile(`esc Close`)
 	// Startup-header identity line: "k1.example@gmail.com (Antigravity Starter
 	// Quota)". The plan suffix fills in asynchronously ~10s after startup, so a
 	// normal scrape usually finishes before it renders — parsed best-effort only
-	// (the AgyCard's 実験枠 label is static and does not depend on it).
+	// (the AgyCard's "experimental tier" label is static and does not depend on it).
 	planRe = regexp.MustCompile(`(\S+@\S+)\s+\(([^)]+)\)`)
 	// The panel's own account line (no plan there).
 	accountRe = regexp.MustCompile(`Account:\s*(\S+@\S+)`)
@@ -158,8 +158,8 @@ func scrapeUsage() (*usageResult, error) {
 	}
 	defer f.Close()
 
-	// 事前 trust が効いていればこの画面は出ない。出た場合でも Enter は盲打ちしない
-	// （既定の選択肢は上流の都合で入れ替わる — trustprompt.go）。
+	// With trust granted beforehand this screen never appears, and even when it does, never
+	// blind-press Enter: which row is selected by default changes upstream (trustprompt.go).
 	if m := f.WaitFor(regexp.MustCompile(trustRe.String()+`|`+readyRe.String()), 25*time.Second); m == "" {
 		return nil, errString("agy did not reach the prompt (timeout)")
 	} else if trustRe.MatchString(m) {

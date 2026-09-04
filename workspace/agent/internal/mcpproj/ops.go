@@ -4,7 +4,7 @@ package mcpproj
 // applying ops would do WITHOUT writing; Apply performs the same computation and
 // then writes, refusing (ErrPlanStale) if any file it would WRITE has changed
 // since the hash the caller supplies was computed. No plan is stored server-side
-// (docs/log/56 §5's "純粋なワンショット") — planHash is a pure function of (ops,
+// (docs/log/56 §5's "purely one-shot") — planHash is a pure function of (ops,
 // current file bytes), so Apply recomputes and compares rather than looking
 // anything up.
 //
@@ -64,8 +64,8 @@ type OpResult struct {
 	ResolvedName string  `json:"resolvedName,omitempty"` // may differ from As under onConflict=rename
 	Before       *Server `json:"before,omitempty"`       // masked; nil = no prior entry
 	After        *Server `json:"after,omitempty"`        // masked
-	// GateCode echoes the destination kind's docs/log/56 §8 gate — "書いた" (this
-	// result) is not "効いている" until the gate clears.
+	// GateCode echoes the destination kind's docs/log/56 §8 gate — "written" (this
+	// result) is not "in effect" until the gate clears.
 	GateCode string `json:"gateCode,omitempty"`
 
 	// ignore

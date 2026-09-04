@@ -1,8 +1,8 @@
 package sessionx
 
-// POST /sessions/{name}/driver の回帰テスト。単一 writer のため旧ドライバを
-// stop してから meta を反転し、新ドライバで resume する順序と、busy 時の排他拒否を
-// tmux スタブ上で検証する。
+// Regression tests for POST /sessions/{name}/driver. Because there is only ever one writer,
+// the order is: stop the old driver, flip meta, resume under the new one. That order and the
+// exclusion refusal while busy are both verified over a tmux stub.
 
 import (
 	"net/http"

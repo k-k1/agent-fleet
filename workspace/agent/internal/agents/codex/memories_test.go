@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// stubCheapModel は seed のモデル pin を固定する（実 codex を起動させない）。
+// stubCheapModel pins the model the seed writes, so no real codex is launched.
 func stubCheapModel(t *testing.T, id string) {
 	t.Helper()
 	prev := cheapModelFn
@@ -31,7 +31,7 @@ func TestMemoriesDefaultOffAndRoundTrip(t *testing.T) {
 		!strings.Contains(got, "model = \"gpt-5.6-sol\"") {
 		t.Fatalf("unrelated user config was not preserved byte-for-byte:\n%s", got)
 	}
-	// 有効化と同時に保守的なチューニングが入る（決着 #4 のコスト懸念に対する手当）。
+	// Enabling also seeds conservative tuning, the hedge against resolution #4's cost concern.
 	for _, want := range []string{"[memories]", "min_rollout_idle_hours = 12",
 		"max_rollouts_per_startup = 4", "extract_model = \"gpt-x-mini\"",
 		"consolidation_model = \"gpt-x-mini\""} {
@@ -50,8 +50,8 @@ func TestMemoriesDefaultOffAndRoundTrip(t *testing.T) {
 	}
 }
 
-// 無効化は [memories] を消さない。トグルを往復しただけで利用者の調整値が飛ぶと、
-// 「元に戻したつもり」が設定の消失になる。
+// Disabling must not delete [memories]. If a round trip of the toggle dropped the user's
+// tuned values, "I just put it back" would silently mean losing the settings.
 func TestMemoriesDisableKeepsTuning(t *testing.T) {
 	stubCheapModel(t, "")
 	on := setMemories(nil, true)
@@ -62,7 +62,8 @@ func TestMemoriesDisableKeepsTuning(t *testing.T) {
 	}
 }
 
-// 既に [memories] がある設定は seed で一切触らない（利用者が調整した値が正）。
+// A config that already has [memories] is left entirely alone by the seed: the value the
+// user tuned wins.
 func TestMemoriesSeedLeavesExistingTuningAlone(t *testing.T) {
 	stubCheapModel(t, "gpt-x-mini")
 	original := []byte("[memories]\nmin_rollout_idle_hours = 1\nextract_model = \"mine\"\n")
@@ -77,8 +78,8 @@ func TestMemoriesSeedLeavesExistingTuningAlone(t *testing.T) {
 	}
 }
 
-// カタログから安価なモデルを引けないときは pin を書かない（存在しないスラッグを
-// 焼き込むより、codex の既定に委ねる方が壊れない）。
+// With no cheap model resolvable from the catalog, no pin is written: leaving codex to its
+// own default breaks less than baking in a slug that does not exist.
 func TestMemoriesSeedOmitsModelPinWhenUnresolvable(t *testing.T) {
 	stubCheapModel(t, "")
 	on := string(setMemories(nil, true))
@@ -90,8 +91,8 @@ func TestMemoriesSeedOmitsModelPinWhenUnresolvable(t *testing.T) {
 	}
 }
 
-// 既存の [features] セクションがあるときは、その中へ足す（新しい [features] を
-// 増やすと後勝ちで元の値が死ぬ）。
+// An existing [features] section is added to in place; appending a second [features] table
+// would let the later one win and kill the original values.
 func TestMemoriesJoinsExistingFeaturesSection(t *testing.T) {
 	stubCheapModel(t, "")
 	original := []byte("[features]\nhooks = true\n\n[projects.\"/repo\"]\ntrust_level = \"trusted\"\n")
@@ -107,7 +108,8 @@ func TestMemoriesJoinsExistingFeaturesSection(t *testing.T) {
 	}
 }
 
-// 2 キー同時更新でも互いを壊さない（PUT が 1 回の read-modify-write で両方を畳むため）。
+// Updating both keys must not clobber either, since one PUT folds them into a single
+// read-modify-write.
 func TestMemoriesAndNudgeCoexist(t *testing.T) {
 	stubCheapModel(t, "")
 	b := setMemories(setRateLimitModelNudge(nil, false), true)

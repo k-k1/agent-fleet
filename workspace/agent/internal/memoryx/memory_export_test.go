@@ -15,12 +15,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// memoryProjectMemPath は live 側のメモリファイルの絶対パス（テスト用の短縮）。
+// memoryProjectMemPath is the absolute path of a memory file on the live side (a test-side
+// shorthand).
 func memoryProjectMemPath(cfg, slug string, parts ...string) string {
 	return filepath.Join(append([]string{cfg, "projects", slug, "memory"}, parts...)...)
 }
 
-// memoryTestAPI は隔離 HOME を組み、トークンゲート込みの実ルート表を返す。
+// memoryTestAPI builds an isolated HOME and returns the real route table, token gate included.
 func memoryTestAPI(t *testing.T) (http.Handler, string, string) {
 	t.Helper()
 	_, cfg, slug := memoryTestEnv(t)
@@ -28,8 +29,9 @@ func memoryTestAPI(t *testing.T) (http.Handler, string, string) {
 	return httpx.RequireToken(buildMux()), cfg, slug
 }
 
-// export の secret ゲート（★4・docs/log/39 決着 #2）。検出時は既定でブロックし、
-// 明示の ack でだけ通す。UI の確認ダイアログではなく **API 単体**で止まること。
+// The export secret gate (★4, docs/log/39 resolution #2). A detection blocks by default
+// and only an explicit ack lets it through. It has to stop at the API on its own, not at a UI
+// confirmation dialog.
 func TestMemoryExportBlocksSecretsUntilAcked(t *testing.T) {
 	h, cfg, slug := memoryTestAPI(t)
 	const fake = "AKIAQWERTYUIOPASDFGH"
@@ -52,12 +54,13 @@ func TestMemoryExportBlocksSecretsUntilAcked(t *testing.T) {
 	if blocked.Error.Code != errCodeMemorySecretDetected || len(blocked.Secrets) == 0 {
 		t.Fatalf("blocked payload = %+v", blocked)
 	}
-	// 応答に生値を混ぜない（これが漏れると防御が配布経路に化ける）。
+	// The response must not carry the raw value: leaking it here would turn the defence into a
+	// distribution channel.
 	if strings.Contains(w.Body.String(), fake) {
 		t.Fatal("the blocking response leaked the raw secret")
 	}
 
-	// ack すると本人の判断として通る。中身は本物の git bundle。
+	// With an ack it goes through as the user's own call. The body is a real git bundle.
 	w = smokeDo(t, h, "GET", "/agents/memory/export?format=bundle&ack=1", "smoke-token", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("acked export: %d %s", w.Code, w.Body.String())
@@ -72,7 +75,7 @@ func TestMemoryExportBlocksSecretsUntilAcked(t *testing.T) {
 		t.Fatalf("body is not a git bundle: %q", head[:min(32, len(head))])
 	}
 
-	// 一時ファイルを置き残さない（平文の持ち出し物をマウントに残さない）。
+	// No temp file is left behind: a plaintext export must not stay on the mount.
 	if ents, err := os.ReadDir(memoryWorkDir()); err == nil {
 		for _, e := range ents {
 			if strings.HasPrefix(e.Name(), "export-") {
@@ -82,8 +85,9 @@ func TestMemoryExportBlocksSecretsUntilAcked(t *testing.T) {
 	}
 }
 
-// tar.gz export（最新のみ）: manifest 付きで、repo のパスがそのまま入る。
-// 秘密が無ければ ack 無しで通ること（ゲートが常時ブロックにならないこと）も見る。
+// tar.gz export (latest only): it carries a manifest and keeps the repo paths as they are.
+// Also checks that with no secret it passes without an ack, i.e. the gate does not block
+// unconditionally.
 func TestMemoryExportTar(t *testing.T) {
 	h, _, slug := memoryTestAPI(t)
 	if w := smokeDo(t, h, "POST", "/agents/memory/snapshots", "smoke-token", ""); w.Code != http.StatusOK {
@@ -106,7 +110,7 @@ func TestMemoryExportTar(t *testing.T) {
 			t.Errorf("%q missing from the archive: %v", want, names)
 		}
 	}
-	// ★1 の裏返し: 取り出す側にも巻き込みが無いこと。
+	// The reverse of ★1: the export side must not capture anything collaterally either.
 	for _, n := range names {
 		if strings.Contains(n, ".jsonl") || strings.Contains(n, "credentials") || strings.Contains(n, ".git/") {
 			t.Errorf("forbidden entry in the archive: %s", n)
@@ -124,7 +128,7 @@ func TestMemoryExportTar(t *testing.T) {
 	}
 }
 
-// 入力検証と、履歴ゼロのときの応答。
+// Input validation, and the response when there is no history.
 func TestMemoryExportBadInput(t *testing.T) {
 	h, _, _ := memoryTestAPI(t)
 	if w := smokeDo(t, h, "GET", "/agents/memory/export?format=zip", "smoke-token", ""); w.Code != http.StatusBadRequest {
@@ -135,7 +139,7 @@ func TestMemoryExportBadInput(t *testing.T) {
 	}
 }
 
-// memoryReadTarGz は tar.gz を名前一覧と中身に開く。
+// memoryReadTarGz unpacks a tar.gz into its list of names and their contents.
 func memoryReadTarGz(t *testing.T, b []byte) ([]string, map[string][]byte) {
 	t.Helper()
 	gr, err := gzip.NewReader(strings.NewReader(string(b)))

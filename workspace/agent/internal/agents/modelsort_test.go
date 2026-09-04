@@ -13,8 +13,8 @@ func labels(list []ModelChoice) string {
 	return strings.Join(out, ",")
 }
 
-// 表示名で並べる（利用者が目にしている文字列）。大小混在でも辞書順に読める並びになり、
-// 同名のときだけ id で決着する — 呼ぶたびに入れ替わらないため。
+// Ordered by label (the string the user actually sees), so mixed case still reads
+// alphabetically; the id only breaks ties, so the order never shuffles between calls.
 func TestSortByLabelIsCaseInsensitiveAndTotal(t *testing.T) {
 	got := labels(SortByLabel([]ModelChoice{
 		{ID: "b", Label: "GPT-5.6-Sol"},
@@ -22,14 +22,15 @@ func TestSortByLabelIsCaseInsensitiveAndTotal(t *testing.T) {
 		{ID: "a1", Label: "claude"},
 		{ID: "c", Label: "Claude Opus"},
 	}))
-	// claude(a1) < claude(a2) < "Claude Opus"(c) < "GPT-5.6-Sol"(b) — id で表示。
+	// claude(a1) < claude(a2) < "Claude Opus"(c) < "GPT-5.6-Sol"(b), shown by id.
 	if want := "a1,a2,c,b"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
-// グループ優先（opencode の Go 先頭）。同ランク内は入力順ではなく表示名順 — 入力順に
-// 落とすと、取得元ごとに違う並びがそのまま透けてしまう。
+// Group rank wins first (opencode puts Go models on top); within a rank the order is by
+// label, not by input order — falling back to input order would leak each source's own
+// ordering straight through to the user.
 func TestSortGroupedRanksThenLabels(t *testing.T) {
 	rank := func(m ModelChoice) int {
 		if strings.HasPrefix(m.ID, "go/") {
@@ -46,7 +47,8 @@ func TestSortGroupedRanksThenLabels(t *testing.T) {
 	if got, want := labels(SortGrouped(in, rank)), "go/glm,go/qwen,zen/aya,zen/kimi"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	// 入力順を変えても結果は同じ（並びが取得元に依存しないことの核心）。
+	// Reordering the input changes nothing: that is the point — the order must not depend on
+	// the source.
 	shuffled := []ModelChoice{in[3], in[0], in[2], in[1]}
 	if got, want := labels(SortGrouped(shuffled, rank)), "go/glm,go/qwen,zen/aya,zen/kimi"; got != want {
 		t.Errorf("shuffled: got %q, want %q", got, want)

@@ -9,16 +9,16 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// captureConversation は「起動前スナップショットから変わった UUID だけを採用」
-// が肝: 同じ dir で前のセッションが残した stale なマップエントリを新スロットが
-// 拾ってはいけない（docs/log/32 Track D-3）。
+// The point of captureConversation is "adopt only a UUID that changed since the
+// pre-launch snapshot": a new slot must not pick up a stale map entry a previous
+// session left behind for the same dir (docs/log/32 Track D-3).
 func TestCaptureConversationAdoptsOnlyFreshUUID(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := "/home/dev/repos/proj"
 	m := session.Meta{Dir: dir, Name: "slot01", Kind: session.KindAgy}
 	slotSid := session.UUID(dir, "slot01")
 
-	// Fresh launch in a dir with a stale entry: snapshot it (BuildLaunch 相当).
+	// Fresh launch in a dir with a stale entry: snapshot it (as BuildLaunch does).
 	writeLastConversations(t, map[string]string{dir: "stale-uuid"})
 	prelaunch.Write(slotSid, LastConversationFor(dir))
 
@@ -74,9 +74,10 @@ func TestClearResumeDropsBothStores(t *testing.T) {
 	}
 }
 
-// brain-dir diff: 生存中のポーリングで「スナップショットに無い brain/<uuid>/ が
-// ちょうど 1 つ」現れたら採用（ライブミラーの点灯条件）。2 つ以上は取り違え回避で
-// 見送り、スナップショット自体が無い（resume / 機能導入前の起動）なら診断しない。
+// brain-dir diff: while polling a live session, adopt when exactly one brain/<uuid>/ the
+// snapshot did not have has appeared (that is what lights the live mirror). Two or more
+// are passed over to avoid picking the wrong one, and with no snapshot at all (a resume,
+// or a launch from before the feature) nothing is diagnosed.
 func TestCaptureConversationBrainDirDiff(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := "/home/dev/repos/proj"

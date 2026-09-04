@@ -33,8 +33,8 @@ func TestBuildCodexProgram(t *testing.T) {
 
 // TestBuildCodexProgramEnablesQuestionsOnEveryRoute pins the request_user_input opt-in
 // to every launch shape, not just a fresh one: a resumed or forked slot that dropped the
-// flag would silently lose its 質問あり state (codex refuses the tool in Default mode
-// without it — measured on 0.144.3 and 0.144.5), which is exactly the failure the flag
+// flag would silently lose its "has a question" state (codex refuses the tool in Default
+// mode without it — measured on 0.144.3 and 0.144.5), which is exactly the failure the flag
 // exists to prevent.
 func TestBuildCodexProgramEnablesQuestionsOnEveryRoute(t *testing.T) {
 	t.Setenv("AF_CODEX_APP_SERVER_ADDR", "")

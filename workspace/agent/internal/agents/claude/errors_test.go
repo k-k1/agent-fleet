@@ -2,8 +2,9 @@ package claude
 
 import "testing"
 
-// 実測レコード（2026-08-06 / 転写コーパス）。認証切れの本文はこの一行が全て —
-// 判定を文言に寄せすぎると版差で落ちるので、`error` と apiErrorStatus も併せて見る。
+// A measured record (2026-08-06, transcript corpus). This one line is the whole body of an
+// expired-login failure; leaning the decision on the wording alone breaks across versions, so
+// `error` and apiErrorStatus are read alongside it.
 const authErrText = "Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue."
 
 func TestAPIErrorAuthRecord(t *testing.T) {
@@ -26,8 +27,8 @@ func TestAPIErrorAuthRecord(t *testing.T) {
 	}
 }
 
-// 認証は3つの入口（`error` / 401 / 文言）のどれか一つでも当たれば立つ。版が
-// フィールドを落としても導線が消えないことを固定する。
+// Auth is raised when any one of the three entry points (`error` / 401 / the wording) matches.
+// This pins that the re-authentication route survives a version that drops one of the fields.
 func TestAPIErrorAuthEntries(t *testing.T) {
 	cases := []struct {
 		name string
@@ -39,7 +40,8 @@ func TestAPIErrorAuthEntries(t *testing.T) {
 		{"status only", apiError{msg: "something went wrong", status: 401}, true},
 		{"text only", apiError{msg: authErrText}, true},
 		{"invalid api key", apiError{msg: "API Error: Invalid API key · Please run /login"}, true},
-		// 再認証しても直らない失敗で導線を出さない（来ないリセットを待たせる類の実害）。
+		// No re-authentication route for a failure it does not fix - the same real harm as
+		// making someone wait for a reset that never comes.
 		{"usage limit", apiError{msg: "You've hit your session limit · resets 9:30am (Asia/Tokyo)", kind: "rate_limit", status: 429}, false},
 		{"prompt too long", apiError{msg: "Prompt is too long · the request is ~242785 tokens", kind: "invalid_request", status: 400}, false},
 		{"server error", apiError{msg: "API Error: 529 Overloaded.", kind: "server_error", status: 529}, false},
@@ -59,8 +61,8 @@ func TestAPIErrorAuthEntries(t *testing.T) {
 	}
 }
 
-// 本文が空のレコードでも見出しだけは残す（part が落ちると parseTurn の
-// 「表示できるものが無い」判定でターンごと消え、失敗が再び不可視になる）。
+// A record with an empty body still keeps its label: drop the part and parseTurn's "nothing
+// to show" branch drops the whole turn, making the failure invisible again.
 func TestAPIErrorEmptyMessageKeepsLabel(t *testing.T) {
 	e := apiError{kind: "server_error"}
 	if got, want := e.detail(), "server_error"; got != want {
@@ -75,9 +77,9 @@ func TestAPIErrorEmptyMessageKeepsLabel(t *testing.T) {
 	}
 }
 
-// parseTurn 側: 合成レコードが text part（＝普通の回答と同じ吹き出し）ではなく
-// error part になり、平坦形にも `[error]` が乗ること。ここが退行するとミラーでは
-// 失敗が回答に化ける。
+// parseTurn side: a synthetic record becomes an error part rather than a text part (the same
+// bubble as an ordinary answer), and the flattened form carries `[error]` too. Regress here
+// and the mirror shows a failure as an answer.
 func TestParseTurnAPIErrorBecomesErrorPart(t *testing.T) {
 	line := []byte(`{"type":"assistant","timestamp":"2026-08-06T22:12:46.526Z","isApiErrorMessage":true,` +
 		`"apiErrorStatus":401,"error":"authentication_failed","message":{"model":"<synthetic>",` +
@@ -104,8 +106,8 @@ func TestParseTurnAPIErrorBecomesErrorPart(t *testing.T) {
 	}
 }
 
-// 通常の assistant レコードは従来どおり text part のまま（error 判定が広がって
-// 普通の回答まで赤ブロックに化けないこと）。
+// An ordinary assistant record stays a text part, so a widening error decision does not turn
+// normal answers into red blocks.
 func TestParseTurnNormalAssistantUnchanged(t *testing.T) {
 	line := []byte(`{"type":"assistant","message":{"model":"claude-opus-5","content":[{"type":"text","text":"done"}]}}`)
 	tn, ok := parseTurn(line, 3)

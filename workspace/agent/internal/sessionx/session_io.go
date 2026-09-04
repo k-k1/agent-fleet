@@ -242,7 +242,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// (deliverInitialPrompt): wait for tmux + the CLI's own composer, type, nudge
 		// Enter once the paste window closed, verify. Answers 202 immediately — the
 		// caller does not wait for the boot. It is the create call's `initial_prompt`
-		// for the one case that cannot use it: the Console's Start work (作業を始める)
+		// for the one case that cannot use it: the Console's Start work button
 		// uploads pasted attachments TO the session, so the prompt text only becomes
 		// final after the session exists. Plain {prompt} only, and not combined with
 		// report_to / peer_from / confirm (those own their own delivery semantics).

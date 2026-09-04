@@ -13,7 +13,7 @@ type transition struct{ sid, previous, state, excerpt string }
 // Buffered so the async notify never blocks on an assertion that already returned.
 func captureNotifier(t *testing.T) chan transition {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir()) // status ストアの書き先をテスト内に隔離
+	t.Setenv("HOME", t.TempDir()) // keep the status store's writes inside the test
 	got := make(chan transition, 8)
 	SetStateNotifier(func(sid, previous, state, excerpt string) {
 		got <- transition{sid, previous, state, excerpt}
@@ -43,15 +43,16 @@ func mustNotNotify(t *testing.T, got chan transition) {
 }
 
 // A completed managed turn must notify working→idle — the transition
-// recordSessionNotification turns into 応答あり + the docs/log/30 operator report. This is
-// the hole managed sessions had: the driver wrote the status and told nobody.
+// recordSessionNotification turns into an "answer ready" notice (応答あり) plus the
+// docs/log/30 operator report. This is the hole managed sessions had: the driver wrote the
+// status and told nobody.
 func TestMarkTurnEndNotifiesCompletion(t *testing.T) {
 	got := captureNotifier(t)
 	MarkTurnStart("sid-1")
 	if st, _ := status.Read("sid-1"); st.State != "working" {
 		t.Fatalf("status after start = %q, want working", st.State)
 	}
-	mustNotNotify(t, got) // 開始は報告対象ではない
+	mustNotNotify(t, got) // a turn starting is not something to report
 
 	MarkTurnEnd("sid-1", TurnCompleted)
 	tr := waitTransition(t, got)
@@ -75,8 +76,9 @@ func TestMarkTurnEndNotifiesCancelled(t *testing.T) {
 
 // A FAILED turn also ends (status → idle, the session really is awaiting input) but must
 // be distinguishable: reporting it as a plain completion is what made a provider error —
-// an exhausted balance, an expired login — read as 応答が完了 with no output at all. The
-// reason rides the excerpt so the report and the chat bridge can quote it.
+// an exhausted balance, an expired login — read as "the answer completed" (応答が完了) with
+// no output at all. The reason rides the excerpt so the report and the chat bridge can
+// quote it.
 func TestMarkTurnEndFailedNotifiesFailureWithReason(t *testing.T) {
 	got := captureNotifier(t)
 	MarkTurnStart("sid-f")
@@ -88,16 +90,16 @@ func TestMarkTurnEndFailedNotifiesFailureWithReason(t *testing.T) {
 	if tr.excerpt != "[error] APIError (HTTP 401): Insufficient balance" {
 		t.Fatalf("excerpt = %q, want the driver's failure summary", tr.excerpt)
 	}
-	// The status store must still say idle — WireLive のフォールバックと
-	// anySessionWorking はここを読むので、failed を書くと 進行中 に張り付く。
+	// The status store must still say idle — WireLive's fallback and anySessionWorking read
+	// it here, so writing failed would pin the session at in-progress.
 	if st, _ := status.Read("sid-f"); st.State != "idle" {
 		t.Fatalf("status = %q, want idle", st.State)
 	}
 }
 
 // TurnUnknown = we lost the runtime, not "the turn finished". The turn may still be
-// running on the other side, so reporting 完了 to the operator would be a lie — but the
-// status must still fall back to idle or the session sticks at 進行中 forever.
+// running on the other side, so reporting completion to the operator would be a lie — but
+// the status must still fall back to idle or the session sticks at in-progress forever.
 func TestMarkTurnEndUnknownPersistsIdleWithoutNotifying(t *testing.T) {
 	got := captureNotifier(t)
 	MarkTurnStart("sid-2")

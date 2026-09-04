@@ -1,6 +1,6 @@
 package main
 
-// node_install.go — on-demand Node.js installer for 設定 → ツールチェーン.
+// node_install.go — on-demand Node.js installer for Settings > Toolchains.
 //
 // ## Why this exists
 //
@@ -83,7 +83,7 @@ func installedNodeMajors() []string {
 // latestNodePatch resolves a major ("22") to the newest released version ("v22.23.2")
 // that actually ships a linux tarball for this architecture.
 //
-// ⚠️ Compare numerically, for the same reason nodeBinFor does: dist/index.json is
+// Compare numerically, for the same reason nodeBinFor does: dist/index.json is
 // ordered newest-first today, but relying on that would make this quietly wrong the day
 // it is not, and a string compare would put v22.9.0 above v22.23.2.
 func latestNodePatch(major string) (string, error) {
@@ -197,7 +197,7 @@ func installNode(major string) (string, error) {
 	if err := runCmd("tar", "-xJf", txz, "--strip-components=1", "-C", staging); err != nil {
 		return "", fmt.Errorf("extract: %w", err)
 	}
-	// ⚠️ Verify the extracted tree before swapping it in. A truncated or unexpected
+	// Verify the extracted tree before swapping it in. A truncated or unexpected
 	// tarball would otherwise be renamed into place and only fail when a session tried
 	// to run it — the same "installer reports success, the binary cannot start" shape
 	// docs/log/70 §70.9.2 recorded for rtk.
@@ -217,7 +217,7 @@ func installNode(major string) (string, error) {
 // runInstallNode is `workspace-agent install-node <major>` — the CLI face, used by the
 // entrypoint and available in a terminal.
 //
-// ⚠️ It prints the installed bin directory — and nothing else — on STDOUT; all progress
+// It prints the installed bin directory — and nothing else — on STDOUT; all progress
 // goes to stderr. The entrypoint captures that stdout to put the selected node on PATH,
 // so it must stay a bare path. Resolving the directory in shell instead is exactly the
 // `ls | tail -1` lexicographic bug that pinned sessions to v22.9.0 (env_toolchains.go
@@ -235,7 +235,7 @@ func runInstallNode(args []string) {
 	fmt.Println(filepath.Join(nvmNodeRoot(), version, "bin"))
 }
 
-// --- HTTP face (設定 → ツールチェーン の「導入」ボタン) -------------------------
+// --- HTTP face (the Install button under Settings > Toolchains) ------------------
 
 type nodeInstall struct {
 	mu    sync.Mutex

@@ -1,12 +1,12 @@
 package cursor
 
-// TUI ルートの graceful stop。cursor は JSONL をライブ追記し resume は AF 採番の
-// UUID 固定なので、agy のような「終了しないと resume ID を失う」制約は無い。ただし
-// cursor-agent はターン後に worker-server 常駐プロセスを残す（実測 — docs/log/40）ので、
-// kill-session でパネルを潰す前に一度だけ正規終了（Ctrl+D 二度押し — 実測/docs）を
-// 試し、CLI 自身に後片付けさせる。保留メニュー（許可/plan）が出ている間の Enter は
-// ハイライト行を承認してしまう（copilot c639973 と同型リスク）——Escape で棄却して
-// から打つ。
+// Graceful stop for the TUI route. cursor appends to its JSONL live and resume is pinned
+// to the UUID AF assigns, so there is no "exit or lose the resume id" constraint like
+// agy's. But cursor-agent leaves a resident worker-server process behind after a turn
+// (measured - docs/log/40), so before kill-session tears the pane down we try a proper
+// exit once (two Ctrl+D presses - measured/docs) and let the CLI clean up after itself.
+// Enter while a pending menu (permission/plan) is up approves the highlighted row (the
+// same risk as copilot c639973), so dismiss it with Escape first.
 
 import (
 	"time"
@@ -15,8 +15,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// gracefulStopWindow は Ctrl+D 二度押し後に終了を待つ上限。idle 終了は速いが、
-// ターン中の TUI は無視し得るのでタイムアウトで caller が kill にフォールバック。
+// gracefulStopWindow is how long we wait for the exit after the two Ctrl+D presses. Idle
+// exit is fast; a mid-turn TUI may ignore them, and the timeout makes the caller fall back
+// to kill.
 const gracefulStopWindow = 4 * time.Second
 
 func (agentImpl) GracefulStop(m session.Meta) bool {
@@ -26,13 +27,13 @@ func (agentImpl) GracefulStop(m session.Meta) bool {
 		return false
 	}
 	if LiveState(m) == "working" {
-		// 進行中なら先に中断（Esc）してから終了する。
+		// Interrupt an in-flight turn (Esc) before exiting.
 		_ = tmuxx.Cmd("send-keys", "-t", pane, "Escape").Run()
 		time.Sleep(300 * time.Millisecond)
 	}
-	// C-u: コンポーザのドラフトを消す（残っていると Ctrl+D が別解釈され得る）。
+	// C-u clears the composer draft: leftover text can make Ctrl+D mean something else.
 	_ = tmuxx.Cmd("send-keys", "-t", pane, "C-u").Run()
-	// Ctrl+D 二度押しで終了（実測: 一度目は確認、二度目で exit）。
+	// Two Ctrl+D presses exit (measured: the first asks to confirm, the second exits).
 	_ = tmuxx.Cmd("send-keys", "-t", pane, "C-d").Run()
 	time.Sleep(300 * time.Millisecond)
 	_ = tmuxx.Cmd("send-keys", "-t", pane, "C-d").Run()

@@ -32,8 +32,8 @@ func mkConvDB(t *testing.T, conv string, rows [][3]any) {
 	}
 }
 
-// 実機の step_payload を模した fixture: protobuf のワイヤバイト列の中に
-// ask_question のツール引数 JSON が平文で埋まっている。
+// A fixture shaped like a real step_payload: the ask_question tool's argument JSON sits in
+// plain text inside the protobuf wire bytes.
 func questionPayload() []byte {
 	return append(append([]byte("\x0a\x08s8twu8rq\x12\x0cask_question\xaa\x01"),
 		[]byte(`{"questions":[{"is_multi_select":false,"options":["Mountain (M)","Sea (S)"],"question":"Which do you prefer?"}],"toolAction":"Asking preference"}`)...),
@@ -111,8 +111,8 @@ func TestProbePendingPermissionUnknownToolNoCard(t *testing.T) {
 	dir := "/home/dev/repos/proj"
 	m := session.Meta{Dir: dir, Name: "slot24", Kind: session.KindAgy}
 	sids.Write(session.UUID(dir, "slot24"), "conv-u")
-	// 未検証ツールのメニュー形は不明 — カードを出すと Down×i が誤爆し得るので
-	// state のみ（応答はターミナルで）。
+	// The menu shape of an unverified tool is unknown: showing a card could fire the wrong
+	// Down x i, so report the state only and let the answer happen in the terminal.
 	mkConvDB(t, "conv-u", [][3]any{
 		{99, stepStatusAwaitingUser, []byte(`mystery_tool*{"Thing":"z"}`)},
 	})
@@ -149,10 +149,10 @@ func TestProbeNoConversationOrDB(t *testing.T) {
 	}
 }
 
-// LiveState は Probe と違い「保留でない」も状態として返す必要がある。agy は
-// status hook を持たないため、この idle 判定が唯一の turn 終端シグナルで、
-// これが無いと /input の楽観 working が消えず、オペレータへの完了報告の arm
-// が永久に消費されない（docs/log/30 ②）。
+// Unlike Probe, LiveState must also report "not pending" as a state. agy has no status
+// hook, so this idle verdict is the only end-of-turn signal there is: without it /input's
+// optimistic working never clears and the arm for the completion report to the operator is
+// never consumed (docs/log/30 ②).
 func TestLiveStateClassifiesEveryStepStatus(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := "/home/dev/repos/proj"
@@ -181,8 +181,9 @@ func TestLiveStateClassifiesEveryStepStatus(t *testing.T) {
 	}
 }
 
-// 会話未採用 / DB 不在では「意見なし」("")。停止済みセッションを誤って idle と
-// 報告し、偽の完了報告を撃たないための境界。
+// With no conversation adopted, or no DB, the answer is "no opinion" (""). That boundary
+// keeps a stopped session from being reported as idle and firing a false completion
+// report.
 func TestLiveStateNoOpinionWithoutDB(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	m := session.Meta{Dir: "/d", Name: "slot-ls-none", Kind: session.KindAgy}

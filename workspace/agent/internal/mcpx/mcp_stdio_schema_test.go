@@ -50,11 +50,11 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 				advertised[name] = struct{}{}
 				schema, ok := tool["inputSchema"].(map[string]any)
 				if !ok {
-					t.Errorf("%s: inputSchema が object ではない: %T", name, tool["inputSchema"])
+					t.Errorf("%s: inputSchema is not an object: %T", name, tool["inputSchema"])
 					continue
 				}
 				if err := validateMCPInputSchema(schema); err != nil {
-					t.Errorf("%s: inputSchema が不正: %v", name, err)
+					t.Errorf("%s: invalid inputSchema: %v", name, err)
 				}
 			}
 		})
@@ -65,7 +65,7 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(declared) != expectedAdvertisedToolCount || !reflect.DeepEqual(advertised, declared) {
-		t.Errorf("広告ツールの被覆が変わった (advertised=%d, declared=%d, want=%d): ツールかゲートを足したなら variants も見直せ", len(advertised), len(declared), expectedAdvertisedToolCount)
+		t.Errorf("advertised-tool coverage changed (advertised=%d, declared=%d, want=%d): if a tool or a gate was added, revisit variants too", len(advertised), len(declared), expectedAdvertisedToolCount)
 	}
 }
 
@@ -76,7 +76,7 @@ func declaredMCPToolNames() (map[string]struct{}, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "mcp_stdio.go", nil, 0)
 	if err != nil {
-		return nil, fmt.Errorf("mcp_stdio.go を解析: %w", err)
+		return nil, fmt.Errorf("parse mcp_stdio.go: %w", err)
 	}
 
 	names := make(map[string]struct{})
@@ -149,10 +149,10 @@ func TestMCPInputSchemaValidationRejectsKnownBadShapes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			err := validateMCPInputSchema(tc.schema)
 			if err == nil {
-				t.Fatal("不正 schema が検査を通った")
+				t.Fatal("an invalid schema passed validation")
 			}
 			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error = %q, want %q を含む", err, tc.want)
+				t.Fatalf("error = %q, want it to contain %q", err, tc.want)
 			}
 		})
 	}
@@ -187,18 +187,18 @@ func validateMCPInputSchema(schema map[string]any) error {
 // legally name a property absent from properties, but that is never useful here).
 func validateMCPInputSchemaNode(path string, schema map[string]any) error {
 	if _, ok := schema["type"]; !ok {
-		return fmt.Errorf("%s: type が無い", path)
+		return fmt.Errorf("%s: no type", path)
 	}
 	if enum, ok := schema["enum"]; ok {
 		v := reflect.ValueOf(enum)
 		if enum == nil || v.Kind() != reflect.Slice || v.Len() == 0 {
-			return fmt.Errorf("%s.enum は空でない配列でなければならない", path)
+			return fmt.Errorf("%s.enum must be a non-empty array", path)
 		}
 	}
 	for _, keyword := range []string{"minLength", "maxLength"} {
 		if value, ok := schema[keyword]; ok {
 			if n, ok := schemaNonNegativeInteger(value); !ok || n == 0 {
-				return fmt.Errorf("%s.%s は正の整数でなければならない: %v", path, keyword, value)
+				return fmt.Errorf("%s.%s must be a positive integer: %v", path, keyword, value)
 			}
 		}
 	}
@@ -207,14 +207,14 @@ func validateMCPInputSchemaNode(path string, schema map[string]any) error {
 	if required, ok := schema["required"]; ok {
 		for _, name := range schemaStrings(required) {
 			if _, exists := properties[name]; !exists {
-				return fmt.Errorf("%s.required の %q が properties に無い", path, name)
+				return fmt.Errorf("%s.required names %q, which is not in properties", path, name)
 			}
 		}
 	}
 	for name, child := range properties {
 		childSchema, ok := child.(map[string]any)
 		if !ok {
-			return fmt.Errorf("%s.properties.%s が object ではない: %T", path, name, child)
+			return fmt.Errorf("%s.properties.%s is not an object: %T", path, name, child)
 		}
 		if err := validateMCPInputSchemaNode(path+".properties."+name, childSchema); err != nil {
 			return err

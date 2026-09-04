@@ -55,7 +55,7 @@ var jdkArchSuffixes = []string{"amd64", "arm64"}
 // foreignArchJDK reports whether a JDK directory name carries an architecture
 // suffix that is not this container's.
 //
-// ⚠️ This exists because the home volume OUTLIVES the architecture it was filled
+// This exists because the home volume OUTLIVES the architecture it was filled
 // on. On the ecs-ec2 runtime a member's `~` is an EBS volume that follows them,
 // and docs/log/70 makes the box they land on a per-member setting — so a home filled
 // on x86 can be attached to an arm64 slot, and then
@@ -125,7 +125,7 @@ func sortMajors(seen map[string]bool) []string {
 // (priority order), or "" when that major is not installed anywhere FOR THIS
 // ARCHITECTURE.
 //
-// ⚠️ Do not go back to "glob, sort, take the first". Both sources name their
+// Do not go back to "glob, sort, take the first". Both sources name their
 // directories temurin-<major>-jdk-<arch>, and "amd64" sorts before "arm64", so on
 // an arm64 workspace holding a home that was filled on x86 the sorted-first entry
 // is always the unusable one (docs/log/70 §70.5.1).
@@ -222,8 +222,8 @@ func installJDK(major string) (string, error) {
 
 	url := fmt.Sprintf("https://api.adoptium.net/v3/binary/latest/%s/ga/linux/%s/jdk/hotspot/normal/eclipse", major, aarch)
 	fmt.Fprintf(os.Stderr, "[install-jdk] downloading Temurin %s (%s) ...\n", major, aarch)
-	// curl follows the API redirect to the release tarball（--proto-redir =https で
-	// http への降格リダイレクトは拒否）. tar --strip-components=1
+	// curl follows the API redirect to the release tarball (--proto-redir =https refuses a
+	// downgrade redirect to http). tar --strip-components=1
 	// drops the jdk-<ver>/ top-level dir so bin/, lib/ land directly under staging.
 	if err := runCmd("curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "-o", tgzPath, url); err != nil {
 		return "", fmt.Errorf("download failed: %w", err)

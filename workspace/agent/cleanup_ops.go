@@ -70,9 +70,9 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 			"session is running; stop it before deleting")
 		return
 	}
-	// fold-on-delete（docs/log/46 §3-b）: 転写が消える前に末尾ターンまで台帳へ確定させる。
-	// 通常の折り込みは「開いているターン」を残すので、ここで確定しないと最後の1ターンが
-	// 永久に入らない。
+	// fold-on-delete (docs/log/46 §3-b): commit the ledger up to the final turn before the
+	// transcript disappears. Ordinary folding leaves the open turn behind, so without this the
+	// last turn would never make it in.
 	finalizeSessionUsage(m)
 	reclaim := r.URL.Query().Get("reclaim") == "1" || r.URL.Query().Get("reclaim") == "true"
 	if !reclaim {
@@ -102,7 +102,7 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 // removeSessionSideFiles drops the per-session side files keyed by session NAME —
 // handoff proposals (session-handoffs/) and transcript marks (session-marks/).
 //
-// ⚠️ Session names are slot names and get REUSED. Left behind, they resurface on
+// Session names are slot names and get REUSED. Left behind, they resurface on
 // whatever session lands in that slot next: someone else's handoff card in the middle
 // of an unrelated conversation, someone else's highlight on an unrelated sentence.
 // Neither is part of the cleanup archive — they are annotations about a conversation

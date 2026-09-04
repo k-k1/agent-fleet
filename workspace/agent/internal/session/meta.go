@@ -1,7 +1,7 @@
 package session
 
-// セッションメタ（Meta）の永続化: 保存先ディレクトリと読み書き・列挙・開始ブランチ更新。
-// package main の session_meta.go からの移設（docs/log/23 残① Wave A）。
+// Persistence of the session Meta: the directory it lives in, read/write, enumeration and
+// updating the starting branch.
 
 import (
 	"encoding/json"

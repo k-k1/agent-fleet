@@ -12,7 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// git-aware file-browser endpoints (docs/17 P3-5, FILES 改善):
+// git-aware file-browser endpoints (docs/17 P3-5, FILES improvements):
 //   GET /fs/changes   — modified files across all repos (the "changes only" filter)
 //   GET /fs/linemarks — editor-style gutter marks for one working-tree file
 // Both reuse the read-only browse guards (denylist/traversal) and the existing
@@ -60,14 +60,13 @@ func handleFSChanges(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": out})
 }
 
-// lineMarksWire — GET /fs/line-marks のレスポンス（Console の `LineMarks`、
-// console/src/features/viewer/CodeView.tsx）。
+// lineMarksWire is the GET /fs/line-marks response (the Console's `LineMarks`,
+// console/src/features/viewer/CodeView.tsx).
 //
 // was: map[string]any{"added":…, "modified":…, "deleted":…}
-// 3 キーとも無条件なので **omitempty は付けない**。
-// ⚠️ 3 つとも **nil ではなく空スライス**でなければならない（nil は JSON で `null`、
-// 空は `[]`）。emptyMarks / parseDiffMarks / 未追跡経路のいずれも make か []int{} で
-// 初期化しており、nil を返す経路は無い。
+// All three keys are unconditional, so no omitempty. All three must be empty slices and
+// never nil: nil marshals to `null`, empty to `[]`. emptyMarks, parseDiffMarks and the
+// untracked path all initialise with make or []int{}, so no path returns nil.
 type lineMarksWire struct {
 	Added    []int `json:"added"`
 	Modified []int `json:"modified"`

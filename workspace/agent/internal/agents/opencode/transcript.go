@@ -53,12 +53,12 @@ func openRO() (*sql.DB, bool) {
 
 // activeSession resolves the slot's CURRENT opencode conversation. Per-slot truth
 // first: the id the bundled plugin captured for THIS slot (it re-records on every
-// event, so runtime session switches track too — claude/codex と同じスロット単位の
-// 対応付け). When no mapping exists (plugin not firing), fall back to the store —
+// event, so runtime session switches track too — the same per-slot mapping claude and codex
+// use). When no mapping exists (plugin not firing), fall back to the store —
 // but ONLY to a root conversation created AFTER the slot itself, i.e. one this slot
 // must have opened. The previous unbounded by-dir lookup made a brand-new session
-// hijack (and resume) the dir's most recent OLD conversation — 実例: 新規スロット
-// szyyh2f が ~/repos/temp の9日前の会話を --session で引き継いでしまった。
+// hijack (and resume) the dir's most recent OLD conversation — measured: brand-new slot
+// szyyh2f resumed a 9-day-old conversation in ~/repos/temp via --session.
 func activeSession(db *sql.DB, m session.Meta) string {
 	id, _ := activeSessionErr(db, m)
 	return id
@@ -113,7 +113,7 @@ func metaCreatedMs(m session.Meta) int64 {
 // the status plugin's events are unreliable): a turn is in flight when the active
 // session's newest message isn't a completed assistant reply, and an in-flight turn
 // whose question tool is running is "question" — the same state claude raises, so the
-// sessions list chip (質問あり) and desktop notifications light up for opencode too.
+// sessions list question chip and desktop notifications light up for opencode too.
 // Returns "" when the state can't be derived (caller falls back to the plugin status
 // store): the db can't be read, OR the store answered but not in the shape we parse.
 //
@@ -122,7 +122,7 @@ func metaCreatedMs(m session.Meta) int64 {
 // and a v2 session_message store already exists alongside the v1 message/part one this
 // reads). Returning "idle" on a broken read would assert the *strongest* claim — the
 // turn is done — from the *least* information, and it fails silently: a schema change
-// would flip a live turn's state to 入力待ち with no stop button, which is exactly the
+// would flip a live turn's state to waiting-for-input with no stop button, which is exactly the
 // claude false-idle bug (there, a TUI footer string moved). It can't self-heal either,
 // because a non-empty "idle" short-circuits driveState before the reverse-heal, and
 // claude's spinner probe doesn't match opencode's footer anyway. "" degrades to the
@@ -191,8 +191,9 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		Queued:     queued(db, ses),
 		Compacting: compacting(db, ses),
 	}
-	// managed セッション（docs/log/27 P2）: driver の runtime 状態を合流 — pending 質問へ
-	// Interaction id（/respond の宛先）、driver 内キューを キュー済み へ。
+	// Managed sessions (docs/log/27 P2): merge in the driver's runtime state — the Interaction
+	// id (the address /respond posts to) onto a pending question, and the driver-held queue
+	// into the queued list.
 	managedEnrich(m, &td)
 	return td, true
 }
@@ -200,7 +201,7 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 // queued returns the prompts sitting in opencode's mid-run input queue — typed while a
 // turn runs, recorded as session_input rows, and not yet promoted to a real user
 // message (promoted_seq is set on promotion; consumed rows are cleaned up). Surfaced as
-// the mirror's キュー済み badge, like claude's queue-operation reconstruction. Ordered by
+// the mirror's queued badge, like claude's queue-operation reconstruction. Ordered by
 // arrival. The generic handler gates on the working state, so stale leftovers from a
 // killed run stay hidden.
 func queued(db *sql.DB, ses string) []string {

@@ -1,19 +1,21 @@
 package mcpx
 
-// テナント配布 MCP の取得契機（docs/log/48 §6 / P4）。定義の取得そのものは
-// internal/mcpreg/tenant.go にあり、本ファイルは「いつ引くか」だけを持つ
-// （mcp_materialize.go が materialize の契機だけを持つのと同じ分け方）。
+// When the tenant-distributed MCP set is fetched (docs/log/48 §6 / P4). Fetching the
+// definitions themselves lives in internal/mcpreg/tenant.go; this file holds only "when to
+// pull" - the same split as mcp_materialize.go holding only the triggers for materialize.
 //
-// 契機は 3 つ:
-//   - agent 起動時（コンテナを起こした直後に、その時点のテナント配布で始める）
-//   - 5 分間隔のポーリング（管理者の登録が誰も何もしなくても届く唯一の経路）
-//   - Console からの明示リフレッシュ（「今すぐ反映したい」の最短経路）
+// Three triggers:
+//   - agent boot (start from whatever the tenant distributes at that moment)
+//   - polling every 5 minutes (the only route by which an admin's registration arrives
+//     without anyone doing anything)
+//   - an explicit refresh from the Console (the shortest path to "apply it now")
 //
-// 取得して **中身が変わったときだけ** materialize を走らせる。変化なしで毎回書くと、
-// claude 自身が絶えず書き換える .claude.json を 5 分ごとに踏むことになる（§8.2）。
+// materialize runs only when the fetched content actually changed. Writing on every pull
+// would stamp on .claude.json - which claude itself rewrites constantly - every 5 minutes
+// (§8.2).
 //
-// CP 到達不能は **エラーではなく現状維持**（fail-open, §6）。ここを fail-closed に
-// すると CP の瞬断で全メンバーのセッションから MCP が消える。
+// An unreachable CP leaves things as they are rather than being an error (fail-open, §6).
+// Fail-closed here would make MCP vanish from every member's session on a CP blip.
 
 import (
 	"errors"

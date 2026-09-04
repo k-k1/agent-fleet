@@ -9,7 +9,7 @@
 // actually running a turn:
 //  1. Stop hook -> status="idle" (the completion signal of the TUI/CLI route)
 //  2. rollout task_started / task_complete (what self-healing uses when a Stop hook is lost)
-//  3. the request_user_input function_call (the 質問あり state) — best-effort
+//  3. the request_user_input function_call (the "question pending" state) — best-effort
 //  4. managed turn/started and turn/completed (they drive status working -> idle)
 //
 // Measured cost of one turn ("reply with exactly: pong"): roughly 5k-15k tokens, and it
@@ -296,7 +296,7 @@ func waitStatus(slot, want string, d time.Duration) bool {
 //
 // Both go through production code (the real `session-status` subcommand, the real
 // latestRolloutLifecycle), so a codex change to hook delivery or rollout event names
-// fails here rather than silently stranding sessions on 進行中.
+// fails here rather than silently stranding sessions on "in progress".
 func TestLiveDriftCodexStopHookAndRollout(t *testing.T) {
 	bin := liveCodexBin(t)
 	agentBin := buildAgentBin(t) // before liveHome: needs the real module cache
@@ -323,7 +323,7 @@ func TestLiveDriftCodexStopHookAndRollout(t *testing.T) {
 		st, ok := status.Read(slot)
 		t.Fatalf("status = %+v (present=%v), want State=idle.\n"+
 			"The Stop hook did not reach production's session-status writer, so a finished "+
-			"codex session would stay 進行中 in the Console forever.\ncodex output:\n%s", st, ok, out)
+			"codex session would stay \"in progress\" in the Console forever.\ncodex output:\n%s", st, ok, out)
 	}
 
 	// The same hooks capture codex's own session id (it has no --session-id flag);
@@ -414,7 +414,7 @@ func TestLiveDriftCodexPendingQuestion(t *testing.T) {
 		return string(out)
 	}
 
-	// Poll production's own probe — the one WireLive calls to light 質問あり.
+	// Poll production's own probe — the one WireLive calls to light "question pending".
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		if id := PendingQuestionID(m); id != "" {
@@ -439,7 +439,7 @@ func TestLiveDriftCodexPendingQuestion(t *testing.T) {
 			(strings.Contains(s, "unavailable in") && strings.Contains(s, "mode")) {
 			t.Fatalf("codex refused request_user_input:\n%s\n\n"+
 				"=> The Default-mode opt-in (-c features.…=true from buildProgram) is no longer "+
-				"taking effect, so the CLI route's 質問あり state can never light. This is the "+
+				"taking effect, so the CLI route's \"question pending\" state can never light. This is the "+
 				"regression f0c74e9 fixed; an unknown -c key is ignored silently, so suspect a "+
 				"feature rename upstream (Tier 1's TestDriftCodexFeatureFlagsKnown should also be red).",
 				strings.TrimSpace(s))
@@ -540,7 +540,7 @@ func TestLiveDriftCodexManagedTurnNotifications(t *testing.T) {
 		case <-deadline:
 			t.Fatalf("no TurnCompleted event within the window — codex's turn/completed notification " +
 				"never arrived (or its threadId/turn payload changed shape), so managed sessions " +
-				"would hang on 進行中 with no completion.")
+				"would hang on \"in progress\" with no completion.")
 		}
 	}
 
@@ -550,7 +550,7 @@ func TestLiveDriftCodexManagedTurnNotifications(t *testing.T) {
 	default:
 		t.Error("status never became \"working\": codex's turn/started notification did not reach " +
 			"dispatchNotification (renamed, or its threadId/turn.id payload changed) — the Console " +
-			"would show no 進行中 and no stop button while the turn runs")
+			"would show no \"in progress\" and no stop button while the turn runs")
 	}
 	if !waitStatus(slot, "idle", 20*time.Second) {
 		st, _ := status.Read(slot)
@@ -631,7 +631,7 @@ func TestLiveDriftCodexForkAtLastTurn(t *testing.T) {
 	}
 	if len(userAnchors) < 2 {
 		t.Fatalf("transcript has %d anchored user turns after 2 turns — turn ids are no longer "+
-			"recoverable from the rollout, so the mirror can't offer 「ここから分岐」", len(userAnchors))
+			"recoverable from the rollout, so the mirror can't offer \"fork from here\"", len(userAnchors))
 	}
 	first, second := userAnchors[0], userAnchors[len(userAnchors)-1]
 	if first == second {

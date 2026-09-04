@@ -1,7 +1,7 @@
 package main
 
 // arch_residue.go — `workspace-agent notify-arch-residue`, the Console-facing half of
-// the architecture self-repair (docs/decisions/0068 決定 4).
+// the architecture self-repair (docs/decisions/0068 decision 4).
 //
 // af-arch-repair puts back everything it can put back (pip --user, uv tools, npm -g, and
 // the entrypoint restores the selected JDK / node). Two things it deliberately cannot:
@@ -63,21 +63,21 @@ func runNotifyArchResidue(args []string) {
 	}
 	b, err := os.ReadFile(archResiduePath())
 	if err != nil || len(strings.TrimSpace(string(b))) == 0 {
-		return // 残骸なし = 何も言わない
+		return // no residue = say nothing
 	}
 	body := strings.TrimSpace(string(b))
 
 	repos, bins := parseArchResidue(body)
 	ev := notice.New("arch-residue", "", "", "")
-	// ⚠️ TargetType を明示する。空だと CP 側の既定（session）に落ち、セッション名が空の
-	// 通知になって Console が開けない対象を指す。
+	// TargetType must be explicit: left empty it falls back to the CP's default (session), and
+	// the notification then points at an empty session name the Console cannot open.
 	ev.TargetType = "workspace"
 	ev.Payload["from"] = from
 	ev.Payload["repos"] = repos
 	ev.Payload["bins"] = bins
 
-	// キーは「いま壊れている集合」そのもの。版でも時刻でもない——直せば変わり、直さな
-	// ければ変わらない、というのがここで欲しい性質である。
+	// The key is the set of things currently broken — not a version, not a timestamp. That is
+	// exactly the property wanted: it changes when the residue is fixed, and only then.
 	sum := sha256.Sum256([]byte(body))
 	if err := notice.PutOnce("arch-residue:"+hex.EncodeToString(sum[:]), ev); err != nil {
 		fmt.Fprintln(os.Stderr, "[notify-arch-residue]", err)

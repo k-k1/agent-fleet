@@ -1,15 +1,16 @@
 package chatx
 
-// アシスタントチャットの「実行中ターン」レジストリ。
+// Registry of the assistant chat's in-flight turns.
 //
-// ストリーミングのターン（handleChatStream）は、開始した HTTP リクエストの寿命から
-// あえて切り離して走らせる（chat_handlers.go の context.WithoutCancel 参照）。ブラウザ
-// をリロードすると SSE リクエストは中断されるが、それでターンを殺して回答を失わない
-// ためだ ── ターンはそのまま走り切って保存され、再接続したクライアントは in_progress
-// を見て（chatGet）ポーリングで再アタッチし、確定した回答を読める。
+// A streaming turn (handleChatStream) deliberately runs detached from the lifetime of the
+// HTTP request that started it (see context.WithoutCancel in chat_handlers.go). Reloading
+// the browser aborts the SSE request, and that must not kill the turn and lose the answer:
+// the turn runs to completion and is saved, while a reconnecting client sees in_progress
+// (chatGet), re-attaches by polling and reads the finished answer.
 //
-// レジストリが保持する CancelFunc は、切り離したターンを「明示的な停止」（Stop ボタン →
-// handleChatStop）で確実に止めるための唯一の経路。単なる切断（リロード）では発火しない。
+// The CancelFunc the registry holds is the only path that reliably stops a detached turn on
+// an explicit halt (the Stop button -> handleChatStop). A mere disconnect (a reload) does
+// not fire it.
 
 import (
 	"context"

@@ -76,7 +76,8 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		return "stopped"
 	}
 	// opencode: derive state from its own store (the status plugin is unreliable) so the
-	// chat chip doesn't stick on 進行中 after a turn the plugin never reported idle for.
+	// chat chip doesn't stick on "in progress" after a turn the plugin never reported
+	// idle for.
 	if m.Kind == session.KindOpencode {
 		if st := opencode.LiveState(m); st != "" {
 			return st
@@ -85,13 +86,13 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// agy: no hooks — /input persists an optimistic "working" that nothing clears
 	// while an interactive prompt is up (the question/permission widget replaces the
 	// idle footer, so the claude-shaped heal below can't fire and the chat showed a
-	// blocked session as 作業中). The conversation DB knows the whole state (last step
+	// blocked session as working). The conversation DB knows the whole state (last step
 	// status — agy/pending.go), so ask it first.
 	if m.Kind == session.KindAgy {
 		if st := agy.LiveState(m); st != "" {
 			// Turn end. agy has no Stop hook, so this poll is the only place the
 			// completion can be observed — persist idle AND fire the notification,
-			// or the operator's 完了報告 arm is never consumed and the report never
+			// or the operator's completion-report arm is never consumed and the report never
 			// arrives (docs/log/30 ②). MarkTurnEnd shares RecordSessionNotification with
 			// the hook route, so "which transition counts" stays one implementation.
 			// Gated on previous=="working" so repeated polls report once; a duplicate
@@ -180,7 +181,8 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	}
 	// codex managed: a turn rejected/failed with usageLimitExceeded leaves the
 	// session sitting at idle, but re-sending will hit the same limit. Surface it as
-	// 制限解除待ち — there is no menu to dismiss and the window opens by waiting (the same
+	// "waiting for the limit to lift" — there is no menu to dismiss and the window opens
+	// by waiting (the same
 	// verdict as WireLive).
 	if m.DriverKind() == session.DriverManaged && NormalizeKind(m.Kind) == session.KindCodex && state == "idle" && codex.IsRateLimited(m.Name) {
 		return agents.StateLimited
@@ -188,7 +190,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// Folding on pane.IdleSettled (not the raw pane.Idle) for the same reason as WireLive:
 	// while claude renders an answer it draws the same picture as the ready prompt, so a single
 	// frame cannot tell them apart (measured, tmuxx/idlesettle.go). Leaving Idle here would put
-	// the mirror/chat chip on 入力待ち while the list still reads 進行中.
+	// the mirror/chat chip on "waiting for input" while the list still reads "in progress".
 	if heal && state != "idle" && pane.IdleSettled {
 		state = "idle"
 		// claude can tell "the turn died on an API error" from the transcript's tail, so that
@@ -205,7 +207,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		// Reverse-heal: the hook state reads idle (its "working" file was never written,
 		// or the self-heal above removed it during a transient prompt frame) but the pane
 		// is plainly mid-turn (interrupt affordance shown). Trust the live TUI and persist
-		// working so the chat shows 進行中 + the stop button, and the eventual Stop still
+		// working so the chat shows "in progress" + the stop button, and the eventual Stop still
 		// fires the answer-ready notification (recorded off the previous "working" state).
 		state = "working"
 		status.Persist(sid, "working")

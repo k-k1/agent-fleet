@@ -18,7 +18,7 @@ import (
 // API's GET /v1/models is NOT used on purpose: it needs a separate API key the
 // fleet doesn't hold, and lists the whole API zoo (embeddings, audio, …) instead
 // of this ChatGPT-gated agentic catalog. Returns nil when the CLI is absent or
-// errors; the launch picker then just offers 既定.
+// errors; the launch picker then just offers the default entry.
 //
 // Cached briefly: the Console fetches on every launch-modal open, and the CLI
 // refresh costs ~2s. Failures are not cached (stale-if-error below).
