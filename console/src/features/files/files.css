@@ -40,6 +40,32 @@
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
 }
+/* 自動更新で増えた行（features/files/sessionRefresh.ts）。ターンが終わって一覧が
+   差し替わったとき、「増えた」ことより「どれが増えたか」が知りたい情報なので、
+   数秒だけ淡く残して消える。色だけの手掛かりで、行の中身には何も足さない —
+   消えても失われる情報が無いようにしてある。 */
+.fsrow.fs-new {
+  animation: af-fs-new 5s ease-out 1;
+}
+/* 最初の 3 割は色を保ってから褪せる。ease-out で頭から落とすと、視線が行く前に
+   ほとんど消えていて「光ったのに、どれか分からない」になる（実測: 5s の 0.4s 時点で
+   もう薄い）。 */
+@keyframes af-fs-new {
+  0%,
+  30% {
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+/* 動きを減らす設定では点かず、静かな下地だけを同じ時間だけ出す。 */
+@media (prefers-reduced-motion: reduce) {
+  .fsrow.fs-new {
+    animation: none;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+}
 .fs-dir,
 .fs-file {
   display: inline-flex;

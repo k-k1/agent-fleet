@@ -31,6 +31,7 @@ import { useSessionNotifications } from "../features/sessions/useSessionNotifica
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { startRepoJobsPolling } from "../features/repos/jobs.ts";
 import { useFilesStore } from "../features/files/store.ts";
+import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
 import { hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setSetting, useSettings } from "../lib/settings.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
@@ -289,6 +290,9 @@ export function App() {
     const unBrowserReconcile = wireBrowserReconcile();
     const unBrowserAttachmentReconcile = wireBrowserAttachmentReconcile();
     const unWsRefresh = wireWorkspaceRefresh();
+    // セッションが入力待ちに入ったら、その作業コピーのぶんだけ FILES を読み直す。
+    // 一覧はどのみち届いているので追加の通信は無く、発火は作業コピーごとに合流する。
+    const unFilesSessionRefresh = wireFilesSessionRefresh();
     // 統合 push チャネル（通信量削減 P3）: 配線を先に登録してから接続 — 初回
     // スナップショットのフレームを取りこぼさない。ポーラーはフォールバックで
     // そのまま起動する（pushHealthy 中は tick スキップ）。
@@ -324,6 +328,7 @@ export function App() {
       unBrowserReconcile();
       unBrowserAttachmentReconcile();
       unWsRefresh();
+      unFilesSessionRefresh();
       unPushApply();
       stopPush();
       stopWsPoll();
