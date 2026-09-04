@@ -14,6 +14,7 @@ import { MarkdownView } from "../MarkdownView.tsx";
 import { MarpView } from "../MarpView.tsx";
 import { PdfView } from "../PdfView.tsx";
 import type { FileSurfaces } from "../fileMode.ts";
+import type { ScrollMemoryFactory } from "./useScrollMemory.ts";
 
 export interface FileViewerShellProps {
   hidden: boolean;
@@ -44,6 +45,9 @@ export interface FileViewerShellProps {
   marks: LineMarks | null;
   targetLine?: number;
   targetColumn?: number;
+  /** 面ごとの「表示位置の記憶」ref を配る（FileView が持つ）。面が変われば別の
+   *  記憶になるので、分岐ごとに違う名前を引く。 */
+  scrollMemory: ScrollMemoryFactory;
 }
 
 export function FileViewerShell(props: FileViewerShellProps) {
@@ -60,7 +64,7 @@ export function FileViewerShell(props: FileViewerShellProps) {
       ) : isPdf ? (
         // PDF は「バイナリ」の一歩手前で拾う（docs/log/82）。api/fs/file は中身を返さず
         // binary:true だけを返すので、ここから先は download の生バイトが情報源。
-        <PdfView src={downloadURL(filePath)} onMeta={props.onPdfMeta} />
+        <PdfView src={downloadURL(filePath)} onMeta={props.onPdfMeta} scrollMemory={props.scrollMemory("pdf")} />
       ) : isDoc ? (
         <DocPreview
           src={downloadURL(filePath)}
@@ -69,15 +73,16 @@ export function FileViewerShell(props: FileViewerShellProps) {
           basePath={filePath}
           onOpenFile={props.onOpenFile}
           onOpenDir={props.onOpenDir}
+          scrollMemory={props.scrollMemory("doc")}
         />
       ) : props.binary ? (
         <pre className="filebody muted">({tr("view.binary")}, {humanSize(props.size)})</pre>
       ) : props.huge ? (
-        <pre className="filebody fb-plain">{props.viewContent}</pre>
+        <pre className="filebody fb-plain" ref={props.scrollMemory("plain")}>{props.viewContent}</pre>
       ) : props.preview === "slides" ? (
         <MarpView source={props.previewSource} />
       ) : props.preview === "normal" ? (
-        <div className="md-scroll">
+        <div className="md-scroll" ref={props.scrollMemory("preview")}>
           <MarkdownView source={props.previewSource} basePath={filePath} onOpenFile={props.onOpenFile} onOpenDir={props.onOpenDir} />
         </div>
       ) : (
@@ -90,6 +95,7 @@ export function FileViewerShell(props: FileViewerShellProps) {
           marks={props.marks}
           targetLine={props.targetLine}
           targetColumn={props.targetColumn}
+          scrollMemory={props.scrollMemory("code")}
         />
       )}
     </div>

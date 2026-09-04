@@ -27,6 +27,7 @@ import {
   type PageSize,
   type ScrollAnchor,
 } from "./pdfPages.ts";
+import type { ScrollMemoryRef } from "./parts/useScrollMemory.ts";
 
 /** ページの左右に置く余白（.pdfview-doc の padding と一致させる）。 */
 const PAGE_PAD = 12;
@@ -38,6 +39,8 @@ interface PdfViewProps {
   src: string;
   /** 開けたときにページ数を親へ（情報バーの表示用）。 */
   onMeta?: (meta: { pages: number }) => void;
+  /** 表示位置の記憶（parts/useScrollMemory）。タブから戻ったときに同じページへ返す。 */
+  scrollMemory?: ScrollMemoryRef;
 }
 
 /** 表示に出す失敗の種類。pdf.js の例外名から引く。 */
@@ -50,7 +53,7 @@ function failureOf(e: unknown): Failure {
   return "load";
 }
 
-export function PdfView({ src, onMeta }: PdfViewProps) {
+export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   const tr = useT();
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasesRef = useRef(new Map<number, HTMLCanvasElement>());
@@ -75,6 +78,19 @@ export function PdfView({ src, onMeta }: PdfViewProps) {
       renderedRef.current.delete(i);
     };
   }, []);
+
+  // 内側の ref と外から来た表示位置の記憶を 1 本に束ねる（CodeView と同じ形）。
+  const attachScroll = useCallback(
+    (el: HTMLDivElement) => {
+      scrollRef.current = el;
+      const detach = scrollMemory?.(el);
+      return () => {
+        scrollRef.current = null;
+        detach?.();
+      };
+    },
+    [scrollMemory],
+  );
 
   const [pageSizes, setPageSizes] = useState<PageSize[]>([]);
   const [failure, setFailure] = useState<Failure>("");
@@ -295,7 +311,7 @@ export function PdfView({ src, onMeta }: PdfViewProps) {
   const pages = pageSizes.length;
   return (
     <div className="pdfview">
-      <div className="pdfview-scroll" ref={scrollRef} tabIndex={0} aria-label={tr("view.pdf.aria")}>
+      <div className="pdfview-scroll" ref={attachScroll} tabIndex={0} aria-label={tr("view.pdf.aria")}>
         {pages === 0 ? (
           <p className="pdfview-loading muted">{tr("view.pdf.loading")}</p>
         ) : (
