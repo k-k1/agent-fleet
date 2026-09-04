@@ -1,17 +1,20 @@
-// deps.go — この package が CP から必要とするものを、切断面の**こちら側**で宣言する。
+// deps.go — declares what this package needs from the CP, on this side of the seam.
 //
-// internal/mcpsrv は MCP の 3 つの面（/mcp の JSON-RPC ツールサーバー、
-// /api/admin/mcp-servers のテナント配布 CRUD、/internal/mcp-servers の配布face）で、
-// CP の `manager` / `memberAuth` / handler 群には依存しない。manager は CP の god
-// object で、そのメソッドは resolver.go / workspace_lifecycle.go / reaper.go ほかに
-// 散っている——運べないし、運ぶべきでもない。
+// internal/mcpsrv covers the three MCP faces (the JSON-RPC tool server at `/mcp`, the
+// tenant distribution CRUD under `/api/admin/mcp-servers`, and the distribution face at
+// `/internal/mcp-servers`) and does not depend on the CP's `manager` / `memberAuth` /
+// handlers. manager is the CP's god object and its methods are spread over resolver.go,
+// workspace_lifecycle.go, reaper.go and others — it cannot be moved here, and should not
+// be.
 //
-// なので外向きの依存は 1 本のインタフェース CP に集める。**struct の公開フィールド
-// （関数フィールドの束）にしていない**のは ADR 0067 決定 5 の但し書きどおり: フィールド
-// を 1 本埋め忘れると nil のまま無言で no-op になり、reflect の網羅検査を別に書かないと
-// 気付けない。インタフェースなら埋め忘れは**コンパイルエラー**なので、検査そのものが要らない。
+// So the outward dependency is collected into the single interface CP. Not a struct of
+// exported function fields, per the proviso in ADR 0067 decision 5: one field left unset
+// stays nil and silently becomes a no-op, which nothing notices without a separate
+// reflect-based completeness check. With an interface, a missing member is a compile
+// error, so the check itself is unnecessary.
 //
-// 逆向き（main が mcpsrv を呼ぶ側）は control-plane/alias_mcp.go 1 枚で吸収する。
+// The other direction — main calling into mcpsrv — is absorbed by
+// control-plane/alias_mcp.go alone.
 package mcpsrv
 
 import (
@@ -27,7 +30,7 @@ import (
 // CP is everything mcpsrv needs from the control plane. The implementation is
 // control-plane/alias_mcp.go's adapter over *manager.
 type CP interface {
-	// --- 素材 ------------------------------------------------------------------
+	// --- Data ------------------------------------------------------------------
 	// Store is the CP metadata store. mcpsrv reads PATs, identities, memberships,
 	// tenants, sessions, memos, audit, egress and the MCP server rows through it.
 	Store() store.Store
@@ -40,7 +43,7 @@ type CP interface {
 	// TokenSignMaster is the master the AF_MCP_TOKEN signing key is derived from.
 	TokenSignMaster() []byte
 
-	// --- 解決 / ライフサイクル（manager のメソッド） ------------------------------
+	// --- Resolution / lifecycle (manager's methods) -----------------------------
 	RuntimeFor(ws store.Workspace, secretKey string, extraEnv ...string) runtime.Runtime
 	ResolveByMembership(ctx context.Context, identityID, membershipID string) (*Resolved, *APIError)
 	WorkspaceStateByMembership(ctx context.Context, membershipID string) (container, state string)
@@ -51,7 +54,7 @@ type CP interface {
 	CountRunningInTenant(ctx context.Context, tenantID string) (int, error)
 	AgentSessions(ctx context.Context, rt runtime.Runtime) ([]Session, error)
 
-	// --- HTTP の認可 / テナント選択（memberAuth と httpapi.go） -------------------
+	// --- HTTP authorization / tenant selection (memberAuth, httpapi.go) ---------
 	// TenantAdminFor gates the admin face. It writes the 401/403 itself and
 	// returns ok=false, exactly as memberAuth does for every other feature API.
 	TenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (store.Identity, store.Tenant, bool)
@@ -63,21 +66,20 @@ type CP interface {
 	// --- CP→Agent ---------------------------------------------------------------
 	// AgentText performs an authenticated CP→Agent request and returns the body.
 	//
-	// ⚠️ It deliberately stayed in package main (control-plane/mcp_agent_text.go).
-	// The error it returns is *agentHTTPError, whose status/body are UNEXPORTED and
-	// are read back by memo.go through errors.As; moving the type here would make
-	// that assertion compile and silently return false — the docs/log の #310 型の
-	// 「コンパイルは通るのに無言で false」事故そのもの。
+	// It deliberately stays in package main (control-plane/mcp_agent_text.go). The
+	// error it returns is *agentHTTPError, whose status/body are UNEXPORTED and are
+	// read back by memo.go through errors.As; moving the type here would leave that
+	// assertion compiling and silently returning false.
 	AgentText(ctx context.Context, rt runtime.Runtime, method, path string, body []byte) (string, error)
 
-	// --- 他家系のサービス層（そのまま呼ぶ。ロジックはこちらに持たない） -------------
+	// --- Service layers of other families (called as is; no logic here) ---------
 	ScheduleGuardErr(ctx context.Context, membershipID, repoName, sessionName string) error
 	MemoList(ctx context.Context, membershipID string) (any, error)
 	MemoCreate(ctx context.Context, mv store.MembershipView, repo, category, kind, body, refPath string) (any, error)
 	MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int) (any, error)
 	MemoFlush(ctx context.Context, rt runtime.Runtime, membershipID, sessionName string, ids []string) (map[string]any, error)
 
-	// --- 方針・一次情報（写すと二つ目の出所になるもの） ----------------------------
+	// --- Policy and primary sources (a copy becomes a second source of truth) ---
 	// ScopeRank is the PAT scope ladder (pat.go). Taken from the CP because a tier
 	// inserted there must move this package's tool visibility with it.
 	ScopeRank(scope string) int

@@ -99,10 +99,11 @@ func normalizeAttachments(in []memoAttachment) (string, *apiError) {
 	return string(b), nil
 }
 
-// memoAPI is the memo-queue feature handler set（docs/log/23 残③ の機能 struct 実例）:
-// 解決は埋め込みの memberAuth（登録側で withMembership / withResolved に包む）、
-// store は MemoStore の narrow view だけを持つ。flush だけは実ランタイムへ送る
-// ため withResolved で登録する。
+// memoAPI is the memo-queue feature handler set (docs/log/23, remaining item 3, as the
+// worked example of a feature struct): resolution comes from the embedded memberAuth
+// (registration wraps it in withMembership / withResolved) and the store is a narrow
+// MemoStore view. flush alone registers through withResolved because it has to reach
+// the live runtime.
 type memoAPI struct {
 	memberAuth
 	store store.MemoStore
@@ -281,9 +282,10 @@ func (a memoAPI) update(w http.ResponseWriter, r *http.Request, _ store.Identity
 }
 
 // buildFlushMessage concatenates the selected memos directly, grouping by category
-// (empty category -> 未分類) and preserving the ORDER of the resolved memos
-// (already sorted by category/position on the way in). File memos surface their
-// ~/repos ref path plus any comment, text memos surface their body.
+// (an empty category becomes the uncategorized heading) and preserving the ORDER of the
+// resolved memos
+// (already sorted by category/position on the way in). File memos surface their ~/repos
+// ref path plus any comment, text memos surface their body.
 func buildFlushMessage(memos []store.Memo) string {
 	var b strings.Builder
 	lastCat := "\x00" // sentinel so the first real category (incl. "") emits a heading
@@ -404,7 +406,7 @@ func (a memoAPI) listCategories(w http.ResponseWriter, r *http.Request, _ store.
 
 // createCategory adds a category to a repo bucket, appended after the existing ones. A
 // duplicate (membership, repo, name) is a no-op that returns the existing row, so the
-// "＋カテゴリ" button is idempotent and never 409s.
+// add-category button is idempotent and never 409s.
 func (a memoAPI) createCategory(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	var in memoCategoryDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -518,8 +520,9 @@ func (a memoAPI) findCategory(ctx context.Context, membershipID, repo, name stri
 	return nil
 }
 
-// deleteCategory removes a category and empties its memos (moves them to 未分類 rather
-// than deleting them — a category delete must never lose notes).
+// deleteCategory removes a category and empties its memos (they move to the
+// uncategorized bucket rather than being deleted — a category delete must never lose
+// notes).
 func (a memoAPI) deleteCategory(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	id := r.PathValue("id")
 	cur, found, err := a.store.GetCategory(r.Context(), id)
@@ -587,8 +590,9 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 	}
 	sentAt := store.NowTS()
 	if err := st.MarkMemosSent(ctx, membershipID, sentIDs, sentAt); err != nil {
-		// 送信自体は完了している。ここで 500 を返すとクライアントの再試行が同内容の
-		// 二重送信を誘発するので、ログに残して成功として返す(メモは未送信のまま残る)。
+		// The message itself was already delivered. Answering 500 here would make the
+		// client retry and send the same text twice, so this is logged and reported as
+		// success; the memos simply stay marked unsent.
 		log.Printf("memo flush: mark sent failed (message already delivered) session=%s ids=%v: %v",
 			sessionName, sentIDs, err)
 	}

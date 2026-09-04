@@ -7,17 +7,17 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/tenantsrv"
 )
 
-// tenant.limits の blob は limits.go の tenantLimits が**唯一のエンコーダ**で、
-// internal/tenantsrv は Limits という写し（json タグ無し）越しに値を渡すだけ——
-// その取り決めを機械で縛るのがこの検査。ADR 0067 決定 5 の但し書き
-// （「公開 struct で依存を受けるなら reflect の網羅検査が必須」）を、
-// 切断面を跨ぐ唯一の struct に当てている。
+// TestTenantLimitsProjectionCoversEveryStoredField holds limits.go's tenantLimits (the
+// only encoder of the stored tenant.limits blob) and internal/tenantsrv's Limits copy
+// (no json tags) to the same field set. It is the reflect sweep ADR 0067 decision 5
+// requires of a public struct taken as a dependency, applied to the one struct that
+// crosses the seam.
 //
-// 🔴 なぜ要るか: PUT /api/admin/tenants/{slug}/limits は blob を**丸ごと書き換える**。
-// limits.go にフィールドが 1 本増えて写しに増えなければ、tenant_wiring.go の
-// tenantLimitsIn がそれを埋めないまま marshal し、**保存のたびに既存の設定が
-// 静かに消える**。ビルドもテストも通り、消えるのは運用者が入れた値だけ、という
-// 一番高くつく壊れ方なので、フィールド集合の一致そのものを検査する。
+// PUT /api/admin/tenants/{slug}/limits rewrites the whole blob, so a field added to
+// limits.go but not to the copy is marshalled unset by tenant_wiring.go's
+// tenantLimitsIn and every save silently erases what the operator configured. Build
+// and tests stay green while only operator-entered values disappear, so the field sets
+// themselves are what gets checked.
 func TestTenantLimitsProjectionCoversEveryStoredField(t *testing.T) {
 	src := reflect.TypeOf(tenantLimits{})
 	dst := reflect.TypeOf(tenantsrv.Limits{})
@@ -48,9 +48,11 @@ func TestTenantLimitsProjectionCoversEveryStoredField(t *testing.T) {
 	}
 }
 
-// 写しの検査だけでは「フィールドはあるが詰め替えを書き忘れた」を捕まえられない
-// （tenantLimitsIn / tenantLimitsOut は手書きの代入 16 本）。そこで**全フィールドに
-// 非ゼロ値を入れて往復させ、元に戻ることを見る**。1 本写し忘れればゼロ値で返るので落ちる。
+// TestTenantLimitsRoundTripsThroughTheSeam catches what the field-set check cannot: a
+// field that exists on both sides but whose hand-written assignment was never added
+// (tenantLimitsIn / tenantLimitsOut are 16 assignments each). Every field gets a
+// non-zero value and has to survive the round trip; a missing assignment comes back
+// zero and fails.
 func TestTenantLimitsRoundTripsThroughTheSeam(t *testing.T) {
 	var src tenantLimits
 	v := reflect.ValueOf(&src).Elem()

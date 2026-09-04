@@ -1,11 +1,12 @@
-// tts_ecs.go — VOICEVOX エンジンの ECS オンデマンド制御（docs/log/24 Phase 2）。
+// tts_ecs.go — on-demand ECS control of the VOICEVOX engine (docs/log/24).
 //
-// AWS 本番ではエンジンを ECS Service として置き、管理者トグルで desired count を
-// 0↔1 する（停止中コスト 0）。アドレッシングは Cloud Map の固定 DNS（例
-// voicevox.af.local）を AF_VOICEVOX_URL に差すだけで、CP の合成ハンドラは不変。
-// Service / タスク定義 / Cloud Map は IaC（deploy/aws）が所有し、CP は
-// DescribeServices / UpdateService しか呼ばない（CP ロールに要この 2 権限）。
-// ワークスペースの ECS アダプタ（runtime_ecs.go）とは独立の小さなコントローラ。
+// On AWS the engine is an ECS service whose desired count the admin toggle flips between
+// 0 and 1, so a stopped engine costs nothing. Addressing is a fixed Cloud Map DNS name
+// (e.g. voicevox.af.local) put into AF_VOICEVOX_URL, which leaves CP's synthesis handler
+// untouched. The service, task definition and Cloud Map entry are owned by IaC
+// (deploy/aws); CP only calls DescribeServices and UpdateService, the two permissions the
+// CP role needs. A small controller independent of the workspace ECS adapter
+// (runtime_ecs.go).
 package main
 
 import (
@@ -18,8 +19,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 )
 
-// ttsEngineAPI は ECS 呼び出しの narrow port（ecsAPI の 2 メソッド版）。実 *ecs.Client
-// が満たし、テストは偽物を差す。
+// ttsEngineAPI is the narrow ECS port (two methods), so tests can pass a fake. The real
+// *ecs.Client satisfies it.
 type ttsEngineAPI interface {
 	DescribeServices(context.Context, *ecs.DescribeServicesInput, ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error)
 	UpdateService(context.Context, *ecs.UpdateServiceInput, ...func(*ecs.Options)) (*ecs.UpdateServiceOutput, error)
@@ -31,9 +32,10 @@ type ttsEngineECS struct {
 	service string
 }
 
-// newTTSEngineFromEnv は AF_TTS_ECS_SERVICE が設定されたときだけコントローラを返す
-// （未設定 = 管理外: dev の常駐 docker 等、ライフサイクルは外部管理）。cluster / region は
-// 専用の AF_TTS_ECS_* が無ければワークスペースの AF_ECS_* に相乗りする。
+// newTTSEngineFromEnv returns a controller only when AF_TTS_ECS_SERVICE is set. Unset
+// means the engine is not managed here (a long-running dev docker, say) and its lifecycle
+// belongs to someone else. Cluster and region fall back to the workspace's AF_ECS_* when
+// the dedicated AF_TTS_ECS_* are absent.
 func newTTSEngineFromEnv() *ttsEngineECS {
 	service := firstEnv("AF_TTS_ECS_SERVICE")
 	if service == "" {
@@ -50,9 +52,10 @@ func newTTSEngineFromEnv() *ttsEngineECS {
 	return &ttsEngineECS{api: ecs.NewFromConfig(ac), cluster: cluster, service: service}
 }
 
-// state はエンジン Service の状態を running | starting | stopped | none に写す
-// （runtime_ecs.go の State と同じ規約）。desired も返し、管理下では「トグルの現在値」
-// として使う（setting より ECS 側が真実源）。
+// state maps the engine service onto running | starting | stopped | none, the same
+// vocabulary as runtime_ecs.go's State. The desired count comes back too and is the
+// toggle's current value while the engine is managed here: ECS is the source of truth,
+// not the stored setting.
 func (t *ttsEngineECS) state(ctx context.Context) (string, int32, error) {
 	out, err := t.api.DescribeServices(ctx, &ecs.DescribeServicesInput{
 		Cluster:  aws.String(t.cluster),
@@ -77,9 +80,9 @@ func (t *ttsEngineECS) state(ctx context.Context) (string, int32, error) {
 	return "none", 0, fmt.Errorf("ecs service %s not found in cluster %s", t.service, t.cluster)
 }
 
-// setEnabled は desired count を 0↔1 する。コールドスタート（image pull 込みで 1〜2 分）
-// は readiness ゲート（voicevoxProvider.Ready / /api/tts/status）が吸収し、その間の
-// 日本語合成は auto ルーティングが Polly JP に逃がす。
+// setEnabled flips the desired count between 0 and 1. The cold start (1-2 minutes,
+// image pull included) is absorbed by the readiness gate (voicevoxProvider.Ready,
+// /api/tts/status), and auto routing sends Japanese synthesis to Polly JP meanwhile.
 func (t *ttsEngineECS) setEnabled(ctx context.Context, on bool) error {
 	desired := int32(0)
 	if on {

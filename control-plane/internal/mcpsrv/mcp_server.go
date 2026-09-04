@@ -14,7 +14,7 @@ package mcpsrv
 // alive while a member's container is stopped, so it is the only place a set can be held
 // that reaches every member (the same reason schedules live here).
 //
-// ⚠️ Validation is DUPLICATED from workspace/agent/internal/mcpreg/def.go. The two are
+// Validation is DUPLICATED from workspace/agent/internal/mcpreg/def.go. The two are
 // separate Go modules, so the rules cannot be shared as code. The error CODES are kept
 // identical on purpose — the Console resolves both through the same "err.<code>" catalog
 // — and the agent re-validates everything it receives (mcpreg.acceptTenant), so a rule
@@ -34,7 +34,8 @@ import (
 )
 
 // Validation codes, identical to mcpreg's (docs/log/48 §11.3: one reason = one code).
-// 追加・改名時は console/src/lib/i18n/locales/{ja,en}/errors.ts の "err.<code>" も同時に。
+// Adding or renaming one means updating "err.<code>" in
+// console/src/lib/i18n/locales/{ja,en}/errors.ts in the same change.
 const (
 	codeMCPNameInvalid    = "mcp_name_invalid"
 	codeMCPNameReserved   = "mcp_name_reserved"
@@ -197,8 +198,8 @@ func (a ServerAPI) openHeaders(ctx context.Context, enc, keyRef string) (map[str
 // --- validation --------------------------------------------------------------------
 
 // validateMCPBody enforces the tenant-distribution rules. transport is pinned to http:
-// ADR0031 決定 2 refuses tenant stdio, and the table has no command columns to hold one,
-// so this is the API half of a constraint the schema also carries.
+// ADR0031 decision 2 refuses tenant stdio, and the table has no command columns to hold
+// one, so this is the API half of a constraint the schema also carries.
 func validateMCPBody(b mcpServerBody) *APIError {
 	name := strings.TrimSpace(b.Name)
 	if !mcpNameRe.MatchString(name) {

@@ -13,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Claude self-operation audit (docs/log/20 M5, A-第2段). claude runs untrusted inside the
+// Claude self-operation audit (docs/log/20 M5, A stage 2). claude runs untrusted inside the
 // container and edits files / runs Bash directly; those don't flow through the CP proxy
 // (M1), so they'd be invisible. The isolation model blocks Agent→CP, so instead of a
 // push from claude's PreToolUse hook the CP PULLS: a background sweeper reads each
@@ -110,10 +110,10 @@ func (a *claudeAuditor) sweep(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	liveWS := map[string]bool{}  // 現存する全ワークスペース
-	checked := map[string]bool{} // セッション一覧まで取得できた running WS
-	liveKey := map[string]bool{} // 現存 claude セッションのカーソル key
-	complete := true             // 部分失敗があれば掃除は見送る(誤削除防止)
+	liveWS := map[string]bool{}  // every workspace that exists
+	checked := map[string]bool{} // running WS whose session list could be read
+	liveKey := map[string]bool{} // cursor keys of the claude sessions that exist
+	complete := true             // a partial failure skips cleanup, so nothing is dropped by mistake
 	for _, tn := range tenants {
 		wss, err := a.mgr.store.ListWorkspaces(ctx, tn.ID)
 		if err != nil {
@@ -146,7 +146,8 @@ func (a *claudeAuditor) sweep(ctx context.Context) {
 
 // cleanupCursors drops per-session cursor keys that can no longer fire: the
 // workspace was deleted, or the (successfully enumerated, running) workspace no
-// longer has that session. 停止中WSのセッションは列挙できないため据え置く。
+// longer has that session. A stopped workspace's sessions cannot be enumerated, so
+// its cursors are left alone.
 func (a *claudeAuditor) cleanupCursors(ctx context.Context, liveWS, checked, liveKey map[string]bool) {
 	keys, err := a.mgr.store.ListSettingKeys(ctx, claudeAuditCursorPrefix)
 	if err != nil {
@@ -193,8 +194,9 @@ func (a *claudeAuditor) auditSession(ctx context.Context, ws store.Workspace, rt
 				a0.At = store.NowTS()
 			}
 			if err := a.mgr.store.InsertAudit(ctx, a0); err != nil {
-				// カーソルを進めると監査行がサイレント欠落する。据え置いて次回再試行
-				// (途中まで入った行は重複し得るが、欠落よりは重複を選ぶ)。
+				// Advancing the cursor here loses audit rows silently. Leave it and
+				// retry on the next sweep: the rows already inserted may be
+				// duplicated, and a duplicate beats a gap.
 				log.Printf("claude-audit: insert failed ws=%s session=%s: %v", ws.ID, name, err)
 				return
 			}

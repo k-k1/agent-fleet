@@ -50,9 +50,9 @@ type bbState struct {
 	created  time.Time
 }
 
-// bbFlowRegistry owns the in-flight OAuth CSRF states（docs/log/23 P2-W4: 生の
-// package 変数 map+mutex から struct 化）。プロセス内メモリなので、CP を
-// マルチインスタンス化する際は sticky ルーティングか DB 退避が必要（P3-7）。
+// bbFlowRegistry owns the in-flight OAuth CSRF states. They live in process memory, so
+// running more than one CP instance needs either sticky routing or the states moved to the
+// DB (P3-7).
 type bbFlowRegistry struct {
 	mu     sync.Mutex
 	states map[string]bbState // csrf state -> {user, tenant, created}
@@ -141,7 +141,7 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
-	t := oauthCallbackText(auth.PreferredUILang(r), "Bitbucket") // docs/log/28 P3: Accept-Language で ja/en
+	t := oauthCallbackText(auth.PreferredUILang(r), "Bitbucket") // ja/en by Accept-Language
 
 	st, ok := bbFlows.take(state)
 	if !ok {

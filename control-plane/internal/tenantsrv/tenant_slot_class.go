@@ -109,19 +109,19 @@ func (a Admin) tenantLimitsFor(r *http.Request, tenantID string) Limits {
 	return a.cp.LimitsFor(r.Context(), tenantID)
 }
 
-// tenantSlotClassWire — GET /api/admin/tenants/{slug}/slot-class のレスポンス
-// （Console の `MachineView`、console/src/features/settings/tenant/tenantMachine.tsx）。
+// tenantSlotClassWire is the response of GET /api/admin/tenants/{slug}/slot-class (the
+// Console's `MachineView`, console/src/features/settings/tenant/tenantMachine.tsx).
 //
 // was: map[string]any{"tenant":…, "slot_class":…, "classes":…,
 //
 //	"default_slot_class":…, "editable":…}
 //
-// 5 キーとも無条件なので **omitempty は付けない**。slot_class は "" を取りうる
-// （＝配備既定に従う）ので、付けるとキーごと消えて Console の判定が変わる。
-// Classes は make(…, 0, n) 済みで nil にならない＝`[]` が出る。
+// All five keys are unconditional, so no omitempty: slot_class can be "" (meaning "follow
+// the deployment default"), and omitempty would drop the key and change what the Console
+// decides. Classes is always make(…, 0, n) and never nil, so `[]` is emitted.
 //
-// ⚠️ tenant は Console が prop で持つ slug の echo。`MachineView` は宣言していないが
-// **読んでもいない**。
+// tenant is an echo of the slug the Console already holds as a prop. `MachineView`
+// neither declares nor reads it.
 type tenantSlotClassWire struct {
 	Tenant           string                       `json:"tenant"`
 	SlotClass        string                       `json:"slot_class"`

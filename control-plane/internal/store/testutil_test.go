@@ -1,10 +1,11 @@
 package store
 
-// テストだけが使う、main 側ヘルパの写し。util.go（製品コードの切断面）と分けて
-// あるのは、これらを store の製品面に足す理由が無いため。
+// Copies of main-side helpers, used only by tests. They are kept apart from util.go (the
+// seam for production code) because there is no reason to add them to store's production
+// surface.
 //
-// ⚠️ util.go と同じ一時的な重複である。ウェーブ境界で共有ヘルパへまとめるとき、
-// ここも一緒に片付けること。
+// The same temporary duplication as util.go: when these are folded into a shared helper
+// at the wave boundary, clean this file up with it.
 
 import (
 	"context"
@@ -30,9 +31,10 @@ func sanitizeUser(s string) string {
 	return s
 }
 
-// main 側の定数の写し。値そのものがテストの前提（provider id は行に入る文字列、
-// trust は tenant_idp の列、lease はリース期限の計算式）なので、定義元がずれたら
-// ここも赤くなってほしい——が、いまは黙ってずれる。ウェーブ境界で 1 つにまとめる。
+// Copies of main-side constants. The values themselves are the tests' premise (the
+// provider id is the string that goes into the row, trust is a tenant_idp column, lease
+// is the lease-expiry formula), so a drift at the definition site ought to turn this red
+// — today it drifts silently. Fold into one definition at the wave boundary.
 const (
 	googleProviderID = "google"        // oauth.go
 	trustIssuer      = "issuer"        // oauth_oidc.go
@@ -49,8 +51,8 @@ func countRows(t *testing.T, st *SQL, table string) int {
 	return n
 }
 
-// linkOf mirrors the helper in main's identity_link_test.go:「realm を持たない、
-// ごく普通のログイン 1 回」。
+// linkOf mirrors the helper in main's identity_link_test.go: one ordinary login, with no
+// realm.
 func linkOf(provider, subject, email string, emailJoin bool) IdentityLink {
 	return IdentityLink{
 		Provider: provider, Subject: subject, Email: email,

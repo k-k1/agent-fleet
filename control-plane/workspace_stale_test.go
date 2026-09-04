@@ -1,6 +1,6 @@
-// workspace_stale_test.go — 「停止→起動で走るコードが変わるか」判定の契約テスト。
-// ここが誤検出すると WS バーに消えない「要再起動」が出続けて信用を失い、逆に取り
-// こぼすと更新が反映されないまま気付けない。判らないときは stale ではない、を固定する。
+// Contract test for the "would a stop/start run different code" verdict. A false
+// positive leaves a "restart needed" badge on the WS bar that nothing can clear, and a
+// miss hides an update that never took effect. When in doubt, answer not stale.
 package main
 
 import (
@@ -8,7 +8,8 @@ import (
 	"testing"
 )
 
-// staleStubRuntime は Stale を任意に返せる Runtime（workspacePayload 用）。
+// staleStubRuntime is a Runtime whose Stale answer is fixed by the test, for exercising
+// workspacePayload.
 type staleStubRuntime struct {
 	stubRuntime
 	state string
@@ -27,13 +28,13 @@ func TestWorkspacePayloadStale(t *testing.T) {
 		t.Fatalf("running+stale: stale = %v, want true", m["stale"])
 	}
 
-	// 停止中は次の起動で必ず新しくなるので出さない（押しても意味の無いバッジを出さない）。
+	// A stopped workspace comes up fresh anyway, so don't show a badge nobody can act on.
 	m = a.workspacePayload(ctx, &resolved{rt: staleStubRuntime{state: "none", stale: true}}, "none")
 	if _, ok := m["stale"]; ok {
 		t.Fatalf("stopped: stale present (%v), want absent", m["stale"])
 	}
 
-	// ドリフト無しのときは key ごと出さない（既存ペイロード形状を変えない）。
+	// With no drift the key is absent entirely, keeping the existing payload shape.
 	m = a.workspacePayload(ctx, &resolved{rt: staleStubRuntime{state: "running", stale: false}}, "running")
 	if _, ok := m["stale"]; ok {
 		t.Fatalf("fresh: stale present (%v), want absent", m["stale"])

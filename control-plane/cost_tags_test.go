@@ -11,7 +11,8 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Automatic activation of the cost allocation tags (docs/log/67 §67.5, ADR 0048 決定 11).
+// Automatic activation of the cost allocation tags (docs/log/67 §67.5, ADR 0048
+// decision 11).
 //
 // This is the one piece of the system that writes ACCOUNT-LEVEL billing configuration,
 // so the tests are mostly about what it must REFUSE to do. Getting activation wrong in
@@ -27,7 +28,7 @@ func has(list []string, want string) bool {
 	return false
 }
 
-// ⚠️ The single most important assertion in this file. `af-workspace` is built from the
+// The single most important assertion in this file. `af-workspace` is built from the
 // member's email address, so activating it would copy personal data into the billing
 // export (CUR / Cost Explorer / invoice CSVs) — permanently, since past bills are not
 // rewritten. It must never be in the set the CP acts on.
@@ -73,7 +74,7 @@ func TestEnsureCostTagsActivatesUnconfiguredKeys(t *testing.T) {
 	}
 }
 
-// ⚠️ A human who turned a tag OFF in their own billing console must not be overruled by
+// A human who turned a tag OFF in their own billing console must not be overruled by
 // a background loop. AWS stamps LastUpdatedDate whenever anyone changes the status, so
 // "Inactive AND stamped" is a decision, while "Inactive and never stamped" is a default.
 func TestEnsureCostTagsLeavesADeliberatelyDisabledKeyAlone(t *testing.T) {
@@ -133,7 +134,7 @@ func TestEnsureCostTagsRetriesAnUndiscoveredKey(t *testing.T) {
 	}
 }
 
-// ⚠️ Partial failure comes back in the RESPONSE body, not as a Go error. Trusting `err`
+// Partial failure comes back in the RESPONSE body, not as a Go error. Trusting `err`
 // alone would log "activated" for a key that was refused, and nobody would find out
 // until they wondered why a column was missing months later.
 func TestEnsureCostTagsReadsPerEntryErrors(t *testing.T) {
@@ -198,14 +199,14 @@ func TestEnsureCostTagsAsksForActive(t *testing.T) {
 	}
 }
 
-// ★ メンバー（linked）アカウント: 有効化は payer にしかできず、**payer がやったことを
-// この CP は読めない**（実測で `ListCostAllocationTags` が構造的に AccessDenied）。
-// それでも「効いているか」は分かる——按分されていれば、ポーラーが毎ティック引いている
-// 費用データに**値の入った af-membership が返ってくる**。
+// A member (linked) account: only the payer may activate, and what the payer did is not
+// readable from this CP — measured, `ListCostAllocationTags` is structurally
+// AccessDenied. Whether it is working is still knowable: once attribution is on, the cost
+// data the poller pulls every tick comes back with af-membership filled in.
 //
-// ここで守るのは 3 つ: ①証拠が来たら生の AWS エラーを出し続けるのをやめる ②断定するのは
-// 実際に group by している 1 軸だけ ③以後 Cost Explorer を叩き直さない（1 リクエスト
-// $0.01 の永久ループを作らない）。
+// Three things are held here: stop emitting the raw AWS error once that evidence arrives;
+// claim only the one axis actually grouped by; and never call Cost Explorer again
+// afterwards, which would be an endless loop at $0.01 a request.
 func TestCostTagsInferActivationFromTheBillWhenUnreadable(t *testing.T) {
 	ce := &fakeCE{listErr: fmt.Errorf("AccessDeniedException: Failed to list Cost Allocation Tags: Linked account doesn't have access to cost allocation tags.")}
 	p := tagPoller(t, ce)
@@ -216,13 +217,14 @@ func TestCostTagsInferActivationFromTheBillWhenUnreadable(t *testing.T) {
 		t.Fatalf("unreadable state must be reported and retried; state = %+v", st)
 	}
 
-	// 値の入らない行しか来ない間は、まだ何も言えない（有効化直後の最大 24 時間がこれ）。
+	// While only untagged rows arrive nothing can be concluded yet — that is the first
+	// 24 hours after activation.
 	p.noteAttribution([]store.CloudCostRow{{Day: "2026-08-25", MembershipID: "", Service: "AmazonEC2"}})
 	if len(p.costTags().Attributed) != 0 {
 		t.Error("an untagged bill is not evidence that the axis is on")
 	}
 
-	// 値が来た＝按分は効いている。
+	// A filled-in value means attribution is working.
 	p.noteAttribution([]store.CloudCostRow{{Day: "2026-08-25", MembershipID: "m-1", Service: "AmazonEC2"}})
 	st = p.costTags()
 	if !has(st.Attributed, runtime.EC2TagMembership) {
@@ -237,7 +239,7 @@ func TestCostTagsInferActivationFromTheBillWhenUnreadable(t *testing.T) {
 	if !st.settled() {
 		t.Error("settled: asking again cannot change the answer from a member account")
 	}
-	// ★ そして本当に叩き直さないこと（$0.01/回 の永久ループ防止）。
+	// And it really must not ask again: $0.01 a call, forever.
 	before := ce.listCalls
 	p.ensureCostTagsActive(ctx)
 	if ce.listCalls != before {

@@ -1,5 +1,4 @@
-// resolver.go — アイデンティティ／テナント／メンバーシップ解決（resolve 系）。
-// manager.go からの機械的分割（docs/log/23 P2-W2）。
+// resolver.go — resolution of identity, tenant and membership for a request.
 package main
 
 import (
@@ -42,17 +41,17 @@ func (m *manager) resolveUser(r *http.Request) string { return m.resolveIdentity
 // key/email are the caller's own, taken from resolveIdentity on the same request,
 // so the context pair always describes the same person. Do not call this with
 // another person's key while a session context is in scope — the pair wins.
-// ★ It is also the choke point for the two things a TENANT-DEFINED provider must
-// not be able to do (docs/log/61 §61.11 + 決定 31/32), and they are enforced here rather
-// than at each caller on purpose — identityFor, resolveFull and resolveMembership
-// all pass roleHintFor(email), and a rule that has to be repeated three times is a
-// rule that will be missed the fourth time:
+// It is also the choke point for the two things a TENANT-DEFINED provider must
+// not be able to do (docs/log/61 §61.11 + decisions 31/32), and they are enforced
+// here rather than at each caller on purpose — identityFor, resolveFull and
+// resolveMembership all pass roleHintFor(email), and a rule that has to be
+// repeated three times is a rule that will be missed the fourth time:
 //
 //   - no deployment role. roleHintFor matches SUPER_ADMIN_EMAILS on the address
 //     alone, so without this a subsidiary's administrator could mint a token
 //     carrying the operator's address and be upgraded to super_admin — and
 //     UpsertIdentity never downgrades, so removing the provider afterwards would
-//     not take it back (決定 30 の乗っ取り経路 4).
+//     not take it back (decision 30, takeover path 4).
 //   - no join by email. The (provider, subject) pair is the only key, because that
 //     issuer belongs to the subsidiary and its assertion about an address is not
 //     proof of being that person (LinkIdentity's rule 2').
@@ -62,7 +61,7 @@ func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint strin
 		if tenantDefined {
 			roleHint = ""
 		}
-		// ★ No realm on this path: the request carries a provider ID from the session
+		// No realm on this path: the request carries a provider ID from the session
 		// cookie, not the provider object, and rule 1.5 must never guess one. The
 		// callback stamped it at login, and LinkIdentity keeps a recorded realm when
 		// it is handed an empty one (docs/log/61 §61.15).
@@ -89,7 +88,7 @@ func identityErr(err error) *apiError {
 
 // roleHintFor names the DEPLOYMENT role a resolution should upgrade this person to.
 //
-// ★ AUTH=dev is super_admin, and that is a decision rather than a shortcut (docs/log/71
+// AUTH=dev is super_admin, and that is a decision rather than a shortcut (docs/log/71
 // §71.6). In dev mode every request is the same fixed user (DEV_USER) with no
 // authentication and no email at all, so SUPER_ADMIN_EMAILS — which matches on the
 // address — can never name anybody: a native / WSL deployment (deploy/native/af pins
@@ -118,13 +117,13 @@ func (m *manager) roleHintFor(email string) string {
 // This is the per-tenant admin gate; deployment-wide actions (create tenant,
 // tenant quotas, host stats, role grants) stay super_admin-only.
 //
-// ★ The membership must be ACTIVE. GetMembership deliberately returns
+// The membership must be ACTIVE. GetMembership deliberately returns
 // deactivated rows too — the offboarding sequence needs them, since stopping the
 // workspace and wiping the home happen after the person is off the roster — so
 // the status check has to be here. Without it, a tenant_admin who was removed
 // would still administer the tenant from a session cookie that stays valid for
 // up to AF_SESSION_TTL, and could put themselves straight back on the roster
-// (docs/log/61 §61.10.7 の穴 2).
+// (docs/log/61 §61.10.7, gap 2).
 func (m *manager) tenantAdminFor(ctx context.Context, ident store.Identity, tID string) bool {
 	if ident.Role == "super_admin" {
 		return true
@@ -175,7 +174,7 @@ func (m *manager) membershipsFor(ctx context.Context, ident store.Identity) ([]s
 		// cached "no" for this address has to go (docs/log/61 §61.9.7).
 		m.tenantLogin.invalidate()
 		if contested {
-			// ★ Never join silently when the configuration is ambiguous: more than one
+			// Never join silently when the configuration is ambiguous: more than one
 			// tenant claimed this domain and the lowest slug won by rule, which is a
 			// decision an administrator has to be able to find afterwards (§61.9.8).
 			log.Printf("WARNING: auto-join: %s matched more than one tenant; joined %q (lowest slug)", ident.Email, t.Slug)
@@ -225,20 +224,20 @@ func (m *manager) hasAnyMembershipRow(ctx context.Context, identityID, tenantID 
 	return err == nil && ok
 }
 
-// checkTenantProvider enforces tenant.allowed_providers (docs/log/61 §61.9.4 + 決定
-// 14). This is the ENFORCEMENT point; filtering the login page's buttons is only
+// checkTenantProvider enforces tenant.allowed_providers (docs/log/61 §61.9.4 +
+// decision 14). This is the ENFORCEMENT point; filtering the login page's buttons is only
 // presentation, and without this check a person could sign in on the generic
 // /login with any enabled provider and then simply send X-AF-Tenant for a tenant
 // that was configured to accept one specific IdP.
 //
-// ★ It answers with provider_required, not a bare forbidden. A session carries
-// exactly one provider (決定 18), so moving between departments with different
+// It answers with provider_required, not a bare forbidden. A session carries
+// exactly one provider (decision 18), so moving between departments with different
 // IdPs legitimately requires signing in again — and being told "not allowed" when
 // the remedy is one click away is how support tickets are made. The Console builds
 // that link from the tenant's allowed_providers, which /api/tenants reports per
 // membership (tenants.go), so this error itself needs no extra payload.
-// ★ It also pins a TENANT-DEFINED session to its own tenant (docs/log/61 §61.11 + 決定
-// 32-3). That check cannot be left to allowed_providers: a tenant that names no
+// It also pins a TENANT-DEFINED session to its own tenant (docs/log/61 §61.11 +
+// decision 32-3). That check cannot be left to allowed_providers: a tenant that names no
 // providers accepts every one of them, so without this a subsidiary's own IdP would
 // be a way into every such tenant in the deployment. The subsidiary's administrator
 // controls that issuer, so the only tenant its assertions may open is theirs.
@@ -256,21 +255,21 @@ func (m *manager) checkTenantProvider(ctx context.Context, mv store.MembershipVi
 		"tenant " + mv.TenantSlug + " requires signing in with: " + strings.Join(allowed, ", ")}
 }
 
-// checkTenantIP enforces tenant.allowed_cidrs (docs/log/66 + ADR 0047 決定 3). It sits
+// checkTenantIP enforces tenant.allowed_cidrs (docs/log/66 + ADR 0047 decision 3). It sits
 // next to checkTenantProvider because it answers the same shape of question — "may
 // this request use THIS tenant" — at the same choke point, which is the first place
 // where the tenant is known at all (the login page and the OAuth round trip happen
 // before anyone knows which tenant is being entered).
 //
-// ★ super_admin is exempt (決定 4). This is a tenant's own control, and the operator
+// super_admin is exempt (decision 4). This is a tenant's own control, and the operator
 // must always be able to undo a tenant that locked itself out; without the exemption
 // the only remedy would be editing the database.
 //
-// ★ It is NOT called from resolveByMembership. That is the PAT path — MCP and the
+// It is NOT called from resolveByMembership. That is the PAT path — MCP and the
 // internal git provider — and its source address is the caller's OWN Workspace
 // container, not a place a person is sitting. Enforcing here would mean a tenant that
 // allowlists its office silently blocks every agent inside its own workspaces
-// (ADR 0047 決定 3). Revoking that access is the membership's job, as it always was.
+// (ADR 0047 decision 3). Revoking that access is the membership's job, as it always was.
 func (m *manager) checkTenantIP(ctx context.Context, ident store.Identity, mv store.MembershipView) *apiError {
 	if ident.Role == "super_admin" {
 		return nil
@@ -354,15 +353,18 @@ func selectMembership(ms []store.MembershipView, tenantSel string) (store.Member
 	}
 }
 
-// buildResolved maps an (identity, membership) to its runtime + workspace,
-// creating the workspace on first use. docs/log/23 P2-W2: 旧実装（buildResolvedLocked）
-// は manager.mu を store/custodian I/O 越しに保持し、全メンバーシップの解決を
-// 1 本のロックで直列化していた。現在 m.mu が守るのはキャッシュ map だけで、
-// I/O は per-membership の build ロック下で走る — 同一メンバーシップの初回同時
-// リクエストが workspace を二重作成しない一方、別メンバーシップは並行に解決する。
-// 注: evict*Cache との競合はベストエフォート（ビルド中に evict されると直後の
-// キャッシュ格納が旧 env のまま残り得るが、ポリシー変更は「次のコンテナ起動で
-// 反映」というこれまでの意味論の範囲内）。
+// buildResolved maps an (identity, membership) to its runtime + workspace, creating the
+// workspace on first use.
+//
+// m.mu guards the cache maps only; the store/custodian I/O runs under a per-membership
+// build lock instead. Never hold m.mu across that I/O: it would serialize the resolution
+// of every membership behind one lock. The build lock is what keeps two concurrent first
+// requests for the SAME membership from creating the workspace twice, while different
+// memberships still resolve in parallel.
+//
+// Racing with evict*Cache is best effort: an eviction during a build can leave the store
+// that follows it holding the old env. That is within the existing semantics — a policy
+// change applies at the next container start.
 func (m *manager) buildResolved(ctx context.Context, ident store.Identity, mv store.MembershipView) (*resolved, *apiError) {
 	if c, ok := m.cachedRTFor(mv.MembershipID); ok {
 		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv}, nil

@@ -1,11 +1,11 @@
 // cost_tags.go — keep the cost allocation tags activated, without anyone having to
-// remember (docs/log/67 §67.5, ADR 0048 決定 11).
+// remember (docs/log/67 §67.5, ADR 0048 decision 11).
 //
 // Why this is automated at all: forgetting is PERMANENT. A cost allocation tag only
 // applies from the moment it is switched on, so every day the step is left undone is a
 // day of real spend that can never be attributed to anyone, ever. Every other
 // prerequisite in this system can be fixed late; this one cannot. A line in a runbook
-// loses that race (ADR 0044 決定 3 — a step nobody performs is a step that does not
+// loses that race (ADR 0044 decision 3 — a step nobody performs is a step that does not
 // exist).
 //
 // And it cannot be a one-shot at boot either: AWS refuses to activate a tag key it has
@@ -13,7 +13,7 @@
 // discovery takes up to a day after the CP first stamps it. So this rides the cloud-cost
 // poller's tick and retries until each key lands.
 //
-// ⚠️ This writes ACCOUNT-LEVEL billing configuration — the only thing in this codebase
+// This writes ACCOUNT-LEVEL billing configuration — the only thing in this codebase
 // that reaches outside the resources the CP created itself. Two guards keep that
 // defensible:
 //
@@ -41,9 +41,9 @@ import (
 
 // costTagKeys is the allow-list: the tags the CP writes that are BILLING AXES.
 //
-// ⚠️ Deliberately excluded, and each for a reason:
+// Deliberately excluded, and each for a reason:
 //   - af-workspace — derived from the member's email. Activating it puts personal data
-//     in the billing export (ADR 0048 決定 1). This is the important one.
+//     in the billing export (ADR 0048 decision 1). This is the important one.
 //   - af-claim / af-claim-at / af-idle-since / af-hibernating / af-backup-at /
 //     af-quarantine-* / af-image — operational state, not axes. They change constantly
 //     and would add churning columns to the bill that answer no question.
@@ -72,15 +72,15 @@ type costTagState struct {
 	// AWS Organizations where only the payer may activate).
 	Error string `json:"error,omitempty"`
 	// Attributed are keys whose activation state could NOT be read, but whose values
-	// are actually coming back in the bill — i.e. **proven on by evidence**.
+	// are actually coming back in the bill — proven on by evidence.
 	//
-	// ★ これが要るのは、メンバー（linked）アカウントでは `ListCostAllocationTags` が
-	// 構造的に AccessDenied になるからである（実測）。有効化は payer にしかできず、
-	// **payer がやったことをこの CP は読めない**。それでも「効いているか」は分かる——
-	// 按分されているなら、ポーラーが毎回引いている費用データに**値の入った
-	// af-membership が返ってくる**。読めないなら、実際に按分できているかで判定する。
-	// 追加の Cost Explorer 呼び出しは要らない（1 リクエスト $0.01 なので、確認のためだけに
-	// 叩き足さない）。
+	// This exists because on a member (linked) account `ListCostAllocationTags` is
+	// structurally AccessDenied (measured): only the payer may activate, and what the
+	// payer did is unreadable from here. Whether it is working is still knowable — if
+	// attribution is on, the cost data the poller already fetches comes back with
+	// af-membership carrying a value. So when the state cannot be read, judge by
+	// whether attribution actually happened. That needs no extra Cost Explorer call,
+	// which matters at $0.01 per request.
 	Attributed []string `json:"attributed,omitempty"`
 }
 
@@ -89,8 +89,8 @@ type costTagState struct {
 // bills $0.01 every six hours forever would be its own small bug.
 func (s costTagState) settled() bool {
 	if len(s.Attributed) > 0 {
-		// 状態は読めないが、按分が効いていることは分かった。これ以上 List を叩いても
-		// 答えは変わらない（linked アカウントである限り永久に AccessDenied）。
+		// The state is unreadable but attribution is demonstrably working, and more
+		// List calls cannot change that — a linked account is AccessDenied forever.
 		return true
 	}
 	return len(s.Pending) == 0 && s.Error == ""
@@ -158,7 +158,7 @@ func (p *cloudCostPoller) ensureCostTagsActive(ctx context.Context) costTagState
 		log.Printf("cost tags: activating %s failed: %v", strings.Join(toActivate, ", "), err)
 		return state
 	}
-	// ⚠️ Partial failure arrives in the RESPONSE, not as a Go error. Checking only `err`
+	// Partial failure arrives in the RESPONSE, not as a Go error. Checking only `err`
 	// would log "activated" for keys that were refused, and the gap would then be
 	// invisible until somebody wondered why a column was missing months later.
 	failed := map[string]string{}
@@ -188,16 +188,17 @@ func (p *cloudCostPoller) costTags() costTagState {
 	return s
 }
 
-// noteAttribution は「按分できているか」を**費用データの実物**から判定する。ポーラーが
-// 毎ティック引いている結果（af-membership で group by 済み）を渡すだけで、Cost Explorer
-// への追加リクエストは無い。
+// noteAttribution decides whether attribution is working from the actual cost data. It
+// takes the rows the poller already fetched this tick (grouped by af-membership), so there
+// is no extra Cost Explorer request.
 //
-// 呼ぶのは活性化状態が**読めなかったとき**だけ。読めているならそちらが正であり、
-// 「値がまだ来ていない＝有効化直後の最大 24 時間」を不活性と誤読してはいけない。
+// Call it only when the activation state could not be read. When it can, that is
+// authoritative: values not having arrived yet — up to 24h right after activation — must
+// not be misread as inactive.
 func (p *cloudCostPoller) noteAttribution(rows []store.CloudCostRow) {
 	s, _ := p.tagState.Load().(costTagState)
 	if s.Error == "" || len(s.Attributed) > 0 {
-		return // 読めている／既に証拠で決着している
+		return // readable, or already settled by evidence
 	}
 	attributed := false
 	for _, r := range rows {
@@ -211,10 +212,10 @@ func (p *cloudCostPoller) noteAttribution(rows []store.CloudCostRow) {
 	}
 	s.Attributed = []string{runtime.EC2TagMembership}
 	s.Pending = nil
-	// ★ 生の AWS エラーを出し続けるのをやめ、読み手が取れる行動に置き換える。
-	// ⚠️ 断定するのは af-membership だけ。ポーラーが group by しているのはその 1 軸で、
-	// 他のキーは「有効化されているはずだ」としか言えない——linked アカウントからは
-	// 確かめる手段が無いので、確かめていないことを確かめたと書かない。
+	// Replace the raw AWS error with something the reader can act on. Only af-membership
+	// is asserted: that is the one axis the poller groups by, and the other keys can only
+	// be presumed on — a linked account has no way to check, so do not claim a check that
+	// was never made.
 	s.Error = "activation state is not readable from a member account (only the payer may " +
 		"activate), but " + runtime.EC2TagMembership + " values are coming back in the bill — the axis is on"
 	p.tagState.Store(s)

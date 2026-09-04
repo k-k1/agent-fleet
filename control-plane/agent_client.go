@@ -1,5 +1,4 @@
-// agent_client.go — CP→Agent HTTP クライアントヘルパ（セッション取得）。
-// manager.go からの機械的分割（docs/log/23 P2-W2）。
+// agent_client.go — the CP→Agent HTTP client helpers (session fetch).
 package main
 
 import (
@@ -20,8 +19,8 @@ import (
 // endpoints (proxy/preview/browser) must NOT use this client.
 var agentHTTPClient = &http.Client{
 	Timeout: 2 * time.Minute,
-	// Service Connect の別名が引けないときに Cloud Map で引き直す共有 Transport
-	// （agent_dial.go）。CP→Agent の経路は全部これを通す。
+	// Shared transport (agent_dial.go) that falls back to Cloud Map when the Service
+	// Connect alias does not resolve. Every CP→Agent path goes through it.
 	Transport: newAgentTransport(),
 	// Never re-follow an Agent redirect with the bearer attached — control-loop
 	// paths are CP-built, so a 3xx is unexpected and surfaces as its status code.

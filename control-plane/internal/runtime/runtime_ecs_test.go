@@ -221,7 +221,7 @@ func TestECSStartCreatesEverything(t *testing.T) {
 	if aws.ToString(c0.Image) != "ecr/af-workspace:dev" || len(c0.Secrets) != 2 {
 		t.Errorf("container image/secrets = %q/%d", aws.ToString(c0.Image), len(c0.Secrets))
 	}
-	// Graceful two-stage stop wiring (§20b.7.8 停止改訂): SIGTERM → stopTimeout →
+	// Graceful two-stage stop wiring (§20b.7.8): SIGTERM → stopTimeout →
 	// SIGKILL, with docker --init parity so the signal actually reaches the Agent,
 	// and the Agent's own budget under the runtime grace.
 	if aws.ToInt32(c0.StopTimeout) != 30 {
@@ -255,7 +255,7 @@ func TestECSStartCreatesEverything(t *testing.T) {
 func TestECSStartNonFatalWhenAgentNotReady(t *testing.T) {
 	// A large image cold-pull can outlast the readiness budget. Start must still
 	// succeed (service is at desired 1; the workspace converges) rather than flip a
-	// starting workspace to "failed" (P3-7 段5 finding A). The watch is asynchronous
+	// starting workspace to "failed" (P3-7 stage 5 finding A). The watch is asynchronous
 	// now, so wait for it to actually run before asserting.
 	fe, ff, fs := &fakeECS{}, &fakeEFS{}, &fakeSSM{}
 	rt := newTestECS(fe, ff, fs)
@@ -425,7 +425,7 @@ func TestECSState(t *testing.T) {
 		{"stopped", &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}, "stopped"},
 		// desired 1 with no RUNNING task = a converging launch (e.g. the multi-minute
 		// Fargate cold image pull). Reported as its own state — not "stopped" — so the
-		// Console shows 起動中 and the reaper/autostart keep their hands off.
+		// Console shows it as starting and the reaper/autostart keep their hands off.
 		{"starting", &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 0}, "starting"},
 		{"running", &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}, "running"},
 		// A Start re-registers the task definition and force-deploys every time

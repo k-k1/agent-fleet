@@ -1,7 +1,7 @@
-// fargate_test.go — the Fargate size matrix (mem_test.go 由来).
+// fargate_test.go — the Fargate size matrix.
 //
-// Moved with the matrix itself: the snapper is a method on an unexported type, and the
-// one caller — the Fargate task definition — lives in this package now.
+// It lives beside the matrix: the snapper is a method on an unexported type, and its one
+// caller — the Fargate task definition — is in this package.
 package runtime
 
 import (
@@ -64,7 +64,7 @@ func TestFargateSizeCoarseTierSteps(t *testing.T) {
 
 // An explicit CPU request is a floor on the tier, and because the bigger tiers have a
 // memory MINIMUM, asking for more CPU can raise memory as well. That is the whole
-// reason the two axes cannot be stored as one named size (ADR 0044 決定 1).
+// reason the two axes cannot be stored as one named size (ADR 0044 decision 1).
 func TestFargateSizeExplicitCPU(t *testing.T) {
 	cases := []struct {
 		bytes    int64

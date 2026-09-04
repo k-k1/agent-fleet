@@ -7,9 +7,10 @@ import (
 	"strings"
 )
 
-// previewAPI は /preview/{port} プロキシの機能ハンドラ集（docs/log/23 残③）。解決は
-// 埋め込みの memberAuth（登録側で withResolved に包む — 従来の resolvedFor と同一
-// 判定）。X-Forwarded-Prefix の組み立てに使う publicBaseURL だけ config から写す。
+// previewAPI holds the /preview/{port} proxy handlers. Identity resolution comes from the
+// embedded memberAuth (registration wraps these in withResolved, the same verdict
+// resolvedFor gave); publicBaseURL is the only piece of config copied in, for building
+// X-Forwarded-Prefix.
 type previewAPI struct {
 	memberAuth
 	publicBaseURL string
@@ -96,7 +97,8 @@ func (a previewAPI) setPreviewTenantCookie(w http.ResponseWriter, r *http.Reques
 // gateway-resolved identity as every other route — and the CP↔Agent bearer is
 // injected here. We attach X-Forwarded-* so apps that honor them (Spring Boot's
 // server.forward-headers-strategy) generate correct absolute URLs/redirects under
-// the /preview/{port} sub-path. WebSocket と逐次フラッシュは relayPreview 側で通る。
+// the /preview/{port} sub-path. WebSocket and incremental flushing go through
+// relayPreview.
 func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt := res.rt
 	if err := a.mgr.touchWorkspace(r.Context(), res.ws.ID); err != nil {
@@ -115,7 +117,7 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 		http.Error(w, "bad preview path", http.StatusBadRequest)
 		return
 	}
-	// Same relay as the host-mode preview (ADR 0062 決定 10): one implementation, so
+	// Same relay as the host-mode preview (ADR 0062 decision 10): one implementation, so
 	// WebSocket/HMR, streaming and the credential stripping cannot drift apart. What
 	// differs is only the shape of the URL the browser used — here the app lives under
 	// a sub-path, so it still gets X-Forwarded-Prefix.

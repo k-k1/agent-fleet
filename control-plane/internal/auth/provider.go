@@ -13,7 +13,7 @@ import (
 // handlers, the session and state cookies, the tenant login-rule cache. Those
 // hang off the root package's config / manager, which the whole Control Plane is
 // built on, so bringing them along would mean moving those two types with them
-// (ADR 0067 決定 1: a family that reaches back into the original package is out of
+// (ADR 0067 decision 1: a family that reaches back into the original package is out of
 // scope for the transport). They stay in control-plane/oauth*.go and reach in
 // here directly (the alias_auth.go layer was reclaimed in RECLAIM-B).
 
@@ -47,7 +47,7 @@ type Principal struct {
 // LoginProvider is one sign-in button: an IdP the deployment enabled. Every
 // provider shares the single redirect_uri (/oauth2/callback) — which provider a
 // callback belongs to is carried in the signed state cookie, so the operator
-// registers exactly one URI per IdP no matter how many are configured (決定 8).
+// registers exactly one URI per IdP no matter how many are configured (decision 8).
 type LoginProvider interface {
 	ID() string
 	Label(lang string) string // login page button text
@@ -64,7 +64,7 @@ type LoginProvider interface {
 // can name the identity source without widening the LoginProvider interface —
 // which every test fake would then have to grow a method for.
 //
-// ★ The method is EXPORTED because the adapters live here while the admin list
+// The method is EXPORTED because the adapters live here while the admin list
 // that asserts against it lives in the root package: an interface whose method
 // name is unexported can only ever be satisfied inside the package that declares
 // it, and the assertion would compile and silently evaluate to false (measured).

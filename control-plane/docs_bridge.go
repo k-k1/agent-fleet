@@ -10,13 +10,13 @@ package main
 // mount of the per-start staging dir (stageWorkspaceDocs → runtime_docker.go /
 // runtime_native.go). ECS has no such seam: the task runs on Fargate or an EC2
 // instance with no host path the CP can write, so those workspaces were starting with
-// an EMPTY docs dir — the Console's 利用ガイド opened nothing, and the in-container
+// an EMPTY docs dir — the Console's user-guide button opened nothing, and the in-container
 // agents had no docs to cite for environment questions. The container pulls instead.
 //
 // What is served is decided entirely on the CP, exactly as it is for the mount: the
 // token proves the caller is an active membership, and the response then carries the
-// guide — the same tree for everyone (ADR 0064). **Nothing in the request selects
-// scope**, so there is no shape of request that reaches the developer tree; the
+// guide — the same tree for everyone (ADR 0064). Nothing in the request selects scope,
+// so there is no shape of request that reaches the developer tree; the
 // decision records and the frozen work journals are not baked into the image at all.
 //
 // The token is a SEPARATE credential from the memo / schedule / MCP / git tokens

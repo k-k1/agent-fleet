@@ -9,11 +9,11 @@
 // app lives in THEIR GitHub org / Bitbucket workspace.
 //
 // Since docs/log/71 the row is the only source. env is not consulted at all — not even as
-// a fallback for the default tenant (決定 2). A fallback would mean two places to look
+// a fallback for the default tenant (decision 2). A fallback would mean two places to look
 // when a button is missing, and the one that wins would depend on which tenant you
 // happen to be in.
 //
-// ★ Why this file holds no cache, unlike tenant_idp.go: the login registry is read on
+// Why this file holds no cache, unlike tenant_idp.go: the login registry is read on
 // every request through sessionAllowed, so a database round trip there is a hot path.
 // These rows are read when somebody presses "connect" and at each poll of a device
 // flow — a handful of times per member per year. A cache would only add a window in
@@ -32,14 +32,14 @@ import (
 const (
 	gitOAuthGitHub    = "github"
 	gitOAuthBitbucket = "bitbucket"
-	// gitOAuthJira is Jira Cloud (docs/log/80 §80.17). ⚠️ It is not a git host, so it sits
+	// gitOAuthJira is Jira Cloud (docs/log/80 §80.17). It is not a git host, so it sits
 	// oddly under a table called tenant_git_oauth — but what the table actually models
 	// is "an OAuth app this tenant registered, whose secret stays in the CP while the
 	// member's token lives in their workspace", and Jira needs exactly that. A parallel
 	// table would duplicate the row, the admin API, the availability endpoint and the
 	// refresh bridge to gain a better name.
 	//
-	// ⚠️ It also cannot ride on the Bitbucket app even though both are Atlassian: the
+	// It also cannot ride on the Bitbucket app even though both are Atlassian: the
 	// authorization servers and the app registries are different (bitbucket.org's OAuth
 	// consumer vs an Atlassian 3LO app on developer.atlassian.com), so one client_id
 	// cannot authorize the other's scopes.

@@ -1,8 +1,10 @@
-// httpapi.go — 共有 JSON レスポンスヘルパ（writeJSON / writeAPIErr、docs/log/23 P2-W1）と、
-// 機能別ハンドラ struct の共通土台 memberAuth（docs/log/23 残③）。ハンドラ冒頭にコピー
-// されていた解決プリアンブル（membershipFor / resolvedFor / requireSuperAdmin）を
-// 登録側で包むラッパーに畳む。各機能 API は memberAuth を埋め込み、store は
-// 必要最小のサブインターフェース（store.go）だけを持つ — memo.go の memoAPI が実例。
+// httpapi.go — the shared JSON response helpers (writeJSON / writeAPIErr, docs/log/23
+// P2-W1) and memberAuth, the common base under every per-feature handler struct
+// (docs/log/23 remainder 3). The resolution preamble that used to be copied to the top of
+// each handler (membershipFor / resolvedFor / requireSuperAdmin) is folded into wrappers
+// applied at registration instead. A feature API embeds memberAuth and holds only the
+// smallest store sub-interface it needs (store.go) — memo.go's memoAPI is the worked
+// example.
 package main
 
 import (
@@ -13,8 +15,8 @@ import (
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	// 呼び出し側が JSON 系の専用 Content-Type（LFS の application/vnd.git-lfs+json 等）
-	// を先に設定していたら尊重する。未設定時のみ既定を付ける。
+	// Respect a JSON-family Content-Type the caller already set (LFS's
+	// application/vnd.git-lfs+json, say); only fill in the default when it is unset.
 	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "application/json")
 	}
@@ -123,16 +125,16 @@ func (a memberAuth) withSuperAdmin(h func(http.ResponseWriter, *http.Request, st
 // list of the deployment's sign-in methods (docs/log/61 §61.17.9 ①). It allows a
 // super_admin, or anyone holding an active tenant_admin membership of ANY tenant.
 //
-// ★ It is a strictly weaker gate than withSuperAdmin, so it must never be put in
+// It is a strictly weaker gate than withSuperAdmin, so it must never be put in
 // front of a WRITE: which tenant the caller administers is not checked here (there
 // is no slug to check it against), so the only thing it may authorize is reading
 // something that is the same for every tenant. Anything scoped to one tenant keeps
 // using tenantAdminFor, which does check.
 //
-// ★ Plain members are refused. The list is not secret — the ids and button labels
+// Plain members are refused. The list is not secret — the ids and button labels
 // are on the unauthenticated /login — but "not secret" is not a reason to widen a
-// gate; the caller has to have a use for it (決定 19 の *編集* のゲートは別で、
-// そちらは withSuperAdmin のまま).
+// gate; the caller has to have a use for it. Decision 19's *edit* gate is a
+// separate one and stays on withSuperAdmin.
 func (a memberAuth) anyTenantAdminFor(w http.ResponseWriter, r *http.Request) (store.Identity, bool) {
 	ident, aerr := a.mgr.identityFor(r.Context(), r)
 	if aerr != nil {
@@ -144,7 +146,7 @@ func (a memberAuth) anyTenantAdminFor(w http.ResponseWriter, r *http.Request) (s
 	}
 	// ListMemberships returns ACTIVE rows only, so a tenant_admin who was taken off
 	// the roster stops passing here as soon as the row is deactivated (docs/log/61
-	// §61.10.7 の穴 2 と同じ性質)。
+	// §61.10.7, the same property as gap 2).
 	ms, err := a.mgr.store.ListMemberships(r.Context(), ident.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))

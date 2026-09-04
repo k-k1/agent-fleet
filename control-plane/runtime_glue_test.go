@@ -40,12 +40,13 @@ func glueReadyAgent(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// TestEnsureWorkspaceReadyAnswersStartingInsteadOfFailing — Agent を要する API
-// （セッション作成・fork・再開・持ち越し回答・SSM）が起動途中に当たったときの答え。
-// 500 + 生の "agent did not become healthy within 15s" ではなく、409 workspace_starting
-// （Console が「起動中です」と訳せて、再試行が意味を持つ形）にする。
+// TestEnsureWorkspaceReadyAnswersStartingInsteadOfFailing pins what an API that needs the
+// Agent (session create, fork, resume, carried-over answer, SSM) answers when it arrives
+// mid-startup: 409 workspace_starting, which the Console can render as "starting up" and
+// for which a retry means something — not a 500 with a raw "agent did not become healthy
+// within 15s".
 func TestEnsureWorkspaceReadyAnswersStartingInsteadOfFailing(t *testing.T) {
-	t.Setenv("AF_AGENT_READY_WAIT_SEC", "1") // 55 秒の既定を待たない
+	t.Setenv("AF_AGENT_READY_WAIT_SEC", "1") // do not sit out the 55s default
 	_, ws, mgr := reaperLifecycleFixture(t)
 	api := newWorkspaceAPI(mgr, true)
 	ctx := context.Background()
@@ -61,13 +62,14 @@ func TestEnsureWorkspaceReadyAnswersStartingInsteadOfFailing(t *testing.T) {
 		t.Fatalf("got %d/%s (%s), want 409/workspace_starting", aerr.status, aerr.code, aerr.message)
 	}
 
-	// 上がっていれば素通し。既に running なら probe すら足さない。
+	// An agent that is up passes straight through; a workspace already running is not
+	// even probed.
 	up := glueReadyAgent(t)
 	resUp := &resolved{rt: stubRuntime{endpoint: up.URL, state: "running"}, ws: ws, mv: mv}
 	if aerr := api.ensureWorkspaceReady(ctx, resUp); aerr != nil {
 		t.Fatalf("running workspace: %+v", aerr)
 	}
-	// 起動途中でも、待っているあいだに上がれば成功として通す。
+	// Mid-startup still succeeds if the agent comes up while we wait.
 	resLate := &resolved{rt: stubRuntime{endpoint: up.URL, state: "starting"}, ws: ws, mv: mv}
 	if aerr := api.ensureWorkspaceReady(ctx, resLate); aerr != nil {
 		t.Fatalf("agent that came up during the wait: %+v", aerr)
@@ -173,7 +175,7 @@ func TestPoolStatusSaysWhenAutoBakeIsOff(t *testing.T) {
 // tenant quotas fit its pool is not news, and the screen already shows both numbers it
 // is made of. Both directions are checked, because "always absent" would pass a test
 // that only looked at the happy one — and an over-subscribed pool that says nothing is
-// the failure this comparison exists to prevent (ADR 0045 決定 25).
+// the failure this comparison exists to prevent (ADR 0045 decision 25).
 func TestPoolStatusCarriesTheTenantBudgetOnlyWhenItDoesNotFit(t *testing.T) {
 	ctx := context.Background()
 

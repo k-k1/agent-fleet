@@ -28,7 +28,7 @@ import (
 // It is copied rather than imported because the store is moving into its own package
 // in the same refactor wave; importing it here would chain this package's merge to
 // that one. Collapsing the two is a job for the alias-collection pass at the wave
-// boundary (ADR 0067 決定 3).
+// boundary (ADR 0067 decision 3).
 type Workspace struct {
 	ID, TenantID, MembershipID      string
 	ContainerName, Network, DataDir string
@@ -62,7 +62,7 @@ type Config struct {
 	AuthMode string
 	// RootDataDir re-bases a workspace's on-disk root onto the CURRENT data root.
 	//
-	// ⚠️ It is a function, not the two strings it needs, and it must stay one: the CP
+	// It is a function, not the two strings it needs, and it must stay one: the CP
 	// discovers its default tenant id LATE (workspace_lifecycle.go's adoption pass
 	// assigns it long after the factory is built), and a factory that had copied the
 	// value would keep re-basing against the empty one — silently handing a workspace
@@ -213,7 +213,7 @@ type PoolBudget struct {
 	// Allocated is Σ(max_workspaces) over ACTIVE tenants — how many workspaces could be
 	// running at once if every tenant used its full quota.
 	Allocated int `json:"allocated"`
-	// Unbounded names the active tenants whose max_workspaces is 0. ⚠️ 0 means UNLIMITED
+	// Unbounded names the active tenants whose max_workspaces is 0. 0 means UNLIMITED
 	// here (like every other int quota), so ONE of these makes Allocated meaningless as
 	// a bound — it is a different problem from "over", and needs saying differently.
 	Unbounded []string `json:"unbounded_tenants,omitempty"`

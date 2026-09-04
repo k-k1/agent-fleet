@@ -1,18 +1,22 @@
 package main
 
-// 共有セッションの転写マーカー（docs/log/69 / ADR 0050）。
+// Transcript markers on a shared session (docs/log/69 / ADR 0050).
 //
-// 印の実体は所有者 Workspace（Agent の session-marks）にあり、CP は毎回 ACL を評価して
-// 中継するだけ。転写・引き継ぎ提案とまったく同じ形で、本文の複製は CP DB に持たない。
+// A mark itself lives in the owner's Workspace (the Agent's session-marks); the CP
+// evaluates the ACL on every call and relays. Exactly as for the transcript and the handoff
+// proposal, no copy of the body is held in the CP DB.
 //
-// 書き込み（RW の共有先が自分で線を引く）は、docs/log/59 §2 の「提案 → 所有者の承認」には
-// 載せない。あの承認が要るのは提案が**エージェントを動かす**（他人のセッションとトークンを
-// 消費する副作用がある）からで、マーカーはエージェントに届かず転写にも入らない。1 本引く
-// たびに承認待ちへ積むのは承認の意味を薄めるだけである（ADR 0050 決定 4）。
+// Writes — an RW recipient drawing their own line — deliberately stay off the "propose →
+// owner approves" path of docs/log/59 §2. That approval exists because a proposal moves an
+// agent, spending someone else's session and tokens; a mark reaches no agent and never
+// enters the transcript. Queuing an approval per line drawn would only dilute what approval
+// means (ADR 0050 decision 4).
 //
-// ⚠️ 代わりに厳しくしてあるのが 2 点:
-//   - author はクライアントの申告を採らない。CP が認証済みの login id で必ず上書きする。
-//   - 消せるのは自分の印だけ。Agent へ author を渡し、Agent 側が突き合わせる。
+// Two things are stricter instead:
+//   - author is never taken from the client's claim; the CP always overwrites it with the
+//     authenticated login id.
+//   - you may delete only your own mark. The author is passed to the Agent, which matches
+//     on it.
 
 import (
 	"bytes"
@@ -26,12 +30,13 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// markProseKinds — 印を置ける part の kind。Agent 側の同名の表と、Console の
-// MARKABLE_KINDS と同じ内容でなければならない。
+// markProseKinds is the set of part kinds a mark may be placed on. It must hold the same
+// content as the Agent's table of the same name and the Console's MARKABLE_KINDS.
 //
-// ⚠️ ここで検査するのは、共有 DTO が落としている座標（cwd / file / 差分）を印の quote が
-// 迂回して運び出さないため（docs/log/69 §69.4）。塗る場所の制限は Console と Agent が既に
-// 掛けているが、中継の出口にも置いておくと、片側が緩んだだけでは漏れない。
+// It is checked here so that a mark's quote cannot smuggle out the coordinates the shared
+// DTO drops — cwd, file, diffs (docs/log/69 §69.4). The Console and the Agent already limit
+// where a mark can go; keeping the check at the relay's exit too means one side going lax
+// is not yet a leak.
 var markProseKinds = map[string]bool{"": true, "text": true, "plan": true, "answer": true, "output": true, "prompt": true}
 
 const sharedMarkMaxBytes = 8 << 10
@@ -55,8 +60,8 @@ func (a sessionShareAPI) marksRead(w http.ResponseWriter, r *http.Request, mv st
 		writeAPIErr(w, e)
 		return
 	}
-	// 転写と同じバケツで数える。共有先1人あたりの所有者 Workspace への往復を、
-	// 面ごとに増やさないため。
+	// Counted in the same bucket as the transcript, so adding a surface does not add round
+	// trips into the owner's Workspace per recipient.
 	if !a.allowRead(mv.MembershipID + ":" + c.ID) {
 		writeAPIErr(w, &apiError{http.StatusTooManyRequests, "shared_read_rate_limited", "too many shared transcript reads"})
 		return
@@ -99,8 +104,8 @@ func (a sessionShareAPI) marksAdd(w http.ResponseWriter, r *http.Request, ident 
 		writeAPIErr(w, &apiError{400, "mark_kind_not_markable", "this part kind cannot be marked"})
 		return
 	}
-	// 申告された author は捨てて、認証済みの login id を刻む。共有先が所有者や別の
-	// 共有先になりすませてはいけない。
+	// Discard the declared author and stamp the authenticated login id: a recipient must
+	// not be able to impersonate the owner or another recipient.
 	who := strings.TrimSpace(ident.Email)
 	if who == "" {
 		writeAPIErr(w, &apiError{403, "mark_no_identity", "no login id to attribute this mark to"})
@@ -133,8 +138,8 @@ func (a sessionShareAPI) marksDelete(w http.ResponseWriter, r *http.Request, ide
 		writeAPIErr(w, &apiError{400, "mark_id_missing", "id is required"})
 		return
 	}
-	// author を必ず添える = Agent 側が「自分の印だけ」に絞る。所有者経路（/api/sessions/…）は
-	// これを渡さないので、所有者は誰の印でも消せる。
+	// Always attaching author is what makes the Agent narrow the delete to the caller's own
+	// marks. The owner path (/api/sessions/…) does not pass it, so an owner can delete any.
 	q := url.Values{"id": {id}, "author": {who}}
 	_, status, e := a.ownerSend(r.Context(), res, http.MethodDelete,
 		"/sessions/"+url.PathEscape(c.Name)+"/marks?"+q.Encode(), nil)
@@ -177,9 +182,10 @@ func (a sessionShareAPI) ownerSend(ctx context.Context, res *resolved, method, p
 	return payload, resp.StatusCode, nil
 }
 
-// sharedMarksDTO — マーカーの allowlist。表示に要るのは位置（turn/part/kind/quote/nth）、
-// 見た目（color）、そして「誰がいつ」（author/created_at）だけ。座標は元々持っていないが、
-// kind が本文以外の印はここでも落とす（docs/log/69 §69.4 の二重の網）。
+// sharedMarksDTO is the marker allowlist. Display needs only the position
+// (turn/part/kind/quote/nth), the look (color) and who/when (author/created_at). Marks
+// never carried coordinates to begin with, but a mark on a non-prose kind is dropped here
+// as well — the second half of the net in docs/log/69 §69.4.
 func sharedMarksDTO(payload map[string]any) map[string]any {
 	items, _ := payload["marks"].([]any)
 	out := make([]any, 0, len(items))

@@ -2,7 +2,7 @@ package main
 
 // Memo bridge — the internal (operator-token) face of the memo queue (docs/log/21).
 // The Console reaches memos through the session gateway (memo.go withMembership); an
-// in-container フリート・オペレーター has NO gateway session, so it authenticates to
+// in-container fleet operator has NO gateway session, so it authenticates to
 // /internal/memos with a per-membership MEMO TOKEN injected into its Workspace
 // (AF_MEMO_TOKEN). The token carries the membership id + a truncated HMAC tag — it
 // mirrors the internal-git token (git_http.go) and is a SEPARATE credential, so a leak

@@ -1,9 +1,9 @@
 package main
 
 // Git OAuth refresh bridge — the internal (per-membership token) face of the tenant's
-// git provider OAuth app (docs/log/71 §71.8 + ADR0052 決定 7).
+// git provider OAuth app (docs/log/71 §71.8 + ADR0052 decision 7).
 //
-// ★ Why this exists at all. Bitbucket access tokens expire in ~2h, so something has to
+// Why this exists at all. Bitbucket access tokens expire in ~2h, so something has to
 // run the refresh grant, and that grant is Basic-authenticated with the OAuth app's
 // key:secret. Until now the CP handed key AND secret to the workspace at connect time
 // and the Agent refreshed on its own — which meant the TENANT's client secret was
@@ -15,7 +15,7 @@ package main
 // So the refresh moves here: the Agent posts the REFRESH TOKEN, the CP adds the app's
 // secret and talks to bitbucket.org.
 //
-// ★ Note what did NOT move. The refresh token itself stays in the workspace — the CP
+// Note what did NOT move. The refresh token itself stays in the workspace — the CP
 // does not store it, and this endpoint does not remember it. That keeps the standing
 // rule that the CP passes credentials through without holding them (docs/build/08), and
 // it is the reason the split is "the tenant's secret here, the member's token there"
@@ -112,7 +112,7 @@ func (a gitOAuthBridgeAPI) withGitOAuthToken(h func(http.ResponseWriter, *http.R
 // refreshBitbucket (POST /internal/git-oauth/bitbucket/refresh) runs the refresh grant
 // with the caller's OWN tenant's app.
 //
-// ★ The tenant comes from the token → membership → store, never from the request. A
+// The tenant comes from the token → membership → store, never from the request. A
 // client-chosen tenant would be a cross-tenant use of somebody else's OAuth app.
 func (a gitOAuthBridgeAPI) refreshBitbucket(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	var body struct {
@@ -152,7 +152,7 @@ func (a gitOAuthBridgeAPI) refreshBitbucket(w http.ResponseWriter, r *http.Reque
 // app. It exists separately from refreshBitbucket for one reason only: the request shape
 // differs (JSON body with client_id/client_secret vs form + Basic auth).
 //
-// ⚠️ Atlassian ROTATES the refresh token — every refresh returns a new one and retires
+// Atlassian ROTATES the refresh token — every refresh returns a new one and retires
 // the old. The Agent must persist what comes back; dropping it strands the connection at
 // the next expiry with no way to renew. (Bitbucket may or may not rotate, so the Agent's
 // store-what-you-get behaviour already covers both.)
@@ -279,7 +279,7 @@ func bbRefreshGrant(key, secret, refreshToken string) (bbRefreshToken, *apiError
 			b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
 			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
-				// ★ Reported as invalid_grant so the Agent can tell "reconnect" from
+				// Reported as invalid_grant so the Agent can tell "reconnect" from
 				// "try again later" — it is the difference between prompting the member
 				// and silently retrying every git command.
 				return bbRefreshToken{}, &apiError{http.StatusBadRequest, "invalid_grant",

@@ -1,13 +1,14 @@
-// golden の同一性を「参照文字列」から「内容」へ移した分（docs/log/72 §72.6.4）のテスト。
+// A golden's identity is compared by image CONTENT, not by the reference string
+// (docs/log/72 §72.6.4). Both directions of that are pinned here.
 //
-// 実機で起きたこと: CP と workspace が 1 つの ImageTag を共有するので、CP だけ差し替えたい
-// ときも workspace 側を同じタグに置く。ECR 内の再タグなので digest は完全に一致していたが、
-// golden の af-image は**タグを含む参照文字列**なので一致せず、CP は 2 アーキ分の home を
-// 一から焼き直した（約 10 分・EC2 スロット 2 本）。
+// CP and workspace share one ImageTag, so replacing only the CP still puts the workspace
+// on the same tag. That is a re-tag inside ECR and the digest is identical, but the
+// golden's af-image is a reference string INCLUDING the tag, so it did not match and both
+// architectures' homes were baked from scratch (measured: ~10 minutes, two EC2 slots).
 //
-// 逆向きはもっと悪い: 可変タグ（`:dev`）へ新しい内容を push すると文字列は一致したままで、
-// 新規メンバーだけが**古いイメージで焼かれた home** を配られる。どちらの誤りも「テストも
-// 実機も緑」で通る型なので、両方向をここで固定する。
+// The other direction is worse: pushing new content to a mutable tag (`:dev`) leaves the
+// string matching, and only new members are handed a home baked from the old image.
+// Either mistake passes with the tests and the live deployment both green.
 package runtime
 
 import (
@@ -56,7 +57,7 @@ func fpOf(t *testing.T, reg *fakeECR, image string) string {
 	return fp
 }
 
-// ★ これが 10 分と 2 台を払っていた経路。タグは違う・中身は同じ。
+// The path that cost the 10 minutes and the two slots: different tag, same content.
 func TestGoldenSurvivesARetagWithTheSameContent(t *testing.T) {
 	withFreshCache(t)
 	ctx := context.Background()
@@ -65,7 +66,7 @@ func TestGoldenSurvivesARetagWithTheSameContent(t *testing.T) {
 	h.rt.base.ecr = reg
 	h.rt.base.cfg.workspaceImage = goldenImgNewTag
 
-	// 焼かれたのは「前のタグ」のときだが、指紋はいまと同じ。
+	// Baked while the previous tag was current, but with the content in use now.
 	addGoldenIdentity(h, "snap-golden", goldenImgOldTag, fpOf(t, reg, goldenImgOldTag))
 
 	if got := h.rt.goldenSnapshot(ctx); got != "snap-golden" {
@@ -73,7 +74,8 @@ func TestGoldenSurvivesARetagWithTheSameContent(t *testing.T) {
 	}
 }
 
-// ★ 逆向き。可変タグへ新しい内容を push した場合で、文字列だけを見ていると気づけない。
+// The other direction: new content pushed onto a mutable tag, which a comparison of
+// strings alone cannot see.
 func TestGoldenIsRefusedWhenTheSameTagMovedToNewContent(t *testing.T) {
 	withFreshCache(t)
 	ctx := context.Background()
@@ -82,7 +84,7 @@ func TestGoldenIsRefusedWhenTheSameTagMovedToNewContent(t *testing.T) {
 	h.rt.base.ecr = reg
 	h.rt.base.cfg.workspaceImage = goldenImgNewTag
 
-	// 同じタグで焼かれているが、そのときの中身は別物だった。
+	// Baked under the same tag, but the content behind it then was a different image.
 	addGoldenIdentity(h, "snap-old-content", goldenImgNewTag, "sha256:"+
 		"0000000000000000000000000000000000000000000000000000000000000000")
 
@@ -91,8 +93,9 @@ func TestGoldenIsRefusedWhenTheSameTagMovedToNewContent(t *testing.T) {
 	}
 }
 
-// 指紋が片側にしか無い／どちらにも無いときは、これまでどおり参照文字列で比べる。
-// unknown を「不一致」と読むと、**アップグレードした瞬間に全配備の golden が捨てられる**。
+// With a fingerprint on only one side, or on neither, the comparison falls back to the
+// reference string. Reading unknown as a mismatch would throw away every deployment's
+// golden the moment it upgrades.
 func TestGoldenIdentityFallsBackToTheReference(t *testing.T) {
 	withFreshCache(t)
 	ctx := context.Background()
@@ -105,7 +108,8 @@ func TestGoldenIdentityFallsBackToTheReference(t *testing.T) {
 		return out
 	}
 
-	// ECR が読めない（権限不足・別レジストリ）＝ こちら側の指紋が空。
+	// ECR unreadable (missing permission, a different registry): this side has no
+	// fingerprint.
 	noECR := goldenIdentityFor(ctx, nil, goldenImgNewTag)
 	if noECR.fp != "" {
 		t.Fatal("no registry, yet a fingerprint appeared")
@@ -117,7 +121,7 @@ func TestGoldenIdentityFallsBackToTheReference(t *testing.T) {
 		t.Error("参照文字列が違うのに一致した")
 	}
 
-	// 昔焼いた golden（指紋タグ無し）は、これまでどおり文字列で拾う。
+	// A golden baked before the fingerprint tag existed is still matched by the string.
 	reg := &fakeECR{manifest: index("sha256:aaaa0001", "sha256:bbbb0001", false), digest: "sha256:index0001"}
 	id := goldenIdentityFor(ctx, reg, goldenImgNewTag)
 	if id.fp == "" {
@@ -128,8 +132,9 @@ func TestGoldenIdentityFallsBackToTheReference(t *testing.T) {
 	}
 }
 
-// 焼くときは両方刻む。参照文字列は人と既存の道具（bake-golden.sh / dev-deploy.sh）のため、
-// 指紋は CP の突合のため。
+// Both stamps are written at bake time: the reference string for people and for the
+// existing tools (bake-golden.sh / dev-deploy.sh), the fingerprint for the CP's own
+// comparison.
 func TestGoldenCaptureStampsBothIdentities(t *testing.T) {
 	withFreshCache(t)
 	ctx := context.Background()
@@ -155,8 +160,8 @@ func TestGoldenCaptureStampsBothIdentities(t *testing.T) {
 	}
 }
 
-// hashImageFingerprint は EC2 のタグ値に収める（256 文字）ためのもの。空は空のまま
-// ——「不明」を「ある値」にしてしまうと、上の fallback が効かなくなる。
+// hashImageFingerprint exists to fit the fingerprint into an EC2 tag value (256 chars).
+// Empty stays empty: turning "unknown" into a value would defeat the fallback above.
 func TestHashImageFingerprint(t *testing.T) {
 	if got := hashImageFingerprint(""); got != "" {
 		t.Errorf("hashImageFingerprint(\"\") = %q, want \"\"", got)

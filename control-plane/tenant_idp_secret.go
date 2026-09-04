@@ -7,11 +7,11 @@ import (
 
 // The tenant-defined IdP registry moved to internal/auth; these two stayed
 // behind because they are methods on manager, which the whole Control Plane is
-// built on and which this transport does not move (ADR 0067 決定 1). The registry
+// built on and which this transport does not move (ADR 0067 decision 1). The registry
 // receives openTenantSecret as a function value at construction (main.go), so
 // nothing else had to change.
 
-// --- secret sealing (docs/log/61 §61.11.4 + 決定 33) ------------------------------
+// --- secret sealing (docs/log/61 §61.11.4 + decision 33) --------------------------
 
 // sealTenantSecret seals a client_secret with the tenant key, exactly as
 // mcp_server.sealHeaders does for header values: AES-256-GCM through the custodian,

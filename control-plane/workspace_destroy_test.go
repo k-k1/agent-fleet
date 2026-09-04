@@ -78,7 +78,7 @@ func callDestroy(adm adminAPI, body string) *httptest.ResponseRecorder {
 
 // The destroy operation is one misclick away from a member who is at their desk, and
 // there is no undo — so it only accepts a membership that was already removed
-// (ADR 0045 決定 13-2).
+// (ADR 0045 decision 13-2).
 func TestDestroyWorkspaceRefusesAnActiveMember(t *testing.T) {
 	f := &destroyingFactory{}
 	st, mgr, victim, tn := destroyFixture(t, f)

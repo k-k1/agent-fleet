@@ -74,7 +74,8 @@ func TestECSEC2SlotOwnerOmitsAnUnknownTenant(t *testing.T) {
 }
 
 // Releasing the slot hands the box back to the pool, so its hours stop being this
-// person's cost and become shared (an idle warm slot belongs to nobody — ADR 0048 決定 4).
+// person's cost and become shared (an idle warm slot belongs to nobody — ADR 0048
+// decision 4).
 func TestECSEC2ReleaseClearsTheSlotOwner(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)

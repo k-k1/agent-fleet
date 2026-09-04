@@ -10,11 +10,12 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// 後始末の 3 段目（docs/log/61 §61.18）のテスト。除名 → Workspace 破棄 → 行の削除、の
-// 最後の 1 段で、前の 2 段が済んでいない限り通ってはいけない。
+// Stage three of the cleanup (docs/log/61 §61.18): remove from the roster → destroy the
+// workspace → delete the row. This last stage must refuse unless the first two are done.
 
-// cleanupFixture: tenant sales に管理者 1 人と対象者 1 人。対象者には workspace 行と、
-// 消えるべき作業データ（user_limit）、残るべき履歴（稼働時間・費用・監査）を置く。
+// cleanupFixture builds tenant sales with one administrator and one subject. The subject
+// gets a workspace row, working data that must be deleted (user_limit) and history that
+// must survive (occupancy, cost, audit).
 func cleanupFixture(t *testing.T) (*store.SQL, *manager, store.Tenant, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -72,8 +73,8 @@ func callDeleteMembership(mgr *manager, slug, key string) *httptest.ResponseReco
 	return w
 }
 
-// 在席中の人の行は消せない。ADR 0045 決定 13-2 と同じ線で、理由も同じ——管理画面の
-// 1 クリック隣に取り消せない操作を置かないため。
+// An active member's row cannot be deleted — the same line as ADR 0045 decision 13-2, for
+// the same reason: no irreversible operation one click away in the admin screen.
 func TestDeleteMembershipRefusesAnActiveMember(t *testing.T) {
 	st, mgr, tn, memID := cleanupFixture(t)
 	w := callDeleteMembership(mgr, "sales", "leaver-acme-co-jp")
@@ -86,8 +87,9 @@ func TestDeleteMembershipRefusesAnActiveMember(t *testing.T) {
 	_ = tn
 }
 
-// workspace 行が残っているうちは消せない。消してしまうと home・EBS・EFS が
-// 「DB から誰も指していない」まま課金され続ける——destroyWorkspace が塞いだ穴そのもの。
+// Refused while the workspace row is still there. Deleting it leaves the home, EBS and
+// EFS billed with nothing in the DB pointing at them — exactly the hole destroyWorkspace
+// closes.
 func TestDeleteMembershipRefusesWhileTheWorkspaceRowIsThere(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, _, memID := cleanupFixture(t)
@@ -103,7 +105,8 @@ func TestDeleteMembershipRefusesWhileTheWorkspaceRowIsThere(t *testing.T) {
 	}
 }
 
-// 通ったときに何が消えて何が残るか——この操作の全部。
+// What is deleted and what is kept once the delete is allowed: the whole of the
+// operation.
 func TestDeleteMembershipRemovesTheWorkAndKeepsTheHistory(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, tn, memID := cleanupFixture(t)
@@ -125,17 +128,18 @@ func TestDeleteMembershipRemovesTheWorkAndKeepsTheHistory(t *testing.T) {
 		t.Errorf("the per-membership quota survived (ok=%v err=%v)", ok, err)
 	}
 
-	// 残るもの 1: 稼働実績。
+	// Survivor 1: occupancy.
 	usage, err := st.ListUsage(ctx, tn.ID, "2026-07-01", "2026-07-01")
 	if err != nil || len(usage) == 0 {
 		t.Errorf("occupancy history was deleted: %+v %v", usage, err)
 	}
-	// 残るもの 2: 費用。過去月の請求合計が後から変わってはいけない。
+	// Survivor 2: cost. A past month's billed total must never change after the fact.
 	cost, err := st.ListCloudCost(ctx, "", memID, "2026-07-01", "2026-07-01")
 	if err != nil || len(cost) == 0 || cost[0].Unblended != 4200 {
 		t.Errorf("cost history changed after the fact: %+v %v", cost, err)
 	}
-	// 残るもの 3: 監査。除名した記録を、除名の後始末で消せてはいけない。
+	// Survivor 3: audit. The record of a removal must not be erasable by the cleanup of
+	// that same removal.
 	rows, err := st.ListAuditByTenant(ctx, tn.ID, 20)
 	if err != nil {
 		t.Fatalf("audit: %v", err)
@@ -157,8 +161,8 @@ func TestDeleteMembershipRemovesTheWorkAndKeepsTheHistory(t *testing.T) {
 	}
 }
 
-// 予約メンバーシップ（種と probe）は消させない。次のベイクで作り直されるだけで、
-// 焼いている最中ならスロットを掴んだまま宙に浮く。
+// A reserved membership (the seed and the probe) cannot be deleted: the next bake just
+// recreates it, and deleting one mid-bake leaves it orphaned while still holding a slot.
 func TestDeleteMembershipRefusesAReservedMembership(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -185,7 +189,7 @@ func TestDeleteMembershipRefusesAReservedMembership(t *testing.T) {
 		t.Fatalf("delete of a reserved membership = %d %s, want 409", w.Code, w.Body.String())
 	}
 	if _, ok, _ := st.GetMembershipByID(ctx, seedMem.ID); ok {
-		return // inactive なので GetMembershipByID は ok=false。行の存在は下で確かめる。
+		return // GetMembershipByID says ok=false for an inactive row; checked below instead.
 	}
 	members, err := st.ListRemovedMembersByTenant(ctx, tn.ID)
 	if err != nil || len(members) != 1 {

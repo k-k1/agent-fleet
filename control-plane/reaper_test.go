@@ -473,7 +473,7 @@ func TestIdleBase(t *testing.T) {
 	}
 }
 
-// --- Tier 3: home hibernation (ADR 0045 決定 13-2) ---
+// --- Tier 3: home hibernation (ADR 0045 decision 13-2) ---
 
 // hibernateStub is a runtime that CAN put its home away. Everything tier 3 decides is
 // decided against this: it never actually goes to AWS.

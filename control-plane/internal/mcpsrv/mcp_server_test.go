@@ -3,7 +3,7 @@ package mcpsrv
 // Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031).
 //
 // The tests worth having here are the ones a code review cannot guarantee:
-//   - a tenant definition can never become a stdio one (決定 2)
+//   - a tenant definition can never become a stdio one (decision 2)
 //   - a masked header round-trips without destroying the stored credential, and
 //     user_secret actually DISCARDS values rather than only hiding them
 //   - the distribution face is scoped by the token's tenant, and never ships a row it
@@ -43,7 +43,7 @@ func newMCPServerAPITest(t *testing.T, withKey bool) (ServerAPI, context.Context
 // --- validation --------------------------------------------------------------------
 
 func TestValidateMCPBodyRefusesStdio(t *testing.T) {
-	// ADR0031 決定 2. The table has no command columns either, so this is the second of
+	// ADR0031 decision 2. The table has no command columns either, so this is the second of
 	// three refusals (the third is the agent re-validating what it receives).
 	aerr := validateMCPBody(mcpServerBody{Name: "x", Transport: "stdio", URL: "https://x.example/mcp"})
 	if aerr == nil || aerr.Code != codeMCPTenantStdio {

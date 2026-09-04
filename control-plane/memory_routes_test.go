@@ -6,10 +6,11 @@ import (
 	"testing"
 )
 
-// エージェントメモリの版管理（docs/log/39 P1・P2）の中継登録を固定する。CP は明示許可リスト
-// 方式なので、Agent 側にだけ足すと Console からは 404 になる（この漏れは繰り返し起きて
-// いる）。ここは「CP のルート表に載っていること」だけを見る — 実際の中継先の応答は
-// Agent 側のテストが担保する。
+// TestMemoryRoutesProxiedByCP pins the proxy registrations for agent memory versioning
+// (docs/log/39 P1/P2). The CP proxies by explicit allowlist, so a route added on the
+// Agent side only is a 404 from the Console — a gap that has recurred. Only presence in
+// the CP's route table is checked here; what the proxied endpoint answers is the Agent
+// side's tests.
 func TestMemoryRoutesProxiedByCP(t *testing.T) {
 	_, mux := smokeEnv(t)
 	for _, c := range []struct{ method, path, want string }{
@@ -23,7 +24,7 @@ func TestMemoryRoutesProxiedByCP(t *testing.T) {
 		{"GET", "/api/agents/memory/export", "GET /api/agents/memory/export"},
 		{"POST", "/api/agents/memory/import", "POST /api/agents/memory/import"},
 		{"POST", "/api/agents/memory/import/apply", "POST /api/agents/memory/import/apply"},
-		// 既存のパターンルートに食われていないこと（/api/agents/{kind}/models と共存）。
+		// Must not be swallowed by the existing pattern route /api/agents/{kind}/models.
 		{"GET", "/api/agents/codex/models", "GET /api/agents/{kind}/models"},
 	} {
 		req := httptest.NewRequest(c.method, c.path, nil)
@@ -33,22 +34,24 @@ func TestMemoryRoutesProxiedByCP(t *testing.T) {
 	}
 }
 
-// 手動 snapshot・restore・import は変更操作なので監査に載る。export は読み取りだが、
-// 「個人のメモリを環境の外へ出す唯一の経路」なので docs/log/39 ★4 の要件として例外的に
-// 載せる。target は URL 由来のみで body は読まない。
+// TestMemorySnapshotIsAudited: manual snapshot / restore / import mutate, so they are
+// audited. export only reads, but it is the one path that takes personal memory out of
+// the environment, so docs/log/39 ★4 requires it audited as an exception. target comes
+// from the URL only; the body is never read.
 func TestMemorySnapshotIsAudited(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/agents/memory/snapshots", nil)
 	action, _, ok := auditActionTarget(req)
 	if !ok || action != "memory.snapshot" {
 		t.Fatalf("auditActionTarget = (%q, ok=%v), want memory.snapshot", action, ok)
 	}
-	// restore は戻し元 rev をクエリのヒントから target に採る（body は読まない）。
+	// restore takes the source rev for target from the query hint, not the body.
 	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/restore?rev=deadbeef", nil)
 	action, target, ok := auditActionTarget(req)
 	if !ok || action != "memory.restore" || target != "deadbeef" {
 		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.restore/deadbeef", action, target, ok)
 	}
-	// import は受領と適用を別の行として残す（受領だけして適用しない、が普通に起きる）。
+	// import records receipt and apply as separate rows: receiving without applying is
+	// an ordinary outcome.
 	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/import", nil)
 	if action, _, ok := auditActionTarget(req); !ok || action != "memory.import" {
 		t.Fatalf("auditActionTarget = (%q, ok=%v), want memory.import", action, ok)
@@ -58,13 +61,13 @@ func TestMemorySnapshotIsAudited(t *testing.T) {
 	if !ok || action != "memory.import.apply" || target != "20260727T010203Z" {
 		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.import.apply", action, target, ok)
 	}
-	// export は GET だが持ち出しなので監査する（target は形式だけ）。
+	// export is a GET but takes data out, so it is audited (target is the format alone).
 	req = httptest.NewRequest(http.MethodGet, "/api/agents/memory/export?format=bundle", nil)
 	action, target, ok = auditActionTarget(req)
 	if !ok || action != "memory.export" || target != "bundle" {
 		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.export/bundle", action, target, ok)
 	}
-	// その他の読み取り系は監査しない。
+	// The other read-only routes are not audited.
 	for _, p := range []string{"/api/agents/memory/snapshots", "/api/agents/memory/tree", "/api/agents/memory/diff"} {
 		if _, _, ok := auditActionTarget(httptest.NewRequest(http.MethodGet, p, nil)); ok {
 			t.Errorf("GET %s should not be audited", p)

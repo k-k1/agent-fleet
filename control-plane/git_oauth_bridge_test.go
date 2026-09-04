@@ -12,9 +12,9 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// docs/log/71 §71.8 + ADR0052 決定 7. The bridge exists so the tenant's client secret stops
-// being copied into every member's workspace, and these pin the three things that would
-// quietly undo that:
+// docs/log/71 §71.8 + ADR0052 decision 7. The bridge exists so the tenant's client secret
+// stops being copied into every member's workspace, and these pin the three things that
+// would quietly undo that:
 //
 //   - the app is resolved from the TOKEN's tenant, never from the request
 //   - the response carries the tokens and NOT the app's key/secret
@@ -55,7 +55,7 @@ func bridgeCall(mgr *manager, token, body string) *httptest.ResponseRecorder {
 	return w
 }
 
-// ★ The whole point in one test: the Agent sends only a refresh token, the CP adds the
+// The whole point in one test: the Agent sends only a refresh token, the CP adds the
 // tenant's secret, and what comes back is a token — never the app credential the bridge
 // exists to keep out of the container.
 func TestGitOAuthBridgeRefreshesWithTheTenantsSecretAndReturnsNoSecret(t *testing.T) {
@@ -100,7 +100,7 @@ func TestGitOAuthBridgeRefreshesWithTheTenantsSecretAndReturnsNoSecret(t *testin
 	}
 }
 
-// ★ The tenant comes from the token, never the request — otherwise one member could
+// The tenant comes from the token, never the request — otherwise one member could
 // refresh against another tenant's OAuth app.
 func TestGitOAuthBridgeRejectsAForeignOrAbsentToken(t *testing.T) {
 	_, mgr, mv := bridgeEnv(t)
@@ -135,7 +135,7 @@ func TestGitOAuthBridgeSaysWhenTheTenantHasNoAppAnyMore(t *testing.T) {
 	}
 }
 
-// ★ Permanent vs transient has to survive the move into the CP. A revoked refresh token
+// Permanent vs transient has to survive the move into the CP. A revoked refresh token
 // (4xx) must come back as invalid_grant and NOT be retried — the Agent uses that to stop
 // asking and prompt for a reconnect, instead of hammering the grant on every git command.
 func TestGitOAuthBridgeSeparatesARevokedGrantFromATransientFailure(t *testing.T) {
@@ -177,7 +177,7 @@ func TestGitOAuthBridgeSeparatesARevokedGrantFromATransientFailure(t *testing.T)
 	}
 }
 
-// ★ The bridge is useless if the token never reaches the container, and it would fail
+// The bridge is useless if the token never reaches the container, and it would fail
 // SILENTLY: the Agent would just keep using the legacy client secret (or, on a fresh
 // connect, stop refreshing after ~2h). Pin the injection next to the other bridges.
 func TestWorkspaceEnvCarriesTheGitOAuthBridgeToken(t *testing.T) {

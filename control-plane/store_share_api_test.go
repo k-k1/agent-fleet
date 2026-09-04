@@ -1,12 +1,8 @@
 package main
 
-// 移送で main 側に残した 1 本（ADR 0067 / CP-STORE）。中身は
-// internal/store/store_share_test.go にあったものと同じで、置き場だけが変わった。
-//
-// これは store のテストではない。manager / newSessionShareAPI / etagJSON という
-// API 層を、store を土台にして検査している——つまり読む向きが main → store で、
-// store から main へ手を伸ばし返していた唯一の箇所だった。切断面の内側に
-// 引きずり込むより、API 層の側に置くほうが正しい。
+// This is not a store test (ADR 0067 / CP-STORE): it exercises the API layer — manager,
+// newSessionShareAPI, etagJSON — with the store underneath it. The dependency runs
+// main -> store, so the test belongs on the API side of the seam rather than inside it.
 
 import (
 	"context"

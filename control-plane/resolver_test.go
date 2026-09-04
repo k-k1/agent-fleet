@@ -11,10 +11,9 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// docs/log/23 P2-W2: manager.mu を DB I/O 跨ぎで保持する直列化をやめた際の要件 —
-// 同一メンバーシップの並行「初回」resolve が workspace を二重作成しないこと
-// （per-membership build ロックが守る）、かつ全 goroutine が同じ workspace に
-// 解決すること。
+// Now that manager.mu is no longer held across DB I/O, concurrent first-time resolves of
+// the same membership must still not create the workspace twice — the per-membership build
+// lock is what guarantees that — and every goroutine must resolve to the same workspace.
 func TestBuildResolvedSingleFlight(t *testing.T) {
 	// Swapped on the adapters' package, not through an alias here: a `var x = pkg.Y`
 	// on this side is a COPY, and reassigning it would leave the adapter calling the

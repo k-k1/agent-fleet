@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// 「なぜ止まらないか」の語彙。ここが reaper の判定とズレると、調べるための画面が
-// 別の答えを出す（docs/log/75 P4）— それなら画面が無い方がまし、という性質の機能なので、
-// 材料と優先順位を固定しておく。
+// TestHoldersOf pins the vocabulary of "why has it not stopped" — the inputs and their
+// order. Drift from what the reaper decides and the screen built to investigate gives a
+// different answer (docs/log/75 P4), which is worse than having no screen at all.
 func TestHoldersOf(t *testing.T) {
 	now := time.Now()
 	future := now.Add(time.Hour).Format(time.RFC3339)
@@ -21,7 +21,7 @@ func TestHoldersOf(t *testing.T) {
 	})
 
 	t.Run("人待ちは止める理由にならない", func(t *testing.T) {
-		// docs/log/75 の本題そのもの: 質問が出ていても Workspace は止まる。
+		// The point of docs/log/75: a pending question does not keep the workspace up.
 		for _, st := range []string{stateQuestion, statePlan, statePermission, stateBlocked, stateAuth, stateSpendLimit, stateLimited} {
 			if got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: st}}, false, now, 0); len(got) != 0 {
 				t.Errorf("state %q が止める理由になっている: %+v", st, got)
@@ -33,12 +33,12 @@ func TestHoldersOf(t *testing.T) {
 		got := holdersOf([]sessionWire{
 			{Alive: true, Name: "s2", State: stateWorking},
 			{Alive: true, Name: "s1", State: stateIdle, BackgroundBusy: true},
-			{Alive: false, Name: "s9", State: stateWorking}, // 停止中は数えない
+			{Alive: false, Name: "s9", State: stateWorking}, // a stopped session does not count
 		}, true, now, 0)
 		if len(got) != 3 {
 			t.Fatalf("holders = %+v, want 3", got)
 		}
-		// セッションは名前順、在席は最後（具体的な対処につながる理由を先に出す）。
+		// Sessions by name, presence last: the reasons someone can act on come first.
 		if got[0].Session != "s1" || got[0].Kind != "background" {
 			t.Errorf("1 件目 = %+v, want background/s1", got[0])
 		}
@@ -50,9 +50,10 @@ func TestHoldersOf(t *testing.T) {
 		}
 	})
 
-	// ★ reaper が busy と見る状態は working だけではない。compacting（codex の文脈圧縮）
-	// を holders が落とすと、reaper は止めないのに画面は StopAt を出す＝「もうすぐ
-	// 止まります」と言いながら止まらない、という docs/log/75 決定 11 違反になる。
+	// working is not the only state the reaper reads as busy. Drop compacting (codex
+	// context compaction) from holders and the screen shows a StopAt for a workspace the
+	// reaper will not stop — it promises a stop that never comes, which docs/log/75
+	// decision 11 forbids.
 	t.Run("reaper が busy と見る状態は全部挙げる", func(t *testing.T) {
 		for _, st := range []string{stateWorking, stateCompacting} {
 			s := sessionWire{Alive: true, Name: "s1", State: st}
@@ -80,8 +81,9 @@ func TestHoldersOf(t *testing.T) {
 		}
 	})
 
-	// ★ セッションが 1 つも無い Workspace でも、取り込み中なら止まらない（docs/log/78）。
-	// reaper 側の busy と対で入れてある — 片方だけだと「止まらないのに理由が空」になる。
+	// A workspace with no sessions at all still does not stop while a repository import
+	// is running (docs/log/78). This is the pair of the reaper's own busy check; with only
+	// one of the two the workspace stays up with no reason to show.
 	t.Run("取り込み中はセッションが無くても理由になる", func(t *testing.T) {
 		got := holdersOf(nil, false, now, 1)
 		if len(got) != 1 || got[0].Kind != "repojob" {

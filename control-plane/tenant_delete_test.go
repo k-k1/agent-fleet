@@ -10,8 +10,9 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// テナント削除（docs/log/61 §61.18）。**空のものだけ**消せる——DB の行は、クラウドや
-// ディスクに残った資源に対する唯一の手掛かりなので、最初に消えてはいけない。
+// Tenant deletion (docs/log/61 §61.18): only an empty tenant may go. The DB rows are the
+// only handle on what is left behind in the cloud or on disk, so they must never be the
+// first thing to disappear.
 
 func callDeleteTenant(mgr *manager, slug string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodDelete, "/api/admin/tenants/"+slug, nil)
@@ -29,7 +30,7 @@ func tenantStillThere(t *testing.T, st *store.SQL, slug string) {
 	}
 }
 
-// 在席中のメンバーが 1 人でも残っていれば拒否。これは退職処理の道具ではない。
+// Refused while even one member is still on the roster: this is not an offboarding tool.
 func TestDeleteTenantRefusesWhileAMemberIsOnTheRoster(t *testing.T) {
 	st, mgr, _, _ := cleanupFixture(t)
 	w := callDeleteTenant(mgr, "sales")
@@ -39,8 +40,8 @@ func TestDeleteTenantRefusesWhileAMemberIsOnTheRoster(t *testing.T) {
 	tenantStillThere(t, st, "sales")
 }
 
-// workspace 行が残っていれば拒否。テナントを消しても home・EBS・EFS は消えず、
-// 消えるのは「それを指していた唯一の行」の方になる。
+// Refused while a workspace row exists. Deleting the tenant does not delete the home, the
+// EBS or the EFS — it deletes the only row that pointed at them.
 func TestDeleteTenantRefusesWhileAWorkspaceRowIsThere(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, tn, memID := cleanupFixture(t)
@@ -59,9 +60,10 @@ func TestDeleteTenantRefusesWhileAWorkspaceRowIsThere(t *testing.T) {
 	tenantStillThere(t, st, "sales")
 }
 
-// 内部 git リポジトリが残っていれば拒否。bare とその LFS はディスクに残る。
-// ⚠️ しかも順序の罠がある: リポジトリ削除 API は withMembership ゲートなので、
-// 最後のメンバーを外した後は誰も消せない。だから拒否のメッセージがその順序を言う。
+// Refused while an internal git repository exists: the bare repo and its LFS stay on disk.
+// There is an ordering trap too — the repo-delete API is behind the withMembership gate,
+// so once the last member is removed nobody can delete them any more. Hence the refusal
+// message spells the order out.
 func TestDeleteTenantRefusesWhileAnInternalRepoExists(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, tn, memID := cleanupFixture(t)
@@ -87,7 +89,7 @@ func TestDeleteTenantRefusesWhileAnInternalRepoExists(t *testing.T) {
 	_ = memID
 }
 
-// 予約テナントと既定テナントは、消しても次の起動やベイクで作り直されるだけ。
+// The reserved and default tenants are recreated by the next boot or bake anyway.
 func TestDeleteTenantRefusesTheSystemAndDefaultTenants(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -106,8 +108,8 @@ func TestDeleteTenantRefusesTheSystemAndDefaultTenants(t *testing.T) {
 	}
 }
 
-// 空になっていれば消える。残っていた inactive な membership も一緒に消え、
-// 履歴（監査・稼働時間・費用）は残る。
+// An empty tenant is deleted along with any leftover inactive memberships, while the
+// history (audit, occupancy, cost) survives.
 func TestDeleteTenantRemovesTheEmptyTenantAndKeepsTheHistory(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, tn, memID := cleanupFixture(t)
@@ -119,7 +121,7 @@ func TestDeleteTenantRemovesTheEmptyTenantAndKeepsTheHistory(t *testing.T) {
 	if err := st.DeleteWorkspace(ctx, "W-1"); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
-	// テナント設定の行も一緒に消えること。
+	// The tenant's settings rows must go with it.
 	if err := st.SetTenantLogin(ctx, tn.ID, "entra", "", "", ""); err != nil {
 		t.Fatalf("login rules: %v", err)
 	}
@@ -138,7 +140,8 @@ func TestDeleteTenantRemovesTheEmptyTenantAndKeepsTheHistory(t *testing.T) {
 		t.Errorf("removed memberships survived: %+v %v", left, err)
 	}
 
-	// 残るもの: 稼働実績・費用・監査。テナントが消えても請求の過去は変わらない。
+	// What survives: occupancy, cost, audit. Deleting a tenant does not rewrite billing
+	// history.
 	if usage, err := st.ListUsage(ctx, tn.ID, "2026-07-01", "2026-07-01"); err != nil || len(usage) == 0 {
 		t.Errorf("occupancy history was deleted with the tenant: %+v %v", usage, err)
 	}
@@ -151,8 +154,9 @@ func TestDeleteTenantRemovesTheEmptyTenantAndKeepsTheHistory(t *testing.T) {
 	}
 	var logged bool
 	for _, row := range rows {
-		// ⚠️ 監査ビューは tenant_id → slug を ListTenants で引く。消えたテナントの行は
-		// テナント欄が空になるので、名前は行の中（Target / Detail）に入っていること。
+		// The audit view resolves tenant_id → slug through ListTenants, so a deleted
+		// tenant's rows show an empty tenant column: the name has to live inside the
+		// row itself (Target / Detail).
 		if row.Action == "tenant.delete" && row.Target == "sales" {
 			logged = true
 		}

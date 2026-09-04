@@ -1,10 +1,10 @@
-// tts_polly.go — AWS Polly の TTS プロバイダ（docs/log/24 Phase 2）。
+// tts_polly.go — the AWS Polly TTS provider (docs/log/24 Phase 2).
 //
-// 認証は SDK の既定チェーン（ECS/EC2 の IAM ロール）で、鍵は保存しない（ADR0013）。
-// 出力は MP3（フロントの AudioContext.decodeAudioData がそのまま復号できる）。速度は
-// SSML の <prosody rate> で表現する（Polly に voicevox の speedScale 相当は無いため）。
-// region が決まらないデプロイ（dev の自ホスト等）では not-ready 扱いになり、auto
-// ルーティングは voicevox 側に倒れる。
+// Authentication uses the SDK's default chain (the ECS/EC2 IAM role); no key is stored
+// (ADR0013). Output is MP3, which the front end's AudioContext.decodeAudioData decodes
+// directly. Speed is expressed as SSML <prosody rate>, since Polly has no equivalent of
+// voicevox's speedScale. A deployment with no resolvable region (a dev host, say) counts
+// as not-ready, and auto routing falls back to voicevox.
 package main
 
 import (
@@ -25,21 +25,22 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 )
 
-// pollyAPI は Polly 呼び出しの narrow port（runtime_ecs.go の ecsAPI と同じ流儀）。
-// 実 *polly.Client が満たし、テストは偽物を差す。
+// pollyAPI is the narrow port for Polly calls, in the same style as ecsAPI in
+// runtime_ecs.go: the real *polly.Client satisfies it and tests substitute a fake.
 type pollyAPI interface {
 	SynthesizeSpeech(context.Context, *polly.SynthesizeSpeechInput, ...func(*polly.Options)) (*polly.SynthesizeSpeechOutput, error)
 }
 
 type pollyProvider struct {
-	region string // "" = 未設定（not-ready）
-	engine string // neural | standard（AF_POLLY_ENGINE）
+	region string // "" means unset, i.e. not-ready
+	engine string // neural | standard (AF_POLLY_ENGINE)
 	mu     sync.Mutex
-	client pollyAPI // 遅延生成（初回 Synthesize 時）
+	client pollyAPI // created lazily, on the first Synthesize
 }
 
-// newPollyProvider は env から Polly の設定を読む。region は専用の AF_POLLY_REGION が
-// 無ければ ECS アダプタ/SDK の region 指定に相乗りする（CP ロールと同居のため通常同一）。
+// newPollyProvider reads the Polly configuration from the environment. Without a dedicated
+// AF_POLLY_REGION the region rides on the ECS adapter's / SDK's region, which is normally
+// the same because Polly runs under the CP's own role.
 func newPollyProvider() *pollyProvider {
 	return &pollyProvider{
 		region: firstEnv("AF_POLLY_REGION", "AF_ECS_REGION", "AWS_REGION", "AWS_DEFAULT_REGION"),
@@ -47,8 +48,8 @@ func newPollyProvider() *pollyProvider {
 	}
 }
 
-// Ready は設定の有無で即答する（ネットワーク I/O なし）。認証エラー等は Synthesize 時に
-// 502 として表面化する。
+// Ready answers from configuration alone, with no network I/O. Credential and similar
+// failures surface as a 502 at Synthesize time.
 func (p *pollyProvider) Ready(context.Context) bool { return p.region != "" }
 
 func (p *pollyProvider) api(ctx context.Context) (pollyAPI, error) {
@@ -58,8 +59,8 @@ func (p *pollyProvider) api(ctx context.Context) (pollyAPI, error) {
 		return p.client, nil
 	}
 	p.mu.Unlock()
-	// ロック外・呼び出し元 ctx でロード（キャンセル可能、他の Synthesize をブロック
-	// しない）。同時初期化は先着の client を尊重する。
+	// Load outside the lock and on the caller's ctx, so it stays cancellable and does not
+	// block other Synthesize calls. Concurrent initialisation keeps whichever client won.
 	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(p.region))
 	if err != nil {
 		return nil, err
@@ -99,8 +100,9 @@ func (p *pollyProvider) Synthesize(ctx context.Context, text string, o voiceOpts
 	return audio, "audio/mpeg", nil
 }
 
-// pollyVoiceFor は VoiceId を決める: 明示指定 > 言語別の既定（日本語 Takumi / 英語 Joanna）。
-// auto ルーティングで日本語がフォールバックしてくるのが主経路なので、既定は日本語。
+// pollyVoiceFor picks the VoiceId: an explicit choice wins, otherwise the per-language
+// default (Takumi for Japanese, Joanna for English). Japanese is the overall default
+// because the main path here is auto routing falling back for Japanese.
 func pollyVoiceFor(o voiceOpts) string {
 	if v := strings.TrimSpace(o.voice); v != "" {
 		return v
@@ -111,8 +113,8 @@ func pollyVoiceFor(o voiceOpts) string {
 	return "Takumi"
 }
 
-// pollySSML は速度を <prosody rate="N%"> に写した SSML を組む。0/未指定は 100%。
-// テキストは XML エスケープ（& < > 等が SSML を壊さないように）。
+// pollySSML builds SSML with the speed mapped to <prosody rate="N%">; 0 or unset is 100%.
+// The text is XML-escaped so & < > and friends cannot break the SSML.
 func pollySSML(text string, speed float64) string {
 	rate := 100
 	if speed > 0 {
@@ -127,7 +129,8 @@ func pollySSML(text string, speed float64) string {
 	return b.String()
 }
 
-// firstEnv は最初に値のある環境変数を返す（空白のみは未設定扱い）。
+// firstEnv returns the first environment variable that has a value; whitespace-only counts
+// as unset.
 func firstEnv(keys ...string) string {
 	for _, k := range keys {
 		if v := strings.TrimSpace(os.Getenv(k)); v != "" {

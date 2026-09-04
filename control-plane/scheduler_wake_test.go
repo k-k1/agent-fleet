@@ -114,7 +114,7 @@ func TestBuildInjectBody(t *testing.T) {
 		t.Errorf("dir = %v", m["dir"])
 	}
 	// The mirror badges schedule-driven prompts (docs/log/38): a timed fire tags "schedule",
-	// a run-now（手動発火・ManualFirePending）tags "schedule-manual".
+	// a run-now (ManualFirePending) tags "schedule-manual".
 	if m["source"] != "schedule" {
 		t.Errorf("source = %v, want schedule", m["source"])
 	}
@@ -183,7 +183,7 @@ func TestInjectSessionAgentError(t *testing.T) {
 	}
 }
 
-// --- unattended-start hardening (8:00 スカウト取りこぼしの回帰) --------------------
+// --- unattended-start hardening ---------------------------------------------------
 //
 // The failure: a scheduled wake started the container, the entrypoint's synchronous
 // agent-CLI self-update ran before `exec workspace-agent`, and the fixed 15s health

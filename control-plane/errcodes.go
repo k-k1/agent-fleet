@@ -1,9 +1,9 @@
 package main
 
-// Console 側で和文ローカライズされるエラーコード（console/src/core/api/client.ts の
-// ERR_TEXT と対、docs/log/23 P0-3）。ここの文字列を変えると Console の文言解決が落ちて
-// developer メッセージへフォールバックする — 変更は必ず両側同時に。Agent 側の対は
-// workspace/agent/errcodes.go。
+// Error codes the Console localises, paired with ERR_TEXT in
+// console/src/core/api/client.ts. Change a string here and the Console's lookup misses and
+// falls back to the developer message, so both sides must move together; the Agent's
+// counterpart is workspace/agent/errcodes.go.
 const (
 	errCodeQuotaSessions = "quota_sessions"
 

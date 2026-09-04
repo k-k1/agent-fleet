@@ -12,7 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Per-tenant login rules (docs/log/61 §61.9 + ADR0043 決定 15/16/19), and the short-TTL
+// Per-tenant login rules (docs/log/61 §61.9 + ADR0043 decisions 15/16/19), and the short-TTL
 // cache the entry gate reads them through.
 //
 // The design turns on keeping THREE layers apart (§61.9.2), and this file only
@@ -242,11 +242,11 @@ func (c *tenantLoginCache) autoJoinTenant(ctx context.Context, email string) (t 
 	return r, snap.contested[domain], ok
 }
 
-// providerAllowed enforces tenant.allowed_providers (決定 14). An empty list means
+// providerAllowed enforces tenant.allowed_providers (decision 14). An empty list means
 // "every provider the deployment enabled", which is what an existing single-IdP
 // deployment has and why nothing changes for it.
 //
-// ★ This — not the filtered login page — is the enforcement. Without it, signing in
+// This — not the filtered login page — is the enforcement. Without it, signing in
 // on the generic /login with any enabled provider and then swapping X-AF-Tenant
 // walks into a tenant that was configured to accept only one IdP.
 func (c *tenantLoginCache) providerAllowed(ctx context.Context, tenantID, prov string) (bool, []string) {
@@ -275,11 +275,11 @@ func (c *tenantLoginCache) providerAllowed(ctx context.Context, tenantID, prov s
 	return false, r.AllowedProviders
 }
 
-// networkAllowed enforces tenant.allowed_cidrs (docs/log/66, ADR 0047 決定 3). An empty
+// networkAllowed enforces tenant.allowed_cidrs (docs/log/66, ADR 0047 decision 3). An empty
 // list means "any network", which is how a tenant that never set one is unaffected —
 // and how the feature is switched off, since there is no operator flag.
 //
-// ⚠️ An unknown caller address is a DENIAL, not a pass. The address is unknown only
+// An unknown caller address is a DENIAL, not a pass. The address is unknown only
 // when the deployment says there are N proxies in front and the forwarding chain does
 // not have N entries — i.e. the CP cannot tell who is calling. A restriction nobody
 // can evaluate must not be one that everybody passes.

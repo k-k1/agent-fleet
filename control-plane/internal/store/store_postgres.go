@@ -40,7 +40,7 @@ func PGURLFromEnv() string {
 		envOr("AF_DB_SSLMODE", "require"))
 }
 
-// OpenPostgres opens the Postgres MetadataStore (P3-7 段3a; the RDS backend for a
+// OpenPostgres opens the Postgres MetadataStore (P3-7 stage 3a; the RDS backend for a
 // redeployable ECS Control Plane whose state must survive task replacement). It
 // reuses the shared SQL with ?→$n rebinding and the consolidated pg schema.
 // No legacy hook: fresh Postgres deployments start at the post-P3-2 schema.

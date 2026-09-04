@@ -1,9 +1,9 @@
 // runtime_ecs_ec2_golden.go — the `ecs-ec2` half of the automatic golden bake
-// (ADR 0045 決定 9 / docs/log/64 §64.28). The state machine itself lives in
+// (ADR 0045 decision 9 / docs/log/64 §64.28). The state machine itself lives in
 // golden_bake.go and knows nothing about EC2; what is here is the two narrow
 // capabilities it needs, implemented once, on the adapter that owns the tags.
 //
-// Everything below follows hibernation's discipline: **the state lives in AWS**, not
+// Everything below follows hibernation's discipline: the state lives in AWS, not
 // in the CP (ADR 0012). A bake is a series of steps, each of which is a no-op when it
 // has already happened, so a CP that dies half way through resumes on the next tick
 // instead of stranding a slot, a volume or a snapshot nobody will ever look at again.
@@ -57,7 +57,7 @@ type GoldenBakePool interface {
 	// promoted, so the pool never pays for two — and so that a second CP replica that
 	// baked its own candidate in the same window does not leave it billing forever.
 	//
-	// ⚠️ The arch scope is load-bearing, not tidiness: without it, publishing the arm64
+	// The arch scope is load-bearing, not tidiness: without it, publishing the arm64
 	// golden would delete the x86_64 one, and every new x86_64 member would silently
 	// go back to an empty home.
 	DropSupersededGoldens(ctx context.Context, keepID, arch string) error
@@ -124,7 +124,7 @@ var (
 	_ GoldenSeedRuntime = (*ecsEC2Runtime)(nil)
 )
 
-// --- golden の同一性（docs/log/72 §72.6.4） ------------------------------------------
+// --- golden identity (docs/log/72 §72.6.4) -------------------------------------------
 
 // goldenIdentity answers "is this golden a golden for the image we are about to run".
 //
@@ -386,7 +386,7 @@ func describeBake(g *EC2GoldenView, arch string, homes map[string]ec2BakeHome, s
 		g.Phase, g.PhaseSince = ec2BakePhaseBoot, bakeStamp(seed.Created)
 	case haveSeed:
 		// A home with no running slot under it: the seed is being placed, or its slot is
-		// still coming up. ⚠️ Before the home volume exists there is nothing in AWS to
+		// still coming up. Before the home volume exists there is nothing in AWS to
 		// see at all, so the first moments of a bake still read as "idle" — one tick.
 		g.Phase, g.PhaseSince = ec2BakePhaseSeed, bakeStamp(seed.Created)
 	case g.Attempts >= 2:
@@ -445,7 +445,7 @@ func bakeStamp(t time.Time) string {
 }
 
 func (f *ecsEC2Factory) SnapshotHome(ctx context.Context, volumeID, workspace, arch string) (string, error) {
-	// ⚠️ The identity is taken HERE, at capture time, and both halves are stamped in the
+	// The identity is taken HERE, at capture time, and both halves are stamped in the
 	// same CreateSnapshot call. Reading it again later would let an image that moved
 	// mid-bake stamp a candidate with content it was not baked from.
 	tags := []ec2types.Tag{
@@ -475,7 +475,7 @@ func (f *ecsEC2Factory) SnapshotHome(ctx context.Context, volumeID, workspace, a
 // SetGoldenRole is a CreateTags, which OVERWRITES a key that is already there — the
 // promotion and the rejection are both one call, and both are idempotent.
 //
-// ★ Never DeleteTags-then-CreateTags. A CP that died between the two would leave a
+// Never DeleteTags-then-CreateTags. A CP that died between the two would leave a
 // snapshot with no af-role at all: invisible to every lookup, matched by no cleanup,
 // and billed forever.
 func (f *ecsEC2Factory) SetGoldenRole(ctx context.Context, snapshotID, role, reason string) error {
@@ -520,7 +520,7 @@ func (f *ecsEC2Factory) RejectedAttempts(ctx context.Context, arch string) (int,
 }
 
 func (f *ecsEC2Factory) DropSupersededGoldens(ctx context.Context, keepID, arch string) error {
-	// ★ Rejected candidates are NOT swept. They are the record of why an image has no
+	// Rejected candidates are NOT swept. They are the record of why an image has no
 	// golden, and they are also the give-up counter — deleting them would put the baker
 	// straight back into retrying an image it has already proven cannot boot.
 	for _, role := range []string{EC2RoleGolden, EC2RoleGoldenCandidate} {

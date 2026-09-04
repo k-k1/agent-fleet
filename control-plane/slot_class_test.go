@@ -1,9 +1,9 @@
-// slot_class_test.go — スロットクラスのうち CP 側の取り分。
+// slot_class_test.go — the CP's share of the slot classes.
 //
-// 宣言の解釈・配置・タスク定義といったアダプタ側の検査は internal/runtime へ移した
-// （ADR 0067 / CP-RUNTIME）。ここに残るのは、テナントとユーザの保存値からクラスを
-// 決める CP の連鎖と、マイグレーションのディスク配置の検査（後者は internal/store の
-// 持ち物なので CP-STORE が追随させている）。
+// The adapter-side checks (declaration parsing, placement, task definitions) live in
+// internal/runtime. What stays here is the CP chain that decides a class from the tenant's
+// and the user's stored values, plus the check on where the migrations sit on disk — that
+// one belongs to internal/store and is kept in step from there.
 package main
 
 import (
@@ -192,7 +192,7 @@ func TestUserLimitRoundTripsSlotClass(t *testing.T) {
 	}
 }
 
-// ⚠️ Two migrations with the same numeric prefix are a SILENT data loss:
+// Two migrations with the same numeric prefix are a SILENT data loss:
 // schema_migrations is keyed by that integer, so the first of the pair records the
 // version and the second is skipped forever as "already applied" — the column it was
 // meant to add never exists, and the failure surfaces as a query error in production.
@@ -202,9 +202,9 @@ func TestUserLimitRoundTripsSlotClass(t *testing.T) {
 // met a branch's 0030_user_limit_slot_class in migrations-pg). This test is the cheap
 // half of the fix — the other half refuses to start (sqlStore.migrate).
 func TestMigrationVersionsAreUniquePerDialect(t *testing.T) {
-	// 2026-09-02: 両系列は internal/store へ移った（ADR 0067 / CP-STORE）。
-	// //go:embed が自分のディレクトリより上を見られないので、SQL は embed する
-	// パッケージと一緒に動く。ここが読むのはディスク上の実体なので追随させる。
+	// Both series live in internal/store: //go:embed cannot look above its own
+	// directory, so the SQL travels with the package that embeds it. This test reads
+	// the files on disk, so the paths have to follow.
 	for _, dir := range []string{"internal/store/migrations", "internal/store/migrations-pg"} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {

@@ -45,7 +45,7 @@ func p3Manager(t *testing.T, st *store.SQL) *manager {
 
 // --- the entry gate ---------------------------------------------------------
 
-// 決定 16: being on a roster is itself permission to reach the login, so an
+// Decision 16: being on a roster is itself permission to reach the login, so an
 // invite-run deployment does not have to keep AF_OAUTH_ALLOWED_* as well. This is
 // the connection docs/log/61 §61.9.6 calls "the one that is missing today".
 func TestEntryGateAdmitsAnInvitedPersonWithNoDeploymentAllowlist(t *testing.T) {
@@ -109,7 +109,7 @@ func TestEntryGateAdmitsAnAutoJoinDomain(t *testing.T) {
 	}
 }
 
-// ★ The regression this design is most exposed to. The union is taken strictly
+// The regression this design is most exposed to. The union is taken strictly
 // inside the email axis: a provider-specific list still REPLACES the
 // deployment-wide one, so narrowing one IdP on purpose is not silently widened
 // back to the deployment list by the P3 change.
@@ -143,7 +143,7 @@ func TestProviderOwnAllowlistStillReplacesTheDeploymentWideOne(t *testing.T) {
 	}
 }
 
-// ★ 決定 2 must survive the union: the GitHub org check is a DIFFERENT axis, so
+// Decision 2 must survive the union: the GitHub org check is a DIFFERENT axis, so
 // holding a membership satisfies the email gate and nothing else. If this ever
 // fails, anyone invited to any tenant can sign in through GitHub from outside the
 // company's orgs.
@@ -181,7 +181,7 @@ func TestMembershipDoesNotBypassTheGitHubOrgGate(t *testing.T) {
 
 // --- the tenant gate --------------------------------------------------------
 
-// 決定 14: the login page's button filter is cosmetic. What actually keeps someone
+// Decision 14: the login page's button filter is cosmetic. What actually keeps someone
 // out of an "Entra only" tenant is this check at resolution time — otherwise the
 // generic /login plus a swapped X-AF-Tenant is all it takes.
 func TestAllowedProvidersIsEnforcedAtTenantResolution(t *testing.T) {
@@ -250,7 +250,7 @@ func TestAutoJoinCreatesAMembershipButNeverOutranksAnExistingOne(t *testing.T) {
 		t.Fatalf("existing memberships must be returned as they are: ms=%+v aerr=%v", ms, aerr)
 	}
 
-	// ★ And a DEACTIVATED membership is an answer too: auto-join must not undo an
+	// And a DEACTIVATED membership is an answer too: auto-join must not undo an
 	// offboarding the next time the person opens the page.
 	other, _ := st.UpsertIdentity(ctx, "tanaka@acme.co.jp", "tanaka-acme-co-jp", "")
 	mem, _ := st.EnsureMembership(ctx, other.ID, sales.ID, "member")
@@ -353,11 +353,11 @@ func TestRemoveMembershipLocksOutButKeepsTheWorkspace(t *testing.T) {
 	}
 }
 
-// ★ A removed tenant_admin must stop being an admin. Their session cookie stays
+// A removed tenant_admin must stop being an admin. Their session cookie stays
 // valid for up to AF_SESSION_TTL and they may still clear the entry gate (a
 // deployment-wide allowed domain, another tenant's membership), so if the admin
 // gate did not check the membership status they could simply put themselves back
-// on the roster — docs/log/61 §61.10.7 の穴 2.
+// on the roster — docs/log/61 §61.10.7 gap 2.
 func TestRemovedTenantAdminLosesAdminRights(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -429,7 +429,7 @@ func TestAllowedDomainsGuardsInvitesOnly(t *testing.T) {
 	}
 }
 
-// --- bootstrap (§61.10.2 / 決定 23) -----------------------------------------
+// --- bootstrap (§61.10.2 / decision 23) -------------------------------------
 
 func TestSuperAdminWithNoMembershipStillGetsTheTenantList(t *testing.T) {
 	st := p3Store(t)
@@ -454,7 +454,7 @@ func TestSuperAdminWithNoMembershipStillGetsTheTenantList(t *testing.T) {
 	}
 }
 
-// --- super_admin revocation (決定 24) ---------------------------------------
+// --- super_admin revocation (decision 24) -----------------------------------
 
 func TestDemoteSuperAdminsAtStartup(t *testing.T) {
 	ctx := context.Background()
@@ -543,7 +543,7 @@ func TestPerTenantLoginPage(t *testing.T) {
 	if !strings.Contains(sales, "営業部") {
 		t.Fatalf("/login/sales must name the tenant:\n%s", sales)
 	}
-	// ★ An unknown slug is the GENERIC page, not a 404 — otherwise the status code
+	// An unknown slug is the GENERIC page, not a 404 — otherwise the status code
 	// tells an unauthenticated visitor which department slugs exist.
 	unknown := body("/login/no-such-department")
 	if !strings.Contains(unknown, "provider=entra") || !strings.Contains(unknown, "provider=github") {
@@ -554,15 +554,15 @@ func TestPerTenantLoginPage(t *testing.T) {
 	}
 }
 
-// P7-1 (docs/log/61 §61.17.6 + 決定 42): the tenant-less /login is the DEFAULT tenant's
-// page — for hidden_providers, and for nothing else.
+// P7-1 (docs/log/61 §61.17.6 + decision 42): the tenant-less /login is the DEFAULT
+// tenant's page — for hidden_providers, and for nothing else.
 //
 // The three properties below are one decision each, and the second one is why the
 // decision was narrowed after review:
 //
 //  1. hiding works there now. §61.15.13 concluded "the implementation cannot change
 //     this", which held only because that page belonged to no tenant.
-//  2. ★ narrowing allowed_providers does NOT reach it — because the hidden filter has
+//  2. narrowing allowed_providers does NOT reach it — because the hidden filter has
 //     a valve (all hidden → ignored) and the allowed filter has none. The bare /login
 //     is the only door for somebody who belongs to no tenant, and the rule that would
 //     undo it needs a session. A button-less page here is unrecoverable short of
@@ -617,7 +617,7 @@ func TestBareLoginAppliesDefaultTenantHiddenOnly(t *testing.T) {
 		t.Fatalf("the unknown-slug page must be byte-identical to the tenant-less one")
 	}
 
-	// 2. ★ allowed_providers must NOT reach it. "entra only" would leave the GitHub
+	// 2. allowed_providers must NOT reach it. "entra only" would leave the GitHub
 	// button off a tenant page — here both stay, because this page is the one nobody
 	// may be locked out of.
 	setRules("entra", "")
@@ -716,12 +716,12 @@ func TestSetTenantLoginRejectsDuplicateAutoJoinDomains(t *testing.T) {
 // two properties the endpoint exists for — it names every enabled provider with a
 // label, and it leaks no credential — plus the gate.
 //
-// ★ P7 (docs/log/61 §61.17.9 ①) widened the gate: the deployment's methods ARE the
+// P7 (docs/log/61 §61.17.9 ①) widened the gate: the deployment's methods ARE the
 // default tenant's methods, so every tenant's sign-in method panel lists them and
 // its administrator has to be able to read them. What did NOT widen is the ISSUER,
 // which names the operator's own directory and is absent from /login — so the
 // column is dropped for a tenant_admin. Editing the rule this list feeds is still
-// super_admin-only (決定 19), and that gate lives on the PUT, not here.
+// super_admin-only (decision 19), and that gate lives on the PUT, not here.
 func TestAdminProvidersListsEnabledProvidersWithoutSecrets(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -780,13 +780,13 @@ func TestAdminProvidersListsEnabledProvidersWithoutSecrets(t *testing.T) {
 		return got.Providers
 	}
 
-	// ★ A plain member has no use for this list, so the widened gate still refuses
+	// A plain member has no use for this list, so the widened gate still refuses
 	// them. "Not secret" is not a reason to open a gate.
 	if w := get("staff@sub.co.jp"); w.Code != http.StatusForbidden {
 		t.Fatalf("member: %d %s", w.Code, w.Body.String())
 	}
 
-	// ★ A tenant_admin READS it (their own panel lists these methods since P7) —
+	// A tenant_admin READS it (their own panel lists these methods since P7) —
 	// but without the issuer, which names the operator's directory.
 	wLead := get("lead@sub.co.jp")
 	if wLead.Code != http.StatusOK {
@@ -828,7 +828,7 @@ func TestAdminProvidersListsEnabledProvidersWithoutSecrets(t *testing.T) {
 	if p := got.Providers[2]; p.ID != auth.GithubProviderID || p.Issuer != auth.GithubWebBase {
 		t.Fatalf("github = %+v, want the fixed identity source", p)
 	}
-	// ★ The response is read by whoever can open the admin modal; a client_id is
+	// The response is read by whoever can open the admin modal; a client_id is
 	// not a secret but it is not on screen either, and client_secret must never
 	// come back out of the process.
 	for _, leak := range []string{"sekrit-entra", "sekrit-okta", "sekrit-gh", "cid-entra", "cid-okta", "cid-gh"} {

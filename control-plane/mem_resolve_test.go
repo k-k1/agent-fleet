@@ -62,7 +62,7 @@ func TestResolveWorkspaceMemBytes(t *testing.T) {
 // The CPU and disk axes go through the same two-stage clamp as memory (per-user value
 // bounded by the tenant cap) and are INDEPENDENT of it — setting one must not disturb
 // the others, which is the point of storing three numbers instead of a named size
-// (ADR 0044 決定 1).
+// (ADR 0044 decision 1).
 func TestResolveWorkspaceSizeCPUAndDisk(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))

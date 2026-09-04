@@ -9,7 +9,7 @@ import (
 )
 
 // The Runtime port must be constructed only through the profile-selected factory
-// (docs/09, P3-7 段1). These tests lock the seam: the local profile builds a
+// (docs/09, P3-7 stage 1). These tests lock the seam: the local profile builds a
 // docker adapter that threads the workspace record through correctly, the ecs
 // profile builds the AWS skeleton, and an unknown profile fails fast at boot
 // rather than silently defaulting.
@@ -76,7 +76,7 @@ func TestFactoryMemoryOverride(t *testing.T) {
 // The CPU and disk axes must reach the adapters the same way memory does: docker as
 // --cpus (fractional cores, since it stores Fargate units), ECS as the task size plus
 // ephemeral storage — and past Fargate's 200 GiB ephemeral ceiling as a managed EBS
-// volume instead (ADR 0044 決定 2).
+// volume instead (ADR 0044 decision 2).
 func TestFactoryCPUAndDiskOverride(t *testing.T) {
 	m := Config{Image: "img", AgentHost: "127.0.0.1", Memory: "1g", RootDataDir: StaticRootDataDir("/srv/data", "")}
 
@@ -99,7 +99,7 @@ func TestFactoryCPUAndDiskOverride(t *testing.T) {
 		t.Errorf("ecs cpu-only: cpu=%q memory=%q, want 4096/8192", e.cpu, e.memory)
 	}
 	// Disk: the deployment default must land ABOVE the entrypoint's arming threshold
-	// (AF_WS_SCRATCH_MIN_GB, 30 GiB), or the cache relocation of ADR 0044 決定 3 never
+	// (AF_WS_SCRATCH_MIN_GB, 30 GiB), or the cache relocation of ADR 0044 decision 3 never
 	// runs — which is exactly what shipping 0 here did.
 	if e := ecsF.New(Workspace{ContainerName: "c"}, "", nil).(*ecsRuntime); int(e.diskGiB) != ecsDefaultWorkDiskGiB || e.ebsGiB != 0 {
 		t.Errorf("ecs disk default: ephemeral=%d ebs=%d, want %d/0", e.diskGiB, e.ebsGiB, ecsDefaultWorkDiskGiB)
@@ -186,7 +186,7 @@ func TestDockerFactoryNew(t *testing.T) {
 	}
 }
 
-// Every adapter destroys (ADR 0045 決定 13-3), and the two local ones own exactly one
+// Every adapter destroys (ADR 0045 decision 13-3), and the two local ones own exactly one
 // thing beyond the container: the data directory that holds the home bind-mount. The
 // ordering is the part worth asserting — unlinking a home out from under a live
 // container is how you get a half-written home back on the next start.

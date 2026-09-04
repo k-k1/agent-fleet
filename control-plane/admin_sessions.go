@@ -51,7 +51,8 @@ func (a adminAPI) allSessions(w http.ResponseWriter, r *http.Request) {
 	for _, t := range tenants {
 		members, err := a.mgr.store.ListMembersByTenant(ctx, t.ID)
 		if err != nil {
-			// 部分失敗はログで可視化する(テナントが管理ビューから静かに消えないように)
+			// Log the partial failure: a tenant must not vanish from the admin view in
+			// silence.
 			log.Printf("admin sessions: list members tenant=%s: %v", t.Slug, err)
 			continue
 		}

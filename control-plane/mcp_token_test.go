@@ -1,13 +1,12 @@
-// mcp_token_test.go — AF_MCP_TOKEN の往復検査。実体（MintMCPToken / VerifyMCPToken）は
-// internal/mcpsrv にあるが、**このテストは package main に残す**（並列リファクタ ウェーブ C /
-// track=CP-MCP）。
+// mcp_token_test.go — AF_MCP_TOKEN round-trip. MintMCPToken / VerifyMCPToken live in
+// internal/mcpsrv, but this test has to stay in package main.
 //
-// 🔥 理由は bad リストの最後の 1 件: 「別ブリッジの資格情報を拒む」を、schedule ブリッジの
-// **本物の mintScheduleToken** で作っている。mcpsrv からは package main のそれを呼べないので、
-// 向こうへ持っていくと文字列リテラルに退化する——つまり「schedule 側が prefix と署名ドメインを
-// MCP と衝突させた」という現実の壊れ方を検出できなくなる（memo ブリッジは既に同じ `afm_`
-// prefix を使っており、両者を隔てているのは署名ドメイン文字列だけ）。テスト関数の本体は
-// develop と 1 文字も変えていない。
+// The reason is the last entry of the bad list: "reject another bridge's credential" is
+// built from the schedule bridge's real mintScheduleToken, which mcpsrv cannot call.
+// Moved over there the case degrades into a string literal and stops detecting the real
+// failure — schedule colliding with MCP on prefix and signing domain. The memo bridge
+// already uses the same `afm_` prefix; the signing-domain string is all that separates
+// the two.
 
 package main
 

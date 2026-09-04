@@ -5,9 +5,10 @@ import (
 	"testing"
 )
 
-// ミラーのスキルピッカー（docs/log/50 / ADR0034）の中継登録を固定する。CP は明示許可リスト
-// 方式なので、Agent 側にだけ足すと Console からは 404 になる（この漏れは繰り返し起きて
-// いる）。実際の応答形は Agent 側 session_skills_test.go が担保する。
+// Pins the CP-side relay registration for the mirror's skill picker (ADR0034). The CP
+// routes by an explicit allowlist, so a route added only on the Agent answers 404 from the
+// Console — a gap that keeps recurring. The response shape itself is covered by the
+// Agent's session_skills_test.go.
 func TestSessionSkillsRouteProxiedByCP(t *testing.T) {
 	_, mux := smokeEnv(t)
 	req := httptest.NewRequest("GET", "/api/sessions/x/skills", nil)

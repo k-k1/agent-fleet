@@ -1,7 +1,7 @@
 package main
 
-// Member-facing egress allowlist face — the 安全弁 that ties the MCP registry to egress
-// control (docs/log/48 §9 / P5, docs/log/20 M3).
+// Member-facing egress allowlist face — the safety valve that ties the MCP registry to
+// egress control (docs/log/48 §9 / P5, docs/log/20 M3).
 //
 // A remote MCP server IS an outbound destination. When the deployment routes workspace
 // egress through the forward proxy (AF_EGRESS_PROXY_ADDR), a server whose host is not on
@@ -31,8 +31,9 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Wire codes for the member face. 追加・改名時は console/src/lib/i18n/locales/{ja,en}/errors.ts
-// の "err.<code>" も同時に（docs/log/48 §11.3: 1 理由 = 1 コード）。
+// Wire codes for the member face. When one is added or renamed, update the matching
+// "err.<code>" in console/src/lib/i18n/locales/{ja,en}/errors.ts at the same time
+// (docs/log/48 §11.3: one reason = one code).
 const (
 	codeEgressEntryInvalid = "egress_entry_invalid"
 	codeEgressEntryBroad   = "egress_entry_too_broad"
@@ -149,14 +150,14 @@ func (a egressAPI) checkHosts(w http.ResponseWriter, r *http.Request, _ store.Id
 	})
 }
 
-// egressCheckWire — GET /api/egress/check のレスポンス（Console の `EgressCheck`、
-// console/src/features/settings/mcp/egressCheck.ts）。
+// egressCheckWire is the response of GET /api/egress/check (the Console's `EgressCheck`,
+// console/src/features/settings/mcp/egressCheck.ts).
 //
 // was: map[string]any{"configured":…, "mode":…, "enforce":…, "hosts":…}
-// 4 キーとも無条件に入っていたので **omitempty は付けない**（付けると
-// configured=false / mode="" のときにキーが消えてワイヤが変わる）。
-// Hosts は make 済みで nil にならないため `{}` が出る。等価は
-// wiremap_equiv_test.go の TestWireEquivEgressCheck が旧 map と突き合わせて示す。
+// All four keys were unconditionally present, so no omitempty: with it, configured=false
+// or mode="" would drop the key and change the wire. Hosts is always make'd and never
+// nil, so `{}` is emitted. TestWireEquivEgressCheck (wiremap_equiv_test.go) shows the
+// equivalence against the old map.
 type egressCheckWire struct {
 	Configured bool                         `json:"configured"`
 	Mode       string                       `json:"mode"`

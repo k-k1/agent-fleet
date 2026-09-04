@@ -73,8 +73,9 @@ func (f handoffFixture) offer(t *testing.T, expiresAt string) SessionHandoffOffe
 		CreatedAt: NowTS(), ExpiresAt: expiresAt}
 }
 
-// TestHandoffOfferOnePendingPerSession — 未処理は 1 セッション 1 件（ADR 0057 決定 10）。
-// 数えて弾く形では 2 要求が同時に来ると両方通るので、部分ユニーク索引で不可能にしてある。
+// TestHandoffOfferOnePendingPerSession: at most one pending offer per session (ADR 0057
+// decision 10). Counting and rejecting lets two concurrent requests both through, so a
+// partial unique index makes it impossible instead.
 func TestHandoffOfferOnePendingPerSession(t *testing.T) {
 	ctx := context.Background()
 	f := newHandoffFixture(t)
@@ -82,7 +83,7 @@ func TestHandoffOfferOnePendingPerSession(t *testing.T) {
 		t.Fatalf("first create=%v err=%v", created, err)
 	}
 	second := f.offer(t, "")
-	second.RecipientMembershipID = f.other.ID // 別の宛先でも 2 件目は通さない
+	second.RecipientMembershipID = f.other.ID // a different recipient is still a second offer
 	created, err := f.st.CreateSessionHandoffOffer(ctx, second)
 	if err != nil {
 		t.Fatalf("second create err=%v", err)
@@ -90,7 +91,7 @@ func TestHandoffOfferOnePendingPerSession(t *testing.T) {
 	if created {
 		t.Fatal("a second pending offer was created for the same session")
 	}
-	// 決着させれば次を出せる（撤回して投げ直す導線）。
+	// Once settled another can be offered — the withdraw-and-re-offer path.
 	first, _ := f.st.ListSessionHandoffOffersByOwner(ctx, f.owner.ID)
 	if _, err := f.st.TransitionSessionHandoffOffer(ctx, first[0].ID, "pending", "withdrawn", NowTS(), ""); err != nil {
 		t.Fatal(err)
@@ -100,8 +101,9 @@ func TestHandoffOfferOnePendingPerSession(t *testing.T) {
 	}
 }
 
-// TestHandoffOfferExpiresWhenShareRevoked が ACL 連動の本命。共有を切ったのに相手の受信箱に
-// 引き継ぎが残るのが、この機能で一番まずい壊れ方（本文ごと他人の手元に残る）。
+// TestHandoffOfferExpiresWhenShareRevoked is the ACL coupling that matters: an offer left
+// in someone else's inbox after the share was revoked is the worst failure this feature
+// has, because the body stays in their hands.
 func TestHandoffOfferExpiresWhenShareRevoked(t *testing.T) {
 	ctx := context.Background()
 	f := newHandoffFixture(t)
@@ -128,8 +130,10 @@ func TestHandoffOfferExpiresWhenShareRevoked(t *testing.T) {
 	}
 }
 
-// RO 共有でも引き継げること。引き継ぎに要るのは会話が読めることで、操作提案の権限ではない。
-// RW 提案の失効条件（permission='rw'）を流用すると、RO 共有の引き継ぎが**作った直後に消える**。
+// TestHandoffOfferSurvivesOnReadOnlyShare: a read-only share is enough to hand off. What
+// a handoff needs is that the conversation can be read, not the right to propose actions;
+// reusing the RW proposal's expiry condition (permission='rw') would drop a handoff made
+// on an RO share the instant it was created.
 func TestHandoffOfferSurvivesOnReadOnlyShare(t *testing.T) {
 	ctx := context.Background()
 	f := newHandoffFixture(t)
@@ -137,7 +141,7 @@ func TestHandoffOfferSurvivesOnReadOnlyShare(t *testing.T) {
 	if created, err := f.st.CreateSessionHandoffOffer(ctx, o); err != nil || !created {
 		t.Fatalf("create=%v err=%v", created, err)
 	}
-	// 権限を触る操作（RO のまま putし直す）でも失効しない。
+	// Re-putting the share (still RO) touches permission and must not expire the offer.
 	row := f.sessionShareRow
 	row.UpdatedAt = NowTS()
 	if err := f.st.PutSessionShare(ctx, row); err != nil {
@@ -166,7 +170,8 @@ func TestHandoffOfferAcceptKeepsBodyDeclineClearsIt(t *testing.T) {
 	if got.Ciphertext == "" || got.AcceptedSessionName != "new-session" {
 		t.Fatalf("accepted offer lost its body or session name: %+v", got)
 	}
-	// 二重決着は通らない。A の自分起動と B の受諾の競合を閉じているのはこの条件付き更新。
+	// A second decision must not land: this conditional update is what closes the race
+	// between A launching it themselves and B accepting.
 	if changed, err := f.st.TransitionSessionHandoffOffer(ctx, accepted.ID, "pending", "withdrawn", NowTS(), ""); err != nil || changed {
 		t.Fatalf("second decision changed=%v err=%v, want false", changed, err)
 	}
@@ -198,13 +203,15 @@ func TestHandoffOfferExpiryReturnsRows(t *testing.T) {
 	if err != nil || len(expired) != 1 || expired[0].ID != o.ID {
 		t.Fatalf("expired=%v err=%v", expired, err)
 	}
-	// 2 回目は空。失効通知が毎ポーリング鳴り続けるのを防ぐのはこの冪等性。
+	// The second sweep returns nothing; that idempotence is what stops the expiry
+	// notification from firing on every poll.
 	if again, err := f.st.ExpireSessionHandoffOffers(ctx, NowTS()); err != nil || len(again) != 0 {
 		t.Fatalf("second sweep=%v err=%v", again, err)
 	}
 }
 
-// アーカイブしたセッションの引き継ぎは受信箱に出さない（docs/log/59 §1 と同じ規律）。
+// TestHandoffInboxHidesArchivedSession: an archived session's handoff stays out of the
+// inbox, the same rule as docs/log/59 §1.
 func TestHandoffInboxHidesArchivedSession(t *testing.T) {
 	ctx := context.Background()
 	f := newHandoffFixture(t)

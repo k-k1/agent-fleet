@@ -34,8 +34,8 @@ func newResolver(f *fakeDiscover) *agentResolver {
 }
 
 func TestIsDNSNotFound(t *testing.T) {
-	// 拾うのは「名前が無い」だけ。接続拒否やタイムアウトで Cloud Map を叩くと、
-	// ただ落ちている Agent に対して毎回 API を打つことになる。
+	// Only "the name does not exist" is matched. Taking connection refusals or timeouts
+	// too would hammer Cloud Map for an Agent that is merely down.
 	if !isDNSNotFound(&net.DNSError{Err: "no such host", IsNotFound: true}) {
 		t.Fatal("NXDOMAIN を拾えていない")
 	}
@@ -61,7 +61,8 @@ func TestLookupUsesRegisteredPort(t *testing.T) {
 }
 
 func TestLookupFallsBackToRequestedPort(t *testing.T) {
-	// ポート属性が無い実体（手で登録されたもの）でも、要求されたポートで繋ぐ。
+	// An instance with no port attribute (registered by hand) still connects on the
+	// requested port.
 	f := &fakeDiscover{insts: []sdtypes.HttpInstanceSummary{
 		inst(map[string]string{"AWS_INSTANCE_IPV4": "10.0.0.9"}),
 	}}
@@ -98,12 +99,12 @@ func TestLookupCaches(t *testing.T) {
 }
 
 func TestLookupExpires(t *testing.T) {
-	// タスクが入れ替われば IP は変わる。TTL を過ぎたら引き直す。
+	// A task replacement changes the IP, so the lookup is repeated once the TTL passes.
 	f := &fakeDiscover{insts: []sdtypes.HttpInstanceSummary{
 		inst(map[string]string{"AWS_INSTANCE_IPV4": "10.0.0.6", "AWS_INSTANCE_PORT": "7700"}),
 	}}
 	r := newResolver(f)
-	r.ttl = -time.Second // 常に期限切れ
+	r.ttl = -time.Second // always expired
 	r.lookup(context.Background(), "af-ws-erin:7700")
 	r.lookup(context.Background(), "af-ws-erin:7700")
 	if f.calls != 2 {
@@ -112,7 +113,8 @@ func TestLookupExpires(t *testing.T) {
 }
 
 func TestLookupIgnoresLiteralIP(t *testing.T) {
-	// IP 直指定で dial が失敗したなら DNS は無関係。Cloud Map を叩いてはいけない。
+	// A dial to a literal IP that failed has nothing to do with DNS; Cloud Map must not
+	// be called.
 	f := &fakeDiscover{}
 	if _, ok := newResolver(f).lookup(context.Background(), "10.20.11.172:7700"); ok {
 		t.Fatal("IP 直指定を引いてしまった")
@@ -130,8 +132,8 @@ func TestLookupErrorIsNotFatal(t *testing.T) {
 }
 
 func TestDialAgentWithoutResolver(t *testing.T) {
-	// docker/native のランタイムでは resolver を建てない。素の dial のエラーが
-	// そのまま返る（フォールバックが原因を隠さない）。
+	// The docker/native runtimes build no resolver: the plain dial's error comes back
+	// unchanged, so a fallback never hides the cause.
 	prev := agentDialer
 	agentDialer = nil
 	defer func() { agentDialer = prev }()

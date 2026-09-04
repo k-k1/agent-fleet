@@ -1,11 +1,9 @@
-// agent_client_invariant_test.go — CP→Agent の HTTP は必ず共有 Transport を通す、を
-// このパッケージにも掛ける。
+// Every CP→Agent HTTP call has to go through the shared Transport; this applies that
+// rule to this package too.
 //
-// ★ これは移送で開いた穴を塞ぐためにある。同じ検査は CP 側にもあるが
-// （agent_client_invariant_test.go の TestAgentCallsUseTheSharedClient）、あちらは
-// `os.ReadDir(".")` でパッケージ直下しか見ずサブディレクトリへ降りない。アダプタが
-// internal/runtime へ移った時点で、あちらの検査対象から静かに外れていた——
-// 検査が消えたことは何も報告しないので、これが無ければ誰も気付かない。
+// The CP-side check (TestAgentCallsUseTheSharedClient) reads `os.ReadDir(".")` and
+// never descends into subdirectories, so the adapters here fall outside it. A check
+// that stops covering something reports nothing, so without this one nobody notices.
 package runtime
 
 import (
@@ -15,13 +13,14 @@ import (
 	"testing"
 )
 
-// なぜ効くのか（CP 側と同じ経緯）: Service Connect の別名はタスク起動時に書かれる
-// /etc/hosts にしか載らないので、CP タスクより後に作られたワークスペースは素の dial
-// では NXDOMAIN になる。Cloud Map への引き直しは Transport に載せた仕組みなので、
-// http.DefaultClient を使った経路には効かない。実機で 2 度踏んでいる。
+// TestAdapterAgentCallsUseTheSharedClient fails a CP→Agent call built on
+// http.DefaultClient. A Service Connect alias only lands in the /etc/hosts written when
+// the task starts, so a workspace created after the CP task is NXDOMAIN on a plain dial;
+// the Cloud Map re-resolution that saves it lives in the Transport, so it does not reach
+// a default client. Hit twice on real infrastructure.
 //
-// このパッケージでは共有クライアントは healthzClient（deps.go 経由で CP が注入する）。
-// 既定値は素の *http.Client なので、それを直接組み立てる新しい呼び出しも同じ穴になる。
+// The shared client here is healthzClient (injected by the CP through deps.go). Its zero
+// value is a plain *http.Client, so a new call that assembles one itself has the same hole.
 func TestAdapterAgentCallsUseTheSharedClient(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -45,7 +44,7 @@ func TestAdapterAgentCallsUseTheSharedClient(t *testing.T) {
 		for i, line := range strings.Split(body, "\n") {
 			code := line
 			if j := strings.Index(code, "//"); j >= 0 {
-				code = code[:j] // コメントで説明するのは許す（禁止するのは呼び出し）
+				code = code[:j] // naming it in a comment is fine; the call is what is banned
 			}
 			if strings.Contains(code, "http.DefaultClient") {
 				t.Errorf("%s:%d: CP→Agent の経路で http.DefaultClient を使っている。"+

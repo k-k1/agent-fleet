@@ -1,9 +1,8 @@
 package main
 
-// 移送で main 側に残した 1 本（ADR 0067 / CP-STORE）。aggregateUsage は usage.go
-// にある集計であって store ではない。DB も張らない純粋な関数のテストなので、
-// internal/store/store_sqlite_test.go に同居していた理由は「同じパッケージ
-// だったから」以上のものではなかった。
+// This test stays on the main side (ADR 0067 / CP-STORE): aggregateUsage is the
+// aggregation in usage.go, not a store, and the test is a pure-function one that opens no
+// database.
 
 import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"

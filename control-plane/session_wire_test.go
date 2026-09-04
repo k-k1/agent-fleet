@@ -1,9 +1,10 @@
-// session_wire_test.go — sessionWire 中継の drop 回帰テスト。
-// sessionWire は Agent の /sessions 応答を decode→再 emit する中継 struct なので、
-// Agent 側 wire（workspace/agent/internal/session.Session）に在って ここに無い
-// field は silently drop される（Title → driver → color/context/exit 系と同じ
-// 事故が 3 回起きている）。Agent 相当の JSON を丸ごと往復させ、Console が消費する
-// field が生き残ることを固定する。
+// session_wire_test.go — drop regression for the sessionWire relay.
+//
+// sessionWire decodes the Agent's /sessions response and re-emits it, so a field that the
+// Agent wire (workspace/agent/internal/session.Session) has and this struct does not is
+// dropped silently — an accident that has already cost title, driver and the
+// color/context/exit fields. Round-trips a whole Agent-shaped JSON body and pins that the
+// fields the Console consumes survive it.
 package main
 
 import (
@@ -14,11 +15,11 @@ import (
 	"testing"
 )
 
-// stubRuntime は Endpoint/Token だけ本物を返す最小 Runtime。
+// stubRuntime is a minimal Runtime that answers for real only on Endpoint/Token.
 type stubRuntime struct {
 	endpoint string
 	token    string
-	state    string // "" = running（既存の呼び出しはこの既定に依存している）
+	state    string // "" = running; existing callers rely on that default
 }
 
 func (s stubRuntime) Start(context.Context) error { return nil }
@@ -33,8 +34,9 @@ func (s stubRuntime) Endpoint() string { return s.endpoint }
 func (s stubRuntime) Token() string    { return s.token }
 func (s stubRuntime) Name() string     { return "stub" }
 
-// Agent の /sessions 1 行ぶんの実形状（workspace/agent の wireSession が出す
-// JSON と同じ key）。exit 系は docs/log/26（OOM で死んだ停止セッション）の実例値。
+// One /sessions row in the shape the Agent really emits (the same keys as workspace/agent's
+// wireSession). The exit fields are real values from docs/log/26: a stopped session the OOM
+// killer took.
 const agentSessionsPayload = `{"sessions":[{
 	"name":"s1","tmux":"claude_s1","dir":"/home/dev/repos/x","workingCopyId":"wc_123","kind":"claude",
 	"driver":"managed","repo":"x","title":"t","display":"[AF] t","color":"#332211",
@@ -46,9 +48,9 @@ const agentSessionsPayload = `{"sessions":[{
 	"exitReason":"oom","exitCode":137,"exitSignal":9
 }]}`
 
-// TestAgentSessionsRelayKeepsFields: CP の decode→再 emit 往復で、Console が
-// 消費する field（特に docs/log/26 の exit chip を出す exitReason/exitCode/exitSignal、
-// SSM 背景色の color、ContextBar の context）が drop されないこと。
+// TestAgentSessionsRelayKeepsFields pins that the CP's decode→re-emit round trip drops none
+// of the fields the Console consumes — above all exitReason/exitCode/exitSignal behind the
+// exit chip (docs/log/26), color for the SSM background, and context for the ContextBar.
 func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/sessions" {
@@ -70,7 +72,8 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 		t.Fatalf("len = %d, want 1", len(list))
 	}
 
-	// 再 emit（sessionsList が writeJSON する形）を JSON に戻して field 単位で確認。
+	// Turn the re-emitted form (what sessionsList writes as JSON) back into JSON and check
+	// it field by field.
 	out, err := json.Marshal(list[0])
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -81,25 +84,26 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 	}
 
 	want := map[string]any{
-		// docs/log/26 exit chip（OOM/クラッシュ表示）— CP 中継で drop されていた本丸。
+		// docs/log/26 exit chip (OOM / crash display) — the ones the relay was dropping.
 		"exitReason": "oom",
 		"exitCode":   float64(137),
 		"exitSignal": float64(9),
-		// 同時に drop されていた表示系。
+		// The display field dropped along with them.
 		"color": "#332211",
-		// P1.5 で追加済みの driver（回帰防止に固定）。
+		// driver, pinned against the same regression.
 		"driver":        "managed",
 		"title":         "t",
 		"workingCopyId": "wc_123",
-		// branch/worktree 系（既存だが同型事故の回帰防止に固定）。
+		// branch/worktree fields, pinned against the same kind of accident.
 		"branch":        "main",
 		"currentBranch": "dev",
 		"branchDrift":   true,
 		"worktree":      true,
-		// 削除ロック（docs/log/45）— CP 中継で落とすと鍵バッジと解除メニューが消える。
+		// Deletion lock (docs/log/45): dropped here, the lock badge and its unlock menu go.
 		"locked": true,
-		// BG 実行中とその理由 — 落とすとバッジが「入力待ち」に戻る／理由だけ落とすと
-		// 何が走っているか言えない汎用文言に固定される。
+		// Background busy and its reason. Drop the flag and the badge falls back to
+		// "waiting for input"; drop only the reason and it is stuck with generic wording
+		// that cannot say what is running.
 		"backgroundBusy":       true,
 		"backgroundBusyReason": "subagent",
 	}
@@ -108,7 +112,8 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 			t.Errorf("relayed %s = %v, want %v", k, got[k], v)
 		}
 	}
-	// context は shape を CP が解釈しない素通し（RawMessage）— 中身ごと残ること。
+	// context passes straight through without the CP interpreting its shape (RawMessage);
+	// the contents have to survive as well.
 	ctxObj, ok := got["context"].(map[string]any)
 	if !ok {
 		t.Fatalf("relayed context = %v, want object", got["context"])
@@ -116,8 +121,8 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 	if ctxObj["read"] != float64(1000) || ctxObj["model"] != "claude-fable-5" {
 		t.Errorf("relayed context = %v, want read=1000 model=claude-fable-5", ctxObj)
 	}
-	// tmux は意図して中継しない（Console 未使用・"claude_"+name で導出可能）。
-	// うっかり増えたら struct コメントの棚卸しと合わせて見直すこと。
+	// tmux is deliberately not relayed: the Console does not use it and it is derivable as
+	// "claude_"+name. If it ever shows up here, review it along with the struct's comments.
 	if _, exists := got["tmux"]; exists {
 		t.Errorf("tmux should not be relayed, got %v", got["tmux"])
 	}

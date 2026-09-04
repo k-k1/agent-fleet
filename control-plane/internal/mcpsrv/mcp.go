@@ -28,21 +28,21 @@ import (
 // AF_MCP_ENABLED so deployments opt in.
 
 // mcpSessionOutputTailBytes caps get_session_output at the last N bytes
-// (/output?tail= — Agent 側 session_io.go)。値はローカル stdio MCP
-// （workspace/agent/mcp_stdio.go）と同じ 32 KiB: ツール結果は呼び手の LLM 会話に
-// 蓄積するため、上限なしの全文はその会話の以降の全ターンを高くする。
+// (/output?tail= — session_io.go on the Agent side). Same 32 KiB as the local stdio MCP
+// (workspace/agent/mcp_stdio.go): a tool result accumulates in the caller's LLM
+// conversation, so an unbounded dump makes every later turn of that conversation dearer.
 const mcpSessionOutputTailBytes = 32 << 10
 
-// API is the MCP feature handler set (docs/log/23 残③): the /mcp endpoint plus
-// its tool registry/impls, converted receiver-only from config. Auth is a
-// Bearer PAT (authMCP), never the session gateway; everything it needs hangs
-// off the CP seam (store + runtime resolution — see deps.go).
+// API is the MCP feature handler set (docs/log/23, remaining task 3): the /mcp
+// endpoint plus its tool registry/impls, converted receiver-only from config. Auth is
+// a Bearer PAT (authMCP), never the session gateway; everything it needs hangs off the
+// CP seam (store + runtime resolution — see deps.go).
 type API struct{ cp CP }
 
 // New builds the /mcp handler set over the CP seam. The CP's own wiring is
 // control-plane/alias_mcp.go.
 //
-// 🔥 It refuses to build on a stale scope copy. scopeRead / scopeWrite below are the
+// It refuses to build on a stale scope copy. scopeRead / scopeWrite below are the
 // VALUES of pat.go's ladder written out a second time, and nothing but this check ties
 // the two together: rename a tier over there and ScopeRank returns 0 for the copy, which
 // makes toolsFor's `rank(prin.scope) >= rank(t.minScope)` true for every read tool
@@ -212,8 +212,8 @@ func (a API) authMCP(r *http.Request) (*mcpPrincipal, *APIError) {
 func (a API) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
 	resp := a.dispatchMCPMethod(ctx, prin, req)
 	if len(req.ID) == 0 {
-		// JSON-RPC: notification には応答を返さない。既知メソッドが notification で
-		// 届いた場合も処理だけ行い、"id":null 付き応答は作らない。
+		// JSON-RPC: a notification gets no response. A known method arriving as a
+		// notification is still handled, but never answered with an "id":null response.
 		return nil
 	}
 	return resp
@@ -249,10 +249,11 @@ func (a API) dispatchMCPMethod(ctx context.Context, prin *mcpPrincipal, req rpcR
 		// Removed in 2026-07-28 (any RPC proves liveness), kept for initialize-era clients.
 		return rpcOK(req.ID, map[string]any{"resultType": "complete"})
 	case "tools/list":
-		// ttlMs / cacheScope は 2026-07-28 の list 系結果の必須フィールド（キャッシュ可能
-		// リスト）。新 era クライアント（opencode 1.18.8 実測）は欠落を検証で弾いて
-		// サーバーごと切断する。旧クライアントは resultType 同様に未知キーとして無視。
-		// ツール集合は principal のスコープ依存なので private。
+		// ttlMs / cacheScope are required fields of a cacheable list result in the
+		// 2026-07-28 protocol era: a new-era client (measured with opencode 1.18.8)
+		// rejects their absence in validation and drops the whole server, while an older
+		// client ignores them as unknown keys just like resultType. The tool set depends
+		// on the principal's scope, hence private.
 		return rpcOK(req.ID, map[string]any{
 			"resultType": "complete",
 			"ttlMs":      60000,
@@ -317,8 +318,9 @@ func memberTools() []mcpTool {
 				"required": []string{"name"},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
-				// tail: 呼び手は外部 LLM。ツール結果はその会話に蓄積するので、
-				// ローカル stdio MCP と同じ末尾上限を常時指定する（session_io.go）。
+				// The caller is an external LLM and the result accumulates in its
+				// conversation, so always pass the same tail cap as the local stdio
+				// MCP (session_io.go).
 				q := "?tail=" + strconv.Itoa(mcpSessionOutputTailBytes)
 				if s := argStr(args, "since"); s != "" {
 					q += "&since=" + url.QueryEscape(s)
@@ -950,7 +952,7 @@ func adminTools() []mcpTool {
 				})
 			},
 		},
-		// --- egress review (docs/log/20 M4: agent 壁打ち) ---------------------------
+		// --- egress review (docs/log/20 M4: agent sounding-board) -------------------
 		// Read + propose only. The agent reviews observations and proposes allowlist
 		// changes; a human admin approves them in the console. Egress is deployment-
 		// wide, so these require super_admin (enforced in the impls).
@@ -1148,10 +1150,11 @@ func (a API) mcpMemberSessions(ctx context.Context, ws store.Workspace) []map[st
 	return out
 }
 
-// sessionLabelTagRe は Agent が付けるラベルの先頭タグ（workspace/agent/internal/session/
-// label.go）。旧 `[AF] ` と、セッション名を含む新 `[AF:<name>] ` の両方に一致する。ラベルは
-// 作成時に meta へ焼かれるので**両方が同時に DB に居る** — 片方しか剥がさないと、古い行だけ
-// 表示にタグが残る。
+// sessionLabelTagRe matches the leading tag the Agent puts on a label
+// (workspace/agent/internal/session/label.go): both the bare `[AF] ` form and the
+// `[AF:<name>] ` form carrying the session name. Labels are baked into meta at creation
+// time, so both forms coexist in the DB — strip only one and the tag stays visible on
+// the older rows.
 var sessionLabelTagRe = regexp.MustCompile(`^\[AF(?::[A-Za-z0-9][A-Za-z0-9_-]*)?\]\s*`)
 
 // sessionRowDisplay is the DB-mirror fallback for a human-readable session name (the

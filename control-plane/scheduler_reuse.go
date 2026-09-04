@@ -375,10 +375,10 @@ func reuseCreateTitle(sch store.Schedule, pinned bool) string {
 
 // reuseSendBody is the /input body for a reuse fire: the expanded prompt plus report_to
 // (the operator conversation when report=true, else empty = no completion report).
-// confirm (docs/log/38 配達検証) is the second sbk7oej fix: the first (the readiness gate)
-// still declared "fired" on tmux keystroke success, and a CLI that momentarily could
-// not accept input (cold resume before slash commands register, a swallowed Enter)
-// silently ate the prompt while the ledger recorded success (2026-07-24 朝の再発).
+// confirm exists because declaring "fired" on tmux keystroke success is not proof of
+// delivery: a CLI that momentarily could not accept input (cold resume before slash
+// commands register, a swallowed Enter) silently ate the prompt while the ledger recorded
+// success.
 // With confirm the Agent blocks until the prompt provably became a turn (a user line
 // appended to the conversation log), self-heals once, and otherwise answers
 // delivery_unconfirmed — which lands here as an error: status plus a notification,
@@ -388,7 +388,7 @@ func reuseSendBody(sch store.Schedule, slot time.Time) []byte {
 		"prompt":    expandSchedulePrompt(sch, slot),
 		"report_to": scheduleReportTo(sch),
 		"confirm":   true,
-		"source":    scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/log/38)
+		"source":    scheduleSource(sch), // mirror badge: scheduled vs manual fire
 	})
 	return b
 }
@@ -406,7 +406,7 @@ func buildReuseCreateBody(sch store.Schedule, slot time.Time, title string) []by
 		"driver":          injectDriver(kind),
 		"report_to":       scheduleReportTo(sch),
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
-		"source":          scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/log/38)
+		"source":          scheduleSource(sch), // mirror badge: scheduled vs manual fire
 	}
 	b, _ := json.Marshal(body)
 	return b
@@ -506,8 +506,8 @@ func parseRotateDuration(s string) (time.Duration, bool) {
 }
 
 // calendarCrossed reports whether slot falls in a later calendar bucket than started, for
-// the given granularity. "weekly" uses ISO year-week, so "月曜は新セッション" (a Monday
-// boundary) rotates whenever a fire lands in a new week.
+// the given granularity. "weekly" uses ISO year-week, so a Monday boundary ("a new
+// session each Monday") rotates whenever a fire lands in a new week.
 func calendarCrossed(started, slot time.Time, calendar string) bool {
 	switch calendar {
 	case "daily":

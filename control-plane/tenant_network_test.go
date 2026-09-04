@@ -144,7 +144,7 @@ func TestCheckTenantIP(t *testing.T) {
 	if aerr == nil || aerr.code != "ip_not_allowed" || aerr.status != http.StatusForbidden {
 		t.Errorf("an address outside the rule = %+v, want 403 ip_not_allowed", aerr)
 	}
-	// ⚠️ An address the CP could not work out is a DENIAL. A restriction nobody can
+	// An address the CP could not work out is a DENIAL. A restriction nobody can
 	// evaluate must not be one everybody passes.
 	if aerr := mgr.checkTenantIP(ctxWithIP("", true), member, mv); aerr == nil {
 		t.Error("an unknown source address must be refused, not admitted")
@@ -156,10 +156,10 @@ func TestCheckTenantIP(t *testing.T) {
 	}
 }
 
-// ⚠️ The PAT path must stay OUT of the gate. Its source address is the caller's own
+// The PAT path must stay OUT of the gate. Its source address is the caller's own
 // Workspace container — MCP and the internal git provider both call from inside it —
 // so enforcing here would mean a tenant that allowlists its office silently blocks
-// every agent running in its own workspaces (ADR 0047 決定 3).
+// every agent running in its own workspaces (ADR 0047 decision 3).
 func TestPATPathIsNotSubjectToTheNetworkRule(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, tn, mv, member := networkFixture(t)

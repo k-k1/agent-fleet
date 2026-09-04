@@ -1,14 +1,17 @@
 package main
 
-// control-plane/errcodes.go の値と Console の `err.<code>` カタログを突き合わせる。
-// workspace/agent 側の errcodes_catalog_test.go と対で、**同じ穴の CP 側**。
+// Cross-checks the values in control-plane/errcodes.go against the Console's `err.<code>`
+// catalog. The counterpart of workspace/agent's errcodes_catalog_test.go, covering the
+// same gap on the CP side.
 //
-// 🔴 CP には Console のカタログを読むヘルパが 1 つも無く、`egress_member.go` と
-// `internal/mcpsrv/mcp_server.go` の「追加・改名時は errors.ts の err.<code> も同時に」
-// という**コメントだけ**が規約だった。綴りを変えても Go も Console も緑のまま、画面だけが
-// 開発者向けメッセージへ落ちる。
+// The CP has no helper that reads the Console catalog, so the whole convention was a
+// comment in `egress_member.go` and `internal/mcpsrv/mcp_server.go` saying "when adding
+// or renaming one, update err.<code> in errors.ts too". Change a spelling and both Go and
+// the Console stay green while the screen alone falls back to the developer-facing
+// message.
 //
-// agent 側と同じく**実際に送出されるコードだけ**を見る（宣言だけの定数は画面に出ようが無い）。
+// As on the agent side, only the codes actually emitted are examined: a constant that is
+// merely declared cannot reach the screen.
 
 import (
 	"go/ast"
@@ -21,14 +24,16 @@ import (
 )
 
 // cpConsoleCatalog concatenates one locale's domain catalogs.
-// ⚠️ `locales/<locale>.ts` は import と spread しか持たない合成ファイルなので読まない
-// （読むと「キーが在るのに無い」と言う検査になる）。ADR 0067 決定 4。
+// `locales/<locale>.ts` is deliberately not read: it is a composition file holding
+// nothing but imports and spreads, and reading it turns the check into one that reports a
+// key as missing while it is present (ADR 0067 decision 4).
 func cpConsoleCatalog(t *testing.T, locale string) string {
 	t.Helper()
 	dir := filepath.Join("..", "console", "src", "lib", "i18n", "locales", locale)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		// console/ を含まない配布物でのビルドに備える（agent 側の先例と同じ）。
+		// Allow for a build from a distribution that does not include console/,
+		// as on the agent side.
 		t.Skipf("catalog not available (%v)", err)
 	}
 	var b strings.Builder

@@ -1,15 +1,18 @@
-// runtime_native.go — ネイティブ（コンテナレス）Runtime アダプタ。Docker が使えない
-// 環境（素の WSL2 等）向けに、workspace-agent をホストの子プロセスとして直接起動する。
-// docs/log/34-native-runtime.md 参照。
+// runtime_native.go — the native (container-less) Runtime adapter: workspace-agent is
+// started as a child process of the host, for environments where docker is not available
+// (a bare WSL2, say). See docs/log/34-native-runtime.md.
 //
-// 割り切り（docs/log/34 §制約）:
-//   - コンテナ隔離が無い。ワークスペース分離は HOME/CLAUDE_CONFIG_DIR/tmux ソケットの
-//     論理分離のみなので、単一ユーザー前提の AUTH=dev でしか構築させない（factory が拒否）。
-//   - メモリ上限（WS_MEMORY / per-user MemBytes）は強制しない（cgroup を持たない）。
-//   - 従来モードでは実行環境（tmux / git / claude 等の CLI / chromium）はホスト側に
-//     導入済みであること（Dockerfile / entrypoint.sh 相当の初期化はしない）。rootfs
-//     モード（AF_NATIVE_ROOTFS — docs/log/35 §35.7.2）は workspace イメージの rootfs を
-//     bwrap で read-only 実行し、entrypoint 初期化・ピン止めが docker と同等に働く。
+// What this profile gives up (docs/log/34, constraints):
+//   - No container isolation. Workspaces are separated only logically, by HOME,
+//     CLAUDE_CONFIG_DIR and the tmux socket, so it may only be built under AUTH=dev,
+//     which assumes a single user — the factory refuses anything else.
+//   - Memory limits (WS_MEMORY / the per-user MemBytes) are not enforced: there is no
+//     cgroup to enforce them with.
+//   - In the plain mode the runtime environment (tmux, git, the agent CLIs, chromium)
+//     must already be installed on the host — nothing here does the Dockerfile /
+//     entrypoint.sh initialization. In rootfs mode (AF_NATIVE_ROOTFS, docs/log/35
+//     §35.7.2) the workspace image's rootfs is run read-only under bwrap, so entrypoint
+//     initialization and version pinning work exactly as they do on docker.
 package runtime
 
 import (
@@ -279,7 +282,7 @@ func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
 		return fmt.Errorf("mkdir data home: %w", err)
 	}
 	// Same split as the docker adapter: plaintext Claude state lives OUTSIDE the
-	// browsable home (docs/17 P3-5 段2).
+	// browsable home (docs/17 P3-5 stage 2).
 	claudeCfg := filepath.Join(n.dataDir, "claude-config")
 	if err := os.MkdirAll(claudeCfg, 0o700); err != nil {
 		return fmt.Errorf("mkdir claude-config: %w", err)
@@ -356,10 +359,11 @@ func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
 		defer stopTail()
 		go n.mirrorBootProgress(tailCtx, off)
 	}
-	// 到達待ちは起動の成否ではない（runtime_health.go 冒頭の契約）。印を先に立ててから
-	// 待つので、待っている最中の State() は "starting" を返す。予算切れで失敗を返して
-	// いた頃は、この関数の defer が **まだ boot-install 中のプロセスを kill** していた
-	// ので、遅い初回起動ほど確実に殺していた。
+	// Waiting for reachability is not the success or failure of the start (the contract
+	// at the top of runtime_health.go). The marker is armed before the wait, so State()
+	// answers "starting" for its duration. Never turn an exhausted budget into an error
+	// here: the defer above would then kill a process that is still boot-installing, and
+	// the slower the first start the more certainly it gets killed.
 	marker := n.startingMarker()
 	marker.arm(time.Now().Add(maxDuration(AgentBootBudget, healthWait)))
 	waitErr := WaitAgentHealthy(ctx, n.Endpoint(), healthWait)
@@ -368,8 +372,8 @@ func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
 		return nil
 	}
 	if ctx.Err() != nil {
-		// 呼び出し側が去った/lease を失った。ここは従来どおり失敗＝この spawn は
-		// コミットされず、defer の abortSpawn が片付ける。
+		// The caller went away, or lost its lease. This one IS a failure: the spawn is
+		// never committed, and the deferred abortSpawn cleans it up.
 		return fmt.Errorf("%w (see %s)", waitErr, filepath.Join(n.dataDir, "agent.log"))
 	}
 	log.Printf("[ws %s] agent not answering yet after %s; still starting (budget %s, progress in %s)",
@@ -604,7 +608,7 @@ func (n *nativeRuntime) rootfsEnv() ([]string, error) {
 func (n *nativeRuntime) processEnv(home, claudeCfg string) []string {
 	env := map[string]string{
 		"HOME": home,
-		// entrypoint.sh parity: user installs (claude 等) under ~/.local/bin take
+		// entrypoint.sh parity: user installs (claude and friends) under ~/.local/bin take
 		// precedence; the rest of the PATH is the CP host's (tmux/git/node live there).
 		"PATH":              filepath.Join(home, ".local", "bin") + ":" + os.Getenv("PATH"),
 		"TERM":              "xterm-256color",
@@ -677,7 +681,7 @@ func (n *nativeRuntime) Stop(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	n.startingMarker().clear() // 起動途中で止めた場合に古い印を残さない
+	n.startingMarker().clear() // a stop mid-start must not leave the marker behind
 	pid := readPidFile(n.pidFile())
 	startID := nativeProcessStartID(pid)
 	if pid > 0 && sameNativeProcess(pid, n.agentBin, startID) {

@@ -53,7 +53,7 @@ type scheduleDTO struct {
 	ReuseRunCount       int    `json:"reuse_run_count,omitempty"`
 	OwnerConv           string `json:"owner_conv,omitempty"`
 	// Report opts the fire's session into the docs/log/30 completion report back to the
-	// owner conversation. Default false = 報告しない (the fire runs silently).
+	// owner conversation. Default false = no report (the fire runs silently).
 	Report       bool   `json:"report"`
 	Enabled      bool   `json:"enabled"`
 	NextRun      string `json:"next_run,omitempty"`
@@ -156,7 +156,7 @@ func validateScheduleFields(s store.Schedule) *apiError {
 	if !oneOf(s.OverlapPolicy, "skip", "queue", "restart") {
 		return &apiError{http.StatusBadRequest, "bad_overlap_policy", "overlap_policy must be skip, queue, or restart"}
 	}
-	// "assistant" (docs/log/38 アシスタント発火): the fire runs one assistant-chat turn in a
+	// "assistant" (docs/log/38, assistant fire): the fire runs one assistant-chat turn in a
 	// conversation (reuse_target = "a…" slug / UUID, empty = the schedule's owner_conv)
 	// instead of driving a session. repo/agent_kind/model are ignored in that mode —
 	// the conversation carries its own provider/model/persona.

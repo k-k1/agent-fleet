@@ -1,16 +1,15 @@
-// mcp_seal_test.go — テナント配布 MCP サーバのヘッダが**本当に封をされて**保存されるか。
+// mcp_seal_test.go — do the headers of a tenant-distributed MCP server reach the DB
+// genuinely sealed?
 //
-// 🔥 この検査が package main に居る理由（レビュー B-1・2026-09-03）。実体は
-// internal/mcpsrv にあるが、封をするのは CP の localCustodian（custodian.go・package
-// main）で、mcpsrv 単体のテストはそれを構築できず作り物を挿している。作り物は seam の
-// 4 つの主張（平文でない / 往復する / keyRef が認証される / 壊れた行はエラー）を守るが、
-// **「符号化しただけ」と「暗号化した」を区別できない**——custodian を一切呼ばずに
-// base64(keyRef + NUL + 平文 JSON) を保存する変異が、mcpsrv 側では緑のまま通る。
-// 守っているのはテナントの `Authorization: Bearer …` なので、抜けると資格情報が
-// 平文相当で DB に入る方向になる。
-//
-// そこで **cpDeps 経由で実 custodian を配線した 1 本**をこちら側に置く。(B) で
-// TestMCPTokenRoundTrip を main に残したのと同じ理由・同じ手。
+// The feature itself lives in internal/mcpsrv, but the sealing is done by the CP's
+// localCustodian (custodian.go, package main), which an mcpsrv-only test cannot build and
+// therefore replaces with a fake. That fake upholds the seam's four claims (not
+// plaintext / round-trips / keyRef is authenticated / a corrupt row errors) yet cannot
+// tell "merely encoded" from "encrypted": a mutation storing base64(keyRef + NUL +
+// plaintext JSON) without calling the custodian at all stays green over there. What is
+// being protected is the tenant's `Authorization: Bearer …`, so the gap puts credentials
+// into the DB in effectively plaintext. Hence one test on this side, wired to the real
+// custodian through cpDeps.
 package main
 
 import (
@@ -57,7 +56,7 @@ func TestMCPServerHeadersAreSealedNotMerelyEncoded(t *testing.T) {
 		t.Fatalf("tenant: %v", err)
 	}
 
-	// AUTH=dev の固定利用者は super_admin なので tenantAdminFor を通る。
+	// Under AUTH=dev the fixed user is a super_admin, so tenantAdminFor lets this through.
 	master := sha256.Sum256([]byte("test-master"))
 	m := &manager{store: st, authMode: "dev", devUser: "admin"}
 	m.master32 = master[:]
@@ -74,8 +73,8 @@ func TestMCPServerHeadersAreSealedNotMerelyEncoded(t *testing.T) {
 		t.Fatalf("the row must be sealed under the tenant key, got %q", rows[0].KeyRef)
 	}
 
-	// ① 保存値からは、どの素朴な復号でも平文が出てこないこと。生の部分文字列だけを見ると
-	//    「base64 で包んだ平文」を見逃す——実際そういう変異が作り物側では緑になる。
+	// 1. No naive decoding of the stored value may reveal the plaintext. Checking the raw
+	//    substring alone misses plaintext wrapped in base64.
 	probes := map[string][]byte{"raw": []byte(enc)}
 	for name, dec := range map[string]func(string) ([]byte, error){
 		"base64.Std":    base64.StdEncoding.DecodeString,
@@ -93,8 +92,9 @@ func TestMCPServerHeadersAreSealedNotMerelyEncoded(t *testing.T) {
 		}
 	}
 
-	// ② 同じヘッダを 2 回封じたら違う値になること。AEAD は毎回新しい nonce を引くので、
-	//    **決定的な符号化はすべてここで落ちる**（①をすり抜ける細工も含めて）。
+	// 2. Sealing the same headers twice must give different bytes. An AEAD draws a fresh
+	//    nonce each time, so every deterministic encoding fails here — including one
+	//    contrived to slip past check 1.
 	upsertMCPServer(t, api, "acme", "wiki2")
 	rows, err = st.ListMCPServers(ctx, tn.ID)
 	if err != nil || len(rows) != 2 {
@@ -104,7 +104,8 @@ func TestMCPServerHeadersAreSealedNotMerelyEncoded(t *testing.T) {
 		t.Fatal("two seals of the same header map are byte-identical: this is a deterministic encoding, not an AEAD")
 	}
 
-	// ③ それでも往復すること（①②が「壊れているから読めない」で通ってしまわないように）。
+	// 3. And it still round-trips, so checks 1 and 2 cannot pass merely because the value
+	//    is unreadable garbage.
 	rec := httptest.NewRecorder()
 	api.Distribute(rec, httptest.NewRequest(http.MethodGet, "/internal/mcp-servers", nil),
 		store.MembershipView{MembershipID: "m1", TenantID: tn.ID})

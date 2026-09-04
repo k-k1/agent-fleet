@@ -1,7 +1,7 @@
-// fargate.go — the valid Fargate task sizes (mem.go 由来).
+// fargate.go — the valid Fargate task sizes.
 //
-// Moved here with the one path that reads it: registerTaskDef on the Fargate adapter.
-// The CP keeps the rest of mem.go (parseMemBytes and the 1024-based units), and aliases
+// This sits with its one reader, registerTaskDef on the Fargate adapter. The CP keeps
+// the rest of mem.go (parseMemBytes and the 1024-based units) and aliases
 // fargateCPUUnits for the callers that offer a size choice.
 package runtime
 
@@ -113,7 +113,7 @@ const (
 // fargateDiskGiB maps a requested per-workspace disk size onto what the ECS task
 // definition should carry: an ephemeral-storage size, or 0 meaning "leave the field
 // out" (deployment default 20 GiB, free). A request above the ephemeral ceiling
-// returns ok=false — that is the ECS-managed EBS path (ADR 0044 決定 2), not a clamp,
+// returns ok=false — that is the ECS-managed EBS path (ADR 0044 decision 2), not a clamp,
 // because silently cutting 500 GiB down to 200 would be a surprise.
 func fargateDiskGiB(reqGiB int) (sizeGiB int32, needsEBS bool) {
 	switch {

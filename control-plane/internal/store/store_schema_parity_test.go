@@ -9,21 +9,18 @@ import (
 	"testing"
 )
 
-// TestSchemaDialectParity は 2 つのマイグレーション系列が**同じスキーマに着地する**ことを
-// 実測で固定する。
+// TestSchemaDialectParity measures that the two migration series land on the same schema.
 //
-// ★ なぜ要るか（2026-08-22 に踏んだ）。`migrations/` と `migrations-pg/` は別々に手で
-// 書かれていて、**片方に足して片方を忘れても誰も気づかない**。`memo_category` は
-// `migrations/0020` に入ったまま Postgres 側へ写されず、ECS/RDS のデプロイでは
-// カテゴリの API が全部 500（relation does not exist）を返していた。しかも Console は
-// 配列でない応答を空リストに畳むので、症状は「エラー」ではなく**「カテゴリが出ない」**
-// ——誰も障害として報告しようがない形で残っていた。
+// `migrations/` and `migrations-pg/` are written by hand, separately, so adding to one and
+// forgetting the other goes unnoticed: `memo_category` reached `migrations/0020` and was
+// never mirrored to Postgres, and on ECS/RDS every category API returned 500 (relation
+// does not exist). The Console folds a non-array response into an empty list, so the
+// symptom was "no categories appear" rather than an error — nothing anyone could report
+// as an outage. The cascade that physically deletes a removed member (docs/log/61 §61.18)
+// names tables directly, so the same divergence would mean a 500 in the middle of an
+// irreversible operation.
 //
-// 見つかったきっかけは、除名済みメンバーの物理削除（docs/log/61 §61.18）で表名を直に並べる
-// cascade を書いたことで、**取り消せない操作の途中で 500 を踏む**寸前だった。以後は
-// このテストが差分を先に落とす。
-//
-// AF_TEST_DATABASE_URL が無ければ skip（他の Postgres テストと同じ作法）。
+// Skipped without AF_TEST_DATABASE_URL, like the other Postgres tests.
 func TestSchemaDialectParity(t *testing.T) {
 	url := os.Getenv("AF_TEST_DATABASE_URL")
 	if url == "" {
@@ -54,9 +51,10 @@ func TestSchemaDialectParity(t *testing.T) {
 	liteCols := sqliteSchema(t, ctx, lite)
 	pgCols := postgresSchema(t, ctx, pg)
 
-	// 型は比べない。SQLite は宣言型を保持するだけで実際には型付けが緩く、Postgres の
-	// TEXT/INTEGER と文字列比較しても「違う」としか言えない。ここで守りたいのは
-	// **「片方にしか無い」**——それが実際に起きた壊れ方である。
+	// Types are deliberately not compared: SQLite only keeps the declared type and is
+	// loosely typed in practice, so comparing its strings against Postgres TEXT/INTEGER
+	// can say nothing but "different". What matters here is "present on one side only",
+	// which is the way this actually broke.
 	for _, d := range append(missing(liteCols, pgCols, "postgres"), missing(pgCols, liteCols, "sqlite")...) {
 		t.Error(d)
 	}

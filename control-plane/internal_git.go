@@ -19,7 +19,7 @@ import (
 // internal repo list/create/delete is CP-NATIVE: the CP owns the bare repos, so
 // it answers directly instead of proxying to a workspace. All routes are scoped
 // to the caller's resolved tenant (X-AF-Tenant → withMembership); the handlers
-// are gitServerAPI methods (struct in git_http.go, docs/log/23 残③).
+// are gitServerAPI methods (struct in git_http.go, docs/log/23 remainder 3).
 
 // cloneURL builds the clone URL a workspace container uses. It is the public
 // base (Caddy TLS terminus, reachable from the container via hairpin NAT) so the
@@ -28,16 +28,16 @@ func (a gitServerAPI) cloneURL(slug, name string) string {
 	return strings.TrimRight(a.publicBaseURL, "/") + "/git/" + slug + "/" + name + ".git"
 }
 
-// internalRepoWire — 内部 git リポジトリ 1 件のワイヤ形（Console の `InternalRepo`、
-// console/src/features/settings/workspace/InternalReposTab.tsx）。
+// internalRepoWire is the wire shape of one internal git repository (the Console's
+// `InternalRepo`, console/src/features/settings/workspace/InternalReposTab.tsx).
 //
 // was: map[string]any{"name":…, "default_branch":…, "clone_url":…, "created_at":…, "provider":…}
-// 5 キーとも無条件なので **omitempty は付けない**（default_branch / created_at は
-// 空文字を取りうるので、付けるとキーごと消えてワイヤが変わる）。
+// All five keys are unconditional, so no omitempty: default_branch and created_at can be
+// empty strings, and omitempty would drop the key and change the wire.
 //
-// ⚠️ provider は常に "internal" の定数。Console の `InternalRepo` はこれを宣言して
-// いないが**読んでもいない**（`ProviderCard` は別物の UI 部品）ので、型化しても
-// ワイヤも画面も変わらない。**型化すると以後は wire.golden が撮る側に移る。**
+// provider is always the constant "internal". The Console's `InternalRepo` neither
+// declares nor reads it (`ProviderCard` is a different UI part), so typing it changes
+// neither the wire nor the screen — but from here on wire.golden is what captures it.
 type internalRepoWire struct {
 	Name          string `json:"name"`
 	DefaultBranch string `json:"default_branch"`
@@ -272,7 +272,7 @@ func (a gitServerAPI) branches(w http.ResponseWriter, r *http.Request, _ store.I
 	out, err := exec.CommandContext(r.Context(), "git", "--git-dir", dir,
 		"for-each-ref", "--format=%(refname:short)", "refs/heads").Output()
 	if err != nil {
-		// bare 破損等を空配列 200 で隠さない
+		// Never hide a corrupt bare repo behind an empty array and a 200.
 		log.Printf("internal-git: for-each-ref failed repo=%s/%s: %v", mv.TenantSlug, name, err)
 		writeAPIErr(w, internalErr(err))
 		return

@@ -68,7 +68,7 @@ func TestPollyVoiceDefaults(t *testing.T) {
 }
 
 func TestPollySSMLSpeedDefault(t *testing.T) {
-	// 0/未指定 → 100%（clampSpeed に落とすと 0→0.5 になってしまう回帰の防止）。
+	// 0 (unset) must mean 100%: routing it through clampSpeed would turn 0 into 0.5.
 	if s := pollySSML("x", 0); !strings.Contains(s, `rate="100%"`) {
 		t.Errorf("speed 0 → %s, want rate=100%%", s)
 	}
@@ -78,7 +78,7 @@ func TestPollySSMLSpeedDefault(t *testing.T) {
 }
 
 func TestPollyNotConfigured(t *testing.T) {
-	p := &pollyProvider{} // region 無し
+	p := &pollyProvider{} // no region
 	if p.Ready(t.Context()) {
 		t.Error("Ready should be false without a region")
 	}

@@ -1,14 +1,11 @@
 package envx
 
-// Control Plane の環境変数パーサ。**1 実装 1 箇所**にするための小さなパッケージ。
+// Package envx holds the Control Plane's environment-variable parsers, so that each one
+// has exactly one implementation: `main` and `internal/auth` both call these instead of
+// keeping copies that can drift (ADR 0067 §1).
 //
-// もとは control-plane/main.go にあり、ウェーブ B の CP-AUTH で internal/auth が
-// 同じものを必要としたが、main.go はどのトラックの所有でもなかったため**写しが作られた**
-// （ADR 0067 §1 ②・env.go の注記に「回収セッションが 1 本化すること」と明記されていた）。
-// RECLAIM-B でその写しを畳み、main と internal/auth の両方がここを呼ぶ。
-//
-// ここに置くものの条件: **純粋で、設定を持たず、auth 固有でないこと。**
-// （envBool は main.go にしか無かったので写しではない。ここへは移していない。）
+// What belongs here: pure, configuration-free helpers that are not auth-specific. envBool
+// has only ever had one caller in main.go, so it stays there.
 
 import (
 	"os"

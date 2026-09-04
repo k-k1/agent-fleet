@@ -73,10 +73,10 @@ func hashPAT(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// patAPI は PAT（docs/decisions/0006 P3-6）の機能ハンドラ集（docs/log/23 残③）。
-// 解決は埋め込みの memberAuth（登録側で withIdentity に包む）、store は PATStore
-// の narrow view だけを持つ。create のテナント選択だけは a.mgr.membershipsFor を
-// 経由する（memberAuth が mgr を運ぶ）。
+// patAPI holds the PAT handlers (docs/decisions/0006 P3-6). Identity resolution comes
+// from the embedded memberAuth (registration wraps these in withIdentity) and the store
+// is only the narrow PATStore view; create picks its tenant through a.mgr.membershipsFor,
+// which memberAuth carries.
 type patAPI struct {
 	memberAuth
 	store store.PATStore
@@ -84,8 +84,8 @@ type patAPI struct {
 
 func newPATAPI(m *manager) patAPI { return patAPI{memberAuth{m}, m.store} }
 
-// maxActivePATs caps issuance per identity (未失効トークン数)。使い捨て発行の
-// 積み上げでハッシュ照合対象が際限なく増えるのを防ぐ。
+// maxActivePATs caps how many unrevoked tokens one identity may hold, so a pile of
+// throwaway issuances cannot grow the set of hashes every lookup has to compare against.
 const maxActivePATs = 20
 
 // auditPAT records a PAT lifecycle event to the audit ledger (best-effort).
@@ -142,7 +142,7 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Ident
 		return
 	}
 
-	// 発行数上限: 未失効トークンが上限に達していたら失効させてから、と促す。
+	// At the cap, tell the caller to revoke something before issuing another.
 	existing, err := a.store.ListPATsByIdentity(r.Context(), ident.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
