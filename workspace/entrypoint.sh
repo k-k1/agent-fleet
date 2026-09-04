@@ -91,7 +91,11 @@ if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_ar
   # 巻き込まないため）。
   if [ -L "$HOME/.local/bin/agent" ]; then rm -f "$HOME/.local/bin/agent"; fi
   # JDK は名前にアーキが入っている（temurin-<major>-jdk-<arch>）ので、他アーキの分だけ
-  # 落とせばよい。入れ直しは Console の toolchains / install-jdk の仕事。
+  # 落とせばよい。**入れ直しはこの同じ起動の中で自動的に済む**——下の java ブロックが
+  # 選択中の版を探し、`find_jh` は他アーキのディレクトリを採らないので「無い」と判定して
+  # `workspace-agent install-jdk` を呼ぶ。利用者の操作は要らない。
+  # ⚠️ 戻るのは **toolchains.json で選択中の版だけ**。選択していないのに入れてあった版は
+  #    ここで消えたまま戻らない（必要なら Console のツールチェーンで入れ直す）。
   for d in "$HOME"/.local/share/agent-fleet/jvm/temurin-*-jdk-*; do
     [ -d "$d" ] || continue
     case "$d" in *-jdk-"$af_arch_now") continue ;; esac
