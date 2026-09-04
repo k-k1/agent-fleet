@@ -115,7 +115,7 @@ func Configure(d Deps) {
 		}
 	}
 	if len(missing) > 0 {
-		panic("chatx.Configure: 未配線のフィールド: " + strings.Join(missing, ", "))
+		panic("chatx.Configure: dependencies left unwired: " + strings.Join(missing, ", "))
 	}
 	deps = d
 	bindValues(d)

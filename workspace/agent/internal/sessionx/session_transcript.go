@@ -28,17 +28,18 @@ import (
 //
 // The shared turn/part model itself lives in internal/transcript (docs/log/23 P1-W5),
 // so the claude/codex/opencode parsers are compiler-bound to one output vocabulary.
-// claude の jsonl 解析（CollectTurns/CollectTasks ほか）は internal/agents/claude
-// へ移設（docs/log/23 残① Wave F）; ここにはウィンドウ処理・ページング・internal/status
-// の pending 合成を行う HTTP ハンドラだけが残る。
+// The claude jsonl parsing (CollectTurns/CollectTasks and the rest) lives in
+// internal/agents/claude (docs/log/23 remaining item 1 Wave F); what stays here are the HTTP
+// handlers that do the windowing, the paging and the internal/status pending composition.
 
 // forkPreviewCursor is an out-of-range line cursor handed out while a fork previews its
 // source transcript, so the first poll that reads the fork's own (shorter) jsonl trips
 // the reset branch and swaps cleanly. Far above any real transcript length.
 const forkPreviewCursor = 1 << 30
 
-// jsonlMtime は internal/agents/claude の同名ヘルパの複製（極小 stat のため共有せず
-// 重複を許容 — generic /messages はエージェント種別を問わず使う）。
+// jsonlMtime duplicates the helper of the same name in internal/agents/claude. The stat is
+// tiny, so the duplication is accepted rather than shared — the generic /messages path uses it
+// whatever the agent kind is.
 func jsonlMtime(p string) time.Time {
 	fi, err := os.Stat(p)
 	if err != nil {
@@ -172,14 +173,16 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// de-duplication below needs to know what was surfaced, and may withdraw it.
 	pending := map[string]any{}
 	surfacePendingPayloads(pending, sid, state, lines)
-	// 畳まれたときに画面に出ていたもの（docs/log/75）。保留が無いときだけ載る。
+	// What was on screen when the session was folded away (docs/log/75). Included only when
+	// nothing is pending.
 	surfaceCarried(pending, sid)
 	// The pending question/plan above is ALSO in the transcript already (ask-time tool_use),
 	// so the same card would render twice. Drop the duplicate and hold the cursor short of
 	// its line, so it comes back — decided — once it resolves.
 	turns, hold := hidePendingInteraction(turns, pending, answers)
-	// forkPreview の cursor は行番号ではなく、次の poll で fork 自身の jsonl へ乗り換える
-	// ための番兵。行番号に落とすと乗り換えそのものが壊れるので、そこだけは触らない。
+	// forkPreview's cursor is not a line number but the sentinel that makes the next poll swap
+	// onto the fork's own jsonl. Turning it into a line number breaks the swap itself, so that
+	// one case is left alone.
 	if !forkPreview && hold >= 0 && hold < cursor {
 		cursor = hold
 	}
@@ -233,7 +236,7 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		resp["files"] = files
 	}
 	// Prompts queued into the running turn (typed mid-run, not yet injected) so the
-	// mirror can badge them キュー済み like the terminal does. The queue only exists
+	// mirror can badge them as queued like the terminal does. The queue only exists
 	// while a turn runs, so gate on working — this also hides stale leftovers from a
 	// run that died with items still queued.
 	if alive && state == "working" {
@@ -242,7 +245,7 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Surface terminal-only states (startup resume menu / auto-compaction) the chat
-	// can't otherwise see, so the Console can prompt the user or show a 圧縮中 badge.
+	// can't otherwise see, so the Console can prompt the user or show a compacting badge.
 	if alive {
 		if ts, prog := sessionTerminalState(name); ts != "" {
 			resp["terminalState"] = ts
@@ -251,10 +254,10 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// Idle by hook but background work may still be running; surface it so the chat
-		// header shows "入力待ち · BG実行中" (BackgroundWork also names WHAT is running, so
-		// the header can say サブエージェント実行中 instead). Only computed when not already
-		// working (the chip prefers 進行中 then), keeping the scans off the hot path during
-		// turns.
+		// header can say "waiting for input, background work running" (BackgroundWork also
+		// names WHAT is running, so the header can say "subagent running" instead). Only
+		// computed when not already working (the chip prefers "in progress" then), keeping the
+		// scans off the hot path during turns.
 		if state == "idle" || state == "" {
 			busy, reason := claude.BackgroundWork(name, sid)
 			resp["backgroundBusy"] = busy
@@ -340,7 +343,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 		turns = update
 	}
 	// userfile parts exist here too (codex imagegen's generated file) — map their
-	// paths browse-root-relative so the Console's 共有ファイル panel can open them.
+	// paths browse-root-relative so the Console's shared-files panel can open them.
 	resolveUserFiles(turns)
 	tagInjectedTurns(meta.Name, turns) // Source=operator/discord/… on injected user turns (docs/log/30 ②, docs/log/37 P2a)
 	resp := map[string]any{
@@ -385,19 +388,20 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if alive && len(td.Pending) > 0 {
 		resp["pendingQuestions"] = td.Pending
 	}
-	// 畳まれたときに答えを待っていた対話（docs/log/75 §75.6）。claude の /messages と同じ
-	// キー・同じ「保留が生きているあいだは出さない」規則で載せる — 出さないと、tier1 が
-	// 畳んだ非 claude セッションの持ち越しは**書かれるだけで誰にも見えない**（一覧の
-	// バッジは「質問あり」と言うのに、開いても答える口が無い）。
+	// The interaction that was awaiting an answer when the session was folded away
+	// (docs/log/75 §75.6). It goes out under the same key, and under the same "not while
+	// something is pending" rule, as claude's /messages — without this, the carried interaction
+	// of a non-claude session that tier 1 folded is written and seen by nobody (the list badge
+	// says there is a question, yet opening it offers no way to answer).
 	surfaceCarried(resp, session.UUID(meta.Dir, meta.Name))
 	// Prompts queued into the running turn (typed mid-run, not yet injected as a user
-	// message) so the mirror can badge them キュー済み — same gate as claude's path: the
+	// message) so the mirror can badge them as queued — same gate as claude's path: the
 	// queue only means anything while a turn runs, and this hides stale leftovers.
 	if alive && state == "working" && len(td.Queued) > 0 {
 		resp["queuedPrompts"] = td.Queued
 	}
 	// Compaction in flight (opencode session.time_compacting): reuse the chat's claude
-	// 圧縮中 block (spinner-only — opencode reports no progress percentage).
+	// compacting block (spinner-only — opencode reports no progress percentage).
 	if alive && td.Compacting {
 		resp["terminalState"] = "compacting"
 	}
@@ -421,10 +425,11 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// Current mode (plan / normal) so the Console shows the plan indicator and toggle.
 	// Read it ONLY from the live terminal — a stopped session isn't "in plan mode", and
 	// the rollout's per-turn mode is a stale snapshot (the last turn's), which made a
-	// stopped codex show 計画モードON. When not alive, or the composer isn't drawn yet,
+	// stopped codex report plan mode as on. When not alive, or the composer isn't drawn yet,
 	// report no mode (the Console shows the default, normal).
-	// managed（docs/log/27 §10.2-5）: pane が無いので TranscriptData.Mode（driver 設定 ＝
-	// 次 turn が使う値、無ければ db の最後の turn の agent）からの射影で供給する。
+	// managed (docs/log/27 §10.2-5): there is no pane, so the mode is projected from
+	// TranscriptData.Mode (the driver setting = what the next turn will use, falling back to
+	// the agent of the last turn in the db).
 	if alive {
 		if meta.DriverKind() == session.DriverManaged {
 			switch td.Mode {
@@ -432,7 +437,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 				resp["mode"] = "Plan"
 			case "normal":
 				if meta.Kind == session.KindOpencode {
-					resp["mode"] = "Build" // opencode の非 plan agent 名（Console の defaultModeLabel と同語彙）
+					resp["mode"] = "Build" // opencode's non-plan agent name (same vocabulary as Console's defaultModeLabel)
 				} else {
 					resp["mode"] = "Default"
 				}
@@ -494,7 +499,7 @@ func clampWindowLimit(s string) int {
 // absolute or cwd-relative) into browse-root-relative paths the Console can open via
 // api/fs/file. Resolution uses the part's own turn cwd (recorded on the jsonl line).
 // A path that lands outside the browse root (e.g. a /tmp scratchpad) is left untouched:
-// it still shows in the panel, but opening it will honestly report "読み込めません".
+// it still shows in the panel, but opening it honestly reports that it cannot be read.
 func resolveUserFiles(turns []transcript.Turn) {
 	root := browseRoot()
 	for ti := range turns {
@@ -546,17 +551,18 @@ func surfacePendingPayloads(resp map[string]any, sid, state string, lines [][]by
 	// AskUserQuestion / ExitPlanMode fire their OWN permission_prompt Notification
 	// (state→"permission") between the tool's PreToolUse and PostToolUse, but the
 	// terminal is showing that tool's selection / approval UI — NOT a generic tool
-	// permission dialog. Surfacing pendingPermission here would make the Console show a
-	// 許可/拒否 prompt whose keystrokes (Enter / Down Down Enter) mis-answer the question
+	// permission dialog. Surfacing pendingPermission here would make the Console show an
+	// allow/deny prompt whose keystrokes (Enter / Down Down Enter) mis-answer the question
 	// menu underneath, skipping it. So whenever a question/plan is captured, surface it
 	// and suppress the permission — the Console drives it with the correct keys. The
 	// payload is cleared by its own lifecycle (PostToolUse→working, idle) once resolved.
 	//
 	// Same precedence as status.EffectiveModal, which applies it on the WRITE paths
 	// (/plan-respond, the {prompt} guard) and on the state chips (WireLive / DriveState).
-	// Display and decision must agree on which modal is up — when only this side applied
-	// it, the Console showed a plan card whose 送信 the Agent refused as「許可の判断待ち」,
-	// and an AUQ カードの隣で state チップだけが「許可待ち」を名乗った。
+	// Display and decision must agree on which modal is up — when only this side applied it,
+	// the Console showed a plan card whose Send the Agent refused as "waiting for a permission
+	// decision", and next to an AUQ card the state chip alone claimed to be waiting for
+	// permission.
 	pq, hasQ := status.ReadPendingQuestion(sid)
 	pp, hasP := status.ReadPendingPlan(sid)
 	if state == "permission" && !hasQ && !hasP {
@@ -586,14 +592,16 @@ func surfacePendingPayloads(resp map[string]any, sid, state string, lines [][]by
 // surfaceCarried adds the CARRIED interaction (docs/log/75 §75.6) — what was on screen when
 // the session was folded away, which the resumed CLI no longer knows about.
 //
-// pending-* とは**別のキー**で出す。同じキーに相乗りさせると、Console 側は「今モーダルが
-// 出ている（キー列で答える）」と「もう出ていない（文章で答える）」を alive の有無で
-// 見分けることになり、その見分けは一度も実装されたことがない（保留カードは今も alive を
-// 見ていない）。別キーなら、キーを撃つコードが持ち越しに到達し得ない。
+// It goes out under a key of its OWN, separate from pending-*. Sharing a key would leave the
+// Console distinguishing "a modal is up now (answer it with keystrokes)" from "it is gone
+// (answer it in prose)" by whether the session is alive, and that distinction has never been
+// implemented (the pending card still does not look at alive). With a separate key, the code
+// that fires keystrokes cannot reach a carried interaction at all.
 //
-// 保留が生きているあいだは持ち越しを出さない: 昇格は畳むときにしか起きないので普通は
-// 同時に存在しないが、halt 直後に再開して新しい質問が出た、のような順序では両方揃いうる。
-// そのときに正しいのは常に「今出ているモーダル」。
+// Nothing carried is surfaced while something is pending: promotion happens only when a session
+// is folded away, so the two are normally not both present, but an order such as "resumed right
+// after a halt and a new question appeared" can produce both. The modal that is up now is
+// always the right one then.
 func surfaceCarried(resp map[string]any, sid string) {
 	if _, hasQ := resp["pendingQuestions"]; hasQ {
 		return
@@ -627,22 +635,23 @@ func surfaceCarried(resp map[string]any, sid string) {
 // shows is already closed.
 //
 // WHY: the hooks clear the payload on that tool's own PostToolUse, which does not fire
-// when the tool is REJECTED — and the Console's「キャンセル」rejects it (it interrupts the
-// turn, 実測 2026-08-31). The payload then outlives its modal, and hidePendingInteraction
+// when the tool is REJECTED — and the Console's Cancel rejects it (it interrupts the turn,
+// measured 2026-08-31). The payload then outlives its modal, and hidePendingInteraction
 // cannot save us: it only withdraws a stale payload while the question's line is inside
 // the window it is emitting, and that window moves on BY DESIGN — the poll carrying the
 // decision releases the held cursor, so the very next poll no longer sees the line and
 // surfaces the leftover payload as a fresh, fully interactive card. Answering it does
 // nothing (there is no modal left for the keystrokes to land on); cancelling it does
 // nothing; it sits there until an unrelated hook (Stop, or the next prompt) happens to
-// clear the file. 利用者報告「AUQ をキャンセルしても何度も聞かれる」の正体。
+// clear the file. This is what was behind the user report that cancelling an AUQ makes the
+// same question come back over and over.
 //
 // The rule needs no content matching: only one modal of a kind is ever open, so a
 // decision recorded AFTER the payload was captured can only be that payload's own. The
 // mtime comparison is also what keeps this safe during the ~120ms in which the PreToolUse
 // hook has already written the payload but claude has not yet flushed the tool_use line
-// (実測 2026-08-31: フックが 106ms / 122ms 先行。claude は jsonl を遅れて flush するので
-// 順序は保証されない) — the newest decision is then still the PREVIOUS modal's, which
+// (measured 2026-08-31: the hook ran 106ms / 122ms ahead; claude flushes the jsonl late, so
+// the order is not guaranteed) — the newest decision is then still the PREVIOUS modal's, which
 // predates the file, and a live question is never swept.
 func sweepSettledPending(sid string, lines [][]byte) {
 	question, plan := claude.SettledAt(lines)
@@ -662,11 +671,11 @@ func sweepSettledPending(sid string, lines [][]byte) {
 	}
 	// ...and the permission payload the question/plan was MASKING goes with it. AUQ /
 	// ExitPlanMode fire their own permission_prompt between their Pre- and PostToolUse
-	// (実測: 質問の 6 秒後に state=permission)、and surfacePendingPayloads only ever
-	// suppressed it because a question/plan payload outranked it. Sweeping that payload
-	// without this UNMASKS a permission prompt for a tool that is already decided — the
-	// Console then pops a 承認/拒否 ダイアログ right after the user cancelled the question
-	// (利用者報告 2026-08-31、この掃除を入れた直後の回帰).
+	// (measured: state=permission 6 seconds after the question), and surfacePendingPayloads
+	// only ever suppressed it because a question/plan payload outranked it. Sweeping that
+	// payload without this UNMASKS a permission prompt for a tool that is already decided — the
+	// Console then pops an approve/deny dialog right after the user cancelled the question
+	// (user report 2026-08-31, a regression immediately after this sweep was added).
 	//
 	// Same clock rule, and it holds for a GENERIC permission (Edit/Bash) too: a permission
 	// prompt blocks the turn, so nothing else can run while it is up — if an interaction
@@ -686,28 +695,31 @@ func sweepSettledPending(sid string, lines [][]byte) {
 // the other half of the leftover, and the one every non-display reader believes.
 //
 // WHY: the payloads above are what the Console DRAWS; `session-status` is what the Agent
-// DECIDES on. promptBlocker refuses free text in any modal state, so sweeping only the
-// payload leaves the composer refused with 「許可の判断待ちです。許可カードから許可・拒否
-// してから送信してください」 while there is no card anywhere to decide — the one surface
-// that could unblock it is the one we just (correctly) took away. 利用者報告 2026-09-04
-// 「AUQ をキャンセルしたあと、メッセージが送信できなくなる」: cancel rejects the tool, so
-// no PostToolUse rewrites the state (the same reason the payload leaks), and the only other
+// DECIDES on. promptBlocker refuses free text in any modal state, so sweeping only the payload
+// leaves the composer refused with "waiting for a permission decision: allow or deny from the
+// permission card before sending" while there is no card anywhere to decide with — the one
+// surface that could unblock it is the one we just (correctly) took away. User report
+// 2026-09-04, "after cancelling an AUQ I can no longer send messages": cancel rejects the tool,
+// so no PostToolUse rewrites the state (the same reason the payload leaks), and the only other
 // writer is the pane self-heal — which needs the pane to sit UNCHANGED for idleSettleWindow
 // (45s) and never fires at all while anything keeps repainting it. A dead end, not a delay.
 //
-// ★保留を消す掃除は、状態も一緒に消さなければ「決めるカードが無いのに断る」を作る。
-// 表示（ペイロード）と判定（state）は同じ根拠で同時に畳む。
+// A sweep that drops the pending payload must drop the state with it, or it creates "refused
+// with no card to decide on". Display (the payload) and decision (the state) fold away
+// together, on the same evidence.
 //
 // Guards, in the same spirit as above:
-//   - モーダル状態のときだけ触る。working/idle は掃除の管轄外（ターンの話であって
-//     モーダルの話ではない）。
-//   - 決着より前に書かれた state だけ。決着の**後**に開いた新しいモーダルは本物。
-//   - ペイロードが 1 つでも残っていれば触らない。上の「決着より後の許可は本物」で残した
-//     生きた許可プロンプトは、state に断ってもらわないと自由文がメニューに飲まれる。
+//   - Only touch a modal state. working/idle are outside this sweep's remit (they are about the
+//     turn, not about a modal).
+//   - Only a state written before the decision. A modal opened AFTER the decision is real.
+//   - Never touch it while any payload remains. The live permission prompt the rule above keeps
+//     ("a permission newer than the decision is real") needs the state to keep refusing, or
+//     free text is swallowed by its menu.
 //
-// 消す（idle として読ませる）のが安全な向き: 実はまだ走っていたターンは、次のポーリングの
-// reverse-heal（pane.Busy → working、agent.go）が 1 回で working へ戻す。逆に working を
-// 書くと、キャンセルで終わったターンが 進行中 に貼り付き Workspace が止まらなくなる。
+// Removing it (letting it read as idle) is the safe direction: a turn that was in fact still
+// running is put back to working in one step by the next poll's reverse-heal (pane.Busy →
+// working, agent.go). Writing working instead pins a turn that ended in a cancel to "in
+// progress", and then the Workspace never stops.
 func sweepSettledState(sid string, decided time.Time) {
 	st, ok := status.Read(sid)
 	if !ok || !status.ModalState(st.State) {
@@ -742,8 +754,8 @@ func latest(a, b time.Time) time.Time {
 // WHY: claude writes an interaction's tool_use at ASK time, so while the modal is up the
 // very same question/plan exists twice in one response — as a part of the newest turn,
 // and as the pending payload surfacePendingPayloads surfaces for the actionable card the
-// Console renders at the bottom. The mirror drew both (実測 2026-08-19), and the inline
-// copy additionally badged 決定済み, because "it reached the transcript" used to mean
+// Console renders at the bottom. The mirror drew both (measured 2026-08-19), and the inline
+// copy additionally badged it as decided, because "it reached the transcript" used to mean
 // "it was already answered". One decision must be shown once, in one place: the pending
 // card, which is the only one that can be acted on.
 //
@@ -783,9 +795,9 @@ func hidePendingInteraction(turns []transcript.Turn, pending map[string]any, ans
 				// pendingText is the prose the assistant streamed just before the question.
 				// It exists because that prose was believed to reach the transcript only
 				// after the answer — but the question's tool_use is here, and claude writes
-				// the prose message BEFORE it (実測: 別行の assistant メッセージが先に出る),
-				// so the transcript already shows it. Sending it again would print the same
-				// paragraphs twice, inline and inside the card.
+				// the prose message BEFORE it (measured: the assistant message on
+				// its own line comes first), so the transcript already shows it. Sending
+				// it again would print the same paragraphs twice, inline and in the card.
 				delete(pending, "pendingText")
 			}
 		}

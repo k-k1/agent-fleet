@@ -28,18 +28,18 @@ import (
 // then stays alive, and returns the session meta for it.
 func paneShowing(t *testing.T, name, frame string) session.Meta {
 	t.Helper()
-	// 🔥 **フレームの実在をここで見る。** 無くても `cat` が失敗するだけで `new-session` は
-	// 成功するので、**呼び出し側は「空のペイン」を検査対象として素通りさせる**（移送で
-	// 相対パスの深さが変わったとき、実際にそうなった）。呼び出し側の一覧を手で並べる検査は
-	// 一覧が減ったことしか見られないので、**守るのは呼び出し口であるここ**。
+	// Check that the frame exists, here. Without it only `cat` fails while `new-session` still
+	// succeeds, so callers wave an EMPTY pane through as the thing under test — which is exactly
+	// what happened when the move changed the depth of the relative paths. A check that lists
+	// the callers by hand can only notice the list shrinking, so the call site itself is guarded.
 	if _, err := os.Stat(frame); err != nil {
-		t.Fatalf("frame %s が無い: %v（相対パスの深さを疑う。放置するとペインに何も出ないまま検査は緑になる）", frame, err)
+		t.Fatalf("frame %s is missing: %v (suspect the depth of the relative path; left alone the pane shows nothing and the check stays green)", frame, err)
 	}
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
 	tn := session.TmuxName(name)
-	// 幅を実ペイン相当に取る: 折返しが変わるとフッタ/選択肢行の見え方が変わる。
+	// Take a real pane's width: different wrapping changes how the footer/choice lines look.
 	out, err := tmuxx.Cmd("new-session", "-d", "-s", tn, "-x", "200", "-y", "50",
 		"sh", "-c", fmt.Sprintf("cat %q; sleep 60", frame)).CombinedOutput()
 	if err != nil {
@@ -47,7 +47,7 @@ func paneShowing(t *testing.T, name, frame string) session.Meta {
 	}
 	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
 	session.WriteMeta(m)
-	// cat がペインへ描き終わるのを待つ（capture-pane は描画済みの画面を読む）。
+	// Wait for cat to finish drawing into the pane (capture-pane reads the drawn screen).
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if tmuxx.CapturePane(tn) != "" {
@@ -75,28 +75,29 @@ func isolatedTmuxSocket() string {
 
 func isolateAgentState(t *testing.T) {
 	t.Helper()
-	// 🔥 **ソケット名はテストごとに変える。** 以前は `af-test-<pid>` 固定で、この隔離を
-	// 使う 4 ファイルの全テスト（と同じ名前を使う shutdown_isolation_test.go）が
-	// **1 つの tmux サーバを共有**していた。各テストの Cleanup は `kill-server` を撃つが、
-	// **tmux はコマンドを受け取った時点で返り、サーバの終了は非同期**である。だから次の
-	// テストの `new-session` が死にかけのサーバへ繋がり、`server exited unexpectedly` で
-	// 落ちる —— テスト本体とは無関係な、理由の見えない赤になる。
+	// Vary the socket name per test. It used to be a fixed `af-test-<pid>`, so every test in
+	// the four files that use this isolation (plus shutdown_isolation_test.go, which builds the
+	// same name) shared ONE tmux server. Each test's Cleanup fires `kill-server`, but tmux
+	// returns as soon as it has taken the command and the server's shutdown is asynchronous. So
+	// the next test's `new-session` reaches a dying server and fails with
+	// `server exited unexpectedly` — a red with no visible reason, unrelated to the test body.
 	//
-	// 窓は負荷が高いほど広がる（実測 2026-09-02: 無負荷の `-count=30` では 0 回、CPU 負荷
-	// 6 本の下の `-count=40` では 7 回。落ちたのは TestDriveStateIdlePaneNotBlocked と
-	// TestDriveStateAuthValid ＝ **実 CI の run 33584943716 で落ちたのと同じ形**）。
+	// The window widens with load (measured 2026-09-02: 0 occurrences at `-count=30` with no
+	// load, 7 at `-count=40` under 6 CPU hogs; the failures were TestDriveStateIdlePaneNotBlocked
+	// and TestDriveStateAuthValid, the same shape as real CI run 33584943716).
 	//
-	// 連番まで入れるのは `-count=N` のため: テスト名だけだと、同じ名前の**前の周回**の
-	// kill-server と競る。
+	// The serial number is there for `-count=N`: with the test name alone, a round races the
+	// kill-server of the PREVIOUS round of the same name.
 	t.Setenv("AF_TMUX_SOCKET", isolatedTmuxSocket())
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
-	// status ストアは HOME 直下（paths.AgentConfigDir）— 実フリートのマーカーを書かない。
+	// The status store sits directly under HOME (paths.AgentConfigDir) — never write a marker
+	// into the real fleet.
 	t.Setenv("HOME", t.TempDir())
-	// claude の設定/資格情報も隔離する。HOME だけでは足りない: このコンテナでは
-	// CLAUDE_CONFIG_DIR が実フリートの木を指しているので、状態判定（認証切れ・docs/log/47
-	// §4-8）が実際のログイン期限に左右されてしまう。
+	// Isolate claude's config/credentials too. HOME alone is not enough: in this container
+	// CLAUDE_CONFIG_DIR points at the real fleet's tree, so the state decision (auth expired,
+	// docs/log/47 §4-8) would depend on the real login's expiry.
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-	// 専用ソケットに対してのみ kill-server が許される（dev/04 §4.11）。
+	// kill-server is allowed only against a dedicated socket (dev/04 §4.11).
 	t.Cleanup(func() { _ = tmuxx.Cmd("kill-server").Run() })
 }
 

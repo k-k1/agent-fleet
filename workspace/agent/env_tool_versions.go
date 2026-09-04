@@ -1,13 +1,14 @@
 package main
 
-// env_tool_versions.go — GET /env/tool-versions（read-only）。バンドルされた各ツール
-// について「実効（PATH 解決の実体）/ 焼き込み（イメージの実体）/ ユーザー local
-// （~/.local/bin の override）」の 3 つの版と、イメージビルド時のピン
-// （/usr/local/share/agent-fleet/versions.json、Dockerfile が ARG から書き出す）を
-// 返す。PATH は ~/.local/bin が /usr/local より先なので実効≠焼き込みが平気で起きる
-// （gh の home shadow、docs/build/08 §8.3 と同型）— その可視化が目的。
-// claude --version などは ~1s かかるため結果は短時間キャッシュし、各ツールは並列に叩く
-// （ただし同時実行は probeSlots で絞り、同じ実体は toolProbe が一度しか起動しない）。
+// env_tool_versions.go — GET /env/tool-versions (read-only). For every bundled tool it
+// returns three versions — effective (what PATH resolves to), baked (the image's own
+// binary) and user local (the ~/.local/bin override) — plus the image build-time pin
+// (/usr/local/share/agent-fleet/versions.json, which the Dockerfile writes from its ARGs).
+// ~/.local/bin comes before /usr/local on PATH, so effective != baked happens routinely
+// (gh's home shadow, the same shape as docs/build/08 §8.3); making that visible is the
+// point. `claude --version` and the like take ~1s, so results are cached briefly and the
+// tools are probed in parallel (concurrency capped by probeSlots, and toolProbe execs the
+// same binary only once).
 
 import (
 	"context"
@@ -25,33 +26,36 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// buildPinsPath は Dockerfile が ARG から書き出すピン一覧。var なのはテストで
-// 差し替えるため（install_kiro のピン比較テスト）— 実行時は書き換えない。
+// buildPinsPath is the pin list the Dockerfile writes from its ARGs. It is a var only so
+// tests can swap it (the install_kiro pin comparison); never rewritten at runtime.
 var buildPinsPath = "/usr/local/share/agent-fleet/versions.json"
 
-// bakedUVToolRoot はイメージが `uv tool install` を置く root（Dockerfile の
-// UV_TOOL_DIR）。buildPinsPath と同じくテスト差し替えのための var — 実行時は
-// 書き換えない。ハードコードのままだと「焼き込み側には無いはず」を確かめる
-// テストが *実コンテナの焼き込み* を拾ってしまい、焼き込みの無い CI では通るのに
-// 実環境の Workspace では落ちる、という逆向きの脆さになる。
+// bakedUVToolRoot is the root where the image puts `uv tool install` results (the
+// Dockerfile's UV_TOOL_DIR). Like buildPinsPath it is a var only so tests can swap it;
+// never rewritten at runtime. Hardcoded, a test checking "this must not exist on the baked
+// side" would pick up the *real container's* baked tree, so it would pass on CI (which has
+// nothing baked) and fail in a real Workspace — brittle in the wrong direction.
 var bakedUVToolRoot = "/usr/local/share/uv/tools"
 
-// toolSpec は 1 ツール分の観測点。Cmd は PATH 解決（実効）と ~/.local/bin/<Cmd>
-// （ユーザー local）の両方に使う。Baked はイメージが焼く実体パス（gh はラッパーでは
-// なく libexec の本体、go は tarball 展開先）。
+// toolSpec is the observation point for one tool. Cmd is used both for PATH resolution
+// (effective) and for ~/.local/bin/<Cmd> (user local). Baked is the real path the image
+// bakes (for gh the libexec binary rather than the wrapper, for go the tarball's extract
+// directory).
 type toolSpec struct {
-	Name  string   // 表示名
-	Cmd   string   // command -v する名前
-	Baked string   // イメージ焼き込みの実体パス
-	Args  []string // 版取得の引数（既定 --version）
-	Pin   string   // versions.json のキー（無ピンのツールは空）
-	// PyDist は「`uv tool install` で入れた Python 製 MCP サーバー」の PyPI 配布名。
-	// これらは **実行して版を訊けない**（実測 2026-08-06）:
-	//   - cloudwatch MCP: `--version` が版を出さず、代わりに**サーバーが起動する**
-	//     （メトリクスメタデータ 1179 件をロードする）。版取得のたびに起動させるのは論外。
-	//   - AWS MCP プロキシ: `--version` は argparse に弾かれて exit 2・stdout 空。
-	//     版は `--help` の 13 行目にしか出ず、先頭 1 行しか見ない probeVersion では拾えない。
-	// なので exec せず、uv の venv にある dist-info ディレクトリ名から読む（uvToolVersion）。
+	Name  string   // display name
+	Cmd   string   // name to resolve with command -v
+	Baked string   // real path of the binary baked into the image
+	Args  []string // arguments that print the version (default --version)
+	Pin   string   // key in versions.json (empty for unpinned tools)
+	// PyDist is the PyPI distribution name of a Python MCP server installed with
+	// `uv tool install`. These cannot be asked for their version by running them
+	// (measured 2026-08-06):
+	//   - cloudwatch MCP: `--version` prints no version and starts the server instead
+	//     (loading 1179 metric metadata entries). Starting it on every probe is out.
+	//   - AWS MCP proxy: `--version` is rejected by argparse with exit 2 and empty stdout.
+	//     The version appears only on line 13 of `--help`, which probeVersion cannot reach
+	//     because it looks at the first line only.
+	// So read it from the dist-info directory name in uv's venv instead (uvToolVersion).
 	PyDist string
 }
 
@@ -59,31 +63,34 @@ var toolSpecs = []toolSpec{
 	{Name: "claude", Cmd: "claude", Baked: "/usr/local/bin/claude", Pin: "claude"},
 	{Name: "opencode", Cmd: "opencode", Baked: "/usr/local/bin/opencode", Pin: "opencode"},
 	{Name: "codex", Cmd: "codex", Baked: "/usr/local/bin/codex", Pin: "codex"},
-	// agy は公式installer manifestが示す不変GCS objectからの真のピン
-	// （workspace/Dockerfile の AGY_VERSION + AGY_RELEASE_BUILD + sha256 検証）。RDRAND 非提示
-	// ホストでは --version 自体が SIGABRT するため probeVersion は "(取得失敗)" になる
-	// （それ自体がガード対象ホストの兆候）。
+	// agy's true pin comes from the immutable GCS object the official installer manifest
+	// names (workspace/Dockerfile: AGY_VERSION + AGY_RELEASE_BUILD + sha256 check). On a host
+	// that does not expose RDRAND, `--version` itself SIGABRTs, so probeVersion yields the
+	// fetch-failure marker "(取得失敗)" — which is itself a sign of such a host.
 	{Name: "agy", Cmd: "agy", Baked: "/usr/local/bin/agy", Pin: "agy"},
 	{Name: "copilot", Cmd: "copilot", Baked: "/usr/local/bin/copilot", Pin: "copilot"},
-	// cursor（kind="cursor"、docs/log/40）は npm でなく版付き tarball の Node.js バンドル。
-	// 焼き込みは /usr/local/share/cursor-agent/versions/<ver>/ で、/usr/local/bin/cursor-agent
-	// はその wrapper への symlink（realpath で版ディレクトリを解決）。版は日付形式
-	// （2026.07.20-8cc9c0b）で semver でないが、`cursor-agent --version` はその文字列を返す。
+	// cursor (kind="cursor", docs/log/40) is a versioned Node.js tarball bundle, not npm. The
+	// baked tree is /usr/local/share/cursor-agent/versions/<ver>/ and
+	// /usr/local/bin/cursor-agent is a symlink to its wrapper (realpath resolves the version
+	// directory). The version is a date (2026.07.20-8cc9c0b) rather than semver, but
+	// `cursor-agent --version` returns exactly that string.
 	{Name: "cursor", Cmd: "cursor-agent", Baked: "/usr/local/bin/cursor-agent", Pin: "cursor"},
-	// kiro（kind="kiro"、docs/log/43）は焼き込み（/usr/local・BAKE=1）でも、既定では
-	// オンデマンドで ~/.local へ入る（~855MB のため全ユーザー boot-install しない）。
-	// 実効/焼き込み/ユーザー local の 3 版表示は他 CLI と同じ（未導入なら effective/baked
-	// とも null＝「未導入」がそのまま可視化される）。`kiro-cli --version` は「kiro-cli 2.14.1」。
+	// kiro (kind="kiro", docs/log/43) installs on demand into ~/.local by default even where
+	// it is baked (/usr/local, BAKE=1), because at ~855MB it must not be boot-installed for
+	// every user. The effective/baked/user-local trio is displayed like any other CLI (with
+	// nothing installed both effective and baked are null, which surfaces as "not installed").
+	// `kiro-cli --version` prints "kiro-cli 2.14.1".
 	{Name: "kiro", Cmd: "kiro-cli", Baked: "/usr/local/bin/kiro-cli", Pin: "kiro"},
 	{Name: "rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk", Pin: "rtk"},
-	{Name: "gh", Cmd: "gh", Baked: "/usr/local/libexec/gh", Pin: "gh"}, // /usr/local/bin/gh は透過認証ラッパー
+	{Name: "gh", Cmd: "gh", Baked: "/usr/local/libexec/gh", Pin: "gh"}, // /usr/local/bin/gh is the transparent-auth wrapper
 	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},
 	{Name: "node", Cmd: "node", Baked: "/usr/local/bin/node"},
 	{Name: "python", Cmd: "python3", Baked: "/usr/bin/python3"},
-	// AWS / ops MCP 系（docs/log/25）。CLI ほど目立たないが、ピンずれと home shadow が起きる
-	// 条件は同じ（`install-awscli` は ~/.local/bin へ、grafana の fallback も ~/.local/bin を
-	// 見る）うえ、lean variant では焼き込みが無く versions.json のピンだけが手掛かりになる。
-	// ここに出ていないと「MCP サーバーが古い/入っていない」を Console から確かめる術が無い。
+	// AWS / ops MCP servers (docs/log/25). Less prominent than the CLIs, but they drift from
+	// their pins and get home-shadowed under the same conditions (`install-awscli` writes to
+	// ~/.local/bin, and grafana's fallback looks there too); in a lean variant nothing is
+	// baked and the versions.json pin is the only clue left. Without these rows there is no
+	// way to check from the Console that an MCP server is old or missing.
 	{Name: "awscli", Cmd: "aws", Baked: "/usr/local/bin/aws", Pin: "awscli"},
 	{Name: "mcp-grafana", Cmd: "mcp-grafana", Baked: "/usr/local/bin/mcp-grafana", Pin: "mcp_grafana"},
 	{Name: "cloudwatch-mcp", Cmd: "awslabs.cloudwatch-mcp-server", Baked: "/usr/local/bin/awslabs.cloudwatch-mcp-server",
@@ -94,21 +101,22 @@ var toolSpecs = []toolSpec{
 
 type toolBin struct {
 	Path    string `json:"path"`
-	Version string `json:"version"` // 抜き出した番号（例 2.1.207）。抜けなければ raw と同じ
-	Raw     string `json:"raw"`     // --version 出力の先頭行
+	Version string `json:"version"` // extracted number (e.g. 2.1.207); same as raw when none matches
+	Raw     string `json:"raw"`     // first line of the --version output
 }
 
 type toolReport struct {
 	Name      string   `json:"name"`
-	Pin       string   `json:"pin,omitempty"` // イメージビルド時の ARG ピン
-	Effective *toolBin `json:"effective"`     // PATH 解決の実体（無ければ null）
-	Baked     *toolBin `json:"baked"`         // イメージの実体（無ければ null）
-	UserLocal *toolBin `json:"userLocal"`     // ~/.local/bin の override（無ければ null）
-	// Overridden: 焼き込み実体が在り、かつ実効がそれとは別の home 配下実体を指している
-	// （= ユーザー local が焼き込みを隠している）。焼き込みが無い lean variant では
-	// ~/.local がピン本体そのものなので false（従来は全行に override が点いて無意味だった）。
-	// 実効と焼き込みの単純パス比較にしないのは、gh のようにラッパー経由が正常なツールが
-	// あるため（home 配下でなければ「イメージ由来」とみなす）。
+	Pin       string   `json:"pin,omitempty"` // ARG pin from the image build
+	Effective *toolBin `json:"effective"`     // what PATH resolves to (null when absent)
+	Baked     *toolBin `json:"baked"`         // the image's binary (null when absent)
+	UserLocal *toolBin `json:"userLocal"`     // the ~/.local/bin override (null when absent)
+	// Overridden: a baked binary exists and the effective one is a different binary under
+	// home (user local hides the baked one). In a lean variant nothing is baked, so ~/.local
+	// IS the pinned binary and this stays false — otherwise every row carried a meaningless
+	// override flag. It is not a plain effective-vs-baked path comparison because for some
+	// tools, gh among them, resolving through a wrapper is normal: anything outside home
+	// counts as coming from the image.
 	Overridden bool `json:"overridden"`
 }
 
@@ -120,30 +128,34 @@ var toolVerCache struct {
 
 const toolVerCacheTTL = 3 * time.Minute
 
-// 版取得の時間予算。--version は「速いはず」だが、それは温まった local disk の話で、
-// 実測（acrt / 0.14.0）では opencode と copilot だけが実効列で (timeout) になった —
-// 同じ実体を指す ~/.local 列は同じリクエスト中に取れているので、実体が壊れていた
-// わけではなく **初回起動が 5s に収まらなかった**だけである。効くのは 3 つ:
-//   - Bun / Node の大きな束（opencode は単一ファイル ~100MB、copilot は多数の JS）
-//   - home がネットワークストレージの配備（ECS）— 初回読み出しが桁で遅い
-//   - 全ツールを一斉に exec する自分自身の負荷（下の probeSlots）
+// Time budget for a version probe. `--version` is supposed to be fast, but that assumes a
+// warm local disk: measured (acrt / 0.14.0), only opencode and copilot showed (timeout) in
+// the effective column, while the ~/.local column pointing at the same binary answered
+// within the same request — so the binary was not broken, its first start simply did not fit
+// in 5s. Three things matter:
+//   - large Bun / Node bundles (opencode is a single ~100MB file, copilot many JS files)
+//   - deployments where home is network storage (ECS) — the first read is an order slower
+//   - the load we create ourselves by exec'ing every tool at once (probeSlots below)
 //
-// なので 1 実体あたりを緩め（probeTimeout）、代わりに全体（collectBudget）で縛る。
-// 「壊れた実体でハンドラが吊るまない」という元の目的は後者が引き受ける。
+// So the per-binary limit is loose (probeTimeout) and the whole collection is bounded
+// instead (collectBudget). The original goal — a broken binary must not hang the handler —
+// is carried by the latter.
 const (
 	probeTimeout  = 15 * time.Second
 	collectBudget = 45 * time.Second
 )
 
-// probeSlots は版取得を同時に何本まで走らせるかの上限。ツールの数だけ goroutine が
-// 一斉に exec すると、CPU の少ない Workspace では起動の重い CLI が**自分たちの作る
-// 負荷で**タイムアウトする（枠待ちは exec の締切を食わない — 締切は起動してから）。
+// probeSlots caps how many version probes run at once. With one goroutine per tool all
+// exec'ing at the same time, a Workspace with few CPUs makes slow-starting CLIs time out on
+// the load we create ourselves (waiting for a slot does not eat the exec deadline — that one
+// starts once the process does).
 var probeSlots = make(chan struct{}, 4)
 
-// verNumRe は --version 出力から版番号を抜く（1.2 / 1.2.3 / 3.11.2 など）。
+// verNumRe extracts the version number from --version output (1.2 / 1.2.3 / 3.11.2, …).
 var verNumRe = regexp.MustCompile(`[0-9]+\.[0-9]+(\.[0-9]+)?`)
 
-// probeVersion は path の版を取得して toolBin にする。バイナリが無ければ nil。
+// probeVersion reads the version of the binary at path into a toolBin. nil when there is no
+// binary.
 func probeVersion(ctx context.Context, path string, args []string) *toolBin {
 	fi, err := os.Stat(path)
 	if err != nil || fi.IsDir() {
@@ -171,13 +183,14 @@ func probeVersion(ctx context.Context, path string, args []string) *toolBin {
 	return &toolBin{Path: path, Version: extractVer(raw), Raw: raw}
 }
 
-// uvToolRoot は path の uv tool ルート。`uv tool install` は
-// <root>/<tool>/bin/<exe> に実体を置き、<root>/<tool>/lib/pythonX.Y/site-packages に
-// venv を作る。root は「イメージ焼き込み（/usr/local/share/uv/tools — Dockerfile の
-// UV_TOOL_DIR）」と「ユーザー導入（~/.local/share/uv/tools — uv の既定）」の 2 つで、
-// どちらかは exe が home 配下にあるかで決まる。3 列（実効／焼き込み／~/.local）の
-// 意味とちょうど一致するので、パスを遡らずこの判定で選ぶ（shim が symlink でなく
-// コピーの uv 版でも壊れない）。
+// uvToolRoot is the uv tool root that holds path. `uv tool install` puts the binary at
+// <root>/<tool>/bin/<exe> and creates the venv at
+// <root>/<tool>/lib/pythonX.Y/site-packages. There are two roots — baked into the image
+// (/usr/local/share/uv/tools, the Dockerfile's UV_TOOL_DIR) and user-installed
+// (~/.local/share/uv/tools, uv's default) — and which one applies follows from whether the
+// exe sits under home. That matches exactly what the three columns (effective / baked /
+// ~/.local) mean, so choose by this test instead of walking the path up (which also survives
+// uv versions whose shim is a copy rather than a symlink).
 func uvToolRoot(exePath, home string) string {
 	if home != "" && strings.HasPrefix(exePath, home+string(os.PathSeparator)) {
 		return filepath.Join(home, ".local", "share", "uv", "tools")
@@ -185,10 +198,10 @@ func uvToolRoot(exePath, home string) string {
 	return bakedUVToolRoot
 }
 
-// uvToolVersion は uv tool の venv にある dist-info ディレクトリ名から版を読む。
-// **実体を exec しない**のが要点（理由は toolSpec.PyDist のコメント）。
-// dist-info の名前は PEP 427 の正規化を受けるので、配布名の "-" は "_" になる
-// （awslabs-cloudwatch-mcp-server → awslabs_cloudwatch_mcp_server-0.1.4.dist-info）。
+// uvToolVersion reads the version from the dist-info directory name in the uv tool's venv.
+// The point is that it does not exec the binary (reason in the toolSpec.PyDist comment).
+// dist-info names go through PEP 427 normalization, so "-" in the distribution name becomes
+// "_" (awslabs-cloudwatch-mcp-server → awslabs_cloudwatch_mcp_server-0.1.4.dist-info).
 func uvToolVersion(exePath, dist, home string) *toolBin {
 	if fi, err := os.Stat(exePath); err != nil || fi.IsDir() {
 		return nil
@@ -201,8 +214,9 @@ func uvToolVersion(exePath, dist, home string) *toolBin {
 			return &toolBin{Path: exePath, Version: extractVer(v), Raw: dist + " " + v}
 		}
 	}
-	// 実体はあるのに venv が見つからない（uvx 実行だけで PATH に置いた等）。版が
-	// 分からないことを「未導入（—）」に化けさせない — 出所不明の実体こそ見せたい。
+	// The binary exists but no venv was found (dropped on PATH by a bare uvx run, say). Not
+	// knowing the version must not turn into "not installed (—)" — a binary of unknown origin
+	// is exactly the thing worth showing.
 	return &toolBin{Path: exePath, Raw: "(版不明)"}
 }
 
@@ -212,7 +226,7 @@ func globSorted(pattern string) []string {
 	return m
 }
 
-// probeTool は 1 実体分の版取得。uv tool の Python サーバーだけ exec を避ける。
+// probeTool reads the version of one binary. Only uv tool Python servers skip the exec.
 func probeTool(ctx context.Context, spec toolSpec, path, home string) *toolBin {
 	if spec.PyDist != "" {
 		return uvToolVersion(path, spec.PyDist, home)
@@ -220,24 +234,26 @@ func probeTool(ctx context.Context, spec toolSpec, path, home string) *toolBin {
 	return probeVersion(ctx, path, spec.Args)
 }
 
-// toolProbe は 1 ツール分の版取得をまとめる。実効／焼き込み／~/.local の 3 列は
-// **同じ実体を指すことが多い**（lean variant では 3 列とも ~/.local/bin/<cmd>）のに、
-// 以前は列ごとに起動していた＝同じバイナリを 3 回。重い CLI ではそれ自体が上の
-// タイムアウトの原因で、しかも「実効は (timeout) なのに ~/.local は 1.18.25」という
-// 同一実体の食い違いになって出た。実体パスで一度だけ起動し、結果を各列へ配る。
+// toolProbe collects the versions for one tool. The three columns (effective / baked /
+// ~/.local) often point at the same binary — in a lean variant all three are
+// ~/.local/bin/<cmd> — yet each column used to exec on its own, i.e. the same binary three
+// times. For heavy CLIs that alone caused the timeouts above, and it surfaced as one binary
+// disagreeing with itself ("effective is (timeout) but ~/.local says 1.18.25"). Exec once
+// per real path and hand the result to every column.
 type toolProbe struct {
 	spec toolSpec
 	home string
 	ctx  context.Context
-	seen map[string]*toolBin // 実体パス → 結果（nil＝実体なし。これも憶える）
+	seen map[string]*toolBin // real path → result (nil = no binary, remembered as well)
 }
 
 func newToolProbe(ctx context.Context, spec toolSpec, home string) *toolProbe {
 	return &toolProbe{spec: spec, home: home, ctx: ctx, seen: map[string]*toolBin{}}
 }
 
-// at は path の版を返す。返す Path は**要求されたパスのまま**にする（symlink を
-// 解決した実体で揃えると、どの列がどこを指しているかという tooltip の情報が消える）。
+// at returns the version at path. The Path it returns stays the path that was asked for:
+// normalizing it to the resolved symlink target would erase the tooltip's information about
+// which column points where.
 func (tp *toolProbe) at(path string) *toolBin {
 	real := path
 	if abs, err := filepath.EvalSymlinks(path); err == nil {
@@ -286,7 +302,7 @@ func collectToolVersions() []toolReport {
 			r := toolReport{Name: spec.Name, Pin: pins[spec.Pin]}
 			effPath := ""
 			if p, err := exec.LookPath(spec.Cmd); err == nil {
-				// symlink（~/.local/bin/claude → share 配下など）は実体で判定する
+				// Judge a symlink (~/.local/bin/claude → somewhere under share) by its target.
 				effPath = p
 				if abs, err := filepath.EvalSymlinks(p); err == nil {
 					effPath = abs
@@ -301,9 +317,9 @@ func collectToolVersions() []toolReport {
 					r.Baked = tp.at(filepath.Join(goHomeRoot(), vers[len(vers)-1], "bin", "go"))
 				}
 			}
-			// Overridden は「隠される焼き込み実体がある」時だけ（struct コメント参照）。
-			// go の on-demand toolchain（home 配下を Baked に立てる）は実効＝焼き込みの
-			// 同一実体なので実体パス比較で除外される。
+			// Overridden only when there is a baked binary to hide (see the struct comment).
+			// go's on-demand toolchain (which puts a path under home in Baked) is the same
+			// binary as the effective one, so the real-path comparison rules it out.
 			if effPath != "" && r.Baked != nil {
 				bakedPath := r.Baked.Path
 				if abs, err := filepath.EvalSymlinks(bakedPath); err == nil {
@@ -319,7 +335,7 @@ func collectToolVersions() []toolReport {
 	return out
 }
 
-// handleToolVersions は GET /env/tool-versions。?refresh=1 でキャッシュを飛ばす。
+// handleToolVersions serves GET /env/tool-versions. ?refresh=1 bypasses the cache.
 func handleToolVersions(w http.ResponseWriter, r *http.Request) {
 	toolVerCache.Lock()
 	defer toolVerCache.Unlock()

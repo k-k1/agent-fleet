@@ -433,7 +433,7 @@ func TestReportReconcilerBusyResetsDebounce(t *testing.T) {
 }
 
 // TestReportReconcilerSinkRetry: a failed delivery leaves the ledger (the arm) alone and
-// retries on the next tick (docs/log/51 §delivery, hole D). v1 was consume-then-deliver, so
+// retries on the next tick (docs/log/51 §delivery, gap D). v1 was consume-then-deliver, so
 // when the append to the conversation failed only the arm disappeared and the report was
 // lost forever.
 func TestReportReconcilerSinkRetry(t *testing.T) {
@@ -539,7 +539,7 @@ func TestReportReconcilerHintCarriesReason(t *testing.T) {
 
 // --- the instruction ledger (docs/log/51 Phase 2) -----------------------------------
 
-// TestReportReconcilerQueuedInstructionSurvives pins that hole A is closed. In v1 the
+// TestReportReconcilerQueuedInstructionSurvives pins that gap A is closed. In v1 the
 // re-arm of instruction 2 overwrote the one-bit arm of instruction 1, and once the Stop of
 // instruction 1 arrived and consumed that bit, the completion of instruction 2 was reported
 // to nobody. In the ledger an instruction is a row, so when the earlier one becomes

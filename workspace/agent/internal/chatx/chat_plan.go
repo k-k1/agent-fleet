@@ -1,29 +1,33 @@
 package chatx
 
-// 作業計画のキャリーフォワード（docs/log/33 第5段）。
+// Work-plan carry-forward (docs/log/33 stage 5).
 //
-// 圧縮の引き継ぎ（第2段）は「LLM が要約した約1000字」1本しかない。しかも要約から
-// 始まったセッションを次の圧縮がまた要約するため、世代を重ねるほど内容が薄まる
-// （要約の要約の要約）。オーケストレーション用の長寿会話では数時間で数世代進み、
-// 最初に立てた計画が原形をなくす。
+// The compaction handoff (stage 2) is a single ~1000-character LLM summary, and the next
+// compaction summarises a session that already started from a summary — a summary of a
+// summary of a summary, thinner with every generation. A long-lived orchestration
+// conversation goes through several generations in a few hours, and the plan it opened
+// with loses its shape.
 //
-// そこで**計画だけを要約から分離**し、原文のまま持つ枠（chatConversation.Plan）を
-// 1つ設ける。新しいプロバイダセッションが始まるたびに原文を前置するので、何世代
-// 圧縮しても劣化しない。要約（PendingHandoff）は背景説明に専念させる。
+// So the plan is kept apart from the summary, in one slot that holds it verbatim
+// (chatConversation.Plan). The verbatim text is prepended whenever a new provider session
+// begins, so no number of compactions degrades it, and the summary (PendingHandoff) is
+// left to carry background alone.
 //
-// 更新契機は3つ:
+// Three things update it:
 //
-//  1. 圧縮時（自動・主経路）— compactConversation が2ブロック出力をパースし、旧計画を
-//     土台に「直近の会話で変わった点だけ反映して書き直す」。
-//  2. 「計画を更新」（明示）— 壁打ちで計画が動いた直後に人が押す。会話のプロバイダ
-//     セッションは使わず oneShotHeadless（直近ターンだけ）で回すので、更新のために
-//     コンテキストを増やさない。
-//  3. 手編集（PUT）— 1/2 の取りこぼしと誤上書きを人が直す最後の砦。
+//  1. Compaction (automatic, the main path) — compactConversation parses the two-block
+//     output and rewrites the old plan, reflecting only what the recent conversation
+//     changed.
+//  2. "Refresh the plan" (explicit) — pressed right after the plan moved in discussion. It
+//     runs through oneShotHeadless (the recent turns only) rather than the conversation's
+//     provider session, so refreshing costs no extra context.
+//  3. Hand editing (PUT) — the last resort for what 1 and 2 missed or overwrote wrongly.
 //
-// 原文キャリーフォワードの唯一のリスクは「古い計画が原文のまま強く復活して、壁打ちで
-// 得た新しい合意を上書きする」こと（要約方式ならぼんやり消えるだけの失敗が、原文方式
-// では自信を持って間違える）。だから 3 の出口を必ず用意し、計画が変わったターンでは
-// notice で本文を見せる — 人が気づける場所がここしかない。
+// The one risk of carrying the text verbatim is an old plan coming back strongly enough to
+// overwrite a new agreement reached in discussion: where the summary approach would fade
+// out vaguely, this one is confidently wrong. Hence exit 3 must always exist, and a turn
+// that changed the plan shows the body in a notice — that is the only place a person can
+// notice it.
 
 import (
 	"context"
@@ -36,27 +40,29 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// 圧縮の2ブロック出力を仕切る記号。モデルが素で書かない綴りにする（会話本文に偶然
-// 現れてパースを乱さないため）。
+// Separators for the two-block compaction output. The spelling is one a model would not
+// write on its own, so it cannot turn up by chance in the conversation and derail parsing.
 const (
 	planMarker    = "<<<PLAN>>>"
 	summaryMarker = "<<<SUMMARY>>>"
 )
 
-// planShapeFor は計画ブロックの型（3見出し固定）。見出しそのものが計画の本文として保存され、
-// 利用者が notice カードで読むので、docs/log/28 P6 で表示言語に分岐した（中身の言語は会話の
-// 主要言語のまま — compactSummaryPromptFor の注記を参照）。
+// PlanShapeFor is the shape of the plan block (three fixed headings). The headings are
+// stored as part of the plan body and read by the user on the notice card, so they follow
+// the display language (docs/log/28 P6); the language of the content stays the
+// conversation's main one — see the note in compactSummaryPromptFor.
 //
-// ★「完了したこと」という見出しを置かないのが肝。見出しがあるとモデルは完了作業を
-// 網羅しにいき、引き継ぎの大半が「次の一手を1ミリも変えない実績報告」で埋まる。運ぶ
-// 基準は「完了したか」ではなく**「これが無いと次の一手を間違えるか」**なので、枠の
-// 名前を『前提』にして必要なものだけを吸い上げる（例: 意図的に fail させてあるテスト
-// は完了作業だが、落とすと後任が「壊れている」と誤認して直しに行く＝運ぶ側）。
+// Deliberately there is no "Done" heading. Given one, the model goes looking to enumerate
+// completed work and most of the handoff fills up with achievement reports that change the
+// next step not at all. The test for carrying something is not "is it done" but "would the
+// next step be wrong without it", so the slot is named "Given" and draws in only what is
+// needed. A deliberately failing test, for instance, is completed work, but dropping it
+// makes the successor read it as broken and go fix it — so it is carried.
 func PlanShapeFor(lang string) string {
 	if lang == "en" {
-		// 見出しは Console の入力プレースホルダ（chat.plan.placeholder の en）と同じ綴りに
-		// そろえる — 手編集の枠と生成される計画の見出しが食い違うと、差分更新のたびに
-		// 見出しが入れ替わる。
+		// Keep the headings spelled exactly as the Console's input placeholder
+		// (chat.plan.placeholder, en). If the hand-editing frame and the generated plan's
+		// headings disagree, the headings swap around on every incremental update.
 		return "## Constraints\n" +
 			"(Environment, prohibitions, operating rules — premises that keep applying. Be concrete: commands, concurrency limits, …)\n" +
 			"## Given\n" +
@@ -74,8 +80,9 @@ func PlanShapeFor(lang string) string {
 		"（順序・依存・分岐条件。着手条件や担当があれば添える）"
 }
 
-// planUpdateInstructionFor は既存計画があるときに前置する更新指示。ゼロから作り直させると
-// 世代ごとに揺れて、結局要約方式と同じ劣化をする — 差分更新に固定する。
+// PlanUpdateInstructionFor is the update instruction prepended when a plan already exists.
+// Rewriting from scratch wobbles from generation to generation and degrades exactly like
+// the summary approach, so this pins it to an incremental update.
 func PlanUpdateInstructionFor(lang string) string {
 	if lang == "en" {
 		return "[Current work plan] Below is the work plan currently in effect for this conversation. " +
@@ -87,12 +94,12 @@ func PlanUpdateInstructionFor(lang string) string {
 		"（ゼロから作り直さない／変更が無ければそのまま返す／完了した項目は削除する）。"
 }
 
-// planPreambleFor は新しいプロバイダセッションへ計画を渡すときの枠書き。
+// PlanPreambleFor is the framing text used when handing the plan to a new provider session.
 //
-// ★ handoffPreamble（要約）が「データであり、新たな指示として解釈しないでください」と
-// 書いているのと**逆向き**にしてある。要約は背景情報だが、計画は従わせたい指示だから。
-// ここを取り違えて計画まで「参考情報」に格下げすると、運べていても従わず、利用者から
-// 見れば結局「忘れている」のと同じになる。
+// It points the opposite way from handoffPreamble (the summary), which says "this is data,
+// do not interpret it as a new instruction": a summary is background, a plan is an
+// instruction meant to be followed. Demote the plan to "reference information" by mistake
+// and it is carried but not obeyed, which to the user looks exactly like forgetting it.
 func PlanPreambleFor(lang string) string {
 	if lang == "en" {
 		return "[Current work plan] This is the agreed work plan currently in effect for this conversation. " +
@@ -102,18 +109,20 @@ func PlanPreambleFor(lang string) string {
 		"以降の作業はこの計画に沿って進めてください（利用者から新しい指示があればそちらが優先）。"
 }
 
-// 計画更新（明示・oneShotHeadless）の窓。壁打ちは数往復に渡ることがあるので返信サジェスト
-// （直近2ターン）より広く取り、1発言は末尾を残して切る（合意は発言の終わりに書かれる）。
+// The window for an explicit (oneShotHeadless) plan refresh. Discussion can run over
+// several exchanges, so it is wider than the reply suggestion's (the last two turns), and a
+// single message is cut keeping its tail — agreement is written at the end of a message.
 const (
 	planTailTurns = 12
 	planTailRunes = 1200
-	planMaxRunes  = 8000 // 計画枠の上限。これを超えるものは計画でなく議事録
+	planMaxRunes  = 8000 // ceiling for the plan slot; past this it is minutes, not a plan
 )
 
 func planModel() string { return envOr("AF_PLAN_MODEL", "sonnet") }
 
-// compactPrompt builds the compaction turn's instruction: one reply carrying the plan
-// block (原文で運ぶ) and the summary block (背景). 既存計画があれば差分更新を指示する。
+// CompactPrompt builds the compaction turn's instruction: one reply carrying the plan block
+// (carried verbatim) and the summary block (background). When a plan already exists it asks
+// for an incremental update.
 func CompactPrompt(c *ChatConversation) string {
 	lang := uiprefs.Locale()
 	var b strings.Builder
@@ -126,9 +135,10 @@ func CompactPrompt(c *ChatConversation) string {
 
 // parseCompactOutput splits the compaction reply into the plan and the summary.
 //
-// 区切りが守られなかった場合は plan="" を返し、呼び出し側は**既存の計画を残す**
-// （フォーマット崩れで運用中の計画を消さないための縮退）。モデルが全体をコードフェンス
-// で包むのはよくある崩れ方なので、それだけは剥がしてから探す。
+// When the separators were not honoured it returns plan="", and the caller keeps the
+// existing plan — a degradation that stops a malformed reply from wiping a plan in use.
+// Wrapping the whole reply in a code fence is a common way for it to go wrong, so that one
+// case is stripped before searching.
 func parseCompactOutput(out string) (plan, summary string) {
 	s := stripCodeFence(strings.TrimSpace(out))
 	pi, si := strings.Index(s, planMarker), strings.Index(s, summaryMarker)
@@ -141,14 +151,16 @@ func parseCompactOutput(out string) (plan, summary string) {
 		plan = ""
 	}
 	if summary == "" {
-		// 要約だけが空。計画は拾えているので捨てず、要約にも同じ本文を渡す（空要約は
-		// compactConversation がエラー扱いにしてしまい、圧縮そのものが失敗する）。
+		// Only the summary came out empty. The plan was parsed, so rather than throw it away
+		// hand the same body to the summary too: compactConversation treats an empty summary
+		// as an error and the whole compaction fails.
 		summary = plan
 	}
 	return plan, summary
 }
 
-// stripCodeFence removes a whole-reply ``` fence (モデルが出力全体を包む崩れ方)。
+// stripCodeFence removes a whole-reply ``` fence, the failure mode where the model wraps
+// its entire output.
 func stripCodeFence(s string) string {
 	if !strings.HasPrefix(s, "```") {
 		return s
@@ -167,8 +179,9 @@ func stripPlanMarkers(s string) string {
 }
 
 // blankPlan reports whether the model's plan block is a "no plan" placeholder rather
-// than a plan. 空文字だけを見ると「なし」「N/A」が計画として保存されてしまう。英語の
-// 言い回しも見るのは、プロンプトが両言語になった以上どちらでも返ってくるため。
+// than a plan. Looking at the empty string alone would store "なし" or "N/A" as the plan.
+// The English wordings are checked too because the prompt exists in both languages, so
+// either can come back.
 func blankPlan(s string) bool {
 	t := strings.Trim(strings.TrimSpace(s), "（）()「」-—–*_ 　")
 	switch strings.ToLower(t) {
@@ -178,8 +191,9 @@ func blankPlan(s string) bool {
 	return false
 }
 
-// clampPlan trims a plan to planMaxRunes (末尾を落とす — 計画は上から順に効く)。切り落とした
-// 印は保存される計画本文に残り利用者が読むので、表示言語に合わせる。
+// clampPlan trims a plan to planMaxRunes, dropping the tail — a plan takes effect from the
+// top down. The truncation marker stays in the stored plan body and is read by the user, so
+// it follows the display language.
 func clampPlan(s string) string {
 	t := strings.TrimSpace(s)
 	r := []rune(t)
@@ -196,9 +210,9 @@ func PlanTruncatedNote(lang string) string {
 	return "（長さ上限のため以降を省略）"
 }
 
-// setPlan stores a new plan and reports whether it actually changed. 変わっていない
-// ときに notice を出さない（自動圧縮のたびに同じ計画カードが積まれると、本当に計画が
-// 動いたときの1枚が埋もれる）ための判定を兼ねる。
+// setPlan stores a new plan and reports whether it actually changed. That verdict is also
+// what keeps a notice from being raised when nothing changed: stacking the same plan card
+// on every automatic compaction buries the one card that says the plan really moved.
 func setPlan(c *ChatConversation, plan string) bool {
 	next := clampPlan(plan)
 	if next == strings.TrimSpace(c.Plan) {
@@ -208,8 +222,9 @@ func setPlan(c *ChatConversation, plan string) bool {
 	return true
 }
 
-// notePlanUpdated appends the "計画を更新しました" notice with the plan body. 原文
-// キャリーフォワードの誤上書きに人が気づける唯一の場所なので、本文ごと見せる。
+// notePlanUpdated appends the "plan updated" notice together with the plan body. It is the
+// only place a person can catch a verbatim carry-forward overwriting something, so the
+// whole body is shown.
 func notePlanUpdated(c *ChatConversation) {
 	c.Messages = append(c.Messages, newNotice(noticeKeyPlanUpdated,
 		map[string]string{"plan": c.Plan},
@@ -217,10 +232,10 @@ func notePlanUpdated(c *ChatConversation) {
 			"\n\n---\n\n"+c.Plan))
 }
 
-// injectPlan prepends the standing plan when the prompt is about to open a FRESH native
-// session for this backend (圧縮直後・エージェント切替直後・初回)。resume が生きている
-// ターンでは相手の文脈に既に計画があるので送らない — 毎ターン送ると入力トークンを
-// 二重に払うだけになる。
+// InjectPlan prepends the standing plan when the prompt is about to open a FRESH native
+// session for this backend (right after a compaction, right after an agent switch, or the
+// first turn). On a turn where resume is alive the plan is already in the other side's
+// context, so it is not sent — sending it every turn only pays for the input tokens twice.
 func InjectPlan(c *ChatConversation, agent, prompt string) (string, bool) {
 	plan := strings.TrimSpace(c.Plan)
 	if plan == "" || providerHasResume(c, agent) {
@@ -229,19 +244,21 @@ func InjectPlan(c *ChatConversation, agent, prompt string) (string, bool) {
 	return PlanPreambleFor(uiprefs.Locale()) + "\n\n" + plan + "\n\n---\n\n" + prompt, true
 }
 
-// injectCarryover prepends everything that must survive a provider-session reset:
-// the compaction summary (要約・1回きり・背景) and the standing plan (原文・毎回・指示)。
+// InjectCarryover prepends everything that must survive a provider-session reset: the
+// compaction summary (background, once) and the standing plan (verbatim, every time, an
+// instruction).
 //
-// 並び順は「要約 → 計画 → 本題」。計画を本題の直前に置くのは、直前ほど強く効くから
-// （計画は今まさに従わせたい指示であり、要約は背景）。戻り値の bool は従来どおり
-// **要約を運んだか**で、呼び出し側はターン成功時に PendingHandoff を落とす。計画は
-// 会話に残り続けるので落とさない。
+// The order is summary -> plan -> the actual prompt. The plan sits immediately before the
+// prompt because the closer it is the stronger it bites: the plan is the instruction to
+// follow right now, the summary is background. The returned bool says whether the SUMMARY
+// was carried, and the caller drops PendingHandoff once the turn succeeds. The plan is not
+// dropped — it stays with the conversation.
 func InjectCarryover(c *ChatConversation, agent, prompt string) (string, bool) {
 	prompt, _ = InjectPlan(c, agent, prompt)
 	return InjectHandoff(c, prompt)
 }
 
-// --- 計画を更新（明示・oneShotHeadless）---------------------------------------
+// --- Explicit plan refresh (oneShotHeadless) -----------------------------------
 
 func PlanRefreshPersonaFor(lang string) string {
 	if lang == "en" {
@@ -252,9 +269,11 @@ func PlanRefreshPersonaFor(lang string) string {
 		"計画の最新版だけを出力します。前置き・後書き・コードフェンスは書きません。"
 }
 
-// planRefreshPrompt asks for the updated plan only. 会話のプロバイダセッションではなく
-// 一発ヘッドレスで回すので、文脈は「現在の計画＋直近の会話」だけを明示的に渡す。
-// 会話本文は原文のまま渡し、枠だけを表示言語で書く（返信サジェスト・件名提案と同じ分け方）。
+// planRefreshPrompt asks for the updated plan only. It runs one-shot headless rather than
+// through the conversation's provider session, so the context is passed explicitly and
+// consists of the current plan plus the recent conversation, nothing else. The conversation
+// text goes in verbatim and only the framing is written in the display language — the same
+// split as the reply suggestion and the title suggestion.
 func planRefreshPrompt(c *ChatConversation, lang string) string {
 	var b strings.Builder
 	b.WriteString(PlanRefreshInstructions(strings.TrimSpace(c.Plan), lang))
@@ -300,8 +319,9 @@ func PlanContextHeader(lang string) string {
 	return "--- 直近の会話 ---\n"
 }
 
-// planContextTurns は計画の文脈に使う末尾窓。report / notice は会話の合意ではないので
-// 外す（notice 本文は表示用カタログの正本言語フォールバックにすぎない — ADR 0033）。
+// planContextTurns is the tail window used as the plan's context. report / notice are
+// excluded because they are not agreements reached in the conversation: a notice body is
+// only the display catalogue's source-language fallback (ADR 0033).
 func planContextTurns(msgs []ChatMessage) []ChatMessage {
 	real := make([]ChatMessage, 0, len(msgs))
 	for _, m := range msgs {
@@ -326,10 +346,10 @@ func planTailText(s string) string {
 }
 
 // refreshPlan runs the one-shot plan update and stores the result. Returns whether the
-// plan changed. 呼び出し側が会話ロックを持つ。
+// plan changed. The caller holds the conversation lock.
 func refreshPlan(ctx context.Context, c *ChatConversation) (bool, error) {
-	// 使用量台帳（ADR 0029 §3）: 計画更新は会話ターンとは別の補助機能。タグを付けないと
-	// unknown（＝タグ付け忘れの信号）に落ちる。
+	// Usage ledger (ADR 0029 §3): a plan refresh is an auxiliary feature, separate from a
+	// conversation turn. Without a tag it falls into unknown, the signal for a forgotten tag.
 	ctx = usagex.WithTag(ctx, usagex.Tag{
 		Feature: usagex.FeaturePlanUpdate, Trigger: usagex.TriggerManual, Ref: c.ID,
 	})
@@ -340,7 +360,8 @@ func refreshPlan(ctx context.Context, c *ChatConversation) (bool, error) {
 	}
 	plan := strings.TrimSpace(stripCodeFence(strings.TrimSpace(reply)))
 	if blankPlan(plan) {
-		// 「計画なし」を返してきたら既存を消さない（会話が浅いだけのことが多い）。
+		// A "no plan" reply does not erase the existing one — usually the conversation is
+		// just still shallow.
 		return false, nil
 	}
 	return setPlan(c, plan), nil
@@ -348,17 +369,18 @@ func refreshPlan(ctx context.Context, c *ChatConversation) (bool, error) {
 
 type chatPlanReq struct {
 	Plan string `json:"plan"`
-	// Notice asks for the「作業計画を更新しました」カードを会話へ積むこと。Console の
-	// 手編集は false（自分で書いた本人に見せ返しても意味がない）、MCP 経由＝オペレーター
-	// が自分で書き換えたときは true — 利用者が見ていない間に計画が動く唯一の経路なので、
-	// そこだけは必ず会話に痕跡を残す（docs/log/33 第5段 案D）。
+	// Notice asks for the "plan updated" card to be stacked into the conversation. Hand
+	// editing from the Console passes false — showing it back to the person who just wrote it
+	// buys nothing. An operator rewriting it over MCP passes true: that is the only path on
+	// which the plan moves while the user is not watching, so it always leaves a trace in the
+	// conversation (docs/log/33 stage 5, option D).
 	Notice bool `json:"notice,omitempty"`
 }
 
-// handleChatPlanGet (GET /chat/conversations/{id}/plan) returns just the plan.
-// 会話まるごとの GET と分けてあるのは MCP（オペレーター自身が自分の計画を読む口・
-// docs/log/33 第5段 案D）のため: 全メッセージを返すと、計画を1行読むためにモデルへ会話
-// 全文を流し込むことになる。
+// HandleChatPlanGet (GET /chat/conversations/{id}/plan) returns just the plan. It is kept
+// apart from the whole-conversation GET for MCP's sake — the face an operator reads its own
+// plan through (docs/log/33 stage 5, option D): returning every message would pour the
+// entire conversation into the model just to read one line of plan.
 func HandleChatPlanGet(w http.ResponseWriter, r *http.Request) {
 	c, err := LoadConv(r.PathValue("id"))
 	if err != nil {
@@ -368,9 +390,9 @@ func HandleChatPlanGet(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"plan": c.Plan, "plan_updated_at": c.PlanUpdatedAt})
 }
 
-// handleChatPlanSet (PUT /chat/conversations/{id}/plan) stores a hand-edited plan.
-// 空文字を渡せば計画を消せる（完了した計画を畳む出口 — 自動更新は消さないので、
-// クリアは人の操作だけが行う）。
+// HandleChatPlanSet (PUT /chat/conversations/{id}/plan) stores a hand-edited plan. An empty
+// string clears the plan — the way to fold up a finished one. The automatic updates never
+// clear it, so clearing is a human action only.
 func HandleChatPlanSet(w http.ResponseWriter, r *http.Request) {
 	var req chatPlanReq
 	if !httpx.DecodeJSON(w, r, &req) {
@@ -397,8 +419,9 @@ func HandleChatPlanSet(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
-// handleChatPlanRefresh (POST /chat/conversations/{id}/plan/refresh) re-derives the plan
-// from the recent conversation — the 壁打ちで計画が動いた直後に押すボタン。
+// HandleChatPlanRefresh (POST /chat/conversations/{id}/plan/refresh) re-derives the plan
+// from the recent conversation — the button pressed right after the plan moved in
+// discussion.
 func HandleChatPlanRefresh(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	unlock := LockConv(id)

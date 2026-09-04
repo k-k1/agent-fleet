@@ -1,21 +1,20 @@
-// Package resources は **この Workspace 自身の**リソース実測値（メモリ・CPU・
-// ディスク）を、コンテナの中から読む。
+// Package resources reads THIS workspace's own resource measurements (memory, CPU,
+// disk) from inside the container.
 //
-// なぜ Agent 側なのか。CP の `containerStats`（control-plane/metrics.go）は
-// `docker inspect` でコンテナ ID を引き、ホストの
-// `/sys/fs/cgroup/system.slice/docker-<id>.scope` を読む——**CP と Workspace が
-// 同じホストに載っている構成でしか成立しない**読み方である。ECS（Fargate も
-// `ecs-ec2` も）では CP タスクに docker バイナリも対象の cgroup も無いので、
-// メモリ / CPU / ディスクが 3 つとも取れず、メンバー詳細のタイルが「–」のまま
-// だった（docs/log/63 §63.9）。
+// Why on the Agent side. The CP's `containerStats` (control-plane/metrics.go) looks the
+// container id up with `docker inspect` and reads the host's
+// `/sys/fs/cgroup/system.slice/docker-<id>.scope` — a reading that only holds where CP
+// and the workspace sit on the same host. On ECS (Fargate and `ecs-ec2` alike) the CP
+// task has neither the docker binary nor the target cgroup, so all three of memory /
+// CPU / disk came back empty and the member-detail tiles stayed "–" (docs/log/63 §63.9).
 //
-// コンテナの中からなら話は逆で、`/sys/fs/cgroup` は cgroup 名前空間で自分自身に
-// 張り替えられているため、**ランタイムが何であれ**同じ 2 ファイルを読むだけで
-// 済む。前例もある: status.OOMKillCount（本パッケージへ移設）は以前からこの
-// 読み方で自分の oom_kill を数えていた。
+// From inside the container it is the other way round: the cgroup namespace remaps
+// `/sys/fs/cgroup` onto ourselves, so whatever the runtime is, reading the same two
+// files is enough. There is precedent: status.OOMKillCount (moved into this package)
+// already counted our own oom_kill this way.
 //
-// 読めなかった軸は **省く**（ゼロを返さない）。「0%」と「測れない」を同じ値で
-// 表すと、画面は測れないものを 0 として描いてしまう。
+// An axis that cannot be read is OMITTED, not returned as zero. Representing "0%" and
+// "not measurable" with the same value makes the screen draw the unmeasurable as 0.
 package resources
 
 import (
@@ -37,26 +36,28 @@ func cgroupDir() string {
 	return "/sys/fs/cgroup"
 }
 
-// Stats は 1 回の観測。読めなかった軸は nil で、JSON からも消える。
-// フィールド名は CP の docker 経路（control-plane/metrics.go）が出す JSON と
-// **同じキー**にしてある: CP はどちらの経路で得た値も同じ map に載せ、Console は
-// 出どころを区別しない。
+// Stats is one observation. An axis that could not be read is nil and disappears from
+// the JSON too. The field names are deliberately the SAME KEYS the CP's docker path
+// (control-plane/metrics.go) emits: CP puts the values from either path into the same
+// map, and the Console does not distinguish where they came from.
 type Stats struct {
 	MemUsed *uint64 `json:"mem_used,omitempty"`
 	MemMax  *uint64 `json:"mem_max,omitempty"`
-	// CPUPct は「1 コア = 100%」（docker stats と同じ規約）。2 サンプル要るので
-	// プロセス起動後の最初の 1 回は必ず nil になる。
+	// CPUPct is "one core = 100%" (the docker stats convention). Two samples are
+	// needed, so the first call after process start is always nil.
 	CPUPct *float64 `json:"cpu_pct,omitempty"`
-	// OOMKillTotal は累積値。「直近で増えたか」の判定は CP 側（oomTracker）が持つ。
+	// OOMKillTotal is cumulative. Deciding "did it grow recently" is the CP's job
+	// (oomTracker).
 	OOMKillTotal *uint64 `json:"oom_kill_total,omitempty"`
-	// DiskUsed / DiskTotal は home が載っているファイルシステムの statfs。du の
-	// ような木の走査ではないので毎回叩いてよい。
+	// DiskUsed / DiskTotal are a statfs of the filesystem home sits on. Not a tree
+	// walk like du, so it is cheap enough to call every time.
 	DiskUsed  *uint64 `json:"disk_used,omitempty"`
 	DiskTotal *uint64 `json:"disk_total,omitempty"`
 }
 
-// Read は今の観測値を返す。どの軸も独立に失敗してよい（片方だけ読める環境が
-// 現に存在する: cgroup v1 のホスト、home が読めない権限、など）。
+// Read returns the current observation. Every axis may fail independently — environments
+// where only one side is readable do exist (a cgroup v1 host, home unreadable for
+// permission reasons).
 func Read() Stats {
 	var s Stats
 	if v, ok := memUsed(); ok {
@@ -77,29 +78,30 @@ func Read() Stats {
 	return s
 }
 
-// --- cgroup v2 / v1 の両対応 ---
+// --- cgroup v2 and v1, both supported ---
 //
-// fleet が自分で用意するホストは cgroup v2 である（EC2 スロットの AMI は
-// `amazon-linux-2023` の ECS-optimized に固定 —— deploy/aws/ecs/cfn/40-ec2-pool.yaml）。
-// ただし **Fargate はプラットフォーム版を指定していない**（CP は `PlatformVersion` を
-// 渡しておらず LATEST に従う）ので、下回りが v1 のホストに当たる可能性を我々は
-// 制御できない。v2 のファイル名しか読まない実装だと、そのとき症状は「メモリと CPU
-// だけ黙って –」——つまり**この修正が直したはずの見た目にそのまま戻る**。
+// The hosts the fleet provisions itself are cgroup v2 (the EC2 slot AMI is pinned to the
+// `amazon-linux-2023` ECS-optimized one — deploy/aws/ecs/cfn/40-ec2-pool.yaml). But
+// Fargate's platform version is not pinned (CP passes no `PlatformVersion` and follows
+// LATEST), so we cannot control whether the underlying host is v1. An implementation that
+// only reads the v2 file names would then show "memory and CPU silently –" — exactly the
+// appearance this code exists to fix.
 //
-// 名前も単位も違うので、軸ごとに v2 → v1 の順で読む。
+// The names and the units both differ, so each axis is read v2 first, then v1.
 //
-//	          v2                         v1
-//	メモリ    memory.current             memory/memory.usage_in_bytes
-//	上限      memory.max（"max"=無制限） memory/memory.limit_in_bytes（巨大値=無制限）
-//	CPU       cpu.stat usage_usec（µs）  cpuacct/cpuacct.usage（**ns**）
-//	OOM       memory.events oom_kill     memory/memory.oom_control oom_kill
+//	         v2                            v1
+//	memory   memory.current                memory/memory.usage_in_bytes
+//	limit    memory.max ("max"=unlimited)  memory/memory.limit_in_bytes (huge=unlimited)
+//	CPU      cpu.stat usage_usec (µs)      cpuacct/cpuacct.usage (ns)
+//	OOM      memory.events oom_kill        memory/memory.oom_control oom_kill
 //
-// ⚠️ 実機で確かめたのは v2 側だけである（このコンテナの実 cgroup と `df` に一致）。
-// v1 側はフィクスチャでの検証にとどまる —— v1 のホストを用意して測ったわけではない。
+// Only the v2 side is confirmed on real hardware (it matches this container's actual
+// cgroup and `df`). The v1 side is verified against fixtures only — no v1 host was
+// provisioned and measured.
 
-// v1Unlimited: cgroup v1 は「上限なし」を巨大な数値（典型的には
-// 9223372036854771712 = PAGE_COUNTER_MAX）で表す。v2 の "max" と違って**数値として
-// 読めてしまう**ので、閾値で弾かないと「上限 8 EiB」を分母にした使用率 0% を描く。
+// v1Unlimited: cgroup v1 expresses "no limit" as a huge number (typically
+// 9223372036854771712 = PAGE_COUNTER_MAX). Unlike v2's "max" it parses as a number, so
+// without a threshold to reject it we would draw 0% usage over an "8 EiB limit".
 const v1Unlimited = uint64(1) << 62
 
 func memUsed() (uint64, bool) {
@@ -120,8 +122,8 @@ func memMax() (uint64, bool) {
 	return v, true
 }
 
-// readCgroupUint は cgroup の単一値ファイルを読む。"max"（無制限）は !ok —
-// 上限が無いことを巨大な数値として画面に出さないため。
+// readCgroupUint reads a cgroup single-value file. "max" (unlimited) is !ok, so that the
+// absence of a limit is never drawn on screen as a huge number.
 func readCgroupUint(name string) (uint64, bool) {
 	b, err := os.ReadFile(cgroupDir() + "/" + name)
 	if err != nil {
@@ -135,7 +137,7 @@ func readCgroupUint(name string) (uint64, bool) {
 	return v, err == nil
 }
 
-// readCgroupKV は "key value" 形式の平坦なファイル（memory.events 等）から 1 行引く。
+// readCgroupKV pulls one line out of a flat "key value" file (memory.events and friends).
 func readCgroupKV(name, key string) (uint64, bool) {
 	b, err := os.ReadFile(cgroupDir() + "/" + name)
 	if err != nil {
@@ -155,13 +157,13 @@ func readCgroupKV(name, key string) (uint64, bool) {
 // cgroup v2 memory.events. From inside the container /sys/fs/cgroup is
 // cgroup-namespaced to this container, so this is our own count. Reports !ok when
 // unreadable (a non cgroup-v2 host, a different layout, etc.) so callers degrade
-// instead of guessing OOM.（record_exit.go → internal/status → 本パッケージへ二度目の
-// 移設。cgroup を読む実装を 1 つに束ねるため。status.OOMKillCount は互換のため
-// 残してあり、ここへ委譲するだけ。）
+// instead of guessing OOM. It lives here so that every cgroup read sits in one place;
+// status.OOMKillCount is kept for compatibility and only delegates to this.
 //
-// v1 の `memory.oom_control` は "oom_kill_disable 0 / under_oom 0 / oom_kill N" の 3 行で、
-// 3 行目は比較的新しいカーネルにしか無い。無ければ !ok ＝「OOM だったか分からない」で、
-// 呼び出し側（record_exit / supervisor）は死因を crashed 側に倒す。
+// v1's `memory.oom_control` has three lines, "oom_kill_disable 0 / under_oom 0 /
+// oom_kill N", and the third one only exists on fairly recent kernels. Without it, !ok
+// means "cannot tell whether this was an OOM" and the callers (record_exit / supervisor)
+// fall back to crashed as the cause of death.
 func OOMKillCount() (uint64, bool) {
 	if v, ok := readCgroupKV("memory.events", "oom_kill"); ok {
 		return v, true
@@ -171,25 +173,26 @@ func OOMKillCount() (uint64, bool) {
 
 // --- CPU ---
 
-// cpuMeter は cpu.stat の累積 usage_usec から使用率を出す。累積カウンタなので
-// 差分を取るしかなく、**前回の値を憶えておく主体が要る**。
+// cpuMeter derives a usage percentage from cpu.stat's cumulative usage_usec. Being a
+// cumulative counter, the only way is to take a delta, which requires SOMEONE to remember
+// the previous value.
 //
-// 呼び出し側で憶えるのではなく、ここに 1 つだけ置いているのが肝である。stats は
-// CP の SSE tick（4 秒）と管理画面のポーリング（4 秒）の両方から叩かれるので、
-// 呼び出し毎に差分を取ると 2 系統が互いの前回値を踏み合い、どちらも短い間隔の
-// 差分になって数字が跳ねる。1 つの計器を共有し、minInterval より短い再訪には
-// 前回の答えをそのまま返す。
+// Keeping exactly one of those here, rather than letting callers remember, is the point.
+// stats is hit both by the CP's SSE tick (4s) and by the admin screen's polling (4s), so
+// taking the delta per call has the two streams trampling each other's previous value:
+// both end up with a very short window and the numbers jump. One shared meter instead,
+// and a revisit sooner than minInterval gets the previous answer back unchanged.
 type cpuMeter struct {
 	mu   sync.Mutex
 	prev uint64
 	at   time.Time
 	last float64
-	have bool // last が有効（= 2 サンプル以上取れた）
+	have bool // last is valid (= at least two samples were taken)
 }
 
-// minInterval より短い間隔では新しい差分を取らない。usage_usec の分解能に対して
-// 差分の窓が短すぎると量子化誤差が支配的になり、静止中の Workspace が数十 % に
-// 見えることがある。
+// minInterval is the shortest gap at which a new delta is taken. Against usage_usec's
+// resolution, too short a window lets quantisation error dominate and an idle workspace
+// can look like tens of percent.
 const minInterval = time.Second
 
 var cpu = &cpuMeter{}
@@ -207,9 +210,9 @@ func (m *cpuMeter) pct(now time.Time) (float64, bool) {
 	prev, prevAt := m.prev, m.at
 	m.prev, m.at = usage, now
 	wall := now.Sub(prevAt).Microseconds()
-	// 初回・時計の巻き戻し・カウンタのリセット（コンテナ再作成）は測れない。
-	// 直前の値を返し続けるのではなく have を倒す——古い数字を今の値として
-	// 出すくらいなら「測れない」と言う方がよい。
+	// A first call, a clock that went backwards and a counter reset (container
+	// recreate) are all unmeasurable. Clear have rather than keep returning the last
+	// value: better to say "not measurable" than to present a stale number as current.
 	if prevAt.IsZero() || wall <= 0 || usage < prev {
 		m.last, m.have = 0, false
 		return 0, false
@@ -218,9 +221,10 @@ func (m *cpuMeter) pct(now time.Time) (float64, bool) {
 	return m.last, true
 }
 
-// readUsageUsec は累積 CPU 時間を**マイクロ秒**で返す。⚠️ v1 の cpuacct.usage は
-// **ナノ秒**なので、ここで単位を揃えないと使用率が 1000 倍になる（静止中の
-// Workspace が数万 % に見える）。呼び出し側は単位を知らなくてよい。
+// readUsageUsec returns cumulative CPU time in MICROSECONDS. v1's cpuacct.usage is in
+// NANOSECONDS, so without normalising the unit here the percentage comes out 1000x too
+// high (an idle workspace looking like tens of thousands of percent). Callers need not
+// know about the unit at all.
 func readUsageUsec() (uint64, bool) {
 	if v, ok := readCgroupKV("cpu.stat", "usage_usec"); ok {
 		return v, true
@@ -233,14 +237,14 @@ func readUsageUsec() (uint64, bool) {
 
 // --- Disk ---
 
-// homeUsage は home が載っているファイルシステムの使用量 / 容量を statfs で返す。
+// homeUsage returns used / total of the filesystem home sits on, via statfs.
 //
-// **`du` ではない**のは意図的である。CP の docker 経路は
-// `du -sb <dataDir>/home` でホーム木を歩くが、あれは「ホスト上の 1 ディレクトリ」
-// の大きさを知る唯一の手段だったからで、木が大きいほど高くつく（だから CP 側は
-// 60 秒キャッシュしている）。コンテナの中では home は自分のボリュームなので、
-// statfs 1 発で使用量も容量も分かる。`ecs-ec2` では home = 永続 EBS なので、
-// この 2 つは**まさに知りたい数字そのもの**になる（docs/log/64）。
+// Deliberately NOT `du`. The CP's docker path walks the home tree with
+// `du -sb <dataDir>/home` because that was the only way to size "one directory on the
+// host", and it costs more the bigger the tree gets (hence the 60s cache on the CP side).
+// Inside the container home is our own volume, so a single statfs gives both usage and
+// capacity. On `ecs-ec2` home is the persistent EBS volume, which makes these two exactly
+// the numbers we want to know (docs/log/64).
 func homeUsage() (used, total uint64, ok bool) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(paths.HomeDir(), &st); err != nil {
@@ -251,8 +255,9 @@ func homeUsage() (used, total uint64, ok bool) {
 		return 0, 0, false
 	}
 	total = st.Blocks * bs
-	// 使用量は Blocks-Bfree（root 予約ぶんを含む実使用）。Bavail を使うと
-	// 一般ユーザーから見た空きになり、used+free が total に合わなくなる。
+	// Usage is Blocks-Bfree (real usage, including the root reservation). Bavail
+	// would be the free space an ordinary user sees, and then used+free no longer
+	// adds up to total.
 	used = (st.Blocks - st.Bfree) * bs
 	return used, total, true
 }

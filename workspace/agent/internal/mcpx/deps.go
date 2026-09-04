@@ -1,19 +1,21 @@
 package mcpx
 
-// deps.go — mcpx が呼び出し側（package main）へ伸ばしている手を 1 枚に集めたもの。
+// deps.go — every hand mcpx reaches out to the caller (package main) with, collected on one
+// sheet.
 //
-// MCP の stdio サーバは、エージェントの機能面をほぼ丸ごと道具として出す面である
-// （セッション作成・ピア送信・完了報告・承認ゲート・UI 設定・ツール版ピン…）。
-// だから家系を切り出すと、**外向きの依存はどうしても main の各家系へ散る**。
-// ここはその断面を隠すのではなく、**1 箇所に集めて数えられるようにする**ための口:
+// The MCP stdio server exposes nearly the agent's whole feature surface as tools (session
+// creation, peer send, completion report, the approval gate, UI preferences, tool version
+// pins, …), so extracting the family inevitably scatters its outward dependencies across
+// main's families. Rather than hide that seam, this file gathers it in one place where it can
+// be counted:
 //
-//   - mcpx は main を import しない（できない。逆向きの依存が既にある）
-//   - なので「main の関数を呼ぶ」は関数値として受け取る形にする
-//   - **配線は起動時に 1 回**（main の mcp_wiring.go の init）。Configure が
-//     欠けを検査して落とす —— 配線漏れを既定値で黙って埋めると、承認ゲートが
-//     素通りするような穴になるので、**静かに動くより落ちる方を選ぶ**
+//   - mcpx does not import main (it cannot; the dependency already runs the other way)
+//   - so "call a function in main" is received as a function value
+//   - wiring happens once at startup (the init in main's mcp_wiring.go). Configure checks for
+//     gaps and panics: filling a missing wire with a default silently opens holes such as an
+//     approval gate that waves everything through, so failing beats running quietly
 //
-// mcpx 単体のテストは main を持たないので、TestMain が偽物を配線する（deps_test 参照）。
+// mcpx's own tests have no main, so TestMain wires fakes (see deps_test).
 
 import (
 	"fmt"
@@ -26,58 +28,59 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// Deps は上のとおり「mcpx から見た外の世界」。**型は main のものを 1 つも含まない**
-// （含んだ瞬間に切断面が閉じなくなる）ので、増えても import は増えない。
+// Deps is the outside world as mcpx sees it, per the note above. It holds none of main's
+// types (the moment it does, the seam stops closing), so growing it adds no imports.
 type Deps struct {
-	// セッション件名（session.go）。**上限を mcpx 側で持ち直さない** —— 層ごとに違う
-	// 数字を持つと「起動の瞬間だけ落ちる」形の事故になる（memory:
-	// session-title-limit-one-source）。
+	// Session title (session.go). The limit is NOT held again on the mcpx side: a number
+	// kept per layer produces the kind of failure that only shows at the instant of launch
+	// (memory: session-title-limit-one-source).
 	CleanTitle           func(s string) (string, bool)
 	SessionTitleMaxRunes int
 
-	// セッション間メッセージ（session_peer.go）。
+	// Session-to-session messages (session_peer.go).
 	PeerIntentNames       []string
 	PeerReachableSessions func(from string) []session.Meta
 
-	// 完了報告の種別（chat_report.go）。
+	// The completion report kind (chat_report.go).
 	ReportKindSelfReport string
 
-	// オペレーター承認（bridge_approval.go）。**既定値を置かない**筆頭がこれで、
-	// 未配線を「素通り」にすると承認そのものが消える。
+	// Operator approval (bridge_approval.go). The first thing that must never get a
+	// default: turning an unwired gate into "wave through" erases approval itself.
 	ApprovalGate      func(op, summary string) error
 	ApprovalLabel     func(op string) string
 	ShellCreateTarget func(dir, prompt string) string
 	ShellSendTarget   func(name, prompt string) string
 	SessionIsShell    func(name string) bool
 
-	// 画面設定（ui_prefs.go）・claude の設定配線（session_status.go）。
+	// UI preferences (ui_prefs.go) and claude's settings wiring (session_status.go).
 	ReadUIPrefs                func() map[string]any
 	EnsureClaudeSettingsWiring func(kind string)
 
-	// リポジトリ解決（git.go）: HTTP の path からワークツリーを引く。
+	// Repository resolution (git.go): looks up the worktree from the HTTP path.
 	RepoAnyDirFromPath func(w http.ResponseWriter, r *http.Request) (string, bool)
 
-	// ツールの版ピンと導入（env_tool_versions.go / install_tools.go）。
+	// Tool version pins and installation (env_tool_versions.go / install_tools.go).
 	ReadBuildPins      func() map[string]string
 	AgentFleetShareDir func() string
 	InstallGrafanaMCP  func(ver string) (string, error)
 
-	// SSM セッションの設定書き出し（session_ssm.go）。
+	// Writing an SSM session's config (session_ssm.go).
 	WriteSSMConfig func(path string, s session.SSMMeta) error
 
-	// --- 道具集合を決める 3 つのフラグ ---
+	// --- the three flags that decide the tool set ---
 	//
-	// 🔥 **保管場所は呼び出し側に置く。** package main のテストが
-	// `mcpWriteEnabled = true` のように**直接代入して**道具集合を切り替えており、
-	// var のエイリアスで受けると代入が mcpx まで届かず、**スタブが効かないのに緑**に
-	// なる（ウェーブ A の #295 F-2 / #297 F-1 で 2 回踏んだ形）。読み書きの口だけを
-	// ここで預かり、値は 1 箇所にしか置かない。
+	// The storage stays on the caller's side. package main's tests switch the tool set by
+	// assigning directly (`mcpWriteEnabled = true`), and a var alias here would never
+	// receive that assignment: the stub would be dead while the test stayed green (hit
+	// twice already). Only the read and write ports are held here; the value lives in
+	// exactly one place.
 	//
-	//   WriteEnabled          … `--write`。書き込み系の道具を出すか（アシスタント面）
-	//   SelfReportOnly        … `--self-report`。セッション面（自己申告だけの狭い面）
-	//   SessionChromiumEnabled… `--self-report --chromium-attach` の同時指定でだけ立つ。
-	//                            単独の --chromium-attach でアシスタント面が広がらない
-	//                            ように、連言はここではなく RunStdio が決める
+	//   WriteEnabled          … `--write`. Whether to expose write tools (assistant surface)
+	//   SelfReportOnly        … `--self-report`. The session surface (self-report only)
+	//   SessionChromiumEnabled… set only when `--self-report --chromium-attach` are given
+	//                            together. RunStdio, not this flag, decides the conjunction,
+	//                            so a lone --chromium-attach cannot widen the assistant
+	//                            surface
 	WriteEnabled              func() bool
 	SetWriteEnabled           func(bool)
 	SelfReportOnly            func() bool
@@ -85,30 +88,30 @@ type Deps struct {
 	SessionChromiumEnabled    func() bool
 	SetSessionChromiumEnabled func(bool)
 
-	// 会話 id（`--conv <id>`）。これも保管は呼び出し側である。
-	// 🔥 **var のエイリアスでは渡せない値**の典型: main が起動時に写しを取っても、
-	// この id は**そのあと**（引数解釈のとき）に決まるので写しは空文字のまま固まり、
-	// bridge_approval.go は「どの会話か分からない」まま承認を投げることになる。
-	// しかも main 側のテストは解釈**結果**（conv が入ったか）を読むので、
-	// 一方向の通知では足りない —— 読み書き両方をここで預かる。
+	// Conversation id (`--conv <id>`). Its storage is on the caller's side too, and it is
+	// the classic value a var alias cannot carry: main may take a copy at startup, but this
+	// id is decided AFTERWARDS (when the arguments are parsed), so the copy freezes as the
+	// empty string and bridge_approval.go posts approvals without knowing which
+	// conversation they belong to. main's tests read the parse RESULT (did conv land?), so
+	// a one-way notification is not enough — both the read and the write live here.
 	ConvID    func() string
 	SetConvID func(id string)
 }
 
 var deps Deps
 
-// Configure は起動時に 1 回だけ呼ぶ（main の mcp_wiring.go / mcpx のテストの init）。
-// 欠けたまま動かさない —— 承認ゲートやセッション件名の上限が「たまたま零値」で動くと、
-// 壊れていることが誰にも見えない形の穴になる。
+// Configure is called exactly once at startup (main's mcp_wiring.go, or the init of mcpx's
+// tests). Never run with a gap: an approval gate or a session-title limit that works by
+// accident of the zero value is a hole nobody can see.
 //
-// 🔥 **網羅は reflect で取る。手書きの一覧にしない。** 以前はフィールド名を並べた map で
-// 検査していたが、それは**フィールドが増えたときに漏れる**（そして漏れても何も起きない）。
-// 危ないのは**値型**である: 関数型なら未配線は nil 参照で落ちるが、`SessionTitleMaxRunes`
-// のような値型は**零値のまま静かに走る**——件名の上限が 0 になっても誰も気付かない。
-// この構造体は既に値型を 3 つ持っており、増える側である。
+// Completeness is taken with reflect, never a hand-written list. A check against a map of
+// field names leaks whenever a field is added, and nothing happens when it does. Value types
+// are the dangerous ones: an unwired function type dies on a nil dereference, but a value type
+// such as SessionTitleMaxRunes runs on quietly as the zero value, and a title limit of 0 goes
+// unnoticed. This struct already holds three value types, and that number only grows.
 //
-// 例外を作るときは**フィールドに `mcpx:"optional"` と書く**（一覧を別に持たない。
-// 例外が見えるのは常に宣言のところ）。
+// To make an exception, tag the field `mcpx:"optional"` — no separate list, so an exception is
+// always visible at the declaration.
 func Configure(d Deps) {
 	var missing []string
 	v := reflect.ValueOf(d)
@@ -124,7 +127,7 @@ func Configure(d Deps) {
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		panic(fmt.Sprintf("mcpx.Configure: 配線されていない依存がある: %v", missing))
+		panic(fmt.Sprintf("mcpx.Configure: dependencies left unwired: %v", missing))
 	}
 	deps = d
 	sessionTitleMaxRunes = d.SessionTitleMaxRunes
@@ -132,9 +135,9 @@ func Configure(d Deps) {
 	reportKindSelfReport = d.ReportKindSelfReport
 }
 
-// unwired は「配線されていない」の判定。零値に加えて、**中身の無いスライス**と
-// **0 以下の数**も配線漏れとして扱う（`[]string{}` や `-1` は零値ではないが、
-// 依存としては未配線と同じ意味になる）。
+// unwired decides what counts as "not wired". Besides the zero value it treats an empty slice
+// and a number of 0 or less as a gap: `[]string{}` and `-1` are not zero values, but as
+// dependencies they mean the same as unwired.
 func unwired(v reflect.Value) bool {
 	switch v.Kind() {
 	case reflect.Slice:
@@ -146,23 +149,23 @@ func unwired(v reflect.Value) bool {
 	}
 }
 
-// Wired は現在の配線を返す。**呼び出し側が「配線が生きているか」を通しで検査する**ための
-// 読み出し口で、mcpx 自身は使わない。
+// Wired returns the current wiring. It is a read port for the CALLER to check end-to-end that
+// the wiring is live; mcpx itself does not use it.
 //
-// 🔥 Configure が捕まえるのは**未配線**だけで、**間違った配線**は捕まえられない。
-// `ApprovalGate` を「常に承認」にしても、`ConvID` を空文字を返す関数にしても静かに通る
-// ——しかも配線は 1 行なので、将来の整理で一番触られやすい場所である。
+// Configure catches only what is UNWIRED, never what is wired WRONG: an `ApprovalGate` that
+// always approves and a `ConvID` that returns the empty string both pass quietly — and since
+// the wiring is a single line, it is the place a future cleanup is most likely to touch.
 func Wired() Deps { return deps }
 
-// 値で受け取るもの。Configure が 1 回だけ書く（以後は読むだけ）。
+// The ones received by value. Configure writes them once; afterwards they are read-only.
 var (
 	sessionTitleMaxRunes int
 	peerIntentNames      []string
 	reportKindSelfReport string
 )
 
-// 以下は移送前と**同じ名前**の薄い委譲。呼び出し側（移してきた 3,461 行）を 1 行も
-// 触らずに済ませるためで、ここが唯一の外向きの窓口になる。
+// Thin delegations keeping the names the moved code already used, so none of it needed an
+// edit; this is the one outward window.
 func cleanTitle(s string) (string, bool) { return deps.CleanTitle(s) }
 
 func peerReachableSessions(from string) []session.Meta { return deps.PeerReachableSessions(from) }
@@ -193,7 +196,7 @@ func installGrafanaMCP(ver string) (string, error) { return deps.InstallGrafanaM
 
 func writeSSMConfig(path string, s session.SSMMeta) error { return deps.WriteSSMConfig(path, s) }
 
-// 道具集合のフラグ（保管は呼び出し側・上の Deps の注記を参照）。
+// Tool-set flags (stored on the caller's side; see the note on Deps above).
 func writeEnabled() bool           { return deps.WriteEnabled() }
 func selfReportOnly() bool         { return deps.SelfReportOnly() }
 func sessionChromiumEnabled() bool { return deps.SessionChromiumEnabled() }
@@ -205,7 +208,8 @@ func setSessionChromiumEnabled(v bool) { deps.SetSessionChromiumEnabled(v) }
 func convID() string      { return deps.ConvID() }
 func setConvID(id string) { deps.SetConvID(id) }
 
-// 純粋な標準ライブラリの薄皮は配線しない（振る舞いが無いので、写しが古くなる余地が無い）。
+// Pure standard-library wrappers are not wired: they have no behaviour, so a copy cannot go
+// stale.
 func homeDir() string { return paths.HomeDir() }
 
 func envOr(key, def string) string {

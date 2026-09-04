@@ -1,25 +1,28 @@
 package memoryx
 
-// エージェントメモリの版管理（docs/log/39 ⑤ / ADR 0022 決定 5）— import。
+// Version control for agent memory (docs/log/39 ⑤ / ADR 0022 decision 5) — import.
 //
-//	受領（multipart）──▶ 検証 ──▶ refs/imports/<id>/* として取り込む ──▶ preview
-//	                                                                    │
-//	                          プロジェクト/kind を選んで「置き換え = 新 commit」◀┘
+//	receive (multipart) ──▶ verify ──▶ take in as refs/imports/<id>/* ──▶ preview
+//	                                                                       │
+//	                  pick project/kind, then "replace = a new commit" ◀────┘
 //
-// 設計の芯は 2 つ:
+// Two ideas at the core of the design:
 //
-//   - **独立系譜として受け入れる**。bundle は `refs/imports/<id>/*` へ fetch し、ローカルの
-//     main には graft しない。tar.gz も同じ形に揃える（展開 → 専用 index で write-tree →
-//     commit-tree → 同じ ref 空間）ので、preview も apply も経路が 1 本になる。
-//     取り込まなかった側もローカル履歴に残るので「取り込んで後悔」が起きない。
+//   - Accept it as an independent lineage. A bundle is fetched into `refs/imports/<id>/*`
+//     and never grafted onto the local main. tar.gz is brought into the same shape (extract
+//     -> write-tree against a dedicated index -> commit-tree -> the same ref space), so
+//     preview and apply each have a single path. What was not applied also stays in local
+//     history, so importing is never something to regret.
 //
-//   - **適用は 3-way merge ではなく選択置き換え**。.md の意味的衝突は機械で解決できない
-//     （ADR 0022 決定 5）。選んだ範囲だけを restore と同じ経路で live へ書き、結果を
-//     AF-Trigger: import の commit として積む。つまり import も巻き戻せる。
+//   - Applying is a selective replace, not a 3-way merge. A semantic conflict between .md
+//     files cannot be resolved mechanically (ADR 0022 decision 5). Only the selected scope
+//     is written to live through the same path as restore, and the result is committed with
+//     AF-Trigger: import — so an import can be rolled back too.
 //
-// ★3（import は外部入力）: サイズ上限・tar の traversal 防御・allowlist 外エントリの拒否・
-// bundle verify 必須。加えて live へ書く段は restore と同じ memoryApplyScopeToLive を通る
-// ので、repo に何が入っていようと allowlist の外へは 1 バイトも書かれない。
+// ★3 (an import is external input): a size cap, tar traversal defence, rejection of entries
+// outside the allowlist, and a mandatory bundle verify. On top of that the step that writes
+// to live goes through the same memoryApplyScopeToLive as restore, so whatever the repo
+// contains, not one byte is written outside the allowlist.
 
 import (
 	"archive/tar"
@@ -39,19 +42,21 @@ import (
 )
 
 const (
-	memoryImportDefaultMax = 64 << 20 // 受領サイズ上限の既定（docs/log/39 ★3）
-	memoryImportMaxEntries = 20000    // tar のエントリ数上限
-	memoryImportMaxFile    = 8 << 20  // tar の 1 ファイル上限
-	memoryImportKeepRefs   = 10       // 保持する取り込み系譜の本数
+	memoryImportDefaultMax = 64 << 20 // default cap on the received size (docs/log/39 ★3)
+	memoryImportMaxEntries = 20000    // cap on the number of tar entries
+	memoryImportMaxFile    = 8 << 20  // cap on a single file in the tar
+	memoryImportKeepRefs   = 10       // how many imported lineages are kept
 
-	// 適用の仕方（REST の mode）。replace = 選んだ範囲の内容だけ採る（既定・履歴は自分の
-	// まま）。migrate = 履歴ごと入れ替える（移設・範囲は全体固定）。
+	// How to apply (REST's mode). replace = take only the content of the selected scope
+	// (the default; the history stays your own). migrate = swap the history along with it
+	// (a migration; the scope is fixed at everything).
 	memoryImportModeReplace = "replace"
 	memoryImportModeMigrate = "migrate"
 )
 
-// memoryImportIDRe は importId の形（生成側と同じ）。apply は URL/本文から来た値を
-// ref 名に使うので、ここを通ったものしか git へ渡さない。
+// memoryImportIDRe is the shape of an importId (the same as on the generating side). apply
+// uses a value that came from the URL or the body as a ref name, so only what passes here is
+// handed to git.
 var memoryImportIDRe = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z(-[0-9]+)?$`)
 
 func memoryImportMaxBytes() int64 {
@@ -63,30 +68,34 @@ func memoryImportMaxBytes() int64 {
 	return memoryImportDefaultMax
 }
 
-// memoryImportPreview は取り込んだ系譜の概況。Console はこれを見せて適用範囲を選ばせる。
+// memoryImportPreview summarises the lineage that was taken in. The Console shows it so the
+// user can pick the scope to apply.
 type memoryImportPreview struct {
 	ImportID  string              `json:"importId"`
 	Format    string              `json:"format"` // bundle | tar
 	Ref       string              `json:"ref"`    // refs/imports/<id>/<name>
-	Head      string              `json:"head"`   // 取り込んだ先頭 commit
+	Head      string              `json:"head"`   // head commit that was taken in
 	HeadTs    string              `json:"headTs,omitempty"`
-	Snapshots int                 `json:"snapshots"` // 系譜に含まれる commit 数
+	Snapshots int                 `json:"snapshots"` // commits contained in the lineage
 	Kinds     []memoryTreeKind    `json:"kinds"`
 	Projects  []memoryTreeProject `json:"projects"`
-	// Unavailable はこの環境に無い kind（例: codex memories 未有効）。選ばせない。
+	// Unavailable are kinds this environment does not have (e.g. codex memories not
+	// enabled). They are not offered for selection.
 	Unavailable []string `json:"unavailable"`
-	// Rejected は allowlist 外だったため取り込まなかった / 適用されないパス。
+	// Rejected are paths outside the allowlist, so they were not taken in / will not be
+	// applied.
 	Rejected []string `json:"rejected"`
-	// Secrets は取り込み内容の secret スキャン結果（情報提供。import は本人のデータを
-	// 持ち込む操作なのでブロックはしない — 生値は含まない）。
+	// Secrets is the secret scan over the imported content, for information only: an import
+	// brings in the user's own data, so it is not blocked. Raw values are not included.
 	Secrets []memorySecretFinding `json:"secrets"`
-	// SecretScanFailed はスキャン自体の失敗（「検出なし」と区別する。import は
-	// ブロックしない方針なのでエラーにはせず、事実だけ返す）。
+	// SecretScanFailed marks a failure of the scan itself, kept distinct from "nothing
+	// found". Since an import is not blocked, this is not an error, just the fact.
 	SecretScanFailed bool `json:"secretScanFailed,omitempty"`
 }
 
-// memoryImportPrepare は受領物を検証して refs/imports/<id>/* に取り込み、preview を返す。
-// src は保存済みの一時ファイル、name は元のファイル名（形式の推定に使う補助）。
+// memoryImportPrepare verifies what was received, takes it in under refs/imports/<id>/* and
+// returns a preview. src is the stored temporary file; name is the original file name, used
+// as a hint when guessing the format.
 func memoryImportPrepare(src, name string, now time.Time) (memoryImportPreview, error) {
 	var pv memoryImportPreview
 	if err := memoryEnsureRepo(); err != nil {
@@ -129,7 +138,8 @@ func memoryImportPrepare(src, name string, now time.Time) (memoryImportPreview, 
 	}
 	pv.Kinds, pv.Projects = kinds, projects
 
-	// この環境で受け皿になるルートが無い kind は選ばせない（codex memories 未有効の環境）。
+	// A kind with no root to land in on this environment is not offered (e.g. an environment
+	// where codex memories are not enabled).
 	active := map[string]bool{}
 	for _, r := range memoryRoots() {
 		active[r.Kind] = true
@@ -140,8 +150,9 @@ func memoryImportPrepare(src, name string, now time.Time) (memoryImportPreview, 
 			pv.Unavailable = append(pv.Unavailable, k.Kind)
 		}
 	}
-	// bundle は中身を選別できないので、allowlist 外のパスはここで洗い出して見せる
-	// （適用段でも memoryApplyScopeToLive が弾くが、事前に分かる方が親切）。
+	// A bundle's contents cannot be filtered, so paths outside the allowlist are listed here
+	// and shown. memoryApplyScopeToLive rejects them at apply time as well, but knowing in
+	// advance is kinder.
 	if format == memoryFormatBundle {
 		pv.Rejected = memoryRejectedPaths(head)
 	}
@@ -149,7 +160,7 @@ func memoryImportPrepare(src, name string, now time.Time) (memoryImportPreview, 
 		pv.Rejected = []string{}
 	}
 	if pv.Secrets, err = memoryScanRevTree(head); err != nil {
-		pv.SecretScanFailed = true // 失敗を「検出なし」に見せない
+		pv.SecretScanFailed = true // do not let a failure look like "nothing found"
 	}
 	if pv.Secrets == nil {
 		pv.Secrets = []memorySecretFinding{}
@@ -159,7 +170,7 @@ func memoryImportPrepare(src, name string, now time.Time) (memoryImportPreview, 
 	return pv, nil
 }
 
-// memoryDetectFormat は中身のマジックで形式を決める（拡張子は信用しない）。
+// memoryDetectFormat decides the format from the magic bytes; the extension is not trusted.
 func memoryDetectFormat(src, name string) (string, error) {
 	f, err := os.Open(src)
 	if err != nil {
@@ -179,7 +190,8 @@ func memoryDetectFormat(src, name string) (string, error) {
 		"unsupported file %q: expected a git bundle or a .tar.gz produced by export", filepath.Base(name))
 }
 
-// memoryNewImportID は refs/imports/<id> の id を作る。同一秒の衝突は連番で避ける。
+// memoryNewImportID builds the id in refs/imports/<id>. A collision within the same second
+// is avoided with a sequence number.
 func memoryNewImportID(now time.Time) (string, error) {
 	base := now.UTC().Format("20060102T150405Z")
 	for i := 0; i < 100; i++ {
@@ -198,8 +210,8 @@ func memoryNewImportID(now time.Time) (string, error) {
 	return "", errors.New("could not allocate an import id")
 }
 
-// memoryImportBundle は bundle を検証して refs/imports/<id>/* へ fetch する。
-// verify を必須にするのは ★3（外部入力）— 壊れた/切り詰められた bundle をここで落とす。
+// memoryImportBundle verifies the bundle and fetches it into refs/imports/<id>/*. verify is
+// mandatory because of ★3 (external input) — a corrupt or truncated bundle dies here.
 func memoryImportBundle(src, id string) (string, error) {
 	abs, err := filepath.Abs(src)
 	if err != nil {
@@ -225,7 +237,7 @@ func memoryImportBundle(src, id string) (string, error) {
 	if len(list) == 0 {
 		return "", memoryErrf(http.StatusBadRequest, errCodeMemoryBadImport, "the bundle carries no branches")
 	}
-	// main（= snapshot を積む唯一のブランチ）を優先し、無ければ先頭を採る。
+	// Prefer main (the only branch snapshots are stacked on); otherwise take the first.
 	want := "refs/imports/" + id + "/" + memoryBranch
 	for _, r := range list {
 		if r == want {
@@ -236,20 +248,20 @@ func memoryImportBundle(src, id string) (string, error) {
 	return list[0], nil
 }
 
-// memoryImportTar は tar.gz を検証しつつ展開し、bundle と同じ ref 空間へ commit する。
-// 展開先は work dir で、live にも staging にも触れない。
+// memoryImportTar extracts the tar.gz while verifying it and commits into the same ref space
+// as a bundle. It extracts into the work dir, touching neither live nor staging.
 func memoryImportTar(src, id string, now time.Time) (ref string, rejected []string, err error) {
 	dir := filepath.Join(memoryWorkDir(), "import-"+id)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", nil, err
 	}
-	defer os.RemoveAll(dir) // 展開物は commit したら用済み
+	defer os.RemoveAll(dir) // the extracted tree is done with once it is committed
 	rejected, err = memoryExtractTar(src, dir)
 	if err != nil {
 		return "", rejected, err
 	}
-	// 専用 index に対して add/write-tree する。staging と bare repo の index を汚さない
-	// ため、GIT_INDEX_FILE と GIT_WORK_TREE をこの操作だけ差し替える。
+	// add/write-tree run against a dedicated index. GIT_INDEX_FILE and GIT_WORK_TREE are
+	// swapped for this operation alone so that staging and the bare repo's index stay clean.
 	idx := filepath.Join(memoryWorkDir(), "import-"+id+".index")
 	defer os.Remove(idx)
 	run := func(args ...string) (string, error) {
@@ -285,8 +297,9 @@ func memoryImportTar(src, id string, now time.Time) (ref string, rejected []stri
 	return ref, rejected, nil
 }
 
-// memoryExtractTar は tar.gz を dst へ展開する。allowlist に合致しない・traversal する・
-// 通常ファイル以外のエントリは**書かずに rejected へ落とす**（cleanup_archive.go の guard と同型）。
+// memoryExtractTar extracts the tar.gz into dst. An entry that does not match the allowlist,
+// traverses out, or is not a regular file is dropped into rejected without being written
+// (the same shape as the guard in cleanup_archive.go).
 func memoryExtractTar(src, dst string) ([]string, error) {
 	f, err := os.Open(src)
 	if err != nil {
@@ -316,14 +329,14 @@ func memoryExtractTar(src, dst string) ([]string, error) {
 		}
 		name := filepath.ToSlash(strings.TrimPrefix(h.Name, "./"))
 		if h.Typeflag == tar.TypeDir {
-			continue // 中身のあるファイルの親として都度作る
+			continue // created on demand as the parent of a file that has content
 		}
 		if h.Typeflag != tar.TypeReg {
-			rejected = append(rejected, name) // symlink / hardlink / device は受け付けない
+			rejected = append(rejected, name) // symlink / hardlink / device are not accepted
 			continue
 		}
 		if name == "manifest.json" {
-			continue // 自己記述。版管理対象ではないので取り込まない
+			continue // self-description; not under version control, so not taken in
 		}
 		if !memoryImportPathAllowed(decls, name) {
 			rejected = append(rejected, name)
@@ -357,9 +370,10 @@ func memoryExtractTar(src, dst string) ([]string, error) {
 	return rejected, nil
 }
 
-// memoryImportPathAllowed は repo 内パスが宣言済みルートの allowlist に収まるか。
-// 判定に使うのは memoryRootDecls（この環境で有効なルートではない）— codex を有効化して
-// いない環境でも codex 分を**取り込む**ことはでき、live へ書く段で初めて弾かれる形にする。
+// memoryImportPathAllowed answers whether a path inside the repo falls within the allowlist
+// of the declared roots. It judges against memoryRootDecls, not the roots enabled on this
+// environment: an environment without codex enabled can still take codex content in, and it
+// is rejected only at the step that writes to live.
 func memoryImportPathAllowed(decls []memoryRoot, repoPath string) bool {
 	if repoPath == "" || strings.HasPrefix(repoPath, "/") || strings.Contains(repoPath, "..") ||
 		strings.HasPrefix(repoPath, ".git/") || strings.Contains(repoPath, "/.git/") {
@@ -374,7 +388,8 @@ func memoryImportPathAllowed(decls []memoryRoot, repoPath string) bool {
 	return false
 }
 
-// memoryRejectedPaths は rev のツリーのうち allowlist に収まらないパス（bundle 用）。
+// memoryRejectedPaths lists the paths in rev's tree that fall outside the allowlist (used
+// for bundles).
 func memoryRejectedPaths(rev string) []string {
 	out, err := memoryGitRun("ls-tree", "-r", "--name-only", rev)
 	if err != nil {
@@ -393,8 +408,8 @@ func memoryRejectedPaths(rev string) []string {
 	return rejected
 }
 
-// memoryPruneImportRefs は古い取り込み系譜を落とす（★8 repo 肥大の抑制）。
-// 適用済みの内容は main 側の import commit として残るので、ref を消しても失われない。
+// memoryPruneImportRefs drops old imported lineages (★8, holding down repo growth). Content
+// that was applied survives as the import commit on main, so deleting the ref loses nothing.
 func memoryPruneImportRefs(keep int) {
 	out, err := memoryGitRun("for-each-ref", "--format=%(refname)", "refs/imports/")
 	if err != nil {
@@ -422,7 +437,7 @@ func memoryPruneImportRefs(keep int) {
 	if len(ids) <= keep {
 		return
 	}
-	sort.Strings(ids) // id は UTC タイムスタンプなので辞書順 = 時刻順
+	sort.Strings(ids) // an id is a UTC timestamp, so lexical order is chronological order
 	for _, id := range ids[:len(ids)-keep] {
 		for _, ref := range byID[id] {
 			_, _ = memoryGitRun("update-ref", "-d", ref)
@@ -430,15 +445,16 @@ func memoryPruneImportRefs(keep int) {
 	}
 }
 
-// memoryImportApply は取り込んだ系譜から選んだ範囲だけを live へ適用する。
-// 実体は restore と同じ経路（= pre-restore snapshot を取り、allowlist の内側だけ書き、
-// 結果を commit する）で、契機だけ import になる — つまり取り込みも巻き戻せる。
+// memoryImportApply applies only the selected scope of an imported lineage to live. It is
+// the same path as restore (take a pre-restore snapshot, write only inside the allowlist,
+// commit the result); only the trigger is import — so an import can be rolled back too.
 //
-// opts.Adopt=true は**移設**（docs/log/39 ⑤-移設）: 内容だけでなく履歴も引き継ぐ。bundle は
-// 相手の全 snapshot を運んでいるのに、既定の適用では最新ツリーしか使わず、運んできた
-// 過去は refs/imports に埋もれたまま（10 本を超えると刈られる）だった。移設は main を
-// その系譜へ付け替えるので、相手の履歴がそのまま「この環境の履歴」になり、一覧・差分・
-// 巻き戻しの既存機能が全部そのまま効く。
+// opts.Adopt=true is a migration (docs/log/39 ⑤-migration): it carries over the history as
+// well as the content. A bundle carries all of the other side's snapshots, yet the default
+// apply uses only the newest tree and leaves the past it carried buried in refs/imports
+// (pruned past 10). A migration repoints main at that lineage, so the other side's history
+// becomes this environment's history and the existing listing, diff and rollback features
+// all work on it unchanged.
 func memoryImportApply(importID string, sc memoryRestoreScope, now time.Time, opts memoryApplyOpts) (memoryRestoreResult, error) {
 	var res memoryRestoreResult
 	if !memoryImportIDRe.MatchString(importID) {
@@ -454,16 +470,17 @@ func memoryImportApply(importID string, sc memoryRestoreScope, now time.Time, op
 	}
 	trailers := []string{"AF-Import-Id: " + importID, "AF-Import-Ref: " + ref}
 	if opts.Adopt {
-		// 移設の範囲は**全体で固定**する。一部だけ置き換えると、履歴（相手の系譜）と
-		// live（自分と相手の混在）が食い違い、以後の巻き戻しが何を意味するのか説明
-		// できなくなる。範囲を選びたい場合は既定の適用（履歴は自分のまま）を使う。
+		// A migration's scope is fixed at everything. Replacing only part of it leaves the
+		// history (the other side's lineage) at odds with live (a mix of yours and theirs),
+		// and then there is no way to explain what a later rollback means. To pick a scope,
+		// use the default apply, which keeps your own history.
 		sc = memoryRestoreScope{All: true}
 		trailers = append(trailers, "AF-Import-Mode: migrate")
 	}
 	return memoryApplyRev(sc, sha, memoryTriggerImport, trailers, now, opts)
 }
 
-// memoryImportRef は importId に対応する ref を引く（main 優先）。
+// memoryImportRef looks up the ref for an importId, preferring main.
 func memoryImportRef(importID string) (string, error) {
 	out, err := memoryGitRun("for-each-ref", "--format=%(refname)", "refs/imports/"+importID+"/")
 	if err != nil {

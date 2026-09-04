@@ -61,7 +61,7 @@ func Configure(d Deps) {
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		panic(fmt.Sprintf("memoryx.Configure: 配線されていない依存がある: %v", missing))
+		panic(fmt.Sprintf("memoryx.Configure: dependencies left unwired: %v", missing))
 	}
 	deps = d
 	errCodeMemoryBadRequest = d.ErrCodeBadRequest

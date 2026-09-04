@@ -1,7 +1,7 @@
-// Package session はセッションのモデル（ワイヤ構造体・永続メタ・kind 定数）と
-// その付帯ヘルパ（tmux 名前規約・UUID・メタ永続化）。package main からの抽出
-// （docs/log/23 残① Wave A）。JSON タグ／ディスク上のレイアウトは main 時代と
-// バイト同一を維持すること。
+// Package session holds the session model (wire structs, persisted meta, kind constants) and
+// its helpers (tmux naming convention, UUID, meta persistence). Extracted from package main
+// (docs/log/23 remaining item 1 Wave A): the JSON tags and the on-disk layout must stay
+// byte-identical to what main wrote.
 package session
 
 import (
@@ -28,32 +28,34 @@ const (
 	KindSSM      = "ssm"
 )
 
-// Driver 方式（docs/log/27 §2・§9.2、ADR 0015）: セッションの制御経路。tui は従来の
-// tmux 内 TUI（AF は send-keys で書き・スクレイプ/hooks で読む）。managed は共有
-// runtime＋構造化 RPC — AF が唯一の writer で、tmux pane を持たない（P2 で opencode、
-// P3 で codex）。kind は分けない — transcript / settings / auth / models を tui と
-// 共有するため、driver は Meta のフィールドで持つ（ADR 0015-決定 9.2）。
+// Driver (docs/log/27 §2, §9.2, ADR 0015): a session's control route. tui is the traditional
+// TUI inside tmux (AF writes with send-keys and reads by scraping/hooks). managed is a shared
+// runtime plus structured RPC — AF is the only writer and there is no tmux pane. kind is NOT
+// split along this line: transcript / settings / auth / models are shared with tui, so driver
+// is a field on Meta instead (ADR 0015 decision 9.2).
 const (
 	DriverTUI     = "tui"
 	DriverManaged = "managed"
 )
 
-// セッションの出自（docs/log/46 §2-c・ADR 0029 §6）: 誰が始めたセッションの消費か。
-// ターン注入元（transcript.Turn.Source）とは別の軸で、「自分で開いたセッション」と
-// 「オペレーターが勝手に立てたセッション」を使用量集計で分けるために持つ — 後者は
-// 自動走行・定時実行と組み合わさると無人で増える。
+// A session's origin (docs/log/46 §2-c, ADR 0029 §6): whose consumption this session is. It
+// is a different axis from where a turn was injected from (transcript.Turn.Source), and it
+// exists so usage accounting can separate "a session I opened myself" from "a session an
+// operator raised on its own" — the latter grows unattended once autonomous runs and
+// scheduled execution are in play.
 const (
-	OriginUser     = "user"     // Console の起動導線から人が開始（既定）
-	OriginOperator = "operator" // af_write アシスタントの create_session（＋作成元の会話）
-	OriginSchedule = "schedule" // 定時実行が起こした（docs/log/38）
-	OriginHandoff  = "handoff"  // 引き継ぎ（旧 fork）で生えた
-	// OriginUnknown はこの機能より前に作られた既存セッション。0 でも user でもない、を守る。
+	OriginUser     = "user"     // a person started it from the Console's launch flow (default)
+	OriginOperator = "operator" // create_session by the af_write assistant (and its conversation)
+	OriginSchedule = "schedule" // raised by scheduled execution (docs/log/38)
+	OriginHandoff  = "handoff"  // grown out of a handoff (formerly fork)
+	// OriginUnknown is a session that predates this feature. It keeps "neither zero nor user".
 	OriginUnknown = "unknown"
 )
 
-// ValidOrigin は外部から届いた出自を記録可能な語彙へ丸める。create のワイヤ項目は
-// どのクライアントからも到達しうるので、未知の値は user（ラベル無しで通る人の操作）へ
-// 縮退させ、任意の文字列が集計の次元に混ざらないようにする。
+// ValidOrigin narrows an origin arriving from outside into the recordable vocabulary. The
+// create wire field is reachable from any client, so an unknown value degrades to user (a
+// person's action, which passes with no label) and no arbitrary string enters the accounting
+// dimension.
 func ValidOrigin(s string) string {
 	switch s {
 	case OriginUser, OriginOperator, OriginSchedule, OriginHandoff, OriginUnknown:
@@ -62,8 +64,8 @@ func ValidOrigin(s string) string {
 	return OriginUser
 }
 
-// OriginOf は集計用の出自。フィールドを持たない既存メタは unknown（推定で user に
-// 寄せると「人が開いた分」を過大に見せてしまう）。
+// OriginOf is the origin used for accounting. A pre-existing meta without the field reads as
+// unknown; guessing user would overstate "what people opened themselves".
 func OriginOf(m Meta) string {
 	if m.Origin == "" {
 		return OriginUnknown
@@ -85,9 +87,9 @@ type Session struct {
 	Tmux string `json:"tmux"`
 	Dir  string `json:"dir"`
 	Kind string `json:"kind"` // "claude" | "opencode" | "codex" | "shell"
-	// Driver mirrors Meta.Driver on the wire（"" = tui）。managed のセッションは
-	// tmux pane を持たないので、Console はこれを見てターミナルビューを出さず
-	// ミラー（チャット）を主 UI として描画する（docs/log/27 §10）。
+	// Driver mirrors Meta.Driver on the wire ("" = tui). A managed session has no tmux
+	// pane, so the Console reads this, skips the terminal view and renders the mirror
+	// (chat) as the primary UI (docs/log/27 §10).
 	Driver string `json:"driver,omitempty"`
 	// Subdir mirrors Meta.Subdir: the folder beneath Dir the agent actually runs in
 	// ("" = Dir itself). Dir stays the working copy, so the Console keeps grouping
@@ -106,18 +108,20 @@ type Session struct {
 	Alive         bool   `json:"alive"`     // true = live tmux session; false = stopped
 	Resumable     bool   `json:"resumable"` // false = stopped claude whose working dir is gone
 	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
-	// running under the pane. Lets the Console mark 入力待ち as "still working in bg".
+	// running under the pane. Lets the Console mark a session that is waiting for input
+	// as "still working in bg".
 	BackgroundBusy bool `json:"backgroundBusy"`
 	// BackgroundBusyReason: WHAT is running behind the idle prompt — "process" (a
 	// run_in_background worker), "subagent" (a background Task/Workflow agent, which
 	// spawns no process), "shell" (a Monitor / waiting background shell). Display only:
 	// the badge lights on BackgroundBusy, this only chooses its wording, so an unknown
-	// (or dropped) value falls back to the generic 「BG実行中」.
+	// (or dropped) value falls back to the generic "running in background".
 	BackgroundBusyReason string `json:"backgroundBusyReason,omitempty"`
-	// RateLimitResumeAt: State == agents.StateLimited のとき**だけ**入る、予約済み自動再開の
-	// 時刻（RFC3339）。空 = 上限では止まっているが再開は仕込まれていない（自動再開 OFF、
-	// リセット時刻を決める材料が無い、モデル別上限 — docs/log/47 §4-5）。チップに「いつ動くか」を
-	// 出すためだけの表示用で、待ち合わせ自体は CP の定時実行が持つ。
+	// RateLimitResumeAt is set ONLY when State == agents.StateLimited: the time (RFC3339) of
+	// the scheduled automatic resume. Empty = stopped at the limit with no resume armed
+	// (auto-resume off, nothing to derive the reset time from, or a per-model limit —
+	// docs/log/47 §4-5). Display only, so the chip can say when it will move again; the
+	// waiting itself belongs to the CP's scheduled execution.
 	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
 	// Context: current context-window fill (newest assistant turn's prompt tokens),
 	// claude only, nil when none recorded yet. Drives the Console's ContextBar in
@@ -138,19 +142,21 @@ type Session struct {
 	// ExitReason explains why a STOPPED session's agent process terminated, when the
 	// pane exit recorder caught an abnormal end: "oom" (memory-killed), "killed"
 	// (SIGKILL, non-OOM), or "crashed" (fault / non-zero exit). Empty for live sessions,
-	// clean quits, and deliberate stops — those show the plain 停止中 chip. ExitCode is
+	// clean quits, and deliberate stops — those show the plain "stopped" chip. ExitCode is
 	// the raw pane wait status (128+signal on a kill; 137 = OOM SIGKILL) and ExitSignal
 	// the derived signal number, both surfaced in the row tooltip.
 	ExitReason string `json:"exitReason,omitempty"`
 	ExitCode   int    `json:"exitCode,omitempty"`
 	ExitSignal int    `json:"exitSignal,omitempty"`
-	// Carried は「畳まれたときに画面に出ていた対話」の種類（"question" | "plan" |
-	// "permission"）。停止中の行にだけ入る（docs/log/75 §75.6.5）。
+	// Carried is the kind of interaction that was on screen when the session was folded
+	// away ("question" | "plan" | "permission"). Set only on stopped rows
+	// (docs/log/75 §75.6.5).
 	//
-	// なぜ一覧に要るか: 停止中セッションの状態は 停止中 の 1 語しか無く、答えを待って
-	// いる質問があることは**どこにも出ていなかった**。人待ちを畳めるようにした以上
-	// （docs/log/75 P2）、畳まれた質問が一覧から見えないのは「静かに失われた」のと区別が
-	// つかない。ミラーを開けばカードは出るが、開く理由が無ければ開かない。
+	// Why the list needs it: a stopped session's state is the single word "stopped", and
+	// the fact that a question is waiting for an answer showed up nowhere at all. Once
+	// waiting on a person can be folded away (docs/log/75 P2), a folded question that is
+	// invisible in the list cannot be told apart from one silently lost. The card is there
+	// if you open the mirror, but nobody opens it without a reason to.
 	Carried string `json:"carried,omitempty"`
 	// Locked mirrors Meta.Locked: the user pinned this session against deletion, so
 	// every removal path (stop=forget meta / delete / TTL prune / a working-copy
@@ -159,8 +165,9 @@ type Session struct {
 	Locked   bool `json:"locked,omitempty"`
 	Archived bool `json:"archived,omitempty"`
 	// KeepAwakeUntil mirrors Meta.KeepAwakeUntil: while it is in the future the
-	// idle-stop reaper leaves this session AND its workspace alone (docs/log/75)。
-	// 停止中の行にも載せる — 掛かっているピンは、切れる前に見えていないと外せない。
+	// idle-stop reaper leaves this session AND its workspace alone (docs/log/75). Carried
+	// on stopped rows too — a pin that is set has to be visible before it expires, or it
+	// cannot be released.
 	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
 }
 
@@ -191,8 +198,8 @@ func ExactTarget(tn string) string { return "=" + tn }
 // and clicking it re-runs claude --resume in the SAME session id (derived from
 // dir+name). Home survives Stop→Start, so a stopped session remains listed and
 // resumable across a Workspace restart (claude --resume reads the jsonl, also
-// persisted). The dir is denylisted in the file browser. "作り直す"(recreate)
-// wipes home, intentionally clearing sessions too.
+// persisted). The dir is denylisted in the file browser. "Recreate" wipes home,
+// intentionally clearing sessions too.
 type Meta struct {
 	Name string `json:"name"`
 	Dir  string `json:"dir"`
@@ -208,18 +215,19 @@ type Meta struct {
 	// by fork/recreate. TUI sessions leave both empty.
 	Effort string `json:"effort,omitempty"`
 	Mode   string `json:"mode,omitempty"`
-	// SkipPermissions is this session's answer to「権限確認をスキップするか」（docs/log/76）:
-	// true = fleet 既定の bypass 起動（claude --dangerously-skip-permissions と各 kind の
-	// 同格フラグ）、false = ツール実行のたびに承認を求めさせる。**3 値**である点が要で、
-	// nil は「未指定＝ ui-prefs の kind 毎の既定に従う」。false と nil を分けないと、
-	// 設定でオフにしたあと個別セッションだけオンに戻す、が表現できない。
-	// 起動時にだけ効く（TUI は再起動が要る）。plan 起動は kind を問わず bypass を外すので、
-	// この値が true でも mode=plan なら承認は出る。
+	// SkipPermissions is this session's answer to "skip the permission prompts?"
+	// (docs/log/76): true = launch with the fleet's default bypass (claude
+	// --dangerously-skip-permissions and each kind's equivalent flag), false = ask for
+	// approval on every tool run. Being THREE-valued is the point: nil means unspecified,
+	// i.e. follow the per-kind default in ui-prefs. Without separating false from nil there
+	// is no way to express "off in settings, back on for this one session".
+	// It only takes effect at launch (a TUI needs a restart). A plan launch drops the
+	// bypass for every kind, so mode=plan still prompts even when this is true.
 	SkipPermissions *bool  `json:"skipPermissions,omitempty"`
 	Kind            string `json:"kind"`
-	// Driver selects the control route（docs/log/27）: "" | "tui" = tmux 内 TUI（従来）、
-	// "managed" = 共有 runtime＋構造化 RPC（pane なし。P2 で opencode から解禁）。
-	// 既定の tui は "" で永続化し、既存メタとディスク上バイト同一を保つ。
+	// Driver selects the control route (docs/log/27): "" | "tui" = the traditional TUI
+	// inside tmux, "managed" = a shared runtime plus structured RPC (no pane). The default
+	// tui persists as "", keeping existing metas byte-identical on disk.
 	Driver string `json:"driver,omitempty"`
 	Title  string `json:"title"` // user-supplied display title (optional); "" = auto
 	// SuggestedTitle is a headless-LLM-generated candidate the Console offers via a
@@ -243,22 +251,25 @@ type Meta struct {
 	CreatedAt string `json:"createdAt"` // RFC3339, set at create
 	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
 	Archived  bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
-	// Locked pins the session against deletion: /stop（メタ忘却）・DELETE /sessions/{name}・
-	// 停止中 TTL の自動 prune・作業コピー削除の巻き添え、いずれも locked の間は拒否される
-	// （アーカイブは可逆なので許可）。解除は POST /sessions/{name}/lock {"locked":false}。
-	// 保護は Agent の REST 層で効くので、Console・オペレーター（MCP）・ブリッジのどこから
-	// 来た削除でも同じように止まる。
+	// Locked pins the session against deletion: /stop (forgetting the meta), DELETE
+	// /sessions/{name}, the stopped-TTL auto prune and being taken down together with a
+	// deleted working copy are all refused while it is locked (archiving is reversible, so
+	// it stays allowed). Release with POST /sessions/{name}/lock {"locked":false}. The
+	// protection lives in the Agent's REST layer, so a deletion coming from the Console, an
+	// operator (MCP) or the bridge is stopped the same way.
 	Locked bool `json:"locked,omitempty"`
 	// KeepAwakeUntil pins the session (and with it the workspace) against the idle-stop
 	// reaper until this instant (RFC3339). Empty / past = not pinned.
 	//
-	// なぜ「時刻」で、真偽値ではないのか（docs/log/75 §75.5）: 消し忘れたピンは、閉じ忘れた
-	// 端末タブと同じ「黙って課金し続けるもの」になる。止めない理由が本物なら数時間で済み、
-	// 本物でなければ勝手に切れてほしい。延長は押し直せばよい。
+	// Why an instant rather than a boolean (docs/log/75 §75.5): a pin nobody remembers to
+	// clear becomes the same thing as a forgotten terminal tab — something that quietly
+	// keeps billing. A real reason not to stop lasts a few hours; anything else should
+	// expire on its own, and extending is one more press.
 	//
-	// なぜ要るのか: shell / ssm のセッションは「今ジョブが走っているか」を af から見分けられ
-	// ない（前景コマンド名では放置された less とビルドが同じに見え、ssm は常に aws を張る）。
-	// 推測で守るのではなく、利用者に宣言してもらう側に倒した判断。
+	// Why it is needed at all: for shell / ssm sessions af cannot tell whether a job is
+	// running right now (by foreground command name an abandoned less looks like a build,
+	// and ssm always holds aws). Rather than guessing, the decision was to have the user
+	// declare it.
 	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
 	// ForkFrom is the SOURCE conversation id this session was forked from, in the
 	// kind's own id space: claude = the source slot's sid (jsonl), opencode = its
@@ -277,11 +288,12 @@ type Meta struct {
 	// Empty = whole-conversation fork, the pre-existing behaviour. Like ForkFrom it only
 	// affects the FIRST launch; afterwards the session resumes its own conversation.
 	ForkAt string `json:"forkAt,omitempty"`
-	// Origin / OriginConv はこのセッションの出自（Origin* 定数・ADR 0029 §6）。使用量
-	// 集計で「人が始めた消費」と「オペレーター/定時が無人で回した消費」を分ける軸。
-	// 未設定＝この機能より前のセッションで、OriginOf が unknown に読み替える（既定値の
-	// user へ寄せない）。OriginConv は origin=operator のとき作成元のアシスタント会話 slug。
-	// recreate は元の出自を継承し、handoff は handoff を立てる。
+	// Origin / OriginConv are this session's origin (the Origin* constants, ADR 0029 §6):
+	// the axis that separates consumption a person started from consumption an operator or
+	// a schedule ran unattended. Unset = a session older than the feature, which OriginOf
+	// reads as unknown rather than folding it into the default user. OriginConv is the
+	// originating assistant conversation's slug when origin=operator. A recreate inherits
+	// the original origin; a handoff sets handoff.
 	Origin     string `json:"origin,omitempty"`
 	OriginConv string `json:"originConv,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
@@ -304,8 +316,8 @@ type SSMMeta struct {
 	RoleName  string `json:"roleName"`  // SSO permission-set role name
 }
 
-// DriverKind normalizes Meta.Driver（"" → tui）。分岐は必ずこれを介す — 生の
-// Meta.Driver 比較だと既定（空文字）の扱いが呼び出し毎にぶれる。
+// DriverKind normalizes Meta.Driver ("" → tui). Always branch through it: comparing raw
+// Meta.Driver makes each call site handle the default (empty string) its own way.
 func (m Meta) DriverKind() string {
 	if m.Driver == "" {
 		return DriverTUI

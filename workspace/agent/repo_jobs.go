@@ -1,25 +1,33 @@
 package main
 
-// リポジトリ取り込みジョブ（docs/log/78）。`git clone` / `svn checkout` を **HTTP リクエストの
-// 寿命から切り離した名前付きジョブ**として走らせ、進捗と結末を別 API で観測できるようにする。
+// Repository import jobs (docs/log/78). Runs `git clone` / `svn checkout` as named jobs
+// detached from the lifetime of the HTTP request, so progress and outcome stay observable
+// through a separate API.
 //
-// なぜ要るか（実測した事故そのもの）: 大きな取り込みは分〜時間かかるが、ALB の idle timeout は
-// 60 秒（deploy/aws/ecs/cfn/30-ingress.yaml）。同期 POST では必ずここで応答が切れ、Console は
-// 「フォルダができていれば成功」と読み替えて **走っている最中のチェックアウトを完了と報告**して
-// いた。利用者から見ると中途半端な作業コピーが「取り込み済み」として並び、そこへ `svn update` を
-// 打つと走行中の checkout と sqlite ロックを奪い合って E155037／E200033 になる。さらに 30 分の
-// 上限を越えると失敗パスがフォルダごと削除し、**数十分ダウンロードした作業コピーが黙って消えた**。
+// Why it exists (the incident that was measured): a large import takes minutes to hours, but
+// the ALB idle timeout is 60 seconds (deploy/aws/ecs/cfn/30-ingress.yaml). A synchronous POST
+// always lost the response there, and the Console read that as "the folder exists, so it
+// succeeded" — reporting a checkout that was still running as complete. Half-finished working
+// copies then sat in the list as "imported", and an `svn update` against one fought the
+// running checkout over the sqlite lock (E155037 / E200033). Past the 30-minute cap the
+// failure path deleted the whole folder, so a working copy that had downloaded for tens of
+// minutes vanished silently.
 //
-// 設計の要点:
-//   - POST は検証だけ同期で行い、202 とジョブを返す。ネットワーク処理は background で走る。
-//   - 取り込み中のフォルダは `GET /repos` に出さない。作業コピーとして使えない物を一覧に出すと、
-//     そこで起動でき、更新でき、`svn status` を掛けてしまう（走行中の checkout と競合する）。
-//   - 進捗は行を数える。checkout/clone の出力を全部ためると巨大リポジトリでメモリを食うので、
-//     カウンタ＋最終行＋末尾リングだけ保持する（エラー本文には末尾リングを使う）。
-//   - 失敗しても **再開できる作業コピーは消さない**。svn は cleanup + update で続きから取れる。
-//   - Agent が落ちて（ECS のタスク入れ替え・idle-stop）ジョブごと消えた場合に備え、marker を
-//     ディスクに置く。起動時に生き残った marker ＝ 中断。これを interrupted として出さないと、
-//     半端な作業コピーが「普通のリポジトリ」として一覧に戻ってしまう（元の事故と同じ状態）。
+// Design:
+//   - POST validates synchronously and answers 202 with the job; the network work runs in the
+//     background.
+//   - A folder being imported is not listed by `GET /repos`. Listing something unusable as a
+//     working copy lets a session start in it, update it, or run `svn status` on it — all of
+//     which race the running checkout.
+//   - Progress is counted in lines. Buffering all of checkout/clone's output eats memory on a
+//     huge repository, so only a counter, the last line and a tail ring are kept (the error
+//     body uses the tail ring).
+//   - A resumable working copy is never deleted on failure; svn continues with cleanup +
+//     update.
+//   - A marker on disk covers the agent dying (ECS task replacement, idle-stop) and taking the
+//     job with it. A marker surviving startup means the import was interrupted; without
+//     surfacing that as interrupted, a half-finished working copy comes back to the list as an
+//     ordinary repository — the original incident again.
 
 import (
 	"context"
@@ -37,53 +45,57 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// ジョブの状態。running 以外はすべて終端で、利用者が dismiss するまで一覧に残る
-// （結末を見る前に消えると、また「黙って失敗した」になる）。
+// Job states. Everything but running is terminal and stays in the list until the user
+// dismisses it (a job that disappears before its outcome is read is "silently failed" again).
 const (
 	repoJobRunning     = "running"
 	repoJobDone        = "done"
 	repoJobFailed      = "failed"
 	repoJobCanceled    = "canceled"
-	repoJobInterrupted = "interrupted" // Agent 再起動でジョブごと消えた（marker の生き残り）
+	repoJobInterrupted = "interrupted" // the agent restarted, taking the job with it (marker survived)
 )
 
-// repoJobDoneTTL は成功したジョブを一覧に残す時間。成功は Console がトーストで伝えるので
-// 短くてよい。失敗・中断は TTL を持たない（利用者が dismiss するまで残す）。
+// repoJobDoneTTL is how long a successful job stays in the list. Success is announced by a
+// Console toast as well, so it can be short. Failed and interrupted jobs have no TTL — they
+// stay until the user dismisses them.
 const repoJobDoneTTL = 10 * time.Minute
 
-// repoJobTimeout はジョブ全体の上限。30 分で殺して作業コピーを消していたのが元の事故なので、
-// 「人が待てる上限」ではなく「明らかに壊れている」だけを切る値にしてある。止めたいときは
-// cancel があり、走っていることは一覧で見える。
+// repoJobTimeout caps the whole job. Killing at 30 minutes and deleting the working copy was
+// the original incident, so this is not "how long a person will wait" but a value that only
+// cuts off what is clearly broken: cancel exists for stopping one, and a running job is
+// visible in the list.
 const repoJobTimeout = 6 * time.Hour
 
-// repoJobProgressMax は進捗行の保持長。svn のパスは長くなりうるので切り詰める。
+// repoJobProgressMax is how much of a progress line is kept; svn paths can get long, so it is
+// truncated.
 const repoJobProgressMax = 240
 
-// repoJobTailMax はエラー本文に使う末尾バッファ。svn/git の最後の数十行あれば原因は分かる。
+// repoJobTailMax is the tail buffer used for the error body; the last few dozen lines of
+// svn/git are enough to see the cause.
 const repoJobTailMax = 8 << 10
 
-// RepoJob は 1 件の取り込み。JSON はそのまま Console の行になる。
+// RepoJob is one import. The JSON becomes a Console row as-is.
 type RepoJob struct {
 	ID    string `json:"id"`
 	Kind  string `json:"kind"`  // "git" | "svn"
-	Name  string `json:"name"`  // ~/repos 直下のフォルダ名
+	Name  string `json:"name"`  // folder name directly under ~/repos
 	Path  string `json:"path"`  //
-	URL   string `json:"url"`   // 表示用。資格情報は載せない
+	URL   string `json:"url"`   // for display; never carries credentials
 	State string `json:"state"` //
 
-	// Progress は最後に見えた出力行、Items は取得したファイル数（svn の "A path" /
-	// git の checkout 行）。どちらも「進んでいる」ことを見せるためだけの近似で、総数は
-	// 分からない（svn も git も事前に総数を教えてくれない）。
+	// Progress is the last output line seen, Items the number of files fetched (svn's
+	// "A path" / git's checkout lines). Both are approximations that exist only to show
+	// movement: the total is unknown (neither svn nor git announces it up front).
 	Progress string `json:"progress,omitempty"`
 	Items    int    `json:"items,omitempty"`
 
 	Error     string `json:"error,omitempty"`
-	Kept      bool   `json:"kept,omitempty"` // 失敗したが作業コピーを残した（再開できる）
+	Kept      bool   `json:"kept,omitempty"` // failed, but the working copy was kept (resumable)
 	StartedAt string `json:"startedAt"`
 	EndedAt   string `json:"endedAt,omitempty"`
 }
 
-// repoJobEntry は登録簿の 1 件。RepoJob（外向き）に cancel と可変進捗を足したもの。
+// repoJobEntry is one registry entry: the outward RepoJob plus cancel and mutable progress.
 type repoJobEntry struct {
 	job    RepoJob
 	cancel func()
@@ -94,18 +106,20 @@ var repoJobs = struct {
 	mu   sync.Mutex
 	m    map[string]*repoJobEntry // id -> entry
 	seq  int
-	swpt bool // 起動時の marker 走査を済ませたか
+	swpt bool // whether the startup marker sweep has run
 }{m: map[string]*repoJobEntry{}}
 
-// repoJobMarkerDir は中断検出用の marker 置き場。~/repos の下に置くのは意図的で、
-// 「作業コピーと同じ寿命」だから（コンテナ作り直しで ~/repos ごと消え、marker も消える）。
+// repoJobMarkerDir is where interruption markers live. Under ~/repos deliberately, so they
+// share the working copies' lifetime (recreating the container drops ~/repos and the markers
+// with it).
 func repoJobMarkerDir() string { return filepath.Join(gitx.ReposRoot(), ".af-repo-jobs") }
 
 func repoJobMarkerPath(name string) string {
 	return filepath.Join(repoJobMarkerDir(), name+".json")
 }
 
-// repoJobMarker はディスクに残す最小限。中断として一覧に戻すのに要るものだけ。
+// repoJobMarker is the minimum kept on disk: only what it takes to put the job back in the
+// list as interrupted.
 type repoJobMarker struct {
 	ID        string `json:"id"`
 	Kind      string `json:"kind"`
@@ -127,9 +141,10 @@ func writeRepoJobMarker(j RepoJob) {
 
 func removeRepoJobMarker(name string) { _ = os.Remove(repoJobMarkerPath(name)) }
 
-// sweepRepoJobMarkers は起動時に一度だけ走り、生き残った marker を interrupted として復元する。
-// 「Agent が落ちた＝取り込みも死んだ」を利用者に見せるための唯一の手段（プロセスは道連れなので、
-// 何もしなければ半端な作業コピーだけが黙って残る）。
+// sweepRepoJobMarkers runs once at startup and restores surviving markers as interrupted. It
+// is the only way the user gets to see "the agent died, so the import died too": the job goes
+// down with the process, so otherwise a half-finished working copy is all that silently
+// remains.
 func sweepRepoJobMarkers() {
 	repoJobs.mu.Lock()
 	if repoJobs.swpt {
@@ -161,8 +176,9 @@ func sweepRepoJobMarkers() {
 		}
 		kept := gitx.IsGitRepo(dir) || isSvnRepo(dir)
 		if _, err := os.Stat(dir); err != nil {
-			// フォルダごと消えている（利用者が消した／取り込みが始まる前に落ちた）。
-			// 報告する相手のいない中断なので marker だけ片付ける。
+			// The folder itself is gone (the user deleted it, or we died before the import
+			// started). Nobody is left to report the interruption to, so just clean up the
+			// marker.
 			removeRepoJobMarker(m.Name)
 			continue
 		}
@@ -178,8 +194,9 @@ func sweepRepoJobMarkers() {
 	}
 }
 
-// repoJobSink は取り込みコマンドの出力を「行数・最終行・末尾」に畳む io.Writer。
-// CombinedOutput のように全部ためない: 巨大リポジトリの checkout は数十万行になる。
+// repoJobSink is an io.Writer that folds the import command's output into a line count, the
+// last line and a tail. Unlike CombinedOutput it keeps nothing else: a huge repository's
+// checkout runs to hundreds of thousands of lines.
 type repoJobSink struct {
 	mu       sync.Mutex
 	items    int
@@ -195,7 +212,7 @@ func (s *repoJobSink) Write(p []byte) (int, error) {
 	if len(s.tail) > repoJobTailMax {
 		s.tail = append([]byte(nil), s.tail[len(s.tail)-repoJobTailMax:]...)
 	}
-	// git は進捗を \r で上書きするので改行と同じ区切りとして扱う。
+	// git overwrites its progress with \r, so treat that as a separator like a newline.
 	s.partial = append(s.partial, p...)
 	for {
 		i := bytesIndexAny(s.partial, "\n\r")
@@ -231,7 +248,8 @@ func (s *repoJobSink) tailString() string {
 	return strings.TrimSpace(string(s.tail))
 }
 
-// bytesIndexAny は改行系の最初の位置。strings.IndexAny の []byte 版（1 バイト文字だけ探す）。
+// bytesIndexAny is the first position of a newline character; the []byte version of
+// strings.IndexAny (it only looks for single-byte characters).
 func bytesIndexAny(b []byte, chars string) int {
 	for i, c := range b {
 		if strings.IndexByte(chars, c) >= 0 {
@@ -241,7 +259,8 @@ func bytesIndexAny(b []byte, chars string) int {
 	return -1
 }
 
-// repoJobActive は name の取り込みが今走っているか。一覧（GET /repos）と削除の門。
+// repoJobActive reports whether name is being imported right now. The gate for listing
+// (GET /repos) and for deletion.
 func repoJobActive(name string) bool {
 	repoJobs.mu.Lock()
 	defer repoJobs.mu.Unlock()
@@ -253,8 +272,8 @@ func repoJobActive(name string) bool {
 	return false
 }
 
-// repoJobsRunning は走行中の件数。GET /sessions に載せて CP の idle-stop に
-// 「この Workspace は仕事中」と伝える（取り込み中に止められると作業コピーが壊れる）。
+// repoJobsRunning is the number of running jobs. Reported on GET /sessions to tell the CP's
+// idle-stop that this workspace is busy (stopping it mid-import corrupts the working copy).
 func repoJobsRunning() int {
 	repoJobs.mu.Lock()
 	defer repoJobs.mu.Unlock()
@@ -267,7 +286,8 @@ func repoJobsRunning() int {
 	return n
 }
 
-// listRepoJobs は表示用の一覧。走行中は進捗を反映し、期限切れの成功は落とす。
+// listRepoJobs is the list for display: running jobs get their progress folded in, expired
+// successes are dropped.
 func listRepoJobs() []RepoJob {
 	now := time.Now()
 	repoJobs.mu.Lock()
@@ -290,9 +310,10 @@ func listRepoJobs() []RepoJob {
 	return out
 }
 
-// startRepoJob は検証済みの取り込みを background で開始する。run はネットワーク処理本体で、
-// 渡された ctx を exec に繋ぎ、出力を sink に流すこと。戻り値はジョブの初期スナップショット
-// （202 の本文）。ctx は repoJobTimeout を上限に持ち、cancel は DELETE から引ける。
+// startRepoJob starts a validated import in the background. run is the network work itself:
+// it must hook the given ctx to exec and stream the output into sink. The return value is the
+// job's initial snapshot (the 202 body). ctx is capped by repoJobTimeout, and its cancel is
+// reachable from DELETE.
 func startRepoJob(kind, name, dir, url string, run func(ctx context.Context, sink *repoJobSink) error) RepoJob {
 	ctx, cancel := context.WithTimeout(context.Background(), repoJobTimeout)
 	repoJobs.mu.Lock()
@@ -319,8 +340,9 @@ func startRepoJob(kind, name, dir, url string, run func(ctx context.Context, sin
 	return job
 }
 
-// finishRepoJob は終端へ遷移させ、marker を落とす。失敗時に作業コピーを残したかは
-// run 側が判断済み（ここでは現状を見て Kept を立てるだけ）。
+// finishRepoJob moves the job to a terminal state and drops the marker. Whether a failed run
+// kept the working copy was already decided by run; here we only look at what is on disk and
+// set Kept.
 func finishRepoJob(id string, err error) {
 	repoJobs.mu.Lock()
 	e, ok := repoJobs.m[id]
@@ -351,8 +373,9 @@ func finishRepoJob(id string, err error) {
 	removeRepoJobMarker(name)
 }
 
-// markRepoJobCanceled は cancel 要求を記録して走行中のプロセスを殺す。実際の終端遷移は
-// run が返ってきたときの finishRepoJob（そこで「消すか残すか」も決まる）。
+// markRepoJobCanceled records the cancel request and kills the running process. The terminal
+// transition itself happens in finishRepoJob when run returns (which is also where "delete or
+// keep" is decided).
 func markRepoJobCanceled(id string) bool {
 	repoJobs.mu.Lock()
 	e, ok := repoJobs.m[id]
@@ -369,7 +392,8 @@ func markRepoJobCanceled(id string) bool {
 	return true
 }
 
-// dismissRepoJob は終端したジョブを一覧から消す（記録を読んだ、という利用者の意思表示）。
+// dismissRepoJob removes a terminated job from the list (the user saying they have read the
+// outcome).
 func dismissRepoJob(id string) bool {
 	repoJobs.mu.Lock()
 	defer repoJobs.mu.Unlock()
@@ -381,13 +405,15 @@ func dismissRepoJob(id string) bool {
 	return true
 }
 
-// handleListRepoJobs (GET /repos/jobs) — 取り込みの進行と結末。Console はこれを見て
-// 「取り込み中」の行を描く。ブラウザを閉じても、別のタブでも、同じものが見える。
+// handleListRepoJobs (GET /repos/jobs) — the progress and outcome of imports. The Console
+// draws its "importing" rows from this, so the same thing is visible after closing the browser
+// and in another tab.
 func handleListRepoJobs(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"jobs": listRepoJobs()})
 }
 
-// handleDeleteRepoJob (DELETE /repos/jobs/{id}) — 走行中なら中止、終端済みなら一覧から消す。
+// handleDeleteRepoJob (DELETE /repos/jobs/{id}) — cancels a running job, removes a terminated
+// one from the list.
 func handleDeleteRepoJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if markRepoJobCanceled(id) {

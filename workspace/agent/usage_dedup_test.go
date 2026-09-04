@@ -1,10 +1,11 @@
 package main
 
-// (ref, idx) 重複排除の回帰（usage_dedup.go / docs/log/46 §7-4）。
+// Regression for (ref, idx) deduplication (usage_dedup.go / docs/log/46 §7-4).
 //
-// 塞ぐ穴は1つ: 折り込みが「行を追記 → watermark を書く」の間で落ちると、そのセッションの
-// 数ターン分が次のパスで再追記される。書き手側では閉じられない（別ファイルなので原子的に
-// 書けない）ので、集計側が落とせていることを見る。
+// One gap to close: when folding dies between appending the rows and writing the watermark, the
+// next pass re-appends several turns of that session. The writer cannot close it (the two are
+// separate files and cannot be written atomically), so what is checked here is that aggregation
+// drops them.
 
 import (
 	"os"
@@ -18,38 +19,41 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// sessionRow は折り込み1行を作る。**重複行でも call は別 ID になる**（folder が行ごとに
-// UUID を振るため）— だから call の重複排除では捕まらず、(ref, idx) が要る。
+// sessionRow builds one folded row. Even a duplicate row gets a different call id (the folder
+// mints a UUID per row), so deduplicating on call never catches it and (ref, idx) is needed.
 func sessionRow(call, ref string, idx int, day string, spend int) usagex.Record {
 	r := at(row(call, usagex.FeatureSession, session.KindClaude, "claude-haiku-4-5", spend), day)
 	r.Ref, r.Idx = ref, idx
 	return r
 }
 
-// 同じ raw ファイル内の再追記（クラッシュ直後に fold-on-read が走った形）を落とす。
+// Drops a re-append inside the same raw file (fold-on-read running right after a crash).
 func TestUsageSeriesDropsDuplicateSessionRows(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(0)
 	writeUsageDay(t, day,
 		sessionRow("c1", "slot01", 1, day, 100),
 		sessionRow("c2", "slot01", 2, day, 200),
-		// ここで落ちた（watermark 未更新）→ 次のパスが同じ2ターンを再追記し、続きも書く
+		// crashed here (watermark not updated) → the next pass re-appends the same two turns
+		// and writes what follows too
 		sessionRow("c3", "slot01", 1, day, 100),
 		sessionRow("c4", "slot01", 2, day, 200),
 		sessionRow("c5", "slot01", 3, day, 300),
 	)
 	got := getSeries(t, "from="+day+"&to="+day)
 	if got.Totals.Spend != 600 || got.Totals.Calls != 3 {
-		t.Fatalf("totals = %+v, want spend 600 / calls 3（重複排除前は 1200 / 5）", got.Totals)
+		t.Fatalf("totals = %+v, want spend 600 / calls 3 (1200 / 5 without dedup)", got.Totals)
 	}
-	// 生の台帳には重複行が残っていること（事後監査のため落とすのは集計側だけ）。
+	// The duplicate rows must stay in the raw ledger: only aggregation drops them, so the rows
+	// remain available for an after-the-fact audit.
 	if n := len(usagex.ReadRows()); n != 5 {
-		t.Fatalf("raw = %d 行, want 5（台帳から行を消してはいけない）", n)
+		t.Fatalf("raw = %d rows, want 5 (rows must never be removed from the ledger)", n)
 	}
 }
 
-// クラッシュ窓が日付を跨ぐと、重複は原本と**別のファイル日**へ落ちる。畳み込みは
-// ファイル単位に走るので、水位をファイルを跨いで持ち回れていないと二重に入る。
+// When the crash window crosses midnight the duplicate lands in a different file day than the
+// original. Rollup runs per file, so unless the watermark is carried across files the
+// consumption is counted twice.
 func TestRollupDropsDuplicatesAcrossFileDays(t *testing.T) {
 	useIsolatedUsageDir(t)
 	d2, d1 := daysAgo(2), daysAgo(1)
@@ -57,7 +61,8 @@ func TestRollupDropsDuplicatesAcrossFileDays(t *testing.T) {
 		sessionRow("c1", "slot01", 1, d2, 100),
 		sessionRow("c2", "slot01", 2, d2, 200),
 	)
-	// 翌日のパスが idx 2 を再追記（消費時刻は転写のものなので、消費日は d2 のまま）。
+	// The next day's pass re-appends idx 2 (the consumption time comes from the transcript, so
+	// the consumption day stays d2).
 	writeUsageDay(t, d1,
 		sessionRow("c3", "slot01", 2, d2, 200),
 		sessionRow("c4", "slot01", 3, d1, 300),
@@ -72,15 +77,16 @@ func TestRollupDropsDuplicatesAcrossFileDays(t *testing.T) {
 		return spend, calls
 	}
 	if spend, calls := sum(d2); spend != 300 || calls != 2 {
-		t.Fatalf("消費日 %s = spend %d / calls %d, want 300 / 2（重複排除前は 500 / 3）", d2, spend, calls)
+		t.Fatalf("consumption day %s = spend %d / calls %d, want 300 / 2 (500 / 3 without dedup)", d2, spend, calls)
 	}
 	if spend, calls := sum(d1); spend != 300 || calls != 1 {
-		t.Fatalf("消費日 %s = spend %d / calls %d, want 300 / 1", d1, spend, calls)
+		t.Fatalf("consumption day %s = spend %d / calls %d, want 300 / 1", d1, spend, calls)
 	}
 }
 
-// 原本が畳み済み（rollup が正・raw は読まない）で、重複だけが未畳みの raw に残っている形。
-// 水位を rollup state から引き継げていないと、この重複は誰も落とせない。
+// The original is already rolled up (the rollup is authoritative and the raw is not read) while
+// only the duplicate sits in a raw file that has not been rolled up. Unless the watermark is
+// carried over from the rollup state, nothing can drop this duplicate.
 func TestDedupSpansRolledAndRawBoundary(t *testing.T) {
 	useIsolatedUsageDir(t)
 	yesterday, today := daysAgo(1), daysAgo(0)
@@ -88,9 +94,9 @@ func TestDedupSpansRolledAndRawBoundary(t *testing.T) {
 		sessionRow("c1", "slot01", 1, yesterday, 100),
 		sessionRow("c2", "slot01", 2, yesterday, 200),
 	)
-	ensureUsageRollups() // yesterday が畳まれ、(ref,idx) の水位が state に残る
+	ensureUsageRollups() // yesterday is rolled up and its (ref,idx) watermark stays in state
 	writeUsageDay(t, today,
-		sessionRow("c3", "slot01", 2, yesterday, 200), // 再追記（消費日は昨日）
+		sessionRow("c3", "slot01", 2, yesterday, 200), // re-appended (consumption day is yesterday)
 		sessionRow("c4", "slot01", 3, today, 300),
 	)
 
@@ -98,16 +104,16 @@ func TestDedupSpansRolledAndRawBoundary(t *testing.T) {
 	if day.Totals.Spend != 600 || day.Totals.Calls != 3 {
 		t.Fatalf("bucket=day totals = %+v, want spend 600 / calls 3", day.Totals)
 	}
-	// hour は rollup を使わず raw を全部読み直す。水位を空から積み直すので、原本の側まで
-	// 落としていないこと（＝合計が day と一致すること）まで見る。
+	// bucket=hour ignores the rollup and re-reads every raw row, rebuilding the watermark from
+	// empty, so check that it did not drop the original as well (its total must match day's).
 	hour := getSeries(t, "from="+yesterday+"&to="+today+"&bucket=hour")
 	if hour.Totals.Spend != 600 || hour.Totals.Calls != 3 {
 		t.Fatalf("bucket=hour totals = %+v, want spend 600 / calls 3", hour.Totals)
 	}
 }
 
-// 落としてよいのは重複だけ。取りこぼし（消費が二度と戻らない）は重複より悪いので、
-// 紛らわしい形が全部通ることを見る。
+// Only duplicates may be dropped. Losing a row is worse than a duplicate (that consumption never
+// comes back), so every shape that merely looks like a duplicate has to pass.
 func TestUsageDedupKeepsLegitimateRows(t *testing.T) {
 	dd := usageDedupIndex{}
 	ts := func(min int) time.Time { return time.Date(2026, 7, 26, 0, min, 0, 0, time.UTC) }
@@ -115,40 +121,41 @@ func TestUsageDedupKeepsLegitimateRows(t *testing.T) {
 		return dd.accept(sessionRow("c", ref, idx, "2026-07-26", 10), ts(min))
 	}
 	if !accept("slot01", 1, 1) || !accept("slot01", 2, 2) {
-		t.Fatal("連番のターンを落とした")
+		t.Fatal("dropped consecutively numbered turns")
 	}
 	if !accept("slot02", 1, 3) {
-		t.Fatal("別セッションの同じ idx を落とした（ref を見ていない）")
+		t.Fatal("dropped another session's identical idx (ref is not being looked at)")
 	}
 	if accept("slot01", 2, 2) {
-		t.Fatal("重複を通した")
+		t.Fatal("let a duplicate through")
 	}
 	if !accept("slot01", 3, 4) {
-		t.Fatal("重複の後に続く新しいターンを落とした")
+		t.Fatal("dropped the new turn that follows a duplicate")
 	}
-	// 補助呼び出しには idx が無い。同じ形の行が何行来ても落とさない。
+	// An auxiliary call has no idx, so however many identically shaped rows arrive, none is dropped.
 	aux := at(row("c9", usagex.FeatureTitleSession, session.KindClaude, "haiku", 10), "2026-07-26")
 	aux.Ref = "slot01"
 	if !dd.accept(aux, ts(5)) || !dd.accept(aux, ts(5)) {
-		t.Fatal("補助呼び出しの行を重複扱いした（idx を持たないので判定できない）")
+		t.Fatal("treated auxiliary-call rows as duplicates (with no idx there is nothing to decide on)")
 	}
-	// slug の再利用（削除済みセッションの名前が再び払い出される）。idx は 1 に戻るが、
-	// 消費時刻は必ず後になる — ここを落とすと新しいセッションの消費が静かに消える。
+	// Slug reuse: a deleted session's name is handed out again. idx goes back to 1, but the
+	// consumption time is always later — dropping this makes the new session's consumption
+	// vanish silently.
 	if !accept("slot01", 1, 99) {
-		t.Fatal("slug 再利用後の idx=1 を重複扱いした")
+		t.Fatal("treated idx=1 after slug reuse as a duplicate")
 	}
 }
 
-// 版が上がった時、既に重複を畳み込んでいる可能性のある rollup を raw から作り直す。
-// 集計は加算済みで引き算できないので、作り直す以外に落とす手が無い。
+// On a version bump, a rollup that may already have folded duplicates in is rebuilt from raw.
+// The aggregate is a sum and cannot be subtracted from, so rebuilding is the only way to drop it.
 func TestRollupRebuildPurgesLegacyDuplicates(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(1)
 	writeUsageDay(t, day,
 		sessionRow("c1", "slot01", 1, day, 100),
-		sessionRow("c2", "slot01", 1, day, 100), // v1 の頃に紛れ込んだ重複
+		sessionRow("c2", "slot01", 1, day, 100), // a duplicate that slipped in back in v1
 	)
-	// v1 の rollup（重複ごと畳み込まれた集計）と、版を持たない state を手で置く。
+	// Place a v1 rollup (an aggregate with the duplicate folded in) and a state with no version.
 	k := usageKey{Feature: usagex.FeatureSession, Trigger: usagex.TriggerUser, Kind: session.KindClaude,
 		Model: "claude-haiku-4-5", ModelSrc: usagex.ModelReported, Measured: usagex.MeasuredExact, OK: true}
 	if err := writeUsageJSON(usageRollupPath(day[:7]), usageRollupMonth{Days: map[string]usageRollupDay{
@@ -166,15 +173,16 @@ func TestRollupRebuildPurgesLegacyDuplicates(t *testing.T) {
 
 	entries := readUsageRollup(day[:7]).Days[day].Entries
 	if len(entries) != 1 || entries[0].Agg.Spend != 100 || entries[0].Agg.Calls != 1 {
-		t.Fatalf("作り直し後の集計 = %+v, want spend 100 / calls 1", entries)
+		t.Fatalf("aggregate after the rebuild = %+v, want spend 100 / calls 1", entries)
 	}
 	if v := readUsageRollupState().Version; v != usageRollupVersion {
-		t.Fatalf("版が %d のまま（作り直しを毎回試みてしまう）", v)
+		t.Fatalf("version is still %d (the rebuild would be attempted on every pass)", v)
 	}
 }
 
-// 寄与元の raw が prune 済みなら作り直さない（消えた分の集計を失う方が重い）。代わりに
-// 見えている畳み済みファイルから水位を復元し、以後に入る重複は落とせるようにする。
+// When the contributing raw file has been pruned, do not rebuild: losing the aggregate for what
+// is gone costs more. Instead the watermark is restored from the rolled-up files still visible,
+// so duplicates arriving later can still be dropped.
 func TestRollupRebuildKeepsDataWhenRawIsPruned(t *testing.T) {
 	dir := useIsolatedUsageDir(t)
 	gone, kept := daysAgo(3), daysAgo(2)
@@ -184,7 +192,7 @@ func TestRollupRebuildKeepsDataWhenRawIsPruned(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "raw", gone+".jsonl")); err != nil {
 		t.Fatal(err)
 	}
-	// 版を巻き戻して「v1 の rollup が残っている」状態にする。
+	// Wind the version back so it looks like a v1 rollup is still lying around.
 	st := readUsageRollupState()
 	st.Version, st.Folded = 1, nil
 	if err := writeUsageJSON(usageRollupStatePath(), st); err != nil {
@@ -194,9 +202,9 @@ func TestRollupRebuildKeepsDataWhenRawIsPruned(t *testing.T) {
 	ensureUsageRollups()
 
 	if e := readUsageRollup(gone[:7]).Days[gone].Entries; len(e) != 1 || e[0].Agg.Spend != 700 {
-		t.Fatalf("raw が消えた日の集計を失った: %+v", e)
+		t.Fatalf("lost the aggregate for the day whose raw file is gone: %+v", e)
 	}
-	// 水位は残っている raw から復元されている＝以後の重複は落ちる。
+	// The watermark is restored from the raw files that remain, so later duplicates are dropped.
 	writeUsageDay(t, daysAgo(1), sessionRow("c2", "slot01", 1, kept, 100))
 	ensureUsageRollups()
 	spend := 0
@@ -204,12 +212,12 @@ func TestRollupRebuildKeepsDataWhenRawIsPruned(t *testing.T) {
 		spend += e.Agg.Spend
 	}
 	if spend != 100 {
-		t.Fatalf("復元した水位で重複を落とせていない: spend = %d, want 100", spend)
+		t.Fatalf("the restored watermark did not drop the duplicate: spend = %d, want 100", spend)
 	}
 }
 
-// 実際のクラッシュ窓を通しで再現する: 折り込み → watermark を書けずに落ちる → 次のパスが
-// 同じターンを再追記。台帳には二重に入るが、系列は1回分しか数えない。
+// Reproduces the real crash window end to end: fold → die before the watermark is written → the
+// next pass re-appends the same turns. The ledger holds them twice; the series counts them once.
 func TestFoldCrashWindowIsNotDoubleCounted(t *testing.T) {
 	useIsolatedUsageDir(t)
 	turns := []transcript.Turn{
@@ -217,7 +225,7 @@ func TestFoldCrashWindowIsNotDoubleCounted(t *testing.T) {
 		asst("claude-haiku-4-5", 100, 10, 0, 0, false),
 		{Role: "user", Text: "2"},
 		asst("claude-haiku-4-5", 200, 20, 0, 0, false),
-		{Role: "user", Text: "3"}, // 直前のターンを閉じる
+		{Role: "user", Text: "3"}, // closes the preceding turn
 	}
 	m := session.Meta{Name: "slot01", Kind: session.KindClaude}
 	fold := func(persist bool) {
@@ -226,7 +234,7 @@ func TestFoldCrashWindowIsNotDoubleCounted(t *testing.T) {
 		defer usageFoldMu.Unlock()
 		st := readUsageFoldState()
 		if _, err := foldSessionUsageWithTurns(m, &st, turns, false); err != nil {
-			t.Fatalf("折り込みに失敗: %v", err)
+			t.Fatalf("fold failed: %v", err)
 		}
 		if persist {
 			if err := writeUsageFoldState(st); err != nil {
@@ -234,25 +242,25 @@ func TestFoldCrashWindowIsNotDoubleCounted(t *testing.T) {
 			}
 		}
 	}
-	fold(false) // 行は書けたが watermark を書く前に落ちた
-	fold(true)  // 次のパスが同じ2ターンを再追記する
+	fold(false) // the rows were written, then it died before the watermark
+	fold(true)  // the next pass re-appends the same two turns
 
 	if n := len(usagex.ReadRows()); n != 4 {
-		t.Fatalf("台帳 = %d 行, want 4（クラッシュ窓で二重に入る形を再現できていない）", n)
+		t.Fatalf("ledger = %d rows, want 4 (the double-entry crash window is not reproduced)", n)
 	}
-	want := 0 // 論理ターン1回分ずつ（重複を数えれば倍になる）
+	want := 0 // one logical turn each (counting the duplicates would double it)
 	for _, r := range foldTurnRows(turns, false) {
 		want += usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out)
 	}
-	day := "2026-07-26" // asst() の TS（消費日）
+	day := "2026-07-26" // asst()'s TS (the consumption day)
 	got := getSeries(t, "from="+day+"&to="+day)
 	if got.Totals.Spend != want || got.Totals.Calls != 2 {
 		t.Fatalf("totals = %+v, want spend %d / calls 2", got.Totals, want)
 	}
 }
 
-// ハッシュキーは ref を平文で無期限領域へ残さないためのもの（ADR0029 §8 の「rollup に
-// ref を入れない」）。索引ファイルにセッション名が出ないことを見る。
+// The hashed key exists so that a ref is never left in cleartext in a store with no expiry
+// (ADR0029 §8: no ref in the rollup). Check that no session name appears in the index file.
 func TestUsageDedupIndexDoesNotStoreRefNames(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(1)
@@ -263,9 +271,9 @@ func TestUsageDedupIndexDoesNotStoreRefNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(b), "slot-secret") {
-		t.Fatalf("索引に ref が平文で載っている: %s", b)
+		t.Fatalf("the index carries a ref in cleartext: %s", b)
 	}
 	if len(readUsageRollupState().Folded) != 1 {
-		t.Fatalf("水位が記録されていない: %+v", readUsageRollupState().Folded)
+		t.Fatalf("no watermark was recorded: %+v", readUsageRollupState().Folded)
 	}
 }

@@ -6,19 +6,19 @@ package chatx
 // v1 stored "one instruction = one arm bit" (session-report/<name>.json). A bit has no
 // identity, so overlapping instructions broke by construction:
 //
-//   - Hole A: queueing instruction 2 re-armed over instruction 1's arm. Once turn 1's Stop
+//   - gap A: queueing instruction 2 re-armed over instruction 1's arm. Once turn 1's Stop
 //     consumed that bit, instruction 2's completion was reported to nobody.
-//   - Hole B: the consumer (v1's waiter / kick) had no way to verify which instruction it
+//   - gap B: the consumer (v1's waiter / kick) had no way to verify which instruction it
 //     consumed (there was no generation), so consuming another instruction's share went
 //     undetected.
 //
 // Phase 2 replaces the bit with a ledger row. One instruction = one row, and delivery always
 // APPENDS (never overwrites). The row id is the identity itself, so:
 //
-//   - Hole A disappears by construction. An earlier instruction's row turning reported leaves
+//   - gap A disappears by construction. An earlier instruction's row turning reported leaves
 //     a later instruction's row pending, and its completion is reported separately
 //     (TestInstrLedgerQueuedInstructionSurvives).
-//   - Hole B (generation-less consumption) and misrouted hints disappear too. The reconciler
+//   - gap B (generation-less consumption) and misrouted hints disappear too. The reconciler
 //     reports a SET OF ROW IDS and transitions only that set to reported, so which row a
 //     report belongs to is always written down.
 //   - Delivery can be made idempotent by row id on the sink side (under the conversation

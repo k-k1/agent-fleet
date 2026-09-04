@@ -1,29 +1,28 @@
 package sessionx
 
-// testhelp_test.go — この家系のテストが使っていた **package main のテストヘルパの写し**。
+// testhelp_test.go — copies of the package main test helpers this family of tests used.
 //
-// 🔥 **Go はテストヘルパをパッケージを跨いで共有できない。** `_test.go` の中の識別子は
-// そのパッケージのテストバイナリにしか存在しないので、`internal/sessionx` からは
-// main 側の `withTempHome` も `gitInit` も見えない（エイリアスにも載せられない）。
-// 家系 30 枚のテストを一緒に移す以上、ここに写しを置くしか無い —— これは
-// `internal/browserx/mux_test.go` / `internal/memoryx/mux_test.go` が採ったのと同じ形である。
+// Go cannot share test helpers across packages: an identifier in a `_test.go` file exists
+// only in that package's test binary, so neither main's `withTempHome` nor its `gitInit` is
+// visible from `internal/sessionx` (and neither can be carried on an alias). Moving the
+// family's 30 test files together therefore leaves no option but copies here — the same shape
+// `internal/browserx/mux_test.go` and `internal/memoryx/mux_test.go` took.
 //
-// ⚠️ **写しは黙って腐る。** 腐り方を減らすために:
+// A copy rots silently. To limit the rot:
 //
-//   - **本物と同じ綴り・同じ引数・同じ既定値**で写す（振る舞いを「改善」しない。
-//     README §4 の「標準ライブラリの近似で作り直すと、両側変異試験でも捕まらないまま
-//     被覆だけが縮む」を踏まないため）
-//   - どのファイルの写しかを各関数の直前に書く
-//   - `buildMux` だけは写しではなく**部分集合**なので、mux_test.go で
-//     `routes.golden`（本物の mux から撮った 247 本）と突き合わせて腐りを検出する
+//   - copy with the same spelling, the same arguments and the same defaults (never "improve"
+//     the behaviour: README §4 warns that rebuilding something as an approximation of the
+//     standard library shrinks coverage while even a two-sided mutation test stays green)
+//   - name the file each function was copied from right above it
+//   - `buildMux` alone is a subset rather than a copy, so mux_test.go detects its rot by
+//     comparing it against `routes.golden` (the 247 routes captured from the real mux)
 //
-// 📌 **tmux 隔離（isolatedTmuxSocket / isolateAgentState / paneShowing）だけは、
-// main 側にも同じものが残る。** `session_rate_limit_state_test.go` を main に置いたままに
-// してあるためで、これは意図的である —— main の `shutdown_isolation_test.go`（所有外）が
-// あの 3 本に依存しており、移すと所有外のファイルを書き換えることになる。
-// **#311 が「2 度書くと片方だけ古くなる」と書いて 1 本化した経緯があるので、
-// ここは債務として報告してある**（パッケージ境界が跨げない以上、共有するには
-// 非テストの共有パッケージへ出すしかなく、それは別の作業パッケージになる）。
+// The tmux isolation (isolatedTmuxSocket / isolateAgentState / paneShowing) also stays on the
+// main side, deliberately: `session_rate_limit_state_test.go` was left in main because main's
+// `shutdown_isolation_test.go` (not owned here) depends on those three, and moving them would
+// mean rewriting a file outside this ownership. Writing the same thing twice leaves one copy
+// stale, so this is reported as debt — with the package boundary in the way, sharing them
+// means lifting them into a non-test shared package, which is a separate work package.
 
 import (
 	"bytes"
@@ -44,26 +43,28 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// tmuxSocketSeq は隔離ソケット名の連番（main 側 session_rate_limit_state_test.go の写し）。
+// tmuxSocketSeq is the serial number in an isolated socket name (copy of main's
+// session_rate_limit_state_test.go).
 var tmuxSocketSeq atomic.Int64
 
-// --- withTempHome: workspace/agent/chat_main_test.go の写し ---
+// --- withTempHome: copy of workspace/agent/chat_main_test.go ---
 // withTempHome points HOME at a temp dir so the fstore/conversation stores write
-// under the test's own tree（移送前の chat_report_test.go と同じ形）。
+// under the test's own tree.
 //
-// 🔥 配送 goroutine の待ちは **`t.Setenv` の後**に積む（Cleanup は LIFO ＝ HOME 復帰より
-// 先に走る）。待たないと chatx の配送が復帰後の実 HOME へ通知を書き、利用者の Console に
-// 幽霊通知が出る（chatx/chat_report.go の interimDeliveries）。
+// Register the wait on the delivery goroutines AFTER `t.Setenv`: Cleanup runs LIFO, so it runs
+// before HOME is restored. Without the wait, a chatx delivery writes a notification into the
+// real HOME once it is back and a ghost notification appears in the user's Console
+// (interimDeliveries in chatx/chat_report.go).
 func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Cleanup(chatx.WaitInterimDeliveries)
-	t.Cleanup(WaitInputMirrors) // 同上。こちらは secrets ストア（実測: secrets.enc.lock）
+	t.Cleanup(WaitInputMirrors) // same reason; this one is the secrets store (measured: secrets.enc.lock)
 	return dir
 }
 
-// --- writeFile: workspace/agent/repo_prompts_test.go の写し ---
+// --- writeFile: copy of workspace/agent/repo_prompts_test.go ---
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -74,7 +75,7 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-// --- isolateAgentConfigDirs: workspace/agent/routes_test.go の写し ---
+// --- isolateAgentConfigDirs: copy of workspace/agent/routes_test.go ---
 // isolateAgentConfigDirs points HOME **and every config dir that is pinned by its own
 // environment variable** at one throwaway tree.
 //
@@ -112,64 +113,66 @@ func isolateAgentConfigDirs(t *testing.T) {
 	}
 }
 
-// --- isolatedTmuxSocket: workspace/agent/session_rate_limit_state_test.go の写し ---
-// isolatedTmuxSocket は**誰とも共有しない** tmux ソケット名を返す。
+// --- isolatedTmuxSocket: copy of workspace/agent/session_rate_limit_state_test.go ---
+// isolatedTmuxSocket returns a tmux socket name shared with nobody.
 //
-// 🔥 隔離ソケットの名前を固定すると、`kill-server` を撃つテストどうしが競る（理由は
-// isolateAgentState の注記）。名前の作り方をここ 1 箇所に置いているのは、**同じ規則を
-// 2 度書くと片方だけ古くなる**から —— 実際 `shutdown_isolation_test.go` が同じ名前を
-// 独自に組み立てていて、そこだけ直っていなかった（#311 では所有権の外だった）。
+// A fixed name for the isolated socket makes the tests that fire `kill-server` race each other
+// (the reason is in isolateAgentState's note). The rule for building the name lives in this
+// one place because writing the same rule twice leaves one copy stale — and it did:
+// `shutdown_isolation_test.go` assembles the same name itself and was never fixed.
 //
-// この関数がこのファイルに居るのは所有権の都合で、意味の上では tmux 隔離の共有部品である。
+// This function sits in this file for ownership reasons; in meaning it is a shared piece of
+// the tmux isolation.
 func isolatedTmuxSocket() string {
 	return fmt.Sprintf("af-test-%d-%d", os.Getpid(), tmuxSocketSeq.Add(1))
 }
 
-// --- isolateAgentState: workspace/agent/session_rate_limit_state_test.go の写し ---
+// --- isolateAgentState: copy of workspace/agent/session_rate_limit_state_test.go ---
 func isolateAgentState(t *testing.T) {
 	t.Helper()
-	// 🔥 **ソケット名はテストごとに変える。** 以前は `af-test-<pid>` 固定で、この隔離を
-	// 使う 4 ファイルの全テスト（と同じ名前を使う shutdown_isolation_test.go）が
-	// **1 つの tmux サーバを共有**していた。各テストの Cleanup は `kill-server` を撃つが、
-	// **tmux はコマンドを受け取った時点で返り、サーバの終了は非同期**である。だから次の
-	// テストの `new-session` が死にかけのサーバへ繋がり、`server exited unexpectedly` で
-	// 落ちる —— テスト本体とは無関係な、理由の見えない赤になる。
+	// Vary the socket name per test. It used to be a fixed `af-test-<pid>`, so every test in
+	// the four files that use this isolation (plus shutdown_isolation_test.go, which builds the
+	// same name) shared ONE tmux server. Each test's Cleanup fires `kill-server`, but tmux
+	// returns as soon as it has taken the command and the server's shutdown is asynchronous. So
+	// the next test's `new-session` reaches a dying server and fails with
+	// `server exited unexpectedly` — a red with no visible reason, unrelated to the test body.
 	//
-	// 窓は負荷が高いほど広がる（実測 2026-09-02: 無負荷の `-count=30` では 0 回、CPU 負荷
-	// 6 本の下の `-count=40` では 7 回。落ちたのは TestDriveStateIdlePaneNotBlocked と
-	// TestDriveStateAuthValid ＝ **実 CI の run 33584943716 で落ちたのと同じ形**）。
+	// The window widens with load (measured 2026-09-02: 0 occurrences at `-count=30` with no
+	// load, 7 at `-count=40` under 6 CPU hogs; the failures were TestDriveStateIdlePaneNotBlocked
+	// and TestDriveStateAuthValid, the same shape as real CI run 33584943716).
 	//
-	// 連番まで入れるのは `-count=N` のため: テスト名だけだと、同じ名前の**前の周回**の
-	// kill-server と競る。
+	// The serial number is there for `-count=N`: with the test name alone, a round races the
+	// kill-server of the PREVIOUS round of the same name.
 	t.Setenv("AF_TMUX_SOCKET", isolatedTmuxSocket())
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
-	// status ストアは HOME 直下（paths.AgentConfigDir）— 実フリートのマーカーを書かない。
+	// The status store sits directly under HOME (paths.AgentConfigDir) — never write a marker
+	// into the real fleet.
 	t.Setenv("HOME", t.TempDir())
-	// claude の設定/資格情報も隔離する。HOME だけでは足りない: このコンテナでは
-	// CLAUDE_CONFIG_DIR が実フリートの木を指しているので、状態判定（認証切れ・docs/log/47
-	// §4-8）が実際のログイン期限に左右されてしまう。
+	// Isolate claude's config/credentials too. HOME alone is not enough: in this container
+	// CLAUDE_CONFIG_DIR points at the real fleet's tree, so the state decision (auth expired,
+	// docs/log/47 §4-8) would depend on the real login's expiry.
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-	// 専用ソケットに対してのみ kill-server が許される（dev/04 §4.11）。
+	// kill-server is allowed only against a dedicated socket (dev/04 §4.11).
 	t.Cleanup(func() { _ = tmuxx.Cmd("kill-server").Run() })
 }
 
-// --- paneShowing: workspace/agent/session_rate_limit_state_test.go の写し ---
+// --- paneShowing: copy of workspace/agent/session_rate_limit_state_test.go ---
 // paneShowing starts an isolated tmux session whose pane displays frame's contents and
 // then stays alive, and returns the session meta for it.
 func paneShowing(t *testing.T, name, frame string) session.Meta {
 	t.Helper()
-	// 🔥 **フレームの実在をここで見る。** 無くても `cat` が失敗するだけで `new-session` は
-	// 成功するので、**呼び出し側は「空のペイン」を検査対象として素通りさせる**（移送で
-	// 相対パスの深さが変わったとき、実際にそうなった）。呼び出し側の一覧を手で並べる検査は
-	// 一覧が減ったことしか見られないので、**守るのは呼び出し口であるここ**。
+	// Check that the frame exists, here. Without it only `cat` fails while `new-session` still
+	// succeeds, so callers wave an EMPTY pane through as the thing under test — which is exactly
+	// what happened when the move changed the depth of the relative paths. A check that lists
+	// the callers by hand can only notice the list shrinking, so the call site itself is guarded.
 	if _, err := os.Stat(frame); err != nil {
-		t.Fatalf("frame %s が無い: %v（相対パスの深さを疑う。放置するとペインに何も出ないまま検査は緑になる）", frame, err)
+		t.Fatalf("frame %s is missing: %v (suspect the depth of the relative path; left alone the pane shows nothing and the check stays green)", frame, err)
 	}
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
 	tn := session.TmuxName(name)
-	// 幅を実ペイン相当に取る: 折返しが変わるとフッタ/選択肢行の見え方が変わる。
+	// Take a real pane's width: different wrapping changes how the footer/choice lines look.
 	out, err := tmuxx.Cmd("new-session", "-d", "-s", tn, "-x", "200", "-y", "50",
 		"sh", "-c", fmt.Sprintf("cat %q; sleep 60", frame)).CombinedOutput()
 	if err != nil {
@@ -177,7 +180,7 @@ func paneShowing(t *testing.T, name, frame string) session.Meta {
 	}
 	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
 	session.WriteMeta(m)
-	// cat がペインへ描き終わるのを待つ（capture-pane は描画済みの画面を読む）。
+	// Wait for cat to finish drawing into the pane (capture-pane reads the drawn screen).
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if tmuxx.CapturePane(tn) != "" {
@@ -188,7 +191,7 @@ func paneShowing(t *testing.T, name, frame string) session.Meta {
 	return m
 }
 
-// --- do: workspace/agent/worktree_flow_test.go の写し ---
+// --- do: copy of workspace/agent/worktree_flow_test.go ---
 // do sends a JSON request, asserts the status, and decodes the body into out (if any).
 func do(t *testing.T, srv *httptest.Server, method, path string, body any, want int, out any) {
 	t.Helper()
@@ -203,14 +206,14 @@ func do(t *testing.T, srv *httptest.Server, method, path string, body any, want 
 	}
 }
 
-// --- httpStatus: workspace/agent/worktree_flow_test.go の写し ---
+// --- httpStatus: copy of workspace/agent/worktree_flow_test.go ---
 func httpStatus(t *testing.T, srv *httptest.Server, method, path string, body any) int {
 	t.Helper()
 	code, _ := roundtrip(t, srv, method, path, body)
 	return code
 }
 
-// --- roundtrip: workspace/agent/worktree_flow_test.go の写し ---
+// --- roundtrip: copy of workspace/agent/worktree_flow_test.go ---
 func roundtrip(t *testing.T, srv *httptest.Server, method, path string, body any) (int, []byte) {
 	t.Helper()
 	var rdr *bytes.Reader
@@ -235,7 +238,7 @@ func roundtrip(t *testing.T, srv *httptest.Server, method, path string, body any
 	return res.StatusCode, buf.Bytes()
 }
 
-// --- gitInit: workspace/agent/git_integration_helpers_test.go の写し ---
+// --- gitInit: copy of workspace/agent/git_integration_helpers_test.go ---
 func gitInit(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -258,7 +261,7 @@ func gitInit(t *testing.T, dir string) {
 	run("branch", "feature")
 }
 
-// --- runIntegrationGit: workspace/agent/git_integration_helpers_test.go の写し ---
+// --- runIntegrationGit: copy of workspace/agent/git_integration_helpers_test.go ---
 func runIntegrationGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
@@ -270,7 +273,7 @@ func runIntegrationGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// --- writeUIPrefs: workspace/agent/ui_prefs_test.go の写し ---
+// --- writeUIPrefs: copy of workspace/agent/ui_prefs_test.go ---
 func writeUIPrefs(t *testing.T, body string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
@@ -283,15 +286,16 @@ func writeUIPrefs(t *testing.T, body string) {
 	}
 }
 
-// --- consoleCatalog: workspace/agent/console_catalog_test.go の写し ---
-// consoleCatalog は Console の 1 ロケール分のカタログを、キー存在確認のために
-// 1 本の文字列として返す。
+// --- consoleCatalog: copy of workspace/agent/console_catalog_test.go ---
+// consoleCatalog returns one locale of the Console catalogue as a single string, for checking
+// that a key exists.
 //
-// ⚠️ カタログはドメイン別に `locales/<locale>/*.ts` へ分かれており（ADR 0067 決定 4）、
-// `locales/<locale>.ts` は import と spread しか持たない**合成ファイル**である。
-// そちらを読むと「キーが在るのに無い」と言う検査になる —— この関数を経由すること。
+// The catalogue is split per domain into `locales/<locale>/*.ts` (ADR 0067 decision 4), and
+// `locales/<locale>.ts` is a composed file holding nothing but imports and spreads. Reading
+// that one turns the check into "the key is there, but reported missing" — go through this
+// function.
 //
-// console/ を含まない配布物でビルドする場合に備えて、カタログが無ければスキップする。
+// Skips when the catalogue is absent, for builds from a distribution without console/.
 func consoleCatalog(t *testing.T, locale string) string {
 	t.Helper()
 	dir := filepath.Join("..", "..", "..", "..", "console", "src", "lib", "i18n", "locales", locale)
@@ -313,22 +317,24 @@ func consoleCatalog(t *testing.T, locale string) string {
 		b.WriteString("\n")
 		n++
 	}
-	// 0 件でも「キーが無い」ではなく「読めていない」。黙って通すと、この検査は
-	// 存在しないのと同じになる。
+	// Zero files means "nothing was read", not "the key is missing". Waving that through makes
+	// this check the same as not having one.
 	if n == 0 {
-		t.Fatalf("%s に .ts が 1 つも無い（カタログの置き場所が変わった？）", dir)
+		t.Fatalf("no .ts file at all under %s (did the catalogue move?)", dir)
 	}
 	return b.String()
 }
 
-// --- consoleCatalogHasKey: workspace/agent/console_catalog_test.go の写し ---
-// consoleCatalogHasKey は "key" がカタログに定義されているかを見る。
+// --- consoleCatalogHasKey: copy of workspace/agent/console_catalog_test.go ---
+// consoleCatalogHasKey reports whether "key" is defined in the catalogue.
 func consoleCatalogHasKey(catalog, key string) bool {
 	return strings.Contains(catalog, `"`+key+`"`)
 }
 
-// --- awaitReported: workspace/agent/chat_main_test.go の写し ---
-// awaitReported は「指示行が配送された報告で reported になる」まで待つ（移送前と同じ）。
+// --- awaitReported: copy of workspace/agent/chat_main_test.go ---
+// awaitReported polls until the session has no open instruction row left. The row is moved
+// to reported only after delivery (the append to the conversation) succeeds, so at the
+// moment the report card appears the row can still be pending: wait before asserting it.
 func awaitReported(t *testing.T, name string) {
 	t.Helper()
 	for i := 0; i < 150; i++ {
@@ -337,21 +343,21 @@ func awaitReported(t *testing.T, name string) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("指示行は配送された報告で reported になるべき (指示1件=報告1回): %s", name)
+	t.Fatalf("a delivered report must move the instruction row to reported (one instruction = one report): %s", name)
 }
 
-// --- withTestReconciler: workspace/agent/chat_main_test.go の写し ---
-// withTestReconciler は本物の reconciler を短い間隔で据える（移送前と同じ駆動）。
-// 実体は chatx の内側なので、据え付けだけを継ぎ目から呼ぶ。
+// --- withTestReconciler: copy of workspace/agent/chat_main_test.go ---
+// withTestReconciler installs the real reconciler at a short interval. The implementation is
+// inside chatx, so only the installation is called through the seam.
 func withTestReconciler(t *testing.T, interval time.Duration) {
 	t.Helper()
 	t.Cleanup(chatx.InstallReconcilerForTest(interval))
 }
 
-// --- reportBodyForTest: workspace/agent/prompt_lang_test.go の写し ---
-// reportBodyForTest はセッション報告 1 通の**プロンプト本文**（見出し＋事実＋指示＋付記）を、
-// 実際の配送（recordSessionReport）と同じ材料の組み方で作る。日本語側の文言を見る既存の
-// テストが使う。
+// --- reportBodyForTest: copy of workspace/agent/prompt_lang_test.go ---
+// reportBodyForTest builds the PROMPT BODY of one session report (heading + facts +
+// instructions + notes) from the same materials, assembled the same way, as the real delivery
+// (recordSessionReport). Used by the existing tests that inspect the Japanese wording.
 func reportBodyForTest(display, name, kind, reason string) string {
 	args := chatx.ReportArgs(display, name, kind, reason, 0)
 	return chatx.ReportPromptFor(chatx.ChatMessage{
@@ -359,18 +365,19 @@ func reportBodyForTest(display, name, kind, reason string) string {
 	}, "ja")
 }
 
-// TestFixturePathsResolve は、移送で深さが変わった**相対パスが今も解決すること**を見る。
+// TestFixturePathsResolve checks that the relative paths whose depth changed in the move still
+// resolve.
 //
-// 🔥 これは README §4 の「相対パスの深さは移送で必ず変わり、直し忘れは黙って通る」を
-// 実際に踏んだ跡である。移送直後、`paneShowing` に渡す
-// `internal/tmuxx/testdata/footers/idle_bypass_hint.txt` は sessionx から見て存在しないが、
-// tmux の中で走る `cat` が失敗するだけなので **new-session は成功し、
-// TestDriveStateAuthExpired は緑のまま通った**（実測）。フレームが出ていないペインを
-// 「認証切れ」と判定していたので、**検査したい枝に 1 度も到達していなかった**。
-// `rate_limit_resume_test.go` の方は明示的な Fatal があったので落ちて気付けた。
+// This is the trace of actually hitting README §4's "the depth of a relative path always
+// changes in a move, and forgetting to fix one passes silently". Right after the move, the
+// `internal/tmuxx/testdata/footers/idle_bypass_hint.txt` handed to `paneShowing` did not exist
+// as seen from sessionx, but only the `cat` running inside tmux failed, so new-session
+// succeeded and TestDriveStateAuthExpired stayed green (measured). It was calling a pane with
+// no frame on it "auth expired", i.e. it never once reached the branch under test.
+// `rate_limit_resume_test.go` had an explicit Fatal, so that one failed and gave it away.
 //
-// → **パスは使う前にここで 1 度だけ実体を見る。** 増えた 1 本はこの理由であり、
-// 「テスト関数の集合が develop と一致」に対する**意図した +1** である。
+// So a path has its existence checked here, once, before use. That is why this test exists and
+// it is the intended +1 against "the set of test functions matches develop".
 func TestFixturePathsResolve(t *testing.T) {
 	paths := []string{
 		"../tmuxx/testdata/footers/idle_bypass_hint.txt",
@@ -379,13 +386,13 @@ func TestFixturePathsResolve(t *testing.T) {
 		filepath.Join("..", "..", "..", "..", "console", "src", "lib", "i18n", "locales", "ja"),
 	}
 	if len(paths) < 4 {
-		t.Fatal("走査したパスが 4 本未満＝この検査が無言化している")
+		t.Fatal("fewer than 4 paths scanned = this check has gone silent")
 	}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err != nil {
-			t.Errorf("%s が見つからない: %v（移送で相対パスの深さが変わったまま直っていない。"+
-				"tmux の中の cat は失敗しても new-session は成功するので、"+
-				"直さないと検査は緑のまま空振りする）", p, err)
+			t.Errorf("%s not found: %v (the move changed the depth of the relative path and it was "+
+				"never fixed; the cat inside tmux can fail while new-session still succeeds, so "+
+				"until it is fixed the check stays green and measures nothing)", p, err)
 		}
 	}
 }
