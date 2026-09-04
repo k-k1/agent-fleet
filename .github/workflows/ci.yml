@@ -192,6 +192,39 @@ jobs:
           cache-dependency-path: console/package-lock.json
       - name: npm ci
         run: npm ci
+      # 🔴🔴 使い捨ての probe（DEPLOY-CI・**マージ前に必ず外す**）。
+      # doc:check / pdf:check を CI に載せる前に、**ランナーに実際に何が在るか**を 1 回だけ測る。
+      # 推測で CHROMIUM= を書かないための段。どの段も job を落とさない（set +e ＋ 終端は echo）。
+      - name: probe (throwaway) — what browser is on the runner
+        run: |
+          set +e
+          echo "== command -v =="
+          for c in chromium chromium-browser google-chrome google-chrome-stable chrome microsoft-edge; do
+            printf '%-24s -> %s\n' "$c" "$(command -v "$c" || echo '(none)')"
+          done
+          echo "== env (chrome/chromium/puppeteer/playwright) =="
+          env | grep -iE 'chrome|chromium|puppeteer|playwright' || echo "(該当する環境変数は 0 件)"
+          echo "== 既知のパスを実在で見る =="
+          for p in /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/google-chrome \
+                   /usr/bin/google-chrome-stable /opt/google/chrome/chrome /snap/bin/chromium \
+                   /usr/bin/microsoft-edge /root/.cache/puppeteer; do
+            if [ -e "$p" ]; then echo "EXISTS  $p"; [ -x "$p" ] && "$p" --version 2>&1 | head -1; else echo "absent  $p"; fi
+          done
+          echo "== /usr/bin と /opt の chrom* =="
+          ls -ld /usr/bin/*chrom* /opt/*chrom* /opt/google 2>/dev/null || echo "(0 件)"
+          echo "== 日本語フォント（pdf:check の標本は日本語）=="
+          echo "fc-list :lang=ja = $(fc-list :lang=ja 2>/dev/null | wc -l) 件"
+          fc-list :lang=ja 2>/dev/null | head -3
+          echo "PROBE-1 DONE"
+      - name: probe (throwaway) — run doc:check / pdf:check with the found browser
+        run: |
+          set +e
+          BIN="$(command -v chromium || command -v chromium-browser || command -v google-chrome \
+                 || command -v google-chrome-stable || echo /usr/bin/chromium)"
+          echo "使う CHROMIUM=$BIN"
+          s=$(date +%s); CHROMIUM="$BIN" npm run doc:check; rc_doc=$?; e_doc=$(( $(date +%s) - s ))
+          s=$(date +%s); CHROMIUM="$BIN" npm run pdf:check; rc_pdf=$?; e_pdf=$(( $(date +%s) - s ))
+          echo "PROBE-2 RESULT: doc:check EXIT=$rc_doc ${e_doc}s / pdf:check EXIT=$rc_pdf ${e_pdf}s (CHROMIUM=$BIN)"
       - name: typecheck
         run: npm run typecheck
       - name: i18n-lint
