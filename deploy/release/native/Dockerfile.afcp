@@ -4,7 +4,7 @@
 #
 #   docker build -f deploy/release/native/Dockerfile.afcp \
 #     --build-arg VERSION=<v> --output type=local,dest=<dir> .
-FROM golang:1.26-bookworm AS build
+FROM golang:1.26-trixie AS build
 WORKDIR /src/control-plane
 COPY control-plane/go.mod control-plane/go.sum ./
 RUN go mod download

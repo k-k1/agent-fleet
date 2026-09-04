@@ -105,6 +105,65 @@ if [ -n "$af_arch_now" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
   printf '%s\n' "$af_arch_now" > "$AF_ARCH_STAMP" 2>/dev/null || true
 fi
 
+# --- ベースイメージの python の major が動いたときの通知（docs/decisions/0068 決定 4） ---
+# 上のアーキ刻印と同じ仕掛けだが、**何も消さない**ところが決定的に違う。
+#
+# `pip install --user` の産物は `~/.local/lib/python<major>/site-packages` にあり、python が
+# 3.11 → 3.13 に動くと**消えるのではなく見えなくなる**（新しい python は別のディレクトリを
+# 見る）。拡張は `…cpython-311-….so` の ABI タグ付きなので寄せても駄目で、入れ直しが要る。
+# さらに `~/.local/bin` のランチャは `#!/usr/bin/python3` なので**残って起動し**、新しい
+# python で即 ModuleNotFoundError になる——症状は「昨日まで動いていた」で、原因はどこにも
+# 出ない。だから知らせる。
+#
+# ⚠️ 入れ直しはこちらでやらない。起動時にネットワークを要求し、数分かかり、黙って別の
+#    バージョンを解決するからで、これは上のアーキ自己修復が「利用者が自分で入れた
+#    `~/.local` のツールは消さない」と決めているのと同じ線引きである。
+# ⚠️ これは**アーキのイベントではない**。amd64 のメンバーも全員が新イメージの初回起動で
+#    1 回踏むので、上のブロックには原理的に乗らない。
+af_py_now="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+AF_PY_STAMP="$HOME/.local/share/agent-fleet/python-major"
+af_py_was="$(cat "$AF_PY_STAMP" 2>/dev/null || true)"
+if [ -n "$af_py_now" ] && [ -n "$af_py_was" ] && [ "$af_py_was" != "$af_py_now" ]; then
+  echo "[entrypoint] python: ベースの python が $af_py_was から $af_py_now に上がりました"
+  af_py_old_sp="$HOME/.local/lib/python$af_py_was/site-packages"
+  af_py_pkgs=""
+  if [ -d "$af_py_old_sp" ]; then
+    # dist-info のディレクトリ名は `<name>-<version>.dist-info`。名前だけを取り出す。
+    # ⚠️ dist-info 側の名前は `-` が `_` に正規化されている（cfn-lint → cfn_lint）ので
+    #    PEP 503 の正準形（`-`）へ戻す。そのまま出すと pip には通るが、利用者が
+    #    PyPI で検索したときに見つからない名前を見せることになる。
+    for d in "$af_py_old_sp"/*.dist-info; do
+      [ -d "$d" ] || continue
+      b="$(basename "$d" .dist-info)"
+      af_py_pkgs="$af_py_pkgs $(printf '%s' "${b%-*}" | tr '_.' '--')"
+    done
+  fi
+  if [ -n "$af_py_pkgs" ]; then
+    # shellcheck disable=SC2086 # 意図的な word splitting（前後の空白を潰して 1 行にする）
+    echo "[entrypoint] python: ⚠️ 次は python$af_py_was 用のまま残っており、$af_py_now からは見えません:"
+    echo "[entrypoint] python:   $(echo $af_py_pkgs)"
+    echo "[entrypoint] python:   入れ直す: pip install --user --force-reinstall $(echo $af_py_pkgs)"
+    echo "[entrypoint] python:   （古い方は消していません。要らなければ rm -rf $af_py_old_sp）"
+  fi
+  if [ -d "$HOME/.local/share/uv/tools" ]; then
+    af_uv_tools=""
+    for d in "$HOME"/.local/share/uv/tools/*; do
+      [ -d "$d" ] || continue
+      af_uv_tools="$af_uv_tools $(basename "$d")"
+    done
+    if [ -n "$af_uv_tools" ]; then
+      echo "[entrypoint] python: ⚠️ uv tool も同じです（venv は起動できるのに import だけ落ちます）:"
+      echo "[entrypoint] python:   $(echo $af_uv_tools)"
+      echo "[entrypoint] python:   入れ直す: uv tool upgrade --reinstall --all"
+    fi
+  fi
+  echo "[entrypoint] python: ⚠️ ~/repos 配下の .venv も python$af_py_was のままです（~/repos は触っていません）"
+fi
+if [ -n "$af_py_now" ] && [ "$af_py_was" != "$af_py_now" ]; then
+  mkdir -p "$(dirname "$AF_PY_STAMP")" 2>/dev/null || true
+  printf '%s\n' "$af_py_now" > "$AF_PY_STAMP" 2>/dev/null || true
+fi
+
 # claude records installMethod="native" and self-checks its launcher at
 # ~/.local/bin/claude on every start, warning "claude command … missing or broken"
 # when it is gone/dangling. After the node→dev rename that launcher dangled (it

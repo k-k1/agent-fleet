@@ -30,7 +30,7 @@
 
 # --- 1. console (Vite + React) ----------------------------------------------
 # Native on the builder: the artifact is architecture-independent (see above).
-FROM --platform=$BUILDPLATFORM node:22-bookworm AS console
+FROM --platform=$BUILDPLATFORM node:22-trixie AS console
 WORKDIR /src/console
 COPY console/package.json console/package-lock.json ./
 RUN npm ci
@@ -40,7 +40,7 @@ RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build   # -> /src/console/dis
 
 # --- 2. control-plane (Go) ---------------------------------------------------
 # Native on the builder, cross-compiling to the target: see the header.
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-trixie AS build
 WORKDIR /src/control-plane
 COPY control-plane/go.mod control-plane/go.sum ./
 RUN go mod download
@@ -59,7 +59,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
     go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/af-cp .
 
 # --- 3. runtime --------------------------------------------------------------
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 # Links the GHCR package to this repository (ADR 0037): the container registry
 # resolves org.opencontainers.image.source to decide which repo a package belongs
 # to, which is what puts the README on the package page and lets the package
