@@ -25,13 +25,20 @@ To add files, **upload by drag & drop** or create them via "New file" in the rig
 If a file with the same name exists, an overwrite confirmation is shown. **Ctrl+click** (or
 middle-click) a file to **open it in a new pane** while keeping the current view ([03](05-terminal.md)).
 
-The tree is **refreshed automatically**: right after a clone, after the workspace starts
-or stops, and **each time a session finishes a turn** — when it goes back to waiting for
-you, the files it created, renamed or deleted in its working copy appear. Re-opening a
-folder also re-reads it, so anything that changed while it was collapsed shows up.
-There is normally no need to refresh by hand; the ⟳ button in the section header is
-still there for a change nothing told the Console about (a command you ran in the
-terminal, for instance) or while a session is still working.
+The tree is **refreshed automatically**, so there is normally no need to refresh by hand:
+
+- **When a session finishes a turn** and goes back to waiting for you — the files it
+  created, renamed or deleted in its working copy appear.
+- **While a session is still working** — the working copy of a running session catches up
+  every 20 seconds, so you can look in mid-task and see what has been made so far.
+- **When you come back to the tab or the window** — this also picks up work that finished
+  while you were away, and changes you made yourself in the terminal.
+- **When you re-open a folder** — anything that changed while it was collapsed shows up.
+- Right after a clone, and after the workspace starts or stops.
+
+Rows for files an automatic refresh **added are tinted for a few seconds**, so you can see
+which ones are new; nothing is lost when the tint fades. The ⟳ button in the section
+header is still there for anything none of the above covers.
 
 ### Why some folders are invisible
 

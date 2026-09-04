@@ -10,7 +10,7 @@
 // the file itself in the viewer instead. The row menu still offers 差分 for anyone
 // who wants it. Revived from the old FilesSection (deleted 0568750), minus its
 // file-management extras.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
@@ -19,6 +19,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
+import { REVALIDATE_GAP_MS } from "../files/refreshPolicy.ts";
 import { useReposStore } from "../repos/store.ts";
 import { orderedRepos } from "../../lib/project.ts";
 import { useActiveWorkingSet, folderBase } from "../../lib/workingSetsStore.ts";
@@ -128,26 +129,42 @@ export function FilesChanges() {
   // 減らせるものが無い（同時に終わった複数セッションは 1 本に畳む）。
   const autoTick = useFilesStore((s) => s.scoped.n);
   const autoInFlight = useRef(false);
+  const lastAutoAt = useRef(0);
   const mountedTick = useRef(autoTick); // マウント前の合図は上の初回読み込みが済ませている
-  useEffect(() => {
-    if (autoTick === mountedTick.current || !running || autoInFlight.current) return;
-    let alive = true;
+  const reload = useCallback(async () => {
+    if (!running || autoInFlight.current || document.hidden) return;
     autoInFlight.current = true;
-    void (async () => {
-      try {
-        const d = await api("api/fs/changes");
-        if (!alive || !d || d.error || isTransientErr(d) || !Array.isArray(d.changes)) return;
-        setChanges(d.changes);
-      } catch {
-        /* 一過性の失敗は今の表示のまま — 次のターン終了か 更新 で追いつく */
-      } finally {
-        autoInFlight.current = false;
-      }
-    })();
-    return () => {
-      alive = false;
+    lastAutoAt.current = Date.now();
+    try {
+      const d = await api("api/fs/changes");
+      if (!d || d.error || isTransientErr(d) || !Array.isArray(d.changes)) return;
+      setChanges(d.changes);
+    } catch {
+      /* 一過性の失敗は今の表示のまま — 次のターン終了か 更新 で追いつく */
+    } finally {
+      autoInFlight.current = false;
+    }
+  }, [running]);
+  useEffect(() => {
+    if (autoTick === mountedTick.current) return;
+    void reload();
+  }, [autoTick, reload]);
+
+  // タブ／ウィンドウに戻ったとき（docs/log/44 §7.2 と同じ考え方）。離席中に終わった
+  // ターンと、state を持たないセッションや Agent Fleet の外での変更を拾う唯一の道。
+  // SCM ペインも同じ引き金で更新している（features/scm/SourceControlView.tsx）。
+  useEffect(() => {
+    const onBack = () => {
+      if (document.hidden || Date.now() - lastAutoAt.current < REVALIDATE_GAP_MS) return;
+      void reload();
     };
-  }, [autoTick, running]);
+    document.addEventListener("visibilitychange", onBack);
+    window.addEventListener("focus", onBack);
+    return () => {
+      document.removeEventListener("visibilitychange", onBack);
+      window.removeEventListener("focus", onBack);
+    };
+  }, [reload]);
 
   if (!running) return <EmptyState icon="debug-disconnect" title={tr("pj.ws_stopped")} />;
   if (changes === null) return <EmptyState icon="loading" title={tr("pj.loading")} />;

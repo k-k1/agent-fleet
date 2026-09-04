@@ -14,7 +14,17 @@
 // 前例: 「稼働 → 非稼働」の縁の取り方は useSessionNotifications / waiting.ts と同じ。
 // 初観測では**発火しない**のも同じ理由で、リロード直後に全セッションぶんが一斉に
 // 走るのを防ぐ（waiting.ts の note を見よ）。
+//
+// ターンの終わりだけでは足りない場面が 2 つあり、それぞれ別の引き金で埋める:
+//   - **長いターンの最中に見に行く人** → 走っているセッションの作業コピーだけを
+//     WORKING_TICK_MS 間隔で読み直す（下の tickWorking。走っているものが無ければ
+//     タイマーごと止まる）。
+//   - **離席していた人** → タブ復帰／ウィンドウ focus での再検証。これはツリー側
+//     （ProjectFiles / FilesChanges）に置く。state を持たない shell セッションが
+//     触ったファイルを拾えるのも、事実上ここだけ。
 import { useSessionsStore } from "../sessions/store.ts";
+import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
+import { COALESCE_MS, MIN_GAP_MS, WORKING_TICK_MS } from "./refreshPolicy.ts";
 import { useFilesStore } from "./store.ts";
 import type { Session } from "../../types/session.ts";
 
@@ -33,10 +43,7 @@ export const isBusySession = (s: Pick<Session, "alive" | "state" | "backgroundBu
  *  subdir があっても作業コピー単位に丸める: エージェントは cwd の外も普通に触る。 */
 export const sessionPrefix = (s: Pick<Session, "repo">): string => (s.repo ? "repos/" + s.repo : "");
 
-/** 同時に終わった複数セッションを 1 回にまとめる待ち。 */
-export const COALESCE_MS = 400;
-/** 同じ作業コピーを読み直す最短間隔。短いターンを連投されても往復が積み上がらない。 */
-export const MIN_GAP_MS = 3000;
+// 間合いの数字とその根拠は refreshPolicy.ts（撃つ側と読む側で共有する）。
 
 /**
  * 一覧が届くたびに呼び、「読み直すべき作業コピー」を返す純関数を作る。
@@ -70,12 +77,15 @@ export function createTurnEndDetector(): (list: Session[]) => string[] {
  *
  * 発火は作業コピーごとに合流させ、最短間隔を空ける。FILES セクションが閉じていても
  * 止めない — 合図はストアのカウンタを 1 つ進めるだけで、木が生えていなければ誰も
- * 読みに行かない（ProjectFiles は閉じるとアンマウントされる）。
+ * 読みに行かない（ProjectFiles は閉じるとアンマウントされる）。**この形のおかげで、
+ * 走行中の低頻度更新も「誰も見ていなければ 0 リクエスト」になる。**
  */
 export function wireFilesSessionRefresh(): () => void {
   const detect = createTurnEndDetector();
   const lastAt = new Map<string, number>();
   const timers = new Map<string, number>();
+  let busyPrefixes: string[] = [];
+  let ticker = 0;
 
   const fire = (prefix: string) => {
     timers.delete(prefix);
@@ -89,11 +99,29 @@ export function wireFilesSessionRefresh(): () => void {
     timers.set(prefix, window.setTimeout(() => fire(prefix), delay));
   };
 
+  // 走行中の低頻度更新。見えていない（タブが裏・WS が停止）ときは撃たない —
+  // 「見ている人のための更新」であって、監視ではない。
+  const tickWorking = () => {
+    if (document.hidden || !wsRunning(useWorkspaceStore.getState().state)) return;
+    for (const prefix of busyPrefixes) schedule(prefix);
+  };
+
   const unsub = useSessionsStore.subscribe((s) => {
     for (const prefix of detect(s.sessions)) schedule(prefix);
+    busyPrefixes = [
+      ...new Set(s.sessions.filter(isBusySession).map(sessionPrefix).filter(Boolean)),
+    ];
+    // 走っているものが 1 つも無ければタイマーを畳む（常駐させない）。
+    if (busyPrefixes.length && !ticker) ticker = window.setInterval(tickWorking, WORKING_TICK_MS);
+    else if (!busyPrefixes.length && ticker) {
+      window.clearInterval(ticker);
+      ticker = 0;
+    }
   });
   return () => {
     unsub();
+    if (ticker) window.clearInterval(ticker);
+    ticker = 0;
     for (const t of timers.values()) window.clearTimeout(t);
     timers.clear();
   };

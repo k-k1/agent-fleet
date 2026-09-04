@@ -67,12 +67,25 @@ async function render(): Promise<void> {
   await settle();
 }
 
-async function settle(): Promise<void> {
+// 描画が落ち着くまで進める。偽タイマーを使う節（ハイライトの消灯）だけは rAF が
+// 進まないので、実装を差し替える。
+const settleFrames = async (): Promise<void> => {
   for (let i = 0; i < 8; i++) {
     await act(async () => {
       await new Promise((r) => requestAnimationFrame(() => r(null)));
     });
   }
+};
+const settleTimers = async (): Promise<void> => {
+  for (let i = 0; i < 8; i++) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+  }
+};
+let settleImpl: () => Promise<void> = settleFrames;
+async function settle(): Promise<void> {
+  await settleImpl();
 }
 
 const paths = () => [...host.querySelectorAll<HTMLLIElement>(".fsrow")].map((li) => li.dataset.path);
@@ -194,5 +207,79 @@ describe("フォルダを開き直したとき", () => {
     await click(row("repos/agent-fleet")); // 開き直す
 
     expect(paths()).toContain("repos/agent-fleet/LATER.md");
+  });
+});
+
+// タブ／ウィンドウに戻ったときの再検証（P2 ③）。離席中に終わったターンと、
+// state を持たないセッション（shell / SSM）や Agent Fleet の外での変更を拾う唯一の道。
+describe("タブに戻ったとき", () => {
+  const comeBack = async () => {
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await settle();
+  };
+
+  it("画面に出ているディレクトリを読み直す", async () => {
+    await render();
+    await click(row("repos/agent-fleet"));
+    served["repos/agent-fleet"] = [
+      { name: "docs", type: "dir" },
+      { name: "AWAY.md", type: "file" },
+    ];
+    calls = [];
+    await comeBack();
+
+    expect(calls).toContain("repos/agent-fleet");
+    expect(paths()).toContain("repos/agent-fleet/AWAY.md");
+  });
+
+  it("戻るたびには撃たない（最短間隔を空ける）", async () => {
+    await render();
+    await click(row("repos/agent-fleet"));
+    await comeBack();
+    calls = [];
+    await comeBack(); // すぐもう一度戻ってきても、往復は増やさない
+    expect(calls).toEqual([]);
+  });
+});
+
+// 増えた行のハイライト（P2 ⑤）。「増えた」ことより「どれが増えたか」が知りたい情報で、
+// かつ数秒で消えることまでが仕様 — 消えないと、次にどれが増えたのか分からなくなる。
+describe("増えた行のハイライト", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    settleImpl = settleTimers;
+  });
+  afterEach(() => {
+    settleImpl = settleFrames;
+    vi.useRealTimers();
+  });
+
+  const classOf = (p: string) => row(p)?.className ?? "";
+
+  it("増えた行にだけ付き、数秒で消える", async () => {
+    await render();
+    await click(row("repos/agent-fleet"));
+    served["repos/agent-fleet"] = [
+      { name: "docs", type: "dir" },
+      { name: "NEW.md", type: "file" },
+      { name: "README.md", type: "file" },
+    ];
+    await turnEnded("repos/agent-fleet");
+
+    expect(classOf("repos/agent-fleet/NEW.md")).toContain("fs-new");
+    expect(classOf("repos/agent-fleet/README.md")).not.toContain("fs-new"); // 元からある行
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(classOf("repos/agent-fleet/NEW.md")).not.toContain("fs-new");
+  });
+
+  it("初回の読み込みでは光らない（全部が「増えた」ことになってしまう）", async () => {
+    await render();
+    await click(row("repos/agent-fleet"));
+    expect([...host.querySelectorAll(".fsrow.fs-new")]).toHaveLength(0);
   });
 });

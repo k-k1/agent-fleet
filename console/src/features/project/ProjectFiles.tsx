@@ -21,6 +21,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
+import { REVALIDATE_GAP_MS } from "../files/refreshPolicy.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useFilesFilter } from "./filesFilter.ts";
 import { normQuery } from "./filter.ts";
@@ -93,6 +94,22 @@ const fsListFresh = async (path: string): Promise<Fresh> => {
 
 const sameEntries = (a: Entry[] | undefined, b: Entry[]): boolean =>
   !!a && a.length === b.length && a.every((e, i) => e.name === b[i].name && e.type === b[i].type);
+
+// What a re-read ADDED to a directory, as full paths. A first read adds nothing:
+// everything is new then, and flashing a whole tree teaches the reader to ignore
+// the highlight.
+const addedPaths = (prev: Entry[] | null | undefined, next: Entry[], dir: string): string[] => {
+  if (!prev) return [];
+  const had = new Set(prev.map((e) => e.name));
+  return next.filter((e) => !had.has(e.name)).map((e) => joinPath(dir, e.name));
+};
+
+/** How long a newly-appeared row stays highlighted. Must match the .fs-new
+ *  animation in features/files/files.css — the class is dropped when this
+ *  elapses, so a longer animation would be cut off mid-fade. */
+const FRESH_MS = 5000;
+/** Shared empty set — one stable reference, like NO_ROWS below. */
+const NO_FRESH: Set<string> = new Set();
 
 // Shared empty row list. It must be ONE stable reference, not a fresh literal per
 // render: displayRows below falls back to it while a search is in flight, and it
@@ -170,8 +187,17 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   const menuOpenRef = useRef(false);
   menuOpenRef.current = !!menu;
   const liveDirsRef = useRef<string[]>([]);
+  const cacheRef = useRef(cache);
+  cacheRef.current = cache;
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
   const revalidatingRef = useRef<Set<string>>(new Set());
   const mountedScopedRef = useRef(scopedRefresh.n);
+  const lastAutoAtRef = useRef(0);
+  // Rows that appeared in the last auto-refresh, held for FRESH_MS so the reader
+  // can see WHICH files the agent just made (a bare row count says nothing).
+  const [fresh, setFresh] = useState<Set<string>>(NO_FRESH);
+  const freshTimersRef = useRef<Map<string, number>>(new Map());
 
   const showFile = useCallback((p: string) => openTarget({ content: { kind: "file", filePath: p } }), [openTarget]);
   const showFileSplit = useCallback((p: string) => openTargetInNew({ content: { kind: "file", filePath: p } }), [openTargetInNew]);
@@ -222,10 +248,49 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     return true;
   }, [root, filesTick, running]);
 
+  // Hold the rows that just appeared, then let them go. Each path keeps its own
+  // timer so a second batch does not cut the first one's highlight short.
+  const markFresh = useCallback((paths: string[]) => {
+    if (!paths.length) return;
+    setFresh((prev) => {
+      const n = new Set(prev);
+      for (const p of paths) n.add(p);
+      return n;
+    });
+    for (const p of paths) {
+      const running = freshTimersRef.current.get(p);
+      if (running) window.clearTimeout(running);
+      freshTimersRef.current.set(
+        p,
+        window.setTimeout(() => {
+          freshTimersRef.current.delete(p);
+          setFresh((prev) => {
+            if (!prev.has(p)) return prev;
+            const n = new Set(prev);
+            n.delete(p);
+            return n;
+          });
+        }, FRESH_MS),
+      );
+    }
+  }, []);
+  useEffect(() => {
+    const timers = freshTimersRef.current;
+    return () => {
+      for (const t of timers.values()) window.clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+
   // Apply a batch of re-reads: replace only what actually changed (an unchanged
   // batch returns the same object, so nothing re-renders), keep what failed, and
   // forget a directory that is gone.
   const applyFresh = useCallback((pairs: (readonly [string, Fresh])[]) => {
+    // Computed from the ref rather than inside the updater below: the updater
+    // must stay pure (React may run it twice).
+    const added: string[] = [];
+    for (const [p, e] of pairs) if (Array.isArray(e)) added.push(...addedPaths(cacheRef.current[p], e, p));
+    markFresh(added);
     setCache((c) => {
       const n = { ...c };
       let changed = false;
@@ -244,7 +309,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       }
       return changed ? n : c;
     });
-  }, []);
+  }, [markFresh]);
 
   // Re-read one directory in the background (one in flight per path).
   const revalidate = useCallback(
@@ -349,6 +414,39 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   }, [rows, cache]);
   liveDirsRef.current = liveDirs;
 
+  // The one path every automatic re-read takes: read the given dirs (plus the
+  // root when asked), then apply what came back. Returns a canceller, so an
+  // effect can hand it straight back as its cleanup.
+  const runRefresh = useCallback(
+    (targets: string[], withRoot: boolean) => {
+      let alive = true;
+      lastAutoAtRef.current = Date.now();
+      void (async () => {
+        const [rootFresh, pairs] = await Promise.all([
+          withRoot ? fsListFresh(root) : Promise.resolve<Fresh>(null),
+          Promise.all(targets.map(async (p) => [p, await fsListFresh(p)] as const)),
+        ]);
+        if (!alive) return;
+        if (Array.isArray(rootFresh)) {
+          markFresh(addedPaths(entriesRef.current, rootFresh, root));
+          setEntries((cur) => (sameEntries(cur ?? undefined, rootFresh) ? cur : rootFresh));
+        }
+        applyFresh(pairs);
+      })();
+      return () => {
+        alive = false;
+      };
+    },
+    [root, applyFresh, markFresh],
+  );
+
+  // Whether an automatic re-read may run at all (the §7.2 gate set of the
+  // editor's external-change probe, in tree form).
+  const autoRefreshAllowed = useCallback(
+    () => running && !searchMode && !menuOpenRef.current && !document.hidden,
+    [running, searchMode],
+  );
+
   // Scoped auto-refresh: a session's turn ended, so re-read what is on screen
   // under its working copy (features/files/sessionRefresh.ts). Deliberately NOT
   // the whole tree — that is what the 更新 button still does.
@@ -358,16 +456,15 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     // (the tree is unmounted while its section is collapsed, so this is the
     // normal case, not an edge one).
     if (scopedRefresh.n === mountedScopedRef.current) return;
-    if (!prefix || !running) return;
+    if (!prefix) return;
     if (secondary && (prefix === "repos" || prefix.startsWith("repos/"))) return; // the repos tree owns it
     if (root && prefix !== root && !prefix.startsWith(root + "/")) return; // another tree's business
-    // In search mode the rows are rg hits, and re-running that query on every
-    // turn end would be a recursive search per turn. The tree underneath is
-    // refreshed here anyway, so leaving the query alone loses nothing.
-    if (searchMode) return;
-    // The context menu holds a row it is about to act on; pulling that row out
-    // from under it turns the next click into an error toast.
-    if (menuOpenRef.current) return;
+    // The gates: the WS must be up; in search mode the rows are rg hits and
+    // re-running that query per turn would be a recursive search each time; the
+    // context menu holds a row it is about to act on, and pulling that row out
+    // from under it turns the next click into an error toast; a hidden tab is
+    // picked up by the visibility trigger below instead.
+    if (!autoRefreshAllowed()) return;
     const targets = liveDirsRef.current.filter((p) => p === prefix || p.startsWith(prefix + "/"));
     // A working copy can also appear or vanish under the turn (a worktree added
     // or removed), which shows in its PARENT's listing — one extra read when
@@ -376,21 +473,30 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     // prefix matches no row, and this single read is all that happens.
     const alsoRoot = parentOf(prefix) === root;
     if (!targets.length && !alsoRoot) return;
-    let alive = true;
-    void (async () => {
-      const [rootFresh, pairs] = await Promise.all([
-        alsoRoot ? fsListFresh(root) : Promise.resolve<Fresh>(null),
-        Promise.all(targets.map(async (p) => [p, await fsListFresh(p)] as const)),
-      ]);
-      if (!alive) return;
-      if (Array.isArray(rootFresh)) setEntries((cur) => (sameEntries(cur ?? undefined, rootFresh) ? cur : rootFresh));
-      applyFresh(pairs);
-    })();
-    return () => {
-      alive = false;
-    };
+    return runRefresh(targets, alsoRoot);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopedRefresh.n]);
+
+  // Coming back to the tab (or to the window) is where an unseen change is most
+  // likely to be waiting — the same reasoning as the editor's external-change
+  // probe (docs/log/44 §7.2), and the only trigger that covers a session with no
+  // state model at all (a shell, an SSM login) or a change made outside Agent
+  // Fleet. Kept to one re-read per REVALIDATE_GAP_MS so alt-tabbing is not a poll.
+  useEffect(() => {
+    const onBack = () => {
+      if (!autoRefreshAllowed()) return;
+      if (Date.now() - lastAutoAtRef.current < REVALIDATE_GAP_MS) return;
+      const targets = liveDirsRef.current;
+      if (!targets.length && entriesRef.current === null) return;
+      runRefresh(targets, true);
+    };
+    document.addEventListener("visibilitychange", onBack);
+    window.addEventListener("focus", onBack);
+    return () => {
+      document.removeEventListener("visibilitychange", onBack);
+      window.removeEventListener("focus", onBack);
+    };
+  }, [autoRefreshAllowed, runRefresh]);
 
   // Quick filter: keep rows whose displayed name matches, plus the ancestor dirs
   // that lead to them (so the match keeps its place in the tree). Rows are
@@ -960,7 +1066,14 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
               role="treeitem"
               aria-selected={isSel}
               {...(isDir ? { "aria-expanded": isOpen } : {})}
-              className={"fsrow" + (isSel ? " selected" : "") + (isDir && dropTarget === r.path ? " drop-hover" : "")}
+              className={
+                "fsrow" +
+                (isSel ? " selected" : "") +
+                (isDir && dropTarget === r.path ? " drop-hover" : "") +
+                // A folded row (a/b/c) is "new" when any level of it is — the
+                // added directory is the first segment, not the row's path.
+                (fresh.size && r.segPaths.some((p) => fresh.has(p)) ? " fs-new" : "")
+              }
               style={{ paddingLeft: 4 + r.depth * 14 }}
               title={isDir ? undefined : tr("proj.open_new_pane")}
               onClick={(e) => {

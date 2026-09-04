@@ -4,6 +4,7 @@
 // 出しすぎれば作業コピー配下を何度も読み直す。どちらも画面上は静かなので、縁の定義は
 // ここで固定しておく。
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { COALESCE_MS, MIN_GAP_MS, WORKING_TICK_MS } from "./refreshPolicy.ts";
 import type { Session } from "../../types/session.ts";
 
 // 配線側は sessions ストア → api client（localStorage・document.baseURI・fetch）を
@@ -15,13 +16,22 @@ vi.stubGlobal("localStorage", {
   setItem: (key: string, value: string) => values.set(key, value),
   removeItem: (key: string) => values.delete(key),
 });
-vi.stubGlobal("document", { baseURI: "http://localhost/", hidden: false });
+let hidden = false; // タブが裏かどうか（低頻度更新のゲート）
+vi.stubGlobal("document", {
+  baseURI: "http://localhost/",
+  get hidden() {
+    return hidden;
+  },
+});
 vi.stubGlobal("window", {
   fetch: vi.fn(),
   setTimeout: (...a: Parameters<typeof setTimeout>) => setTimeout(...a),
   clearTimeout: (...a: Parameters<typeof clearTimeout>) => clearTimeout(...a),
+  setInterval: (...a: Parameters<typeof setInterval>) => setInterval(...a),
+  clearInterval: (...a: Parameters<typeof clearInterval>) => clearInterval(...a),
 });
 
+let useWorkspaceStore: typeof import("../../core/store/workspace.ts")["useWorkspaceStore"];
 let createTurnEndDetector: typeof import("./sessionRefresh.ts")["createTurnEndDetector"];
 let isBusySession: typeof import("./sessionRefresh.ts")["isBusySession"];
 let sessionPrefix: typeof import("./sessionRefresh.ts")["sessionPrefix"];
@@ -35,6 +45,7 @@ beforeAll(async () => {
   ));
   ({ useSessionsStore } = await import("../sessions/store.ts"));
   ({ useFilesStore } = await import("./store.ts"));
+  ({ useWorkspaceStore } = await import("../../core/store/workspace.ts"));
 });
 
 const s = (over: Partial<Session>): Session => ({
@@ -144,6 +155,8 @@ describe("wireFilesSessionRefresh", () => {
     vi.useFakeTimers();
     useSessionsStore.setState({ sessions: [] });
     useFilesStore.setState({ scoped: { prefix: "", n: 0 } });
+    useWorkspaceStore.setState({ state: "running" });
+    hidden = false;
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -184,5 +197,43 @@ describe("wireFilesSessionRefresh", () => {
     un();
     vi.advanceTimersByTime(5000);
     expect(useFilesStore.getState().scoped.n).toBe(0);
+  });
+
+  // ターンの途中でも見に行く人のための低頻度更新（WORKING_TICK_MS）。
+  it("走っている間は低頻度で撃ち続け、止まったらタイマーごと畳む", () => {
+    const un = wireFilesSessionRefresh();
+    publish([s({ state: "working" })]);
+    vi.advanceTimersByTime(WORKING_TICK_MS + COALESCE_MS);
+    expect(useFilesStore.getState().scoped).toEqual({ prefix: "repos/agent-fleet", n: 1 });
+    vi.advanceTimersByTime(WORKING_TICK_MS + COALESCE_MS);
+    expect(useFilesStore.getState().scoped.n).toBe(2);
+
+    // ターンが終わる（ここでもう 1 回撃つ）。以後は走っているものが無いので静か。
+    publish([s({ state: "idle" })]);
+    vi.advanceTimersByTime(MIN_GAP_MS + COALESCE_MS);
+    expect(useFilesStore.getState().scoped.n).toBe(3);
+    vi.advanceTimersByTime(WORKING_TICK_MS * 3);
+    expect(useFilesStore.getState().scoped.n).toBe(3);
+    un();
+  });
+
+  it("タブが裏／WS が停止のときは低頻度更新を撃たない（見ている人のための更新なので）", () => {
+    const un = wireFilesSessionRefresh();
+    publish([s({ state: "working" })]);
+
+    hidden = true;
+    vi.advanceTimersByTime(WORKING_TICK_MS * 2 + COALESCE_MS);
+    expect(useFilesStore.getState().scoped.n).toBe(0);
+
+    hidden = false;
+    useWorkspaceStore.setState({ state: "stopped" });
+    vi.advanceTimersByTime(WORKING_TICK_MS * 2 + COALESCE_MS);
+    expect(useFilesStore.getState().scoped.n).toBe(0);
+
+    // 表に戻り、WS も動いていれば再開する（タイマーは止めていない）。
+    useWorkspaceStore.setState({ state: "running" });
+    vi.advanceTimersByTime(WORKING_TICK_MS + COALESCE_MS);
+    expect(useFilesStore.getState().scoped.n).toBe(1);
+    un();
   });
 });

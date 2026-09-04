@@ -84,6 +84,15 @@ the God-context structure — the reasoning is
   coalesce per working copy and keep a 3-second minimum gap. ★ A failed re-read (5xx,
   dropped fetch) MUST be swallowed and the current rows kept: writing the failure back
   as an empty listing would empty the tree at the end of every turn.
+- Events lead, intervals are the safety net (the timings live in
+  `features/files/refreshPolicy.ts`). Two cases the turn-end edge cannot reach get their
+  own trigger: **mid-turn**, the working copies of running sessions are re-read every
+  20 s (the timer stops entirely when nothing is running, and never fires on a hidden tab
+  or a stopped workspace); **on tab/window return**, what is on screen is revalidated at
+  most every 10 s (the same gate set as `editor/probe.ts` §7.2). The latter is also the
+  only trigger that covers a session with no state model (shell, SSM) or a change made
+  outside Agent Fleet. Rows an automatic re-read ADDED are highlighted for a few seconds
+  (`.fs-new`).
 - Polling: workspace every 4 s, sessions every 4 s, repos every 60 s, resource stats
   every 4 s. A trailing `…` marks an optimistic in-flight state, which both the buttons
   and the poller treat as busy and leave alone.
