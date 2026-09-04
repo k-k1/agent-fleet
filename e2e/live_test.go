@@ -1,18 +1,19 @@
 //go:build e2e
 
-// 実クレデンシャル・スモーク（L4）: 焼き込みの claude CLI が実際に Anthropic と会話
-// できるかの最終確認。認証は 2 経路のどちらか:
-//   - E2E_ANTHROPIC_API_KEY   … API キー（従量課金）→ ANTHROPIC_API_KEY として注入
-//   - E2E_CLAUDE_OAUTH_TOKEN  … `claude setup-token` で発行した OAuth トークン
-//     （Max/Pro サブスク枠を消費・追加課金なし）→ CLAUDE_CODE_OAUTH_TOKEN として注入
+// Live-credential smoke (L4): the last check that the baked-in claude CLI can actually
+// talk to Anthropic. Either credential works:
+//   - E2E_ANTHROPIC_API_KEY   … API key (metered) -> injected as ANTHROPIC_API_KEY
+//   - E2E_CLAUDE_OAUTH_TOKEN  … OAuth token from `claude setup-token`, which draws on a
+//     Max/Pro subscription instead of billing -> injected as CLAUDE_CODE_OAUTH_TOKEN
 //
-// どちらも無ければ skip（課金/サブスク枠を伴うため opt-in。CI では e2e.yml の
-// workflow_dispatch 専用ジョブが secrets を渡す）。
+// With neither set the test skips: it spends money or subscription quota, so it is
+// opt-in and CI only runs it from the workflow_dispatch job in e2e.yml that holds the
+// secrets.
 //
-// TUI のオンボーディング（テーマ選択・API キー確認）に依存しないよう、対話セッション
-// ではなく shell セッション内で `claude -p`（headless print mode）を実行し、出力
-// ファイルを fs API で読み戻して判定する。クレデンシャルは CP の WS_ENV 経由で
-// コンテナ env に注入する（打鍵やログに載せない）。
+// Runs `claude -p` (headless print mode) inside a shell session rather than an
+// interactive one, so the TUI onboarding (theme picker, API-key confirmation) can never
+// gate the run, and reads the output file back through the fs API. Credentials go in via
+// the control plane's WS_ENV so they never appear in keystrokes or logs.
 package e2e
 
 import (
@@ -29,7 +30,7 @@ func TestClaudeLive(t *testing.T) {
 	case os.Getenv("E2E_CLAUDE_OAUTH_TOKEN") != "":
 		env = "WS_ENV=CLAUDE_CODE_OAUTH_TOKEN=" + os.Getenv("E2E_CLAUDE_OAUTH_TOKEN")
 	default:
-		t.Skip("E2E_ANTHROPIC_API_KEY / E2E_CLAUDE_OAUTH_TOKEN のいずれも未設定 — 実クレデンシャル・スモークはスキップ（opt-in）")
+		t.Skip("neither E2E_ANTHROPIC_API_KEY nor E2E_CLAUDE_OAUTH_TOKEN is set - skipping the live-credential smoke (opt-in)")
 	}
 	base := startFleet(t, "e2e-live", env)
 
@@ -39,8 +40,9 @@ func TestClaudeLive(t *testing.T) {
 		t.Fatalf("session create returned no name: %v", created)
 	}
 
-	// -p は非対話（オンボーディング無し）。応答全文でなく決め打ちトークンの包含だけを
-	// 見る（モデルの言い回し揺れに依存しない）。exit code も末尾に落として観測する。
+	// -p is non-interactive, so no onboarding. Assert only that a fixed token appears in
+	// the reply rather than matching the whole response, which would break on any change
+	// in the model's phrasing. The exit code is appended so it can be observed too.
 	sendPrompt(t, base, name,
 		`claude -p 'Reply with exactly: E2E_OK' > live-out.txt 2>&1; echo "exit=$?" >> live-out.txt`)
 	waitFileContains(t, base, "live-out.txt", "E2E_OK", 4*time.Minute)
