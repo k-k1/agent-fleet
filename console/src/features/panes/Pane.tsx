@@ -196,11 +196,22 @@ function PopulatedPane({
   const [mirror, setMirror] = useState(chat === true);
   const [attached, setAttached] = useState(!chat || sessionMeta?.alive === true);
   // Re-sync when the pane's session/chat descriptor changes (a new session opened
-  // here); local toggles persist within the same session.
-  useEffect(() => {
+  // here — and in the tabbed profile, merely selecting another tab of this cell:
+  // one Pane instance is reused, only the props swap). Local toggles persist
+  // within the same session.
+  //
+  // ★ Adjusted DURING RENDER, never from an effect. An effect commits the STALE
+  // `mirror` first and the browser paints that frame before the effect corrects
+  // it — switching from a file tab to a chat-mirror session tab flashed one frame
+  // of raw TUI before the mirror appeared. A render-phase update to this same
+  // component is discarded before the commit, so nothing is ever painted.
+  const descKey = `${pane.session ?? ""} ${chat ? "1" : "0"}`;
+  const [syncedKey, setSyncedKey] = useState(descKey);
+  if (syncedKey !== descKey) {
+    setSyncedKey(descKey);
     setMirror(chat === true);
     setAttached(!chat || sessionMeta?.alive === true);
-  }, [pane.session, chat]);
+  }
   // Track liveness: alive → attach (connecting doesn't resume); stopped → detach
   // to read-only so nothing silently resumes. Runs only on an alive CHANGE, so a
   // user resume (attached=true while alive still false) isn't undone.
