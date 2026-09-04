@@ -71,6 +71,14 @@ func (f *recordingFirer) first() (store.Schedule, bool) {
 // ⚠️ **これは「待ち時間を伸ばして緩めた」のではない。** 緑になる速さは変わらない（発火した
 // 瞬間に返る）。締切は「起きなかった」と**断定する**ためだけにあるので、長くしても検査は
 // 弱くならず、短いと嘘をつく。
+//
+// 🔴 **保証するのは「firer が呼ばれた」ことだけで、台帳が前進したことではない。**
+// 通知は firer の内側（fire の中）から送られるのに対し、台帳の前進 RecordScheduleFire と
+// 実行履歴の追記 AppendScheduleRun は **firer が戻ったあと**に ticker の goroutine が
+// 走らせる（scheduler.go の runOne）。その間には advanceNextRun と SQLite への書き込みが
+// 挟まるので、ここから戻った直後に台帳を読むと**まだ前進していないことがある**。
+// 実測（2026-09-04・8 コア）: 200 反復に 1 回ほど `last_status="" want fired`。
+// **待ち時間の問題ではないので締切を伸ばしても直らない。台帳を読む前に waitLedger を通すこと。**
 func (f *recordingFirer) waitFire(t *testing.T, d time.Duration) {
 	t.Helper()
 	select {
@@ -83,6 +91,62 @@ func (f *recordingFirer) waitFire(t *testing.T, d time.Duration) {
 // liveFireDeadline は「発火しなかった」と断定するまでの上限。共有ホストで他のセッションが
 // ビルドを回していても、発火そのものが起きないことは無い。
 const liveFireDeadline = 30 * time.Second
+
+// waitLedger は台帳が発火を書き終える（cond が真になる）まで待って、その行を返す。
+//
+// **waitFire と対で使う。** waitFire が保証するのは firer の呼び出しまでで、台帳の前進は
+// その後に別の goroutine（ticker）が走らせるため、2 つの間には必ず窓がある。ここを
+// 「発火した＝台帳も前進済み」と決め打つと、contention で破れる（waitFire の注記を参照）。
+//
+// ⚠️ **待ち時間を稼ぐための sleep ではない。** cond が真になった瞬間に返るので緑になる速さは
+// 変わらず、締切は「前進しなかった」と**断定する**ためだけにある —— waitFire と同じ考え方。
+//
+// 🔴 **cond には「台帳が前進したか」だけを書き、期待する値そのものを書かないこと。**
+// 例えば `LastStatus == "fired"` を条件にすると、scheduler が `error:...` を書いた場合に
+// 締切まで待たされたうえ「前進しなかった」という**嘘の見出し**で落ちる。「前進したか」で
+// 待ち、値の判定は呼び出し側のアサーションに残す —— そうすれば従来どおりの文言で落ちる。
+func waitLedger(t *testing.T, ctx context.Context, st *store.SQL, id string, d time.Duration, cond func(store.Schedule) bool) store.Schedule {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for {
+		got, ok, err := st.GetSchedule(ctx, id)
+		if err != nil {
+			t.Fatalf("台帳の読み出しに失敗した (%s): %v", id, err)
+		}
+		if !ok {
+			t.Fatalf("台帳から schedule %s が消えた", id)
+		}
+		if cond(got) {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%v 待っても台帳が前進しなかった: last_status=%q next_run=%q enabled=%v",
+				d, got.LastStatus, got.NextRun, got.Enabled)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// waitRuns は実行履歴が n 行に達するまで待って、その一覧を返す。AppendScheduleRun は
+// RecordScheduleFire の **さらに後**（best-effort）なので、台帳の前進を待っただけでは
+// まだ書かれていないことがある。
+func waitRuns(t *testing.T, ctx context.Context, st *store.SQL, id, membershipID string, n int, d time.Duration) []store.ScheduleRun {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for {
+		runs, err := st.ListScheduleRuns(ctx, id, membershipID, 50)
+		if err != nil {
+			t.Fatalf("実行履歴の読み出しに失敗した (%s): %v", id, err)
+		}
+		if len(runs) >= n {
+			return runs
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%v 待っても実行履歴が %d 行に達しなかった: %+v", d, n, runs)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
 
 // TestLiveOperatorCreateThenTickerFires: an operator registers a due `once` schedule
 // through the real create handler, and the real ticker goroutine fires it, advances the
@@ -131,19 +195,19 @@ func TestLiveOperatorCreateThenTickerFires(t *testing.T) {
 	}
 
 	// Ledger + history reflect the fire, and a spent `once` disabled itself.
-	got, ok, err := st.GetSchedule(ctx, dto.ID)
-	if err != nil || !ok {
-		t.Fatalf("get after fire: err=%v ok=%v", err, ok)
-	}
+	// 台帳の前進は firer の呼び出しより後なので、waitFire だけでは足りない（waitLedger の注記）。
+	got := waitLedger(t, ctx, st, dto.ID, liveFireDeadline, func(s store.Schedule) bool {
+		return s.LastStatus != "" // 「前進したか」だけを待つ。値の判定は下のアサーションが持つ
+	})
 	if got.LastStatus != "fired" {
 		t.Fatalf("last_status=%q want fired", got.LastStatus)
 	}
 	if got.Enabled || got.NextRun != "" {
 		t.Fatalf("spent once not disabled: enabled=%v next_run=%q", got.Enabled, got.NextRun)
 	}
-	runs, err := st.ListScheduleRuns(ctx, dto.ID, mv.MembershipID, 50)
-	if err != nil || len(runs) != 1 || runs[0].Status != "fired" {
-		t.Fatalf("run history = %+v err=%v", runs, err)
+	runs := waitRuns(t, ctx, st, dto.ID, mv.MembershipID, 1, liveFireDeadline)
+	if len(runs) != 1 || runs[0].Status != "fired" {
+		t.Fatalf("run history = %+v", runs)
 	}
 
 	// The ticker must not re-fire the now-disabled row.
@@ -206,7 +270,12 @@ func TestLiveRunNowFiresThroughTicker(t *testing.T) {
 	ff.waitFire(t, liveFireDeadline)
 
 	// interval stays enabled with a fresh future next_run after the fire.
-	got, _, _ := st.GetSchedule(ctx, dto.ID)
+	// 🔴 ここも台帳の前進を待たないと破れる。run_now は next_run を「いま」に戻す
+	// （schedule.go:371-372）ので、**前進する前に読むと next_run はまだ過去のまま**＝
+	// 下の「未来へ進んだか」の判定が偽になる。waitFire から戻った時点では未確定。
+	got := waitLedger(t, ctx, st, dto.ID, liveFireDeadline, func(s store.Schedule) bool {
+		return s.LastStatus != ""
+	})
 	if !got.Enabled {
 		t.Fatal("interval schedule should stay enabled after run_now")
 	}
