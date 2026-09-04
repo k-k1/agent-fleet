@@ -1,28 +1,30 @@
-// wiretest_dup_test.go — control-plane と workspace/agent の 2 つの写しが
-// **漂流していない**ことを機械で保つ。
+// wiretest_dup_test.go keeps the two copies of this package — control-plane and
+// workspace/agent — from drifting apart, mechanically.
 //
-// なぜ写しが 2 つ必要か: モジュール横断の共有 Go パッケージは見送られている
-// （ADR 0012 決定 3）。モジュール内では 1 コピーに畳めるが、**モジュール境界は畳めない。**
+// Two copies exist because a Go package shared across the modules was ruled out
+// (ADR 0012 decision 3): the duplication folds into one copy within a module, but the
+// module boundary does not fold.
 //
-// 🔴 **手書きの複製は漂流する**（運用キット 0.5）。片方だけ直すと、もう片方は
-// **両モジュールのテストが独立に緑のまま**古い実装を使い続ける。
+// Hand-written duplicates drift (operating kit 0.5). Fix one side only and the other keeps
+// running the old implementation while both modules' tests stay independently green.
 //
-// 検査は 2 本立てで、**2 本目が 1 本目の穴を構造的に塞ぐ**:
+// Two checks, the second closing a structural hole in the first:
 //
-//	① 共有区間の byte 比較 — 番兵より下が 1 バイトも違わないこと
-//	② ファイル名集合の一致 — 片方にファイルが 1 枚増えたら赤くなる
+//	① byte comparison of the shared region — not one byte may differ below the sentinel
+//	② equal file-name sets — adding a file to one side alone turns it red
 //
-// ①だけだと**守っているのは「区間」であってパッケージではない**——
-// 片方の番兵の外や新しいファイルに共有すべき道具を足すと、**緑のまま漂流する**。
-// ②はその道を塞ぐ（#346 のレビュワー観察①が、同じファイル内に区間が同居していたため
-// 閉じられなかった穴。**こちらは共有単位がパッケージ 1 つなので機械で閉じられる**）。
+// ① guards a region, not a package: a shared tool added outside the sentinel or in a new
+// file drifts while everything stays green. ② closes that road, because here the unit of
+// sharing is exactly one package.
 //
-// 番兵より上（package 宣言と import）は**モジュールパスが違うので一致しない**。
-// 正規化ではなく**番兵を import の下に置く**方式を採った——正規化は「何を無視してよいか」
-// の判断がコードに埋まるが、番兵は境界がソースに見える。
+// Above the sentinel (package clause and imports) the copies cannot match, because the
+// module paths differ. A sentinel placed below the imports rather than normalisation:
+// normalisation buries the judgement of what may be ignored inside code, while a sentinel
+// puts the boundary in the source where it can be seen.
 //
-// 🔴 **このファイル自身も 2 つの写しで byte 一致している**（相手の位置を定数で持たず、
-// リポジトリ根から探すため）。片方にしか置かないと ② が自分自身で落ちる。
+// This file is itself byte-identical in both copies — it searches for its peer from the
+// repository root instead of holding the peer's path in a constant. Placed on one side
+// only, it would fail ② on itself.
 package wiretest
 
 import (
@@ -57,9 +59,9 @@ func TestWiretestCopiesDoNotDrift(t *testing.T) {
 		a := mustShared(t, filepath.Join(self, name))
 		b := mustShared(t, filepath.Join(peer, name))
 		if a != b {
-			t.Errorf("%s の共有区間が一致しない（%d バイト 対 %d バイト）。\n"+
-				"  片方だけ直すと、両モジュールのテストは独立に緑のまま漂流する。\n"+
-				"  どちらかへ揃えること: %s / %s", name, len(a), len(b), self, peer)
+			t.Errorf("the shared region of %s does not match (%d bytes vs %d bytes).\n"+
+				"  Fix only one side and both modules' tests stay independently green while they drift.\n"+
+				"  Make them identical: %s / %s", name, len(a), len(b), self, peer)
 		}
 	}
 }
@@ -71,11 +73,11 @@ func TestWiretestCopiesHaveSameFiles(t *testing.T) {
 	self, peer := selfAndPeer(t)
 	got, want := goFiles(t, self), goFiles(t, peer)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("2 つの写しのファイル構成が違う。\n  %s: %v\n  %s: %v\n"+
-			"  片方だけにファイルを足すと、byte 比較は全部緑のまま漂流する。", self, got, peer, want)
+		t.Errorf("the two copies have different file sets.\n  %s: %v\n  %s: %v\n"+
+			"  Add a file to one side only and the byte comparison stays entirely green while they drift.", self, got, peer, want)
 	}
 	if len(got) == 0 {
-		t.Fatal(".go が 1 枚も見つからない（走査が壊れている）")
+		t.Fatal("not a single .go file was found (the scan is broken)")
 	}
 }
 
@@ -107,8 +109,8 @@ func selfAndPeer(t *testing.T) (string, string) {
 	}
 	// Fatal, not Skip: skipping when nothing is found makes "not checked" green while it
 	// reads as "not drifting".
-	t.Fatalf("リポジトリ根（%v の両方を持つ階層）が %s から見つからない。"+
-		"移動したならこの表を直すこと——見つからないまま緑にはしない。", wiretestCopies, wd)
+	t.Fatalf("the repository root (the level holding both of %v) was not found from %s. "+
+		"If they moved, fix this table - not finding them must never be green.", wiretestCopies, wd)
 	return "", ""
 }
 
@@ -156,8 +158,8 @@ func mustShared(t *testing.T, path string) string {
 	}
 	s := string(b)
 	if n := strings.Count(s, wiretestSentinel); n != 1 {
-		t.Fatalf("%s の番兵が %d 個（1 個であるべき）。"+
-			"番兵が消えると比較範囲が変わり、**検査が黙って別のものを見る**。", path, n)
+		t.Fatalf("%s has %d sentinels (there must be exactly 1). "+
+			"Lose the sentinel and the compared range changes, so the check silently looks at something else.", path, n)
 	}
 	return s[strings.Index(s, wiretestSentinel)+len(wiretestSentinel):]
 }

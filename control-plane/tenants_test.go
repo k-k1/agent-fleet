@@ -34,16 +34,16 @@ func TestTenantLimitsProjectionCoversEveryStoredField(t *testing.T) {
 	for name, typ := range a {
 		got, ok := b[name]
 		if !ok {
-			t.Errorf("tenantLimits.%s は tenantsrv.Limits に無い: limits の保存で無言に落ちる", name)
+			t.Errorf("tenantLimits.%s is not in tenantsrv.Limits: it is silently dropped when limits are saved", name)
 			continue
 		}
 		if got != typ {
-			t.Errorf("%s: tenantLimits は %s / tenantsrv.Limits は %s", name, typ, got)
+			t.Errorf("%s: tenantLimits has %s / tenantsrv.Limits has %s", name, typ, got)
 		}
 	}
 	for name := range b {
 		if _, ok := a[name]; !ok {
-			t.Errorf("tenantsrv.Limits.%s は tenantLimits に無い: 書いても保存されない", name)
+			t.Errorf("tenantsrv.Limits.%s is not in tenantLimits: writing it does not save it", name)
 		}
 	}
 }
@@ -70,10 +70,10 @@ func TestTenantLimitsRoundTripsThroughTheSeam(t *testing.T) {
 		case reflect.Slice:
 			f.Set(reflect.ValueOf([]string{v.Type().Field(i).Name}))
 		default:
-			t.Fatalf("%s: 未知の kind %s — 往復検査を足すこと", v.Type().Field(i).Name, f.Kind())
+			t.Fatalf("%s: unknown kind %s - add it to the round-trip check", v.Type().Field(i).Name, f.Kind())
 		}
 	}
 	if got := tenantLimitsIn(tenantLimitsOut(src)); !reflect.DeepEqual(got, src) {
-		t.Errorf("往復で値が変わった:\n in  = %+v\n out = %+v", src, got)
+		t.Errorf("the value changed across the round trip:\n in  = %+v\n out = %+v", src, got)
 	}
 }

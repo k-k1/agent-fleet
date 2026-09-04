@@ -1,17 +1,20 @@
-# docs ゲート。docs/ の構造規約（docs/CONVENTIONS.md）を機械検査する。
+# The docs gate: a machine check of the structural conventions for docs/
+# (docs/CONVENTIONS.md).
 #
-# なぜ ci.yml と分けるか: ci.yml は Go / Console のビルドとテストで、docs だけを
-# 直した PR には重すぎる。逆に docs ゲートはコード変更でも走らせたい——ref/ の表は
-# コードの一次情報（エージェント種別の定数・runtime のプロファイル）と突き合わせて
-# いるので、**表を触らずコードを触ったときにこそ壊れる**。だから両方の変更で走る。
+# Why it is separate from ci.yml: ci.yml builds and tests Go and the Console, which is too
+# heavy for a PR that only edits docs. Conversely the docs gate is wanted on code changes
+# too — the tables under ref/ are matched against primary information in the code (the
+# agent-kind constants, the runtime profiles), so they break precisely when the code is
+# touched and the table is not. Hence it runs on both kinds of change.
 #
-# ⚠️ 同じ理由で docs/ の外も見ている: workspace/agent/knowledge/af-usage.md（アシスタント
-# 知識）と workspace/workspace-notes.md（全コンテナへ配る
-# 運用ポリシー）は docs/ の写しなので、docs/ を並べ替えたときに取り残される。よって
-# `paths:` の絞り込みは**入れない**——絞ると「docs だけ直した PR」でしか走らなくなり、
-# この 2 つが腐るのはまさに docs 側を直した時である。
+# For the same reason it also looks outside docs/: workspace/agent/knowledge/af-usage.md
+# (the assistant's knowledge) and workspace/workspace-notes.md (the operating policy
+# distributed to every container) are copies of docs/ content and get left behind when
+# docs/ is rearranged. So there is deliberately no `paths:` filter — a filter would limit
+# this to "PRs that only touch docs", and those two go stale exactly when the docs side is
+# edited.
 #
-# 検査の中身は scripts/docs-check.py。ローカルでも同じコマンドで走る。
+# The check itself is scripts/docs-check.py, run locally with the same command.
 name: docs
 
 permissions:
@@ -34,12 +37,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 依存は無い（標準ライブラリのみ）。ランナーの python3 をそのまま使う。
+      # No dependencies (standard library only), so the runner's python3 is used as is.
       - name: docs-check
         run: python3 scripts/docs-check.py
 
-      # 移行中は warn のままにしてある検査（利用者向けの棚の語彙）を可視化する。
-      # 棚を書き終えた段階で、この行を上の run に --strict として畳む。
+      # Surfaces the checks kept at warn level during the migration (the vocabulary of the
+      # user-facing shelves). Once the shelves are written, fold this into the run above as
+      # --strict.
       - name: docs-check (strict, informational)
         continue-on-error: true
         run: python3 scripts/docs-check.py --strict

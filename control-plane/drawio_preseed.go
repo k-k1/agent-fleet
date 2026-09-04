@@ -84,15 +84,15 @@ func drawioPreseedNames(m drawioStencilManifest, all bool) []string {
 
 func runDrawioPreseed(args []string) {
 	fs := flag.NewFlagSet("drawio-preseed", flag.ExitOnError)
-	all := fs.Bool("all", false, "台帳の全件（203 件 / 40.8 MB）を投入する")
-	from := fs.String("from", "", "ネットワークではなく、このディレクトリ（drawio の stencils/）から読む")
-	dir := fs.String("dir", "", "キャッシュ先（既定 $WS_DATA/drawio-stencils）")
-	list := fs.Bool("list", false, "対象を並べるだけで何もしない")
+	all := fs.Bool("all", false, "seed every entry in the manifest (203 sets / 40.8 MB)")
+	from := fs.String("from", "", "read from this directory (drawio's stencils/) instead of from the network")
+	dir := fs.String("dir", "", "cache destination (default $WS_DATA/drawio-stencils)")
+	list := fs.Bool("list", false, "only list the targets and do nothing")
 	_ = fs.Parse(args)
 
 	m, err := loadDrawioManifest()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "台帳を読めない: %v\n", err)
+		fmt.Fprintf(os.Stderr, "cannot read the manifest: %v\n", err)
 		os.Exit(1)
 	}
 	names := drawioPreseedNames(m, *all)
@@ -108,9 +108,9 @@ func runDrawioPreseed(args []string) {
 	}
 	skippedBytes -= total
 
-	fmt.Printf("drawio %s / 対象 %d 件 %.1f MB", m.Version, len(names), float64(total)/(1<<20))
+	fmt.Printf("drawio %s / target %d sets %.1f MB", m.Version, len(names), float64(total)/(1<<20))
 	if skipped > 0 {
-		fmt.Printf("（対象外 %d 件 %.1f MB —— 全件なら --all）", skipped, float64(skippedBytes)/(1<<20))
+		fmt.Printf(" (not targeted: %d sets %.1f MB - use --all for everything)", skipped, float64(skippedBytes)/(1<<20))
 	}
 	fmt.Println()
 	if *list {
@@ -125,11 +125,11 @@ func runDrawioPreseed(args []string) {
 		cacheDir = filepath.Join(envx.Or("WS_DATA", "/tmp/af-data"), "drawio-stencils")
 	}
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "キャッシュ先を作れない %s: %v\n", cacheDir, err)
+		fmt.Fprintf(os.Stderr, "cannot create the cache destination %s: %v\n", cacheDir, err)
 		os.Exit(1)
 	}
 	d := &drawioStencils{cacheDir: cacheDir, loading: map[string]*sync.Mutex{}}
-	fmt.Printf("投入先 %s\n", cacheDir)
+	fmt.Printf("seeding into %s\n", cacheDir)
 
 	var done, already, failed int
 	for _, name := range names {
@@ -146,7 +146,7 @@ func runDrawioPreseed(args []string) {
 			body, err = os.ReadFile(filepath.Join(*from, filepath.FromSlash(name)))
 			if err == nil {
 				if verr := verifyDrawioStencil(body, entry); verr != nil {
-					err = fmt.Errorf("%s: %w（--from のディレクトリは %s のものか）", name, verr, m.Version)
+					err = fmt.Errorf("%s: %w (is the --from directory the one for %s?)", name, verr, m.Version)
 				}
 			}
 			if err == nil {
@@ -168,7 +168,7 @@ func runDrawioPreseed(args []string) {
 			fmt.Printf("  %d / %d …\n", done+already, len(names))
 		}
 	}
-	fmt.Printf("投入 %d 件 / 既にあった %d 件 / 失敗 %d 件\n", done, already, failed)
+	fmt.Printf("seeded %d / already present %d / failed %d\n", done, already, failed)
 	if failed > 0 {
 		// A missing stencil still opens the diagram (outlines and colours only), so a
 		// failure does not abort the run — but the exit status stays honest.

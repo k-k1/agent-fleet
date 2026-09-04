@@ -110,7 +110,7 @@ func TestGitHubOutageHonorsTheLastPositiveAnswerForTheGraceWindow(t *testing.T) 
 	p.TTL = 0 // treat every read as stale, so re-evaluation is entered
 	gh.apiDown = true
 	if ok, err := p.Allowed(t.Context(), pr); !ok || err != nil {
-		t.Fatalf("猶予期間内なのに拒否された: ok=%v err=%v", ok, err)
+		t.Fatalf("rejected although still inside the grace window: ok=%v err=%v", ok, err)
 	}
 
 	// Past the grace window it closes.
@@ -124,6 +124,6 @@ func TestGitHubOutageHonorsTheLastPositiveAnswerForTheGraceWindow(t *testing.T) 
 	p.cache["4242"].lastOK = time.Now().Add(-2 * time.Hour)
 	p.mu.Unlock()
 	if ok, _ := p.Allowed(t.Context(), pr); ok {
-		t.Fatal("猶予期間を過ぎても通り続けている")
+		t.Fatal("still let through after the grace window expired")
 	}
 }

@@ -76,7 +76,7 @@ func wiremapExemptions() []wiremapExemption {
 func exemptionStillNeeded(ex wiremapExemption, byFunc map[string][]wireMapSite) (bool, string) {
 	got, ok := byFunc[ex.Func]
 	if !ok {
-		return false, "対象サイトがもう存在しない（変換済み・削除済みなら免除表からも消すこと）"
+		return false, "the target site no longer exists (once converted or deleted, remove it from the exemption table too)"
 	}
 	for _, s := range got {
 		switch ex.NeedsFlag {
@@ -90,7 +90,7 @@ func exemptionStillNeeded(ex wiremapExemption, byFunc map[string][]wireMapSite) 
 			}
 		}
 	}
-	return false, ex.NeedsFlag + " 印が付いていない（キー集合が確定するようになったか、走査が痩せた）"
+	return false, ex.NeedsFlag + " flag is not set (either the key set became statically determined, or the walk got thinner)"
 }
 
 // wiremapSitesByFunc reshapes the scan result so it can be looked up by function name.
@@ -129,10 +129,10 @@ func reportStaleExemptions(t wiretest.TB, exs []wiremapExemption, byFunc map[str
 	t.Helper()
 	for _, ex := range exs {
 		if ok, why := exemptionStillNeeded(ex, byFunc); !ok {
-			t.Errorf("免除 %q はもう要らない（理由: %s）。\n"+
-				"  免除の根拠は %q だった。\n"+
-				"  実装が変わってキー集合が確定するようになったなら**免除を外して変換する**。\n"+
-				"  走査が痩せて印を落としたなら**道具を直す**。どちらにせよこのまま緑にはしない。",
+			t.Errorf("exemption %q is no longer needed (why: %s).\n"+
+				"  the ground for the exemption was %q.\n"+
+				"  if the implementation changed and the key set is now determined, **drop the exemption and convert the site**.\n"+
+				"  if the walk got thinner and lost the flag, **fix the tool**. Either way this does not stay green.",
 				ex.Func, why, ex.Why)
 		}
 	}
@@ -169,12 +169,12 @@ func TestWiremapDeferredAreStillMaps(t *testing.T) {
 	}
 	for _, d := range wiremapDeferred {
 		if !byFunc[d.Func] {
-			t.Errorf("保留 %q はもう map サイトではない（%s）。\n"+
-				"  変換済み・削除済みなら**保留表から外すこと**。"+
-				"残すと変換候補が計画から静かに落ちる。", d.Func, d.Why)
+			t.Errorf("deferred site %q is no longer a map site (%s).\n"+
+				"  once converted or deleted, **take it out of the deferred table**. "+
+				"Left there, a conversion candidate drops out of the plan in silence.", d.Func, d.Why)
 		}
 		if strings.TrimSpace(d.Why) == "" {
-			t.Errorf("保留 %q に理由が無い", d.Func)
+			t.Errorf("deferred site %q has no reason", d.Func)
 		}
 	}
 }
@@ -185,18 +185,18 @@ func TestWiremapExemptionsHaveReasons(t *testing.T) {
 	seen := map[string]bool{}
 	for _, ex := range wiremapExemptions() {
 		if strings.TrimSpace(ex.Why) == "" {
-			t.Errorf("免除 %q に理由が無い", ex.Func)
+			t.Errorf("exemption %q has no reason", ex.Func)
 		}
 		if ex.NeedsFlag != "dyn" && ex.NeedsFlag != "partial" {
-			t.Errorf("免除 %q の NeedsFlag が dyn/partial のどちらでもない: %q", ex.Func, ex.NeedsFlag)
+			t.Errorf("exemption %q has a NeedsFlag that is neither dyn nor partial: %q", ex.Func, ex.NeedsFlag)
 		}
 		if seen[ex.Func] {
-			t.Errorf("免除 %q が重複している", ex.Func)
+			t.Errorf("exemption %q is duplicated", ex.Func)
 		}
 		seen[ex.Func] = true
 	}
 	if len(wiremapExemptions()) == 0 {
-		t.Fatal("免除が 0 件（表が空なら逆検査は何も見ていない）")
+		t.Fatal("zero exemptions (with an empty table the reverse check is looking at nothing)")
 	}
 }
 
@@ -217,13 +217,13 @@ func TestWiremapExemptionReverseCheckActuallyFires(t *testing.T) {
 		return len(rec.Errs()) > 0
 	}
 
-	t.Run("対象が消えた免除は赤くなる", func(t *testing.T) {
-		if !check(wiremapExemption{Func: "存在しない.ハンドラ", Why: "合成", NeedsFlag: "dyn"}) {
-			t.Error("対象が居ない免除を素通しした＝「変換済みなのに免除が残っている」を捕まえられない")
+	t.Run("an exemption whose site is gone goes red", func(t *testing.T) {
+		if !check(wiremapExemption{Func: "nonexistent.handler", Why: "synthetic", NeedsFlag: "dyn"}) {
+			t.Error("let an exemption with no target site through = it cannot catch 'converted, yet the exemption is still there'")
 		}
 	})
 
-	t.Run("印が裏付けない免除は赤くなる", func(t *testing.T) {
+	t.Run("an exemption the flags do not back goes red", func(t *testing.T) {
 		// Pick one real site that carries no dyn flag and synthesize an exemption that
 		// claims dyn as its reason.
 		var plain string
@@ -240,19 +240,19 @@ func TestWiremapExemptionReverseCheckActuallyFires(t *testing.T) {
 			}
 		}
 		if plain == "" {
-			t.Skip("dyn/partial を持たないサイトが 1 つも無い（対照を作れない）")
+			t.Skip("not a single site without dyn/partial (no control can be built)")
 		}
-		if !check(wiremapExemption{Func: plain, Why: "合成", NeedsFlag: "dyn"}) {
-			t.Errorf("%s は dyn 印を持たないのに dyn を理由にした免除を素通しした", plain)
+		if !check(wiremapExemption{Func: plain, Why: "synthetic", NeedsFlag: "dyn"}) {
+			t.Errorf("%s carries no dyn flag, yet an exemption claiming dyn as its ground was let through", plain)
 		}
 	})
 
-	t.Run("本物の免除は通る", func(t *testing.T) {
+	t.Run("a real exemption passes", func(t *testing.T) {
 		// Positive control as well as negative: a check that reddens everything protects
 		// nothing.
 		for _, ex := range wiremapExemptions() {
 			if check(ex) {
-				t.Errorf("実在する免除 %q を赤にした（検査が厳しすぎる）", ex.Func)
+				t.Errorf("reddened the real exemption %q (the check is too strict)", ex.Func)
 			}
 		}
 	})

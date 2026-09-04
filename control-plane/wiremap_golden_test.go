@@ -34,7 +34,7 @@ import (
 )
 
 var updateWireMapGolden = flag.Bool("update-wiremap-golden", false,
-	"testdata/wiremap.golden を実際の map 書き出し地点で書き換える（意図して変えたときだけ）")
+	"rewrite testdata/wiremap.golden from the actual map write sites (only when the change was intended)")
 
 const wireMapGoldenPath = "testdata/wiremap.golden"
 
@@ -47,15 +47,15 @@ const wireMapMinSites = 60
 func TestWireMapGolden(t *testing.T) {
 	sites := scanWireMapSites(t, ".")
 	if len(sites) < wireMapMinSites {
-		t.Fatalf("map 書き出し地点が %d 件しか取れなかった（下限 %d）。"+
-			"走査が壊れている疑いが濃い——ゴールデンを撮り直す前に道具を疑うこと。",
+		t.Fatalf("only %d map write sites were picked up (floor %d). "+
+			"the scan is very likely broken - suspect the tool before retaking the golden.",
 			len(sites), wireMapMinSites)
 	}
 	got := wireMapLines(sites)
 
 	if *updateWireMapGolden {
 		writeWireMapGolden(t, wireMapGoldenPath, got)
-		t.Logf("wrote %s (%d 行 / %d サイト)", wireMapGoldenPath, len(got), len(sites))
+		t.Logf("wrote %s (%d lines / %d sites)", wireMapGoldenPath, len(got), len(sites))
 		return
 	}
 	assertWireMapGoldenLines(t, wireMapGoldenPath, got)
@@ -68,10 +68,10 @@ func TestWireMapGolden(t *testing.T) {
 func assertWireMapGoldenLines(t *testing.T, path string, got []string) {
 	t.Helper()
 	if diff := lineDiff(readGoldenLines(t, path), got); diff != "" {
-		t.Errorf("%s と一致しない:\n%s\n"+
-			"意図した増減なら -update-wiremap-golden で撮り直し、**撮り直した理由を PR に書く**。\n"+
-			"  行が消えた = その map サイトが struct になった（変換したなら意図どおり）か、消えた。\n"+
-			"  キーが増減した = ワイヤが変わった可能性そのもの。等価テストで示せていないなら止まること。",
+		t.Errorf("does not match %s:\n%s\n"+
+			"if the gain/loss was intended, retake with -update-wiremap-golden and **state in the PR why it was retaken**.\n"+
+			"  a line disappeared = that map site became a struct (intended, if you converted it), or it is gone.\n"+
+			"  a key was gained or lost = that IS the wire possibly changing. stop unless an equivalence test shows otherwise.",
 			path, diff)
 	}
 }
@@ -92,7 +92,7 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 		byFunc[s.Func] = append(byFunc[s.Func], s)
 	}
 
-	t.Run("条件付きキーを持つ変数 map を開けている", func(t *testing.T) {
+	t.Run("opens a variable map that has conditional keys", func(t *testing.T) {
 		// Do not name the sample. This used to point at gitServerAPI.blob, and the
 		// guarantee died the moment this track turned that site into a struct (#347 was
 		// the same shape). What your own work deletes cannot guarantee anything.
@@ -110,14 +110,14 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 			}
 		}
 		if len(withCond) == 0 {
-			t.Fatal("「基底のキー ＋ 条件付きキー」を両方持つサイトが 1 つも無い＝" +
-				"変数 map の追跡か条件分岐の判定が壊れている（omitempty の要否が読めなくなる）")
+			t.Fatal("not a single site has both base keys AND conditional keys = " +
+				"either variable-map tracking or the conditional detection is broken (whether omitempty is needed becomes unreadable)")
 		}
-		t.Logf("基底＋条件付きの両方を開けたサイト: %d 件（例: %s の %v / cond=%v）",
+		t.Logf("sites opened with both base and conditional keys: %d (e.g. %s with %v / cond=%v)",
 			len(withCond), withCond[0].Func, withCond[0].Keys, withCond[0].CondKeys)
 	})
 
-	t.Run("形状関数の戻り値を2段たどれている", func(t *testing.T) {
+	t.Run("follows a shape function's return value two levels down", func(t *testing.T) {
 		// workspaceAPI.stats is writeJSON(w, 200, workspaceStats(...)), and workspaceStats
 		// returns out := containerStats(...): the keys live in the callee OF the callee.
 		//
@@ -137,38 +137,38 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 			}
 		}
 		if !exempt {
-			t.Fatalf("%s が免除表に無い。標本は「変換で消えない」ものから採る約束なので、"+
-				"免除でなくなったなら標本も選び直すこと。", sample)
+			t.Fatalf("%s is not in the exemption table. the rule is that samples are taken from sites that "+
+				"do not disappear on conversion, so if it is no longer exempt, pick a new sample too.", sample)
 		}
 		got := byFunc[sample]
 		if len(got) == 0 {
-			t.Fatal(sample + " を拾えていない（形状関数の戻り値を開けていない）")
+			t.Fatal(sample + " was not picked up (the shape function's return value is not being opened)")
 		}
 		// running/starting/oom_recent come from workspaceStats itself (level 1);
 		// exit_code/oom_killed/cpu_pct/mem_max/oom_kill_total from containerStats (level 2).
 		want := []string{"running", "starting", "oom_recent", "exit_code", "oom_killed", "cpu_pct", "mem_max"}
 		if !wireMapHasAll(got[0].Keys, want) {
-			t.Errorf("2 段目（containerStats）まで降りていない: %v\n  %v を含むべき", got[0].Keys, want)
+			t.Errorf("did not descend to the second level (containerStats): %v\n  should contain %v", got[0].Keys, want)
 		}
 		// Even so the key set is not complete: containerStats assigns `out` three separate
 		// times, and mem_used in the third literal `{"running": true, "mem_used": memUsed}`
 		// is unreachable for this scan. Unless that unreachability itself shows up in the
 		// golden, the reader takes the key set for complete.
 		if wireMapHasAll(got[0].Keys, []string{"mem_used"}) {
-			t.Log("mem_used まで開けるようになった。partial 印の要否を見直すこと")
+			t.Log("mem_used is now being opened too. reconsider whether the partial mark is still needed")
 		} else if !got[0].Partial {
-			t.Error("キー集合が不完全（mem_used が取れていない）のに partial 印が付いていない——" +
-				"ゴールデンの読者がキー集合を完全だと誤解する")
+			t.Error("the key set is incomplete (mem_used is not picked up) yet no partial mark is set - " +
+				"a reader of the golden will mistake the key set for complete")
 		}
 	})
 
-	t.Run("外来キーの流し込みに dyn 印が付く", func(t *testing.T) {
+	t.Run("merged-in foreign keys get a dyn mark", func(t *testing.T) {
 		// workspaceStats merges a map coming from the Agent with `for k, v := range`, so
 		// the key set is not statically determined and must not be snapshotted as if it were.
 		got := byFunc["workspaceAPI.stats"]
 		if len(got) == 0 || !got[0].DynKey {
-			t.Error("workspaceStats の dyn 印が落ちている——" +
-				"キー集合が静的に確定しないことがゴールデンから読めなくなる")
+			t.Error("workspaceStats has lost its dyn mark - " +
+				"the golden no longer shows that the key set is not statically determined")
 		}
 	})
 }
@@ -214,13 +214,13 @@ func writeWireMapGolden(t *testing.T, path string, lines []string) {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
 	var b strings.Builder
-	b.WriteString("# map[string]any を直に返している JSON 書き出し地点のキー集合。生成物 —— 手で編集しない。\n")
-	b.WriteString("# 更新: cd control-plane && go test -run TestWireMapGolden -update-wiremap-golden ./...\n")
-	b.WriteString("# 形式: <ファイル> <関数> x<同一形状の件数> {キー集合} [cond{条件付きキー}] [dyn|partial]\n")
-	b.WriteString("#   cond    = 条件文の中で足されるキー（struct 化するなら omitempty の要否を判断する対象）\n")
-	b.WriteString("#   dyn     = 非リテラルのキーがある（キー集合は静的に確定しない＝struct 化できない）\n")
-	b.WriteString("#   partial = 変数が複数回代入されており、キー集合を開けきれていない\n")
-	b.WriteString("# 🔴 キーが減った/増えた差分は、ワイヤが変わった可能性そのもの。撮り直す理由を PR に書くこと。\n")
+	b.WriteString("# Key sets of the JSON write sites that still return a map[string]any directly.\n# Generated - do not edit by hand.\n")
+	b.WriteString("# Update: cd control-plane && go test -run TestWireMapGolden -update-wiremap-golden ./...\n")
+	b.WriteString("# Format: <file> <func> x<count of identical shapes> {key set} [cond{conditional keys}] [dyn|partial]\n")
+	b.WriteString("#   cond    = keys added inside a conditional (decide omitempty for these when converting)\n")
+	b.WriteString("#   partial = the variable is assigned more than once, so the key set is not fully opened\n")
+	b.WriteString("#   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct\n")
+	b.WriteString("# A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.\n")
 	fmt.Fprintf(&b, "# count: %d\n", len(lines))
 	for _, ln := range lines {
 		b.WriteString(ln)
@@ -282,7 +282,7 @@ func scanWireMapSites(t *testing.T, root string) []wireMapSite {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("走査に失敗: %v", err)
+		t.Fatalf("scan failed: %v", err)
 	}
 
 	for _, f := range files {

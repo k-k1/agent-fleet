@@ -140,7 +140,7 @@ func TestTenantGitHubSaveTimeValidation(t *testing.T) {
 	case row.AllowedDomains != "sub.co.jp":
 		t.Fatalf("domains = %q (must be normalized on save)", row.AllowedDomains)
 	case row.Status != "pending":
-		t.Fatalf("status = %q — a new row is never born active (決定 30)", row.Status)
+		t.Fatalf("status = %q — a new row is never born active (decision 30)", row.Status)
 	}
 }
 
@@ -199,7 +199,7 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 		t.Fatalf("tenant github must not be refused: %v", err)
 	}
 	if isNew || second.ID != first.ID || second.UserKey != first.UserKey {
-		t.Fatalf("同じ GitHub アカウントが別人になった: %+v want %+v (isNew=%v)", second, first, isNew)
+		t.Fatalf("the same GitHub account became a different person: %+v want %+v (isNew=%v)", second, first, isNew)
 	}
 	if n := countRows(t, st, "identity"); n != 1 {
 		t.Fatalf("identity rows = %d, want 1", n)
@@ -212,7 +212,7 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 		Provider: "t:sub:keycloak", Subject: "42", Realm: "https://idp.sub.co.jp/realms/x",
 		Email: email, FallbackKey: sanitizeUser(email), EmailJoin: false,
 	}); err == nil {
-		t.Fatal("別 realm・同 subject は結合してはいけない（email はすでに他人のもの）")
+		t.Fatal("a different realm with the same subject must not be joined (the email already belongs to somebody else)")
 	}
 
 	// A row carrying no realm (pre-0041, through the proxy) stays refused.
@@ -220,7 +220,7 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 		Provider: "t:sub:entra", Subject: "99", Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: false,
 	}); err == nil {
-		t.Fatal("realm 無しで email だけ一致する行は拒否のまま（決定 32）")
+		t.Fatal("a row with no realm that matches on email alone stays refused (decision 32)")
 	}
 }
 
@@ -239,7 +239,7 @@ func TestFillProviderRealmMakesOldRowsJoinable(t *testing.T) {
 		Provider: "t:sub:github", Subject: "42", Realm: auth.GithubWebBase, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: false,
 	}); err == nil {
-		t.Fatal("埋め戻す前は拒否される（この状態を直すのが FillProviderRealm）")
+		t.Fatal("before the backfill this is refused (fixing that state is what FillProviderRealm is for)")
 	}
 
 	if err := st.FillProviderRealm(ctx, auth.GithubProviderID, auth.GithubWebBase); err != nil {
@@ -253,7 +253,7 @@ func TestFillProviderRealmMakesOldRowsJoinable(t *testing.T) {
 		t.Fatalf("after fill: %v", err)
 	}
 	if joined.ID != first.ID {
-		t.Fatalf("埋め戻し後も別人のまま: %s want %s", joined.ID, first.ID)
+		t.Fatalf("still a different person after the backfill: %s want %s", joined.ID, first.ID)
 	}
 
 	// An already recorded realm is never overwritten, so that a deployment repointed at
@@ -308,16 +308,16 @@ func TestHiddenProvidersHideTheButtonButNotTheDoor(t *testing.T) {
 
 	page := body("/login/sub")
 	if strings.Contains(page, "provider=google") {
-		t.Fatalf("隠した方式のボタンが出ている:\n%s", page)
+		t.Fatalf("the hidden method's button is on the page:\n%s", page)
 	}
 	if !strings.Contains(page, "t%3Asub%3Aentra") {
-		t.Fatalf("自社の方式のボタンは出ていないといけない:\n%s", page)
+		t.Fatalf("the tenant's own method must have a button:\n%s", page)
 	}
 	// The point of the test: hidden or not, someone who signed in with that method can use
 	// this tenant.
 	ok, _ := mgr.tenantLogin.providerAllowed(ctx, tn.ID, "google")
 	if !ok {
-		t.Fatal("隠した方式が門でも閉じている — 兼務の人が締め出される（表示と強制を混ぜている）")
+		t.Fatal("the hidden method is closed at the gate too — someone holding both roles is locked out (display and enforcement are being mixed up)")
 	}
 
 	// When everything is hidden, the hide list is ignored instead: a login page with no
@@ -327,7 +327,7 @@ func TestHiddenProvidersHideTheButtonButNotTheDoor(t *testing.T) {
 	}
 	mgr.tenantLogin.invalidate()
 	if page := body("/login/sub"); !strings.Contains(page, "provider=google") {
-		t.Fatalf("全部隠したときはボタンを出す（行き止まりを作らない）:\n%s", page)
+		t.Fatalf("with everything hidden the buttons must still be shown (never create a dead end):\n%s", page)
 	}
 }
 
@@ -382,16 +382,16 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 	} {
 		page := body(tc.accept)
 		if !strings.Contains(page, tc.tenant) {
-			t.Fatalf("%s: テナント行のボタンに会社名が入っていない（%q が無い）:\n%s", tc.lang, tc.tenant, page)
+			t.Fatalf("%s: the tenant row's button does not carry the company name (%q is missing):\n%s", tc.lang, tc.tenant, page)
 		}
 		// The env button keeps its original wording, and the tenant row's wording contains
 		// it, so "two buttons with the same string" is checked by the occurrence count.
 		if n := strings.Count(page, tc.env); n != 2 {
-			t.Fatalf("%s: %q の出現が %d（env の 1 つ＋テナント行の接頭辞 1 つ = 2 のはず）:\n%s",
+			t.Fatalf("%s: %q appears %d times (1 from env + 1 as the tenant row's prefix = 2 expected):\n%s",
 				tc.lang, tc.env, n, page)
 		}
 		if !strings.Contains(page, "provider="+auth.GithubProviderID) || !strings.Contains(page, "t%3Asub%3Agithub") {
-			t.Fatalf("%s: 両方のボタンが出ていない:\n%s", tc.lang, page)
+			t.Fatalf("%s: both buttons are not on the page:\n%s", tc.lang, page)
 		}
 	}
 
@@ -403,7 +403,7 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 	if p.Label("ja") != "子会社の GitHub" || p.Label("en") != "Subsidiary GitHub" {
-		t.Fatalf("行が書いたラベルが勝っていない: %q / %q", p.Label("ja"), p.Label("en"))
+		t.Fatalf("the label the row wrote did not win: %q / %q", p.Label("ja"), p.Label("en"))
 	}
 }
 

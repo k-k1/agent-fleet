@@ -54,7 +54,7 @@ Parameters:
       moving the small-file caches (go build cache, uv, go modules) and build artifacts
       (node_modules, target, .venv) off EFS onto the task-local disk: the entrypoint
       does that only when this is 30 or more, because the measured caches do not fit
-      alongside the image in 20 GiB (ADR 0044 決定 3). The default is 50 so that
+      alongside the image in 20 GiB (ADR 0044 decision 3). The default is 50 so that
       relocation is ON — at 0 it can never arm, which is what shipped before and meant
       every deployment ran builds on EFS at ~9x the cost. Roughly $2.9/month per
       workspace at 24/7, and only while the task runs. Set 0 to opt out.
@@ -66,7 +66,7 @@ Parameters:
       Which Runtime adapter the Control Plane uses. `ecs` = Fargate (the shipped
       default: two resources per workspace, ~105s to start, home on EFS). `ecs-ec2` =
       a pool of EC2 slots with a persistent per-user EBS home (docs/log/64 §64.12/§64.17,
-      ADR 0045 決定 10/12). Switch for I/O and persistence (small-file writes 8-30x faster
+      ADR 0045 decision 10/12). Switch for I/O and persistence (small-file writes 8-30x faster
       than EFS, a home that survives) and for sizes above Fargate's ceilings — NOT for
       start latency: measured 43-110s against Fargate's ~105s. The price is six resource
       kinds per workspace on a substrate with no production mileage. Requires the
@@ -86,9 +86,9 @@ Parameters:
       holds its memory REQUEST and gets the WHOLE box (the task reserves neither cpu
       nor memory — on EC2 those are reservations against the instance). EC2 on-demand
       pricing is perfectly linear in vCPU, so bigger slots are not more expensive per
-      user (ADR 0045 決定 8). The vCPU field is optional and display-only: the Console
+      user (ADR 0045 decision 8). The vCPU field is optional and display-only: the Console
       prints it so a tenant admin can see which box a memory number lands on, and
-      omitting it just omits the label (ADR 0045 決定 21 — asking EC2 instead would
+      omitting it just omits the label (ADR 0045 decision 21 — asking EC2 instead would
       mean an extra IAM action for a label).
 
       Two shapes, and the old one is not deprecated (docs/log/70 §70.4.2):
@@ -227,7 +227,7 @@ Parameters:
     Default: "0"
     Description: >-
       The DEPLOYMENT DEFAULT for how long a home may sit unopened before it is
-      snapshotted and its volume deleted; the next start restores it (ADR 0045 決定 4
+      snapshotted and its volume deleted; the next start restores it (ADR 0045 decision 4
       and 13-2). A tenant overrides it from the Console (Tenants > the tenant >
       "Hibernate unused homes"), so this is only what a tenant that has not chosen gets.
       ⚠️ This is the only automatic path in the product that moves a user's HOME, which
@@ -340,23 +340,24 @@ Parameters:
     Description: >-
       Parent domain for the per-start preview subdomains (docs/81), e.g.
       pv.example.com. A workspace start mints a random slug and its services become
-      reachable at https://{slug}-{port}.{PreviewDomain} — 3000 と 8080 のような
-      2 ポート構成が、サブパスではなく **それぞれのルート直下**で開ける。
+      reachable at https://{slug}-{port}.{PreviewDomain}, so a two-port setup such as
+      3000 and 8080 opens at each service's own root rather than under a sub-path.
 
       Empty (the default) = the feature is OFF and nothing below is created; only
       the existing path-mode /preview/{port} exists.
 
-      ★ ラベルは 1 段しか使えない。ACM のワイルドカード証明書が 1 段しか受け持たない
-      ので、ポートは `{slug}-{port}` とラベルの中に前置してある（`{port}.{slug}.…` は
-      `*.*.…` を要求して発行できない — ADR 0062 決定 2）。
+      Only one label deep: an ACM wildcard certificate covers a single label, so the
+      port is folded into the label as `{slug}-{port}`. `{port}.{slug}....` would need
+      `*.*....`, which cannot be issued (ADR 0062 decision 2).
 
-      ⚠️ Console の FQDN の **子ではなく兄弟**を勧める（af.example.com に対して
-      pv.example.com）。子（*.af.example.com）にすると、プレビューで動くアプリが
-      .af.example.com のドメイン cookie を書けてしまい、Console の cookie を上書き /
-      固定できる余地が残る（ADR 0062 決定 13）。
+      Make this a SIBLING of the Console's FQDN, not a child: pv.example.com next to
+      af.example.com. As a child (*.af.example.com), an app running in a preview could
+      set a domain cookie on .af.example.com and so overwrite or fixate the Console's
+      own cookie (ADR 0062 decision 13).
 
-      ⚠️ この名前を含むゾーンが HostedZoneId（または PreviewHostedZoneId）でなければ、
-      ACM の DNS 検証が終わらず **失敗ではなく「進まない」**形でスタックが止まる。
+      If the zone containing this name is neither HostedZoneId nor PreviewHostedZoneId,
+      ACM's DNS validation never completes and the stack stalls - it does not fail, it
+      simply stops making progress.
   PreviewHostedZoneId:
     Type: String
     Default: ""
@@ -365,14 +366,14 @@ Parameters:
       the Console lives in. Empty (the default) = use HostedZoneId, which is right
       whenever PreviewDomain sits inside the Console's own zone.
 
-      ★ 兄弟を勧めている（上記・ADR 0062 決定 13）のに Console のゾーンが委任された
-      サブドメイン（af.example.com そのものが 1 つのゾーン）だと、pv.example.com は
-      **そのゾーンの外**になる —— 兄弟にするには別ゾーン＋親からの NS 委任が要り、
-      その id をここで渡す。これが無いと「勧めている形が、このテンプレートでは
-      表現できない」ことになる。
+      The sibling layout recommended above (ADR 0062 decision 13) falls outside the
+      Console's zone when that zone is itself a delegated subdomain (af.example.com is
+      one whole zone): pv.example.com then needs its own zone plus an NS delegation from
+      the parent, and that zone's id goes here. Without this parameter the recommended
+      layout cannot be expressed in this template at all.
 
-      ⚠️ Console 側（Cert / DnsRecord）は常に HostedZoneId のままで、ここが効くのは
-      プレビューの証明書検証とワイルドカード A レコードだけ。
+      The Console side (Cert / DnsRecord) always stays on HostedZoneId; this parameter
+      only affects the preview certificate's validation and its wildcard A record.
   CpPort:
     Type: Number
     Default: 8099
@@ -556,8 +557,8 @@ Conditions:
   HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
   # The rate limit is what creates the web ACL; reputation is an extra rule on it.
   HasPreviewDomain: !Not [ !Equals [ !Ref PreviewDomain, "" ] ]
-  # プレビューを別ゾーンに置くとき（兄弟にするには委任した別ゾーンが要る）。空なら
-  # Console と同じゾーン ＝ 今までどおり。
+  # For putting the preview in another zone (a sibling needs a delegated zone of its own).
+  # Empty = the same zone as the Console, i.e. unchanged.
   HasPreviewZone: !Not [ !Equals [ !Ref PreviewHostedZoneId, "" ] ]
   # Scheduled execution: each knob is passed ONLY when the operator set it, so an unset
   # parameter means "whatever the CP's own default is" rather than a copy frozen here.
@@ -673,9 +674,10 @@ Resources:
           TargetGroupArn: !Ref TargetGroup
 
   # --- preview subdomains (docs/81), only when PreviewDomain is set -----------
-  # ★ 既存の Cert には触らない。SAN を足す形は **証明書の置換**になり、Console が今
-  # 出せている TLS を「プレビューを足す」という理由で作り直すことになる。リスナーは
-  # SNI で追加証明書を選べるので、2 枚目として貼る（やめるときは外すだけ・決定 4）。
+  # Never touch the existing Cert: adding a SAN replaces the certificate, rebuilding the
+  # TLS the Console is serving today for the sake of adding previews. A listener can pick an
+  # extra certificate by SNI, so attach it as a second one — removing it is then just a
+  # detach (decision 4).
   PreviewCert:
     Type: AWS::CertificateManager::Certificate
     Condition: HasPreviewDomain
@@ -684,8 +686,9 @@ Resources:
       ValidationMethod: DNS
       DomainValidationOptions:
         - DomainName: !Sub "*.${PreviewDomain}"
-          # ★ 検証レコード `_xxx.{PreviewDomain}` を書くゾーン。`*.` は取れるので、
-          # 要るのは **PreviewDomain 自身を含むゾーン**であって Console のゾーンではない。
+          # The zone the validation record `_xxx.{PreviewDomain}` is written into. The `*.`
+          # is stripped, so what is needed is the zone containing PreviewDomain itself, not
+          # the Console's zone.
           HostedZoneId: !If [ HasPreviewZone, !Ref PreviewHostedZoneId, !Ref HostedZoneId ]
 
   PreviewListenerCert:
@@ -696,10 +699,11 @@ Resources:
       Certificates:
         - CertificateArn: !Ref PreviewCert
 
-  # ワイルドカード 1 本で全 Workspace・全ポートを受け持つ。★ Workspace ごとに
-  # レコードを書く設計にはしない —— 起動のたびに API 往復と伝播待ちが乗り、レコード数の
-  # クォータにも当たる。発行コスト 0・伝播待ち 0 がホスト方式の数少ない「ただの得」で、
-  # そこを崩すと残るのは複雑さだけになる（決定 5）。
+  # One wildcard covers every Workspace and every port. Do not write a record per Workspace:
+  # that adds an API round trip and a propagation wait to every start, and runs into the
+  # record-count quota. Zero issuing cost and zero propagation wait are one of the few plain
+  # wins of the host-based scheme, and giving that up leaves only the complexity
+  # (decision 5).
   PreviewDnsRecord:
     Type: AWS::Route53::RecordSet
     Condition: HasPreviewDomain
@@ -866,14 +870,14 @@ Resources:
             # to be TOLD, because it cannot tell — without this, r.RemoteAddr is the load
             # balancer and every request looks like it comes from the same private
             # address. That is what a tenant's source-network restriction is matched
-            # against (docs/log/66, ADR 0047 決定 2), so a wrong value here is either "the
+            # against (docs/log/66, ADR 0047 decision 2), so a wrong value here is either "the
             # rule never matches anyone" or "the rule matches everyone".
             - { Name: AF_TRUSTED_PROXY_HOPS, Value: "1" }
             - { Name: AUTH, Value: !Ref AuthMode }
             - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
             - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
-            # docs/81: プレビュー用サブドメインの親。空なら CP はホスト方式の振り分けを
-            # 一切登録しない（従来のパス方式だけが残る）。
+            # docs/81: the parent of the preview subdomains. Empty means the CP registers no
+            # host-based routing at all and only the path-based scheme remains.
             - { Name: AF_PREVIEW_DOMAIN, Value: !Ref PreviewDomain }
             - { Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId }
             - { Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails }
@@ -899,7 +903,7 @@ Resources:
             # still owns the Bitbucket callback and derives it from PUBLIC_BASE_URL above.
             # AF_RUNTIME=ecs = the P3-7 stage-2 adapter (Fargate). AF_RUNTIME=ecs-ec2
             # keeps the same substrate but puts workspaces on a pool of EC2 slots with a
-            # persistent per-user EBS home (docs/log/64, ADR 0045 決定 10) — deploy the
+            # persistent per-user EBS home (docs/log/64, ADR 0045 decision 10) — deploy the
             # 40-ec2-pool stack and set WsRuntime=ecs-ec2 + Ec2SlotLaunchTemplate.
             # Rolling back is this one parameter. The AF_ECS_* below are shared by both.
             - { Name: AF_RUNTIME, Value: !Ref WsRuntime }

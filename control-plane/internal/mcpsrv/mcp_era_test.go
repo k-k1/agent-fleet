@@ -68,7 +68,7 @@ func TestMCPDiscoverAdvertisesBothEras(t *testing.T) {
 	}
 	res, _ := resp.Result.(map[string]any)
 	if res["resultType"] != "complete" {
-		t.Fatalf("resultType = %v（新版クライアントは必須として読む）", res["resultType"])
+		t.Fatalf("resultType = %v (new-era clients read it as required)", res["resultType"])
 	}
 	vers, _ := res["supportedVersions"].([]string)
 	if len(vers) == 0 || vers[0] != mcpVersionStateless {
@@ -81,15 +81,15 @@ func TestMCPDiscoverAdvertisesBothEras(t *testing.T) {
 		}
 	}
 	if !sawLegacy {
-		t.Fatalf("旧版が広告から消えている: %v（旧クライアントを serve し続ける限り載せる）", vers)
+		t.Fatalf("the legacy version disappeared from the advertisement: %v (keep listing it as long as legacy clients are served)", vers)
 	}
 	// SEP and the draft document disagree on where serverInfo belongs, so it goes in both.
 	if _, ok := res["serverInfo"]; !ok {
-		t.Fatal("serverInfo が top-level に無い（SEP-2575 の DiscoverResult 形）")
+		t.Fatal("serverInfo is missing at top level (the SEP-2575 DiscoverResult shape)")
 	}
 	meta, _ := res["_meta"].(map[string]any)
 	if _, ok := meta[metaServerInfo]; !ok {
-		t.Fatal("serverInfo が _meta に無い（draft ドキュメントの形）")
+		t.Fatal("serverInfo is missing from _meta (the draft document shape)")
 	}
 }
 
@@ -109,10 +109,10 @@ func TestMCPLegacyInitializeStillWorks(t *testing.T) {
 
 func TestMCPHeaderMismatchIs400(t *testing.T) {
 	cases := map[string]map[string]string{
-		"版ヘッダが _meta と食い違う": {"MCP-Protocol-Version": "2025-06-18", "Mcp-Method": "server/discover"},
-		"版ヘッダが無い":           {"Mcp-Method": "server/discover"},
-		"Mcp-Method が無い":    {"MCP-Protocol-Version": mcpVersionStateless},
-		"Mcp-Method が違う":    {"MCP-Protocol-Version": mcpVersionStateless, "Mcp-Method": "tools/list"},
+		"version header disagrees with _meta": {"MCP-Protocol-Version": "2025-06-18", "Mcp-Method": "server/discover"},
+		"version header missing":              {"Mcp-Method": "server/discover"},
+		"Mcp-Method missing":                  {"MCP-Protocol-Version": mcpVersionStateless},
+		"Mcp-Method differs":                  {"MCP-Protocol-Version": mcpVersionStateless, "Mcp-Method": "tools/list"},
 	}
 	for label, hdr := range cases {
 		resp, status := validate(t, statelessBody(1, "server/discover", "", mcpVersionStateless), hdr)
@@ -130,13 +130,13 @@ func TestMCPNameHeaderMirrorsBody(t *testing.T) {
 
 	hdr["Mcp-Name"] = "list_my_sessions"
 	if resp, _ := validate(t, body, hdr); resp != nil {
-		t.Fatalf("一致しているのに拒否された: %+v", resp.Error)
+		t.Fatalf("rejected even though it matches: %+v", resp.Error)
 	}
 
 	hdr["Mcp-Name"] = "other_tool"
 	resp, status := validate(t, body, hdr)
 	if status != http.StatusBadRequest || resp.Error == nil || resp.Error.Code != rpcHeaderMismatch {
-		t.Fatalf("不一致が通ってしまった: status=%d err=%+v", status, resp.Error)
+		t.Fatalf("a mismatch got through: status=%d err=%+v", status, resp.Error)
 	}
 
 	// A name with non-ASCII characters travels as a base64 sentinel.
@@ -144,7 +144,7 @@ func TestMCPNameHeaderMirrorsBody(t *testing.T) {
 	bodyJP := statelessBody(1, "tools/call", `"name":"`+jp+`"`, mcpVersionStateless)
 	hdr["Mcp-Name"] = "=?base64?" + base64.StdEncoding.EncodeToString([]byte(jp)) + "?="
 	if resp, _ := validate(t, bodyJP, hdr); resp != nil {
-		t.Fatalf("base64 sentinel が復号されていない: %+v", resp.Error)
+		t.Fatalf("the base64 sentinel was not decoded: %+v", resp.Error)
 	}
 }
 
@@ -168,7 +168,7 @@ func TestMCPUnsupportedVersionIs400WithSupportedList(t *testing.T) {
 		t.Fatalf("requested = %v", data["requested"])
 	}
 	if sup, _ := data["supported"].([]string); len(sup) == 0 {
-		t.Fatal("supported 一覧が無いとクライアントは再交渉できない")
+		t.Fatal("without the supported list a client cannot renegotiate")
 	}
 }
 

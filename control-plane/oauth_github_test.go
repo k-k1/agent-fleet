@@ -203,7 +203,7 @@ func TestGitHubLoginRefusals(t *testing.T) {
 		orgs  []string
 		want  string
 	}{{
-		name: "primary な verified email が無い",
+		name: "no primary verified email",
 		// Somebody else's company address, added but never verified: exactly what
 		// the verified flag exists to stop (§61.4).
 		setup: func(s *stubGitHub) {
@@ -214,11 +214,11 @@ func TestGitHubLoginRefusals(t *testing.T) {
 		},
 		want: "forbidden",
 	}, {
-		name:  "org のメンバーではない",
+		name:  "not a member of the org",
 		setup: func(s *stubGitHub) { s.orgStatus = map[string]int{"acme": http.StatusNotFound} },
 		want:  "forbidden",
 	}, {
-		name:  "招待されただけで active ではない",
+		name:  "invited only, not active",
 		setup: func(s *stubGitHub) { s.orgState = map[string]string{"acme": "pending"} },
 		want:  "forbidden",
 	}, {
@@ -226,11 +226,11 @@ func TestGitHubLoginRefusals(t *testing.T) {
 		// this one. Everybody is rejected even though the config is right — the
 		// adapter must survive it and log the hint (checked by hand; here we only
 		// pin that it denies rather than 500s).
-		name:  "OAuth App が org に承認されていない（403）",
+		name:  "the OAuth App is not approved by the org (403)",
 		setup: func(s *stubGitHub) { s.orgStatus = map[string]int{"acme": http.StatusForbidden} },
 		want:  "forbidden",
 	}, {
-		name:  "GitHub API が落ちている",
+		name:  "the GitHub API is down",
 		setup: func(s *stubGitHub) { s.apiDown = true },
 		want:  "exchange", // transient: "sign in again", not "you are not allowed"
 	}}
@@ -246,7 +246,7 @@ func TestGitHubLoginRefusals(t *testing.T) {
 				t.Fatalf("error = %q, want %q", got, tc.want)
 			}
 			if sessionCookieOf(t, w) != nil {
-				t.Fatal("拒否したのにセッションが発行されている")
+				t.Fatal("a session was issued even though the login was refused")
 			}
 		})
 	}
@@ -278,14 +278,14 @@ func TestGitHubProviderRequiresItsOrgList(t *testing.T) {
 		wantHasAllowlist  bool
 		wantOrgsLowercase []string
 	}{
-		{name: "未設定なら黙って無効", wantProvider: false, wantSilent: true},
+		{name: "nothing configured: silently disabled", wantProvider: false, wantSilent: true},
 		// GITHUB_OAUTH_CLIENT_ID is also the git integration's (device flow) variable and
 		// appears in .env.example, so a deployment that never asked for GitHub login must
 		// not be nagged with a warning on every start.
-		{name: "device flow の client_id だけなら黙って無効", id: "cid", wantProvider: false, wantSilent: true},
-		{name: "secret はあるが org が無ければ警告して無効", id: "cid", secret: "sec", wantProvider: false},
-		{name: "org はあるが secret が無ければ警告して無効", id: "cid", orgs: "acme", wantProvider: false},
-		{name: "揃っていれば有効", id: "cid", secret: "sec", orgs: "Acme, acme-labs",
+		{name: "only the device flow client_id: silently disabled", id: "cid", wantProvider: false, wantSilent: true},
+		{name: "secret but no org: warn and disable", id: "cid", secret: "sec", wantProvider: false},
+		{name: "org but no secret: warn and disable", id: "cid", orgs: "acme", wantProvider: false},
+		{name: "all present: enabled", id: "cid", secret: "sec", orgs: "Acme, acme-labs",
 			wantProvider: true, wantHasAllowlist: true, wantOrgsLowercase: []string{"acme", "acme-labs"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -302,7 +302,7 @@ func TestGitHubProviderRequiresItsOrgList(t *testing.T) {
 				t.Fatalf("provider = %v, want configured=%v", p, tc.wantProvider)
 			}
 			if tc.wantSilent && logs.Len() > 0 {
-				t.Fatalf("何も設定していないのに警告が出ている: %s", logs.String())
+				t.Fatalf("nothing is configured, yet a warning was logged: %s", logs.String())
 			}
 			if p == nil {
 				return
@@ -311,7 +311,7 @@ func TestGitHubProviderRequiresItsOrgList(t *testing.T) {
 				t.Fatalf("hasOwnAllowlist = %v", p.HasOwnAllowlist())
 			}
 			if strings.Join(p.AllowedOrgs, ",") != strings.Join(tc.wantOrgsLowercase, ",") {
-				t.Fatalf("orgs = %v, want %v (org 名は大小文字を区別しない)", p.AllowedOrgs, tc.wantOrgsLowercase)
+				t.Fatalf("orgs = %v, want %v (org names are case-insensitive)", p.AllowedOrgs, tc.wantOrgsLowercase)
 			}
 			if p.TTL != auth.GithubDefaultTTL || p.Grace != auth.GithubDefaultGrace {
 				t.Fatalf("ttl=%s grace=%s, want the documented defaults", p.TTL, p.Grace)
@@ -359,12 +359,12 @@ func TestGitHubIDIsReservedAgainstAnOIDCProvider(t *testing.T) {
 		if p.ID() == auth.GithubProviderID {
 			n++
 			if _, isGH := p.(*auth.GitHubProvider); isGH {
-				t.Fatal("OIDC 側が先に id を取っているのに GitHub アダプタも登録された")
+				t.Fatal("the OIDC side took the id first, yet the GitHub adapter was registered too")
 			}
 		}
 	}
 	if n != 1 {
-		t.Fatalf("github id を持つ provider が %d 個", n)
+		t.Fatalf("%d providers hold the github id", n)
 	}
 }
 
@@ -390,7 +390,7 @@ func TestGitHubMembershipIsRecheckedAfterTheTTL(t *testing.T) {
 		}
 	}
 	if gh.memberHits != hitsAfterLogin {
-		t.Fatalf("TTL 内で %d 回 API を叩いている", gh.memberHits-hitsAfterLogin)
+		t.Fatalf("the API was called %d times inside the TTL", gh.memberHits-hitsAfterLogin)
 	}
 
 	// Once the TTL expires it asks again, and a removal takes effect there.
@@ -398,10 +398,10 @@ func TestGitHubMembershipIsRecheckedAfterTheTTL(t *testing.T) {
 	gh.orgStatus = map[string]int{"acme": http.StatusNotFound}
 	ok, err := p.Allowed(t.Context(), pr)
 	if ok || err != nil {
-		t.Fatalf("org から外れた人が通った: ok=%v err=%v", ok, err)
+		t.Fatalf("somebody removed from the org got through: ok=%v err=%v", ok, err)
 	}
 	if gh.memberHits == hitsAfterLogin {
-		t.Fatal("TTL 切れ後に再判定していない")
+		t.Fatal("no re-check once the TTL expired")
 	}
 }
 
@@ -420,7 +420,7 @@ func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 	})
 	cookie := &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)}
 	gate := cfg.authGate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		t.Error("判定材料が無いのにハンドラまで通した")
+		t.Error("let the request through to the handler with nothing to decide on")
 	}))
 
 	// A browser navigation: reauth, not forbidden.
@@ -434,10 +434,10 @@ func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 	}
 	u, _ := url.Parse(w.Header().Get("Location"))
 	if got := u.Query().Get("error"); got != "reauth" {
-		t.Fatalf("error = %q, want reauth（メンバーのままの人に「許可されていません」は誤り）", got)
+		t.Fatalf("error = %q, want reauth (telling somebody who is still a member 'not allowed' is wrong)", got)
 	}
 	if page := auth.LoginErrorBlock("reauth", "ja"); !strings.Contains(page, "もう一度サインイン") {
-		t.Fatalf("reauth の文言が出ていない: %s", page)
+		t.Fatalf("the reauth wording is not shown: %s", page)
 	}
 
 	// An XHR from the SPA: 401, not 403 — the SPA's unauthenticated path sends it to login.
@@ -459,6 +459,6 @@ func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 	w = httptest.NewRecorder()
 	gate.ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("ドメイン外: want 403 got %d", w.Code)
+		t.Fatalf("outside the domain: want 403 got %d", w.Code)
 	}
 }

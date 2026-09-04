@@ -13,7 +13,7 @@ func TestEnglishToKana(t *testing.T) {
 	for _, w := range words {
 		got := englishToKana(w)
 		if got == "" || got == w {
-			t.Errorf("%q -> %q (変換されていない)", w, got)
+			t.Errorf("%q -> %q (not converted)", w, got)
 		}
 		t.Logf("%-12s -> %s", w, got)
 	}
@@ -25,10 +25,10 @@ func TestEnglishToKanaMixed(t *testing.T) {
 	got := englishToKana("これは pen です。 iPhone を3個。")
 	t.Logf("mixed -> %s", got)
 	if !containsJP(got, "これは") || !containsJP(got, "です") {
-		t.Errorf("日本語が壊れた: %q", got)
+		t.Errorf("the Japanese was mangled: %q", got)
 	}
 	if containsASCIILetters(got) {
-		t.Errorf("英字が残っている: %q", got)
+		t.Errorf("ASCII letters are left over: %q", got)
 	}
 }
 
@@ -42,10 +42,10 @@ func TestAcronymAndCamel(t *testing.T) {
 		got := englishToKana(w)
 		t.Logf("%-12s -> %s", w, got)
 		if got == w || got == "" {
-			t.Errorf("%q が変換されていない: %q", w, got)
+			t.Errorf("%q was not converted: %q", w, got)
 		}
 		if containsASCIILetters(got) {
-			t.Errorf("%q に英字が残っている: %q", w, got)
+			t.Errorf("%q still has ASCII letters left: %q", w, got)
 		}
 	}
 }
@@ -78,7 +78,7 @@ func TestTechTerms(t *testing.T) {
 	// A standalone digit keeps its Japanese reading; only a digit that runs straight into
 	// letters is read as English.
 	if got := englishToKana("3個"); got != "3個" {
-		t.Errorf("単独数字 3個 -> %q, want 3個", got)
+		t.Errorf("standalone digit: 3個 -> %q, want 3個", got)
 	}
 }
 
@@ -264,7 +264,7 @@ func TestSingleUpperLetter(t *testing.T) {
 	// A standalone lower-case letter (the "a" of ordinary prose) is out of scope and keeps
 	// its CMUdict word reading rather than becoming a letter name.
 	if got := englishToKana("a"); got == "エー" {
-		t.Errorf("小文字 a が文字名読みになった: %q", got)
+		t.Errorf("lower-case a was read as a letter name: %q", got)
 	}
 }
 
@@ -311,7 +311,7 @@ func TestReadingOverrides(t *testing.T) {
 	// random or freedom.
 	for _, w := range []string{"kingdom", "random", "freedom"} {
 		if got := englishToKana(w); got == "ドム" || containsASCIILetters(got) {
-			t.Errorf("%q が誤変換された: %q", w, got)
+			t.Errorf("%q was mis-converted: %q", w, got)
 		}
 	}
 }
@@ -374,7 +374,7 @@ func TestContractions(t *testing.T) {
 	// Inside a sentence it is not split either, and the surrounding words and punctuation
 	// survive.
 	if got := englishToKana("It's good, don't worry."); containsASCIILetters(got) {
-		t.Errorf("英字が残った: %q", got)
+		t.Errorf("ASCII letters were left behind: %q", got)
 	}
 }
 

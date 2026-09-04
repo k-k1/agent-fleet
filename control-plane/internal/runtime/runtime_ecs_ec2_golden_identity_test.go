@@ -70,7 +70,7 @@ func TestGoldenSurvivesARetagWithTheSameContent(t *testing.T) {
 	addGoldenIdentity(h, "snap-golden", goldenImgOldTag, fpOf(t, reg, goldenImgOldTag))
 
 	if got := h.rt.goldenSnapshot(ctx); got != "snap-golden" {
-		t.Fatalf("goldenSnapshot = %q; 同じ digest の再タグで golden を捨てた（実機では約 10 分・スロット 2 本の焼き直し）", got)
+		t.Fatalf("goldenSnapshot = %q; a retag with the same digest threw the golden away (on real hardware that is a ~10 minute rebake of two slots)", got)
 	}
 }
 
@@ -89,7 +89,7 @@ func TestGoldenIsRefusedWhenTheSameTagMovedToNewContent(t *testing.T) {
 		"0000000000000000000000000000000000000000000000000000000000000000")
 
 	if got := h.rt.goldenSnapshot(ctx); got != "" {
-		t.Fatalf("goldenSnapshot = %q; 中身が変わったタグの golden を使った（新規メンバーだけが古い home を配られる）", got)
+		t.Fatalf("goldenSnapshot = %q; used the golden of a tag whose content changed (only new members would get the stale home)", got)
 	}
 }
 
@@ -115,10 +115,10 @@ func TestGoldenIdentityFallsBackToTheReference(t *testing.T) {
 		t.Fatal("no registry, yet a fingerprint appeared")
 	}
 	if !noECR.matches(tags(goldenImgNewTag, "sha256:whatever")) {
-		t.Error("指紋が読めないのに、スナップショット側の指紋で不一致にした（＝全 golden を捨てる側）")
+		t.Error("no fingerprint could be read, yet the snapshot side fingerprint was treated as a mismatch (= throws away every golden)")
 	}
 	if noECR.matches(tags(goldenImgOldTag, "")) {
-		t.Error("参照文字列が違うのに一致した")
+		t.Error("matched even though the reference string differs")
 	}
 
 	// A golden baked before the fingerprint tag existed is still matched by the string.
@@ -128,7 +128,7 @@ func TestGoldenIdentityFallsBackToTheReference(t *testing.T) {
 		t.Fatal("fingerprint not resolved from the fake registry")
 	}
 	if !id.matches(tags(goldenImgNewTag, "")) {
-		t.Error("af-image-fp を持たない旧 golden が使われなくなった（アップグレードで全部焼き直しになる）")
+		t.Error("an old golden without af-image-fp is no longer used (an upgrade would rebake all of them)")
 	}
 }
 

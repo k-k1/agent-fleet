@@ -97,10 +97,10 @@ var sessionWireBinding = map[string]string{
 // decision about the wire, so they are exempted untouched and raised with the user
 // instead. Closing one forces its exemption out, via the reverse check.
 var consoleOnlyExempt = map[string]string{
-	"model": "【穴】session.ts:51 が `model?: string; // claude model` を宣言しているが、" +
-		"sessionWire にも Agent の session.Session にも該当キーが無い。Console 側の実読みも見つからない＝死んだ宣言の疑い。",
-	"path": "【穴】session.ts:34 が `path?: string; // absolute working dir` を宣言しているが、" +
-		"sessionWire にも Agent の session.Session にも該当キーが無い（実際の作業ディレクトリは dir）。",
+	"model": "[gap] session.ts:51 declares `model?: string; // claude model`, but " +
+		"neither sessionWire nor the Agent's session.Session has such a key. No actual read of it on the Console side either = likely a dead declaration.",
+	"path": "[gap] session.ts:34 declares `path?: string; // absolute working dir`, but " +
+		"neither sessionWire nor the Agent's session.Session has such a key (the actual working directory is dir).",
 }
 
 // goOnlyExempt is the mirror image: keys sessionWire emits that the Console's Session
@@ -111,9 +111,9 @@ var consoleOnlyExempt = map[string]string{
 // `type ArchivedSession = Session & { started?: string };` — a feature filling in with an
 // intersection type because the shared type has not caught up with the actual wire.
 var goOnlyExempt = map[string]string{
-	"started":  "【穴】ArchivedModal.tsx:19 が交差型で局所的に足している。共有の Session に載せるのが筋だが、既存の利用箇所の型が変わる。",
-	"display":  "【穴】sessionWire が出しているが Session に宣言が無い。",
-	"archived": "【穴】sessionWire が出しているが Session に宣言が無い。",
+	"started":  "[gap] ArchivedModal.tsx:19 adds it locally with an intersection type. Putting it on the shared Session is the right move, but that changes the type at existing call sites.",
+	"display":  "[gap] sessionWire emits it, but Session has no declaration for it.",
+	"archived": "[gap] sessionWire emits it, but Session has no declaration for it.",
 }
 
 // sessionContractFamily describes the sessionWire family. The body of the check lives in

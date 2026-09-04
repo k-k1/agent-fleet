@@ -55,7 +55,7 @@ func TestWireEquivTenantNetwork(t *testing.T) {
 				YourIP: in.YourIP, Editable: in.Editable, Reason: in.Reason,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 // --- Admin.SetTenantNetwork (the PUT response; its key set differs from the GET) ---
@@ -70,7 +70,7 @@ func TestWireEquivTenantNetworkSaved(t *testing.T) {
 		func(v in) any {
 			return tenantNetworkSavedWire{Tenant: v.Tenant, AllowedCIDRs: v.Stored}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 // --- Admin.TenantSlotClass (Console: MachineView) ---
@@ -109,7 +109,7 @@ func TestWireEquivTenantSlotClass(t *testing.T) {
 				DefaultSlotClass: in.DefaultSlotClass, Editable: in.Editable,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 // --- Admin.SetTenantLogin (Console: TenantLoginFields) ---
@@ -141,5 +141,5 @@ func TestWireEquivTenantLogin(t *testing.T) {
 				HiddenProviders: in.HiddenProviders,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }

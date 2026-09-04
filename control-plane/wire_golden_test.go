@@ -33,7 +33,7 @@ import (
 )
 
 var updateWireGolden = flag.Bool("update-wire-golden", false,
-	"testdata/wire.golden を実際の DTO 形状で書き換える（ワイヤを意図して変えたときだけ）")
+	"rewrite testdata/wire.golden from the actual DTO shapes (only when the wire was changed on purpose)")
 
 const wireGoldenPath = "testdata/wire.golden"
 
@@ -105,7 +105,7 @@ func TestWireShapeGoldenCoversSessionWire(t *testing.T) {
 		"sessionWire.workingCopyId string,omitempty", // working-copy generation
 	} {
 		if !containsLine(lines, want) {
-			t.Errorf("wireShape が %q を返さない（過去に drop 事故を起こした field）", want)
+			t.Errorf("wireShape does not return %q (a field that has been dropped by accident before)", want)
 		}
 	}
 }
@@ -130,7 +130,7 @@ func wireShape(t *testing.T, name string, typ reflect.Type) []string {
 	var out []string
 	shapeInto(t, name, typ, map[reflect.Type]bool{}, &out)
 	if len(out) == 0 {
-		t.Fatalf("%s: キーが 1 つも取れなかった（wireShape が壊れている）", name)
+		t.Fatalf("%s: not a single key was picked up (wireShape is broken)", name)
 	}
 	sort.Strings(out)
 	return out
@@ -140,7 +140,7 @@ func shapeInto(t *testing.T, prefix string, typ reflect.Type, seen map[reflect.T
 	t.Helper()
 	typ = deref(typ)
 	if typ.Kind() != reflect.Struct {
-		t.Fatalf("%s: struct でない型は撮れない: %s", prefix, typ.Kind())
+		t.Fatalf("%s: a non-struct type cannot be captured: %s", prefix, typ.Kind())
 	}
 	if seen[typ] {
 		*out = append(*out, prefix+" <recursive>")
@@ -245,9 +245,9 @@ func writeWireGolden(t *testing.T, path string, lines []string) {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
 	var b strings.Builder
-	b.WriteString("# Console が読む代表的な DTO の JSON キー集合。生成物 —— 手で編集しない。\n")
-	b.WriteString("# 更新: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...\n")
-	b.WriteString("# 形式: <型>.<キーパス> <JSON上の型>[,omitempty]（[]=配列 / raw=素通し JSON）\n")
+	b.WriteString("# JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.\n")
+	b.WriteString("# Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...\n")
+	b.WriteString("# Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)\n")
 	fmt.Fprintf(&b, "# count: %d\n", len(lines))
 	for _, ln := range lines {
 		b.WriteString(ln)

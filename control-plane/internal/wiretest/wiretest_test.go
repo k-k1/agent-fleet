@@ -82,21 +82,21 @@ func TestWireEquivAcceptsFaithfulConversion(t *testing.T) {
 	rec := &Recorder{}
 	got := AssertEquiv(rec, "faithful", equivInputs(), oldFaithful, newFaithful)
 	if len(rec.errs) > 0 {
-		t.Fatalf("忠実な変換を赤にした（ハーネスが厳しすぎる）:\n%s", strings.Join(rec.errs, "\n"))
+		t.Fatalf("reddened a faithful conversion (the harness is too strict):\n%s", strings.Join(rec.errs, "\n"))
 	}
 	if got.Modes[ModeParsed] != got.Cases {
-		t.Errorf("宣言順が map の昇順と違うので全ケース parsed のはず: %s", got)
+		t.Errorf("the declaration order differs from the map's ascending key order, so every case must be parsed: %s", got)
 	}
 
 	rec2 := &Recorder{}
 	got2 := AssertEquiv(rec2, "faithful-sorted", equivInputs(), oldFaithful, newSorted)
 	if len(rec2.errs) > 0 {
-		t.Fatalf("キー昇順に宣言した忠実な変換を赤にした:\n%s", strings.Join(rec2.errs, "\n"))
+		t.Fatalf("reddened a faithful conversion declared in ascending key order:\n%s", strings.Join(rec2.errs, "\n"))
 	}
 	if got2.Modes[ModeBytes] != got2.Cases {
-		t.Errorf("キー昇順の宣言なので全ケース bytes 一致のはず: %s", got2)
+		t.Errorf("declared in ascending key order, so every case must match on bytes: %s", got2)
 	}
-	t.Logf("突き合わせ方式の実測: %s / %s", got, got2)
+	t.Logf("measured comparison modes: %s / %s", got, got2)
 }
 
 // TestWireEquivCatchesEachTrap is the negative control: one broken conversion per trap,
@@ -110,7 +110,7 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 	}{
 		{
 			// ① forgotten omitempty: the zero-value case grows a "flag": false.
-			trap: "① omitempty 付け忘れ",
+			trap: "① forgotten omitempty",
 			newF: func(f equivFixture) any {
 				return struct {
 					Name string   `json:"name"`
@@ -120,7 +120,7 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 					Flag bool     `json:"flag"`
 				}{f.Name, f.Note, f.N, f.Tags, f.Flag}
 			},
-			want: "flag: キーが増えた",
+			want: "flag: key appeared",
 		},
 		{
 			// ①⑤ inverted: an omitempty that should not be there makes the key vanish
@@ -128,7 +128,7 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 			// zero value) — a Console reading `if (x.foo)` collapses "no key" and `""`
 			// into the same thing, but the wire does not, and the harness reports them
 			// as two different diffs.
-			trap: "①⑤ 余計な omitempty（キーの有無とゼロ値）",
+			trap: "①⑤ an omitempty that should not be there (key absence versus zero value)",
 			newF: func(f equivFixture) any {
 				return struct {
 					Name string   `json:"name,omitempty"`
@@ -138,11 +138,11 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 					Flag bool     `json:"flag,omitempty"`
 				}{f.Name, f.Note, f.N, f.Tags, f.Flag}
 			},
-			want: "name: キーが消えた",
+			want: "name: key disappeared",
 		},
 		{
 			// ② nil versus empty: normalising a nil slice to [] turns null into [].
-			trap: "② nil を空スライスへ正規化",
+			trap: "② normalising nil into an empty slice",
 			newF: func(f equivFixture) any {
 				tags := f.Tags
 				if tags == nil {
@@ -154,7 +154,7 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 		},
 		{
 			// ③ numeric type: received as float64, an int64 loses digits at 1<<62.
-			trap: "③ int64 を float64 で受ける",
+			trap: "③ receiving an int64 as float64",
 			newF: func(f equivFixture) any {
 				return struct {
 					Name string   `json:"name"`
@@ -168,7 +168,7 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 		},
 		{
 			// ④ missing json tag: the Go exported name goes out on the wire as-is.
-			trap: "④ json タグ書き忘れ",
+			trap: "④ forgotten json tag",
 			newF: func(f equivFixture) any {
 				return struct {
 					Name string
@@ -178,12 +178,12 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 					Flag bool     `json:"flag,omitempty"`
 				}{f.Name, f.Note, f.N, f.Tags, f.Flag}
 			},
-			want: "Name: キーが増えた",
+			want: "Name: key appeared",
 		},
 		{
 			// ⑥ swap two fields of the same type (the mutation README §4 requires).
 			// The types line up, so the compiler never says a word.
-			trap: "⑥ 同型フィールドの入れ替え",
+			trap: "⑥ swapping two fields of the same type",
 			newF: func(f equivFixture) any {
 				return equivNewFaithful{Name: f.Note, Note: f.Name, N: f.N, Tags: f.Tags, Flag: f.Flag}
 			},
@@ -196,12 +196,12 @@ func TestWireEquivCatchesEachTrap(t *testing.T) {
 			rec := &Recorder{}
 			AssertEquiv(rec, tc.trap, equivInputs(), oldFaithful, tc.newF)
 			if len(rec.errs) == 0 {
-				t.Fatalf("罠 %q を素通しした＝この罠に対してハーネスは無力", tc.trap)
+				t.Fatalf("let trap %q through = the harness is powerless against this trap", tc.trap)
 			}
 			joined := strings.Join(rec.errs, "\n")
 			if !strings.Contains(joined, tc.want) {
-				t.Errorf("罠 %q で赤くはなったが、理由が違う（別の罠を踏んで赤い可能性）\n"+
-					"  %q を含むべき\n  実際:\n%s", tc.trap, tc.want, joined)
+				t.Errorf("trap %q did go red, but for the wrong reason (it may be red from tripping another trap)\n"+
+					"  must contain %q\n  got:\n%s", tc.trap, tc.want, joined)
 			}
 		})
 	}
@@ -223,9 +223,9 @@ func TestWireEquivAlwaysMeasuresZeroValue(t *testing.T) {
 	rec := &Recorder{}
 	res := AssertEquiv(rec, "zero-only", nil, oldFaithful, noOmitEmpty)
 	if res.Cases != 1 {
-		t.Fatalf("入力 nil でもゼロ値 1 ケースは測るはず: %d", res.Cases)
+		t.Fatalf("even with nil inputs the zero value must be measured as 1 case: %d", res.Cases)
 	}
 	if len(rec.errs) == 0 {
-		t.Fatal("ゼロ値ケースが足されていない＝呼ぶ側の書き忘れで検査が無言になる")
+		t.Fatal("the zero-value case was not added = the check goes silent when the caller forgets to write one")
 	}
 }

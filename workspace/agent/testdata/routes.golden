@@ -1,6 +1,6 @@
-# buildMux() が登録する (method, path) の全件。生成物 —— 手で編集しない。
-# 更新: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .
-# ANY = メソッド指定なしの登録。
+# Every (method, path) buildMux() registers. Generated - do not edit by hand.
+# Update: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .
+# ANY = registered without a method.
 # count: 249
 GET /agents/memory/diff
 GET /agents/memory/export

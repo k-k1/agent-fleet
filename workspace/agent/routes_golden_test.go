@@ -193,9 +193,9 @@ func writeRoutesGolden(t *testing.T, path string, lines []string) {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
 	var b strings.Builder
-	b.WriteString("# buildMux() が登録する (method, path) の全件。生成物 —— 手で編集しない。\n")
-	b.WriteString("# 更新: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .\n")
-	b.WriteString("# ANY = メソッド指定なしの登録。\n")
+	b.WriteString("# Every (method, path) buildMux() registers. Generated - do not edit by hand.\n")
+	b.WriteString("# Update: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .\n")
+	b.WriteString("# ANY = registered without a method.\n")
 	fmt.Fprintf(&b, "# count: %d\n", len(lines))
 	for _, ln := range lines {
 		b.WriteString(ln)

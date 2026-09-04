@@ -1,10 +1,11 @@
-# map[string]any を直に返している JSON 書き出し地点のキー集合。生成物 —— 手で編集しない。
-# 更新: cd control-plane && go test -run TestWireMapGolden -update-wiremap-golden ./...
-# 形式: <ファイル> <関数> x<同一形状の件数> {キー集合} [cond{条件付きキー}] [dyn|partial]
-#   cond    = 条件文の中で足されるキー（struct 化するなら omitempty の要否を判断する対象）
-#   dyn     = 非リテラルのキーがある（キー集合は静的に確定しない＝struct 化できない）
-#   partial = 変数が複数回代入されており、キー集合を開けきれていない
-# 🔴 キーが減った/増えた差分は、ワイヤが変わった可能性そのもの。撮り直す理由を PR に書くこと。
+# Key sets of the JSON write sites that still return a map[string]any directly.
+# Generated - do not edit by hand.
+# Update: cd control-plane && go test -run TestWireMapGolden -update-wiremap-golden ./...
+# Format: <file> <func> x<count of identical shapes> {key set} [cond{conditional keys}] [dyn|partial]
+#   cond    = keys added inside a conditional (decide omitempty for these when converting)
+#   partial = the variable is assigned more than once, so the key set is not fully opened
+#   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
+# A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
 # count: 118
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}

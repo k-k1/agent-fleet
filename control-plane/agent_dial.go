@@ -86,7 +86,7 @@ func initAgentResolver(ctx context.Context, ac aws.Config, namespaceArn string) 
 	defer cancel()
 	out, err := api.GetNamespace(cctx, &servicediscovery.GetNamespaceInput{Id: aws.String(id)})
 	if err != nil || out.Namespace == nil {
-		log.Printf("agent dial: 名前空間 %s の名前を引けなかったのでフォールバックは無効: %v", id, err)
+		log.Printf("agent dial: could not look up the name of namespace %s, so the fallback is disabled: %v", id, err)
 		return
 	}
 	setAgentResolver(api, aws.ToString(out.Namespace.Name))
@@ -98,7 +98,7 @@ func setAgentResolver(api scDiscoverAPI, namespaceName string) {
 		return
 	}
 	agentDialer = &agentResolver{api: api, nsName: namespaceName, ttl: 30 * time.Second, cache: map[string]resolvedAgent{}}
-	log.Printf("agent dial: Service Connect の別名が引けないときは Cloud Map(%s) で引き直す", namespaceName)
+	log.Printf("agent dial: when a Service Connect alias does not resolve, look it up again in Cloud Map(%s)", namespaceName)
 }
 
 // dialAgent is the DialContext every client and dialer here uses.
@@ -141,7 +141,7 @@ func (r *agentResolver) lookup(ctx context.Context, addr string) (string, bool) 
 		ServiceName:   aws.String(host),
 	})
 	if err != nil {
-		log.Printf("agent dial: Cloud Map で %s を引けなかった: %v", host, err)
+		log.Printf("agent dial: could not look up %s in Cloud Map: %v", host, err)
 		return "", false
 	}
 	for _, inst := range out.Instances {
@@ -165,7 +165,7 @@ func (r *agentResolver) lookup(ctx context.Context, addr string) (string, bool) 
 		// Reaching here means we just resolved a service that is not in this CP task's
 		// /etc/hosts. Always leave a line, so an operator can later work out why
 		// restarting CP "fixes" it.
-		log.Printf("agent dial: %s は Service Connect の別名で引けなかった → Cloud Map の %s を使う", host, resolved)
+		log.Printf("agent dial: %s did not resolve through the Service Connect alias -> using %s from Cloud Map", host, resolved)
 		return resolved, true
 	}
 	return "", false

@@ -26,32 +26,32 @@ func TestDrawioManifestLoads(t *testing.T) {
 		t.Fatalf("manifest: %v", err)
 	}
 	if m.Version == "" || !strings.HasPrefix(m.Base, "https://") {
-		t.Fatalf("version/base が空: %+v", m.Version)
+		t.Fatalf("version/base is empty: %+v", m.Version)
 	}
 	if len(m.Sets) < 150 {
-		t.Fatalf("セット数 %d —— 台帳を絞ってはいけない（載っていない名前は 404 ＝ 図が黙って劣化する）", len(m.Sets))
+		t.Fatalf("%d sets - the manifest must never be narrowed (a name it does not list is a 404 = the diagram degrades silently)", len(m.Sets))
 	}
 	// The viewer only ever asks for `<basename>.xml`. Anything else in the manifest
 	// widens the barrier that keys off it.
 	for name, e := range m.Sets {
 		if !strings.HasSuffix(name, ".xml") {
-			t.Fatalf("%q は .xml ではない", name)
+			t.Fatalf("%q is not a .xml", name)
 		}
 		if strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
-			t.Fatalf("%q は台帳の鍵として不正", name)
+			t.Fatalf("%q is not a valid manifest key", name)
 		}
 		if len(e.SHA256) != 64 || e.Size <= 0 {
-			t.Fatalf("%q のエントリが不正: %+v", name, e)
+			t.Fatalf("the entry for %q is invalid: %+v", name, e)
 		}
 	}
 	// A known hole: the libraries reference sap.xml but upstream does not ship it.
 	// Do not read that as a gap in the manifest and add it by hand — the entry would
 	// only send fetches at a URL that does not exist.
 	if _, ok := m.Sets["sap.xml"]; ok {
-		t.Fatalf("sap.xml は upstream v31.1.8 に存在しない —— 台帳に足してはいけない")
+		t.Fatalf("sap.xml does not exist in upstream v31.1.8 - it must never be added to the manifest")
 	}
 	if _, ok := m.Sets["aws4.xml"]; !ok {
-		t.Fatalf("aws4.xml が台帳に無い")
+		t.Fatalf("aws4.xml is not in the manifest")
 	}
 }
 
@@ -71,7 +71,7 @@ func TestDrawioStencilRejectsUnknownName(t *testing.T) {
 		req.SetPathValue("name", name)
 		d.serve(rec, req)
 		if rec.Code != http.StatusNotFound {
-			t.Fatalf("%q: %d（404 でなければ任意 URL 取得の道具になる）", name, rec.Code)
+			t.Fatalf("%q: %d (anything but 404 turns this into a tool for fetching arbitrary URLs)", name, rec.Code)
 		}
 	}
 }
@@ -90,12 +90,12 @@ func TestDrawioStencilRejectsTamperedBytes(t *testing.T) {
 		"test.xml": {SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body))},
 	}}
 	if _, err := d.fetch(context.Background(), m, "test.xml", m.Sets["test.xml"]); err == nil {
-		t.Fatal("改竄されたバイト列を受け入れた")
+		t.Fatal("tampered bytes were accepted")
 	}
 	ents, _ := os.ReadDir(d.cacheDir)
 	for _, e := range ents {
 		if !strings.HasPrefix(e.Name(), ".tmp-") {
-			t.Fatalf("検証に落ちたのにキャッシュへ残っている: %s", e.Name())
+			t.Fatalf("verification failed yet it is left in the cache: %s", e.Name())
 		}
 	}
 }
@@ -118,18 +118,18 @@ func TestDrawioStencilCaches(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		got, err := d.fetch(context.Background(), m, "test.xml", entry)
 		if err != nil {
-			t.Fatalf("%d 回目: %v", i, err)
+			t.Fatalf("attempt %d: %v", i, err)
 		}
 		if string(got) != string(body) {
-			t.Fatalf("%d 回目の中身が違う", i)
+			t.Fatalf("the body differs on attempt %d", i)
 		}
 	}
 	if hits != 1 {
-		t.Fatalf("upstream を %d 回叩いた（1 回であるべき）", hits)
+		t.Fatalf("upstream was hit %d times (it should be 1)", hits)
 	}
 	// Content-addressed by sha256, so a changed manifest lands on a different file.
 	if _, err := os.Stat(filepath.Join(d.cacheDir, entry.SHA256+".xml")); err != nil {
-		t.Fatalf("キャッシュファイルが無い: %v", err)
+		t.Fatalf("the cache file is missing: %v", err)
 	}
 }
 
@@ -145,7 +145,7 @@ func TestDrawioStencilUpstreamDownIs502(t *testing.T) {
 	entry := drawioStencilEntry{SHA256: strings.Repeat("0", 64), Size: 10}
 	m := drawioStencilManifest{Base: srv.URL + "/", Sets: map[string]drawioStencilEntry{"test.xml": entry}}
 	if _, err := d.fetch(context.Background(), m, "test.xml", entry); err == nil {
-		t.Fatal("到達不能な upstream でエラーにならなかった")
+		t.Fatal("an unreachable upstream did not error")
 	}
 }
 
@@ -158,7 +158,7 @@ func TestDrawioPreseedDefaultBundle(t *testing.T) {
 	}
 	for _, n := range drawioPreseedExact {
 		if _, ok := m.Sets[n]; !ok {
-			t.Fatalf("既定束の %q が台帳に無い（綴り違いは黙って無視される）", n)
+			t.Fatalf("%q from the default bundle is not in the manifest (a misspelling is silently ignored)", n)
 		}
 	}
 	for _, p := range drawioPreseedPrefixes {
@@ -170,7 +170,7 @@ func TestDrawioPreseedDefaultBundle(t *testing.T) {
 			}
 		}
 		if !hit {
-			t.Fatalf("既定束の接頭辞 %q に当たるセットが 1 つも無い", p)
+			t.Fatalf("not a single set matches the default bundle prefix %q", p)
 		}
 	}
 
@@ -183,22 +183,22 @@ func TestDrawioPreseedDefaultBundle(t *testing.T) {
 	// about it. Approaching the full set (40.8 MB) makes "default" meaningless; far too
 	// small and it is not a bundle at all.
 	if total > 25<<20 {
-		t.Fatalf("既定束が %.1f MB —— 大きすぎる（--all との差が無い）", float64(total)/(1<<20))
+		t.Fatalf("the default bundle is %.1f MB - too large (no different from --all)", float64(total)/(1<<20))
 	}
 	if len(names) < 20 {
-		t.Fatalf("既定束が %d 件しかない", len(names))
+		t.Fatalf("the default bundle holds only %d sets", len(names))
 	}
 	// Large sets with a narrow audience stay out of the default.
 	for _, n := range names {
 		if strings.HasPrefix(n, "rack/hpe_aruba/") {
-			t.Fatalf("%q（3.67 MB）は既定束に入れない", n)
+			t.Fatalf("%q (3.67 MB) does not belong in the default bundle", n)
 		}
 	}
 	// --all must match the manifest exactly.
 	if got := len(drawioPreseedNames(m, true)); got != len(m.Sets) {
-		t.Fatalf("--all が %d 件（台帳は %d 件）", got, len(m.Sets))
+		t.Fatalf("--all yields %d sets (the manifest has %d)", got, len(m.Sets))
 	}
-	t.Logf("既定束 %d 件 / %.1f MB", len(names), float64(total)/(1<<20))
+	t.Logf("default bundle: %d sets / %.1f MB", len(names), float64(total)/(1<<20))
 }
 
 // The whole point of preseeding is serving with no way out to the network, so this serves
@@ -214,15 +214,15 @@ func TestDrawioStencilPreseededServesOffline(t *testing.T) {
 
 	d := testStencils(t)
 	if err := d.store(d.pathFor(entry), body); err != nil {
-		t.Fatalf("事前投入: %v", err)
+		t.Fatalf("preseed: %v", err)
 	}
 
 	got, err := d.fetch(context.Background(), m, "test.xml", entry)
 	if err != nil {
-		t.Fatalf("投入済みなのに閉域で返せない: %v", err)
+		t.Fatalf("preseeded yet it cannot be served with no way out to the network: %v", err)
 	}
 	if string(got) != string(body) {
-		t.Fatalf("中身が違う")
+		t.Fatalf("the body differs")
 	}
 
 	// Preseeded bytes that disagree with the manifest (a version skew, a corrupted
@@ -231,7 +231,7 @@ func TestDrawioStencilPreseededServesOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := d.fetch(context.Background(), m, "test.xml", entry); err == nil {
-		t.Fatal("台帳と食い違うキャッシュをそのまま配った")
+		t.Fatal("a cache entry that disagrees with the manifest was served as-is")
 	}
 }
 
@@ -256,10 +256,10 @@ func TestDrawioStencilStoreIsAtomic(t *testing.T) {
 		for _, e := range ents {
 			names = append(names, e.Name())
 		}
-		t.Fatalf("キャッシュの中身が %v", names)
+		t.Fatalf("the cache holds %v", names)
 	}
 	if ents[0].Name() != entry.SHA256+".xml" {
-		t.Fatalf("置き場所が %q（内容アドレスであるべき）", ents[0].Name())
+		t.Fatalf("stored at %q (it should be content-addressed)", ents[0].Name())
 	}
 }
 
@@ -277,7 +277,7 @@ func TestDrawioStencilRetriesTransient(t *testing.T) {
 			// Drop the connection: a network-layer failure, the kind worth retrying.
 			hj, ok := w.(http.Hijacker)
 			if !ok {
-				t.Error("hijack できない")
+				t.Error("cannot hijack")
 				return
 			}
 			conn, _, err := hj.Hijack()
@@ -294,13 +294,13 @@ func TestDrawioStencilRetriesTransient(t *testing.T) {
 	m := drawioStencilManifest{Base: srv.URL + "/", Sets: map[string]drawioStencilEntry{"test.xml": entry}}
 	got, err := d.fetch(context.Background(), m, "test.xml", entry)
 	if err != nil {
-		t.Fatalf("2 回切られただけで諦めた: %v", err)
+		t.Fatalf("gave up after only 2 disconnects: %v", err)
 	}
 	if string(got) != string(body) {
-		t.Fatal("中身が違う")
+		t.Fatal("the body differs")
 	}
 	if n := atomic.LoadInt32(&tries); n != 3 {
-		t.Fatalf("試行 %d 回（3 回であるべき）", n)
+		t.Fatalf("%d attempts (it should be 3)", n)
 	}
 }
 
@@ -318,7 +318,7 @@ func TestDrawioStencilDoesNotRetryPermanent(t *testing.T) {
 	}{
 		{"404", func(w http.ResponseWriter) { w.WriteHeader(http.StatusNotFound) }, 1},
 		// Right length, wrong bytes: not a truncated transfer, a different file.
-		{"改竄", func(w http.ResponseWriter) { _, _ = w.Write([]byte("<shapeX/>")) }, 1},
+		{"tampered", func(w http.ResponseWriter) { _, _ = w.Write([]byte("<shapeX/>")) }, 1},
 		// A 5xx can be transient, so it is retried.
 		{"503", func(w http.ResponseWriter) { w.WriteHeader(http.StatusServiceUnavailable) }, drawioFetchTries},
 	} {
@@ -332,10 +332,10 @@ func TestDrawioStencilDoesNotRetryPermanent(t *testing.T) {
 			d := testStencils(t)
 			m := drawioStencilManifest{Base: srv.URL + "/", Sets: map[string]drawioStencilEntry{"test.xml": entry}}
 			if _, err := d.fetch(context.Background(), m, "test.xml", entry); err == nil {
-				t.Fatal("失敗するべきところで成功した")
+				t.Fatal("succeeded where it should have failed")
 			}
 			if n := atomic.LoadInt32(&tries); n != tc.tries {
-				t.Fatalf("試行 %d 回（期待 %d）", n, tc.tries)
+				t.Fatalf("%d attempts (want %d)", n, tc.tries)
 			}
 		})
 	}

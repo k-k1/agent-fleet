@@ -467,12 +467,12 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 	//    guard on its own — the two hold independently.
 	if w := detachReq(t, api, me, loginRef{"entra", "e-1"}, auth.GoogleProviderID, "g-1"); w.Code != http.StatusConflict ||
 		!strings.Contains(w.Body.String(), "last_login_method") {
-		t.Fatalf("最後の 1 つは外せてはいけない: %d %s", w.Code, w.Body.String())
+		t.Fatalf("the last remaining method must not come off: %d %s", w.Code, w.Body.String())
 	}
 	// The SQL layer counts too: another tab can slip in between the API's check and
 	// the DELETE.
 	if err := st.DetachProvider(t.Context(), me.ID, auth.GoogleProviderID, "g-1"); !errors.Is(err, store.ErrLastLoginMethod) {
-		t.Fatalf("store 層の残数ガードが効いていない: %v", err)
+		t.Fatalf("the store layer's remaining-count guard is not working: %v", err)
 	}
 
 	if err := st.AttachProvider(t.Context(), me.ID, store.IdentityLink{
@@ -483,7 +483,7 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 	// 2. Even with two, the method the session is using cannot be removed.
 	if w := detachReq(t, api, me, cur, auth.GoogleProviderID, "g-1"); w.Code != http.StatusConflict ||
 		!strings.Contains(w.Body.String(), "current_login_method") {
-		t.Fatalf("現セッションの方式は外せてはいけない: %d %s", w.Code, w.Body.String())
+		t.Fatalf("the method the current session uses must not come off: %d %s", w.Code, w.Body.String())
 	}
 	// 3. Somebody else's row: knowing the pair still does not reach it.
 	other, _, err := st.LinkIdentity(t.Context(), store.IdentityLink{
@@ -494,25 +494,25 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 		t.Fatalf("other: %v", err)
 	}
 	if w := detachReq(t, api, me, cur, "entra", "e-9"); w.Code != http.StatusNotFound {
-		t.Fatalf("他人の行に届いてはいけない: %d %s", w.Code, w.Body.String())
+		t.Fatalf("somebody else's row must be out of reach: %d %s", w.Code, w.Body.String())
 	}
 	if lp, _ := st.ListLinkedProviders(t.Context(), other.ID); len(lp) != 1 {
-		t.Fatalf("他人の方式が消えている: %+v", lp)
+		t.Fatalf("somebody else's method was deleted: %+v", lp)
 	}
 
 	// And the legitimate one does come off. The identity row does not move — a detach
 	// is no more a login than an attach is.
 	before, _, _ := st.GetIdentityByID(t.Context(), me.ID)
 	if w := detachReq(t, api, me, cur, "entra", "e-1"); w.Code != http.StatusOK {
-		t.Fatalf("外せるはずの 1 件が外せない: %d %s", w.Code, w.Body.String())
+		t.Fatalf("the one that should come off cannot be detached: %d %s", w.Code, w.Body.String())
 	}
 	lp, _ := st.ListLinkedProviders(t.Context(), me.ID)
 	if len(lp) != 1 || lp[0].Provider != auth.GoogleProviderID {
-		t.Fatalf("linked = %+v, want google だけ", lp)
+		t.Fatalf("linked = %+v, want google only", lp)
 	}
 	after, _, _ := st.GetIdentityByID(t.Context(), me.ID)
 	if after.UserKey != before.UserKey || after.Email != before.Email || after.Role != before.Role {
-		t.Fatalf("解除で identity 行が動いた: %+v -> %+v", before, after)
+		t.Fatalf("the detach moved the identity row: %+v -> %+v", before, after)
 	}
 	// It lands in the ledger, so when that door opened and closed stays readable later.
 	rows, err := st.ListAuditByTenant(t.Context(), "", 50)
@@ -526,7 +526,7 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 		}
 	}
 	if !strings.Contains(seen, "e-1") {
-		t.Fatalf("解除が監査に残っていない: %+v", rows)
+		t.Fatalf("the detach left no trace in the audit log: %+v", rows)
 	}
 }
 
@@ -567,10 +567,10 @@ func TestLoginMethodsSaysWhichRowsCanBeRemoved(t *testing.T) {
 	// With only one, it is also the current session's method, so both guards bite.
 	one := read()
 	if len(one) != 1 || one[0].Removable {
-		t.Fatalf("最後の 1 つが removable になっている: %+v", one)
+		t.Fatalf("the last remaining method is marked removable: %+v", one)
 	}
 	if one[0].Subject != "g-1" {
-		t.Fatalf("行を名指しする subject が返っていない: %+v", one)
+		t.Fatalf("the subject that names the row was not returned: %+v", one)
 	}
 
 	if err := st.AttachProvider(t.Context(), me.ID, store.IdentityLink{
@@ -582,11 +582,11 @@ func TestLoginMethodsSaysWhichRowsCanBeRemoved(t *testing.T) {
 		switch l.Provider {
 		case auth.GoogleProviderID:
 			if !l.Current || l.Removable {
-				t.Fatalf("現セッションの方式は removable ではない: %+v", l)
+				t.Fatalf("the current session's method must not be removable: %+v", l)
 			}
 		case "entra":
 			if l.Current || !l.Removable {
-				t.Fatalf("もう一方は外せるはず: %+v", l)
+				t.Fatalf("the other one must be removable: %+v", l)
 			}
 		}
 	}

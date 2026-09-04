@@ -18,25 +18,25 @@ func TestConnRegistryWatched(t *testing.T) {
 
 	r := newConnRegistry()
 	if r.watched(ws, grace, now) {
-		t.Error("接続が無いのに在席と答えた")
+		t.Error("answered present with no connection at all")
 	}
 
 	// Terminal (attention-bearing): present the moment it opens, absent once the
 	// keystrokes stop.
 	r.addConn(ws, "s1", true)
 	if !r.watched(ws, grace, now) {
-		t.Error("開いた直後の端末が在席でない")
+		t.Error("a terminal just opened is not counted as present")
 	}
 	if !r.watched(ws, grace, now.Add(29*time.Minute)) {
-		t.Error("猶予内なのに不在になった")
+		t.Error("went absent while still inside the grace window")
 	}
 	if r.watched(ws, grace, now.Add(31*time.Minute)) {
-		t.Error("★打鍵の無い端末が在席のまま＝タブ 1 枚で永久に温まる")
+		t.Error("a terminal with no keystrokes stays present = one forgotten tab warms the workspace forever")
 	}
 	// Typing again brings presence back.
 	r.noteInput(ws)
 	if !r.watched(ws, grace, time.Now().Add(time.Minute)) {
-		t.Error("打鍵後も不在のまま")
+		t.Error("still absent after typing again")
 	}
 
 	// A non-terminal long-lived connection (a scheduled-run wake-up) counts as presence
@@ -45,20 +45,20 @@ func TestConnRegistryWatched(t *testing.T) {
 	r2 := newConnRegistry()
 	r2.addConn(ws, "", false)
 	if !r2.watched(ws, grace, now.Add(10*time.Hour)) {
-		t.Error("定時実行の presence が猶予で切れた")
+		t.Error("the scheduled-run presence was cut off by the grace window")
 	}
 
 	// 0 disables the grace: any open socket counts as presence.
 	r3 := newConnRegistry()
 	r3.addConn(ws, "s1", true)
 	if !r3.watched(ws, 0, now.Add(10*time.Hour)) {
-		t.Error("AF_PRESENCE_IDLE_TIMEOUT=0 で従来挙動に戻らない")
+		t.Error("AF_PRESENCE_IDLE_TIMEOUT=0 does not restore the previous behaviour")
 	}
 
 	// Disconnecting ends presence.
 	r.doneConn(ws, "s1", true)
 	if r.watched(ws, grace, time.Now()) {
-		t.Error("切断後も在席と答えた")
+		t.Error("answered present after the disconnect")
 	}
 }
 
@@ -71,19 +71,19 @@ func TestAttentionFreshGatesTheLease(t *testing.T) {
 	r.addConn(ws, "s1", true)
 	now := time.Now()
 	if !r.attentionFresh(ws, time.Minute, now) {
-		t.Error("開いた直後に lease を止めた")
+		t.Error("the lease was stopped right after the socket opened")
 	}
 	if r.attentionFresh(ws, time.Minute, now.Add(2*time.Minute)) {
-		t.Error("★打鍵が途絶えても lease を更新し続けている（DB の connected_until が生き続ける）")
+		t.Error("the lease keeps being renewed after the keystrokes stopped (connected_until in the DB stays alive)")
 	}
 	if !r.attentionFresh(ws, 0, now.Add(10*time.Hour)) {
-		t.Error("猶予 0（無効）で lease が止まった")
+		t.Error("the lease stopped with grace 0 (disabled)")
 	}
 	if !r.attentionFresh("unknown-ws", 0, now) {
-		t.Error("無効時は未知の workspace でも true であるべき")
+		t.Error("while disabled, even an unknown workspace must be true")
 	}
 	if r.attentionFresh("unknown-ws", time.Minute, now) {
-		t.Error("記録の無い workspace を在席と答えた")
+		t.Error("answered present for a workspace with no record")
 	}
 }
 
@@ -97,12 +97,12 @@ func TestIsTerminalInputCountsOnlyKeystrokes(t *testing.T) {
 		data string
 		want bool
 	}{
-		{"打鍵", websocket.TextMessage, `{"type":"input","data":"ls\n"}`, true},
-		{"ping は在席ではない", websocket.TextMessage, `{"type":"ping"}`, false},
-		{"resize は在席ではない", websocket.TextMessage, `{"type":"resize","cols":80,"rows":24}`, false},
-		{"PTY 出力（binary）は在席ではない", websocket.BinaryMessage, `{"type":"input"}`, false},
-		{"壊れた JSON", websocket.TextMessage, `{`, false},
-		{"空", websocket.TextMessage, ``, false},
+		{"keystroke", websocket.TextMessage, `{"type":"input","data":"ls\n"}`, true},
+		{"ping is not presence", websocket.TextMessage, `{"type":"ping"}`, false},
+		{"resize is not presence", websocket.TextMessage, `{"type":"resize","cols":80,"rows":24}`, false},
+		{"PTY output (binary) is not presence", websocket.BinaryMessage, `{"type":"input"}`, false},
+		{"broken JSON", websocket.TextMessage, `{`, false},
+		{"empty", websocket.TextMessage, ``, false},
 	}
 	for _, c := range cases {
 		if got := isTerminalInput(c.mt, []byte(c.data)); got != c.want {

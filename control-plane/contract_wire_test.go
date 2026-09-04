@@ -65,9 +65,9 @@ func cpContractFamilies() []contractFamily {
 				// Audit timestamps; the screen draws none of them (`approved_at` it does
 				// draw). Adding or dropping them is a design decision, so this only
 				// writes down the current state.
-				"created_by": "【穴】監査メタ。Console の TenantIdP に宣言が無く、画面にも出ていない。",
-				"created_at": "【穴】同上。",
-				"updated_at": "【穴】同上。",
+				"created_by": "Gap: audit metadata. Not declared in the Console's TenantIdP and not drawn on screen.",
+				"created_at": "Gap: same as above.",
+				"updated_at": "Gap: same as above.",
 			},
 		},
 
@@ -86,7 +86,7 @@ func cpContractFamilies() []contractFamily {
 			// complaining — which is exactly the bug this family caught.
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{
-				"createdAt": "【穴】ssmHostDTO は出しているが Console の SsmHost に宣言が無い。",
+				"createdAt": "Gap: ssmHostDTO emits it, but the Console's SsmHost does not declare it.",
 			},
 		},
 
@@ -103,8 +103,8 @@ func cpContractFamilies() []contractFamily {
 				// A settings bundle is rebuilt at its destination, so leaving out the id
 				// and the creation time is the intended design ([[settings-export-import]]:
 				// import only ever adds).
-				"id":        "意図された免除: 設定バンドルは取り込み先で id を振り直すので、書き出しに含めない。",
-				"createdAt": "意図された免除: 同上。取り込み時刻が正しく、書き出し元の作成時刻は持ち込まない。",
+				"id":        "Intended exemption: a settings bundle is given a fresh id at its destination, so the export leaves it out.",
+				"createdAt": "Intended exemption: same as above. The import time is the correct one; the exporter's creation time is not carried over.",
 			},
 		},
 
@@ -121,8 +121,8 @@ func cpContractFamilies() []contractFamily {
 				// Not a gap: the Console must not read this. The secret is accepted on
 				// write only, and a read returns nothing but the `has_secret` boolean.
 				// Declaring it in the TS type would suggest it is readable.
-				"client_secret": "意図された免除: 秘密。書き込み専用で、読み出しは has_secret の真偽だけ。Console の型に載せない。",
-				"updated_by":    "【穴】監査メタ。Console の GitOAuthApp に宣言が無く、画面にも出ていない。",
+				"client_secret": "Intended exemption: a secret. Write-only, and a read returns nothing but the has_secret boolean. It must not appear in the Console's type.",
+				"updated_by":    "Gap: audit metadata. Not declared in the Console's GitOAuthApp and not drawn on screen.",
 			},
 		},
 
@@ -139,8 +139,8 @@ func cpContractFamilies() []contractFamily {
 				"kinds", "timeoutMs", "enabled", "user_secret", "created_by", "updated_at"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{
-				"tenant_slug": "【穴】どのテナントの設定かを返しているが、Console の TenantServer に宣言が無い。",
-				"created_at":  "【穴】監査メタ。宣言が無く、画面にも出ていない（updated_at だけ出している）。",
+				"tenant_slug": "Gap: it returns which tenant the setting belongs to, but the Console's TenantServer does not declare it.",
+				"created_at":  "Gap: audit metadata. Not declared and not drawn on screen (only updated_at is).",
 			},
 		},
 
@@ -209,7 +209,7 @@ func TestContractFamilies(t *testing.T) {
 	fams := cpContractFamilies()
 	// Watch the population: a family silently dropped from the table is noticed here.
 	if len(fams) != 7 {
-		t.Fatalf("家系が %d 件しかない＝表から落ちている（足したなら本数も直すこと）", len(fams))
+		t.Fatalf("only %d families = one has fallen out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {
 		t.Run(f.name, func(t *testing.T) { checkContractFamily(t, f) })
@@ -269,18 +269,18 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 	for name, want := range f.binding {
 		got, ok := goFields[name]
 		if !ok {
-			t.Errorf("%s に フィールド %s が無い（消えたか改名された）", f.name, name)
+			t.Errorf("%s has no field %s (removed or renamed)", f.name, name)
 			continue
 		}
 		if got != want {
-			t.Errorf("%s.%s の json タグが %q（表は %q）"+
-				"——同じ型のフィールド同士でタグを入れ替えると、ワイヤのキー集合は変わらないまま値だけが入れ替わる",
+			t.Errorf("%s.%s has json tag %q (the table says %q)"+
+				" - swapping the tags of two fields of the same type leaves the wire key set unchanged and swaps only the values",
 				f.name, name, got, want)
 		}
 	}
 	for name, key := range goFields {
 		if _, ok := f.binding[name]; !ok {
-			t.Errorf("%s.%s (json:%q) が表に無い——足したなら表にも足すこと（Console 側の型にも要るはず）", f.name, name, key)
+			t.Errorf("%s.%s (json:%q) is not in the table - if you added it, add it to the table too (the Console type should need it as well)", f.name, name, key)
 		}
 	}
 
@@ -288,16 +288,16 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 	scanned := consoleInterfaceFields(t, f.tsPath, f.tsName)
 	for k := range f.tsKeys {
 		if !scanned[k] {
-			t.Errorf("%s: %s の %q が表に在るのに TS 側で見つからない。原因は 2 つのどちらか——"+
-				"(a) キーを意図して消した → tsKeys の表と免除表も直すこと（同じ実行の下のほうに"+
-				"「免除はもう要らない」が出ているはず）／(b) 走査が壊れた → 合成標本の対照"+
-				"（TestTSInterfaceFieldsParser）も一緒に赤くなっているはず",
+			t.Errorf("%s: %s is missing %q, which the table pins. One of two causes: "+
+				"(a) the key was removed on purpose -> fix the tsKeys table and the exemption table too "+
+				"('the exemption is no longer needed' should appear further down the same run); (b) the scanner broke -> the synthetic fixture control "+
+				"(TestTSInterfaceFieldsParser) should have gone red along with it",
 				f.name, f.tsName, k)
 		}
 	}
 	for k := range scanned {
 		if !f.tsKeys[k] {
-			t.Errorf("%s: %s に %q が増えている——表にも足すこと（③の判定はここを通らない）", f.name, f.tsName, k)
+			t.Errorf("%s: %s has gained %q - add it to the table too (check ③ does not pass through here)", f.name, f.tsName, k)
 		}
 	}
 
@@ -321,13 +321,13 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 	sort.Strings(goOnly)
 	for _, k := range tsOnly {
 		if _, ok := f.tsOnly[k]; !ok {
-			t.Errorf("%s: %s が %q を宣言しているが %s は出さない"+
-				"——Console は常に undefined を読む（optional なので型検査は鳴らない）", f.name, f.tsName, k, f.name)
+			t.Errorf("%s: %s declares %q but %s does not emit it"+
+				" - the Console reads undefined forever (it is optional, so the type check never complains)", f.name, f.tsName, k, f.name)
 		}
 	}
 	for _, k := range goOnly {
 		if _, ok := f.goOnly[k]; !ok {
-			t.Errorf("%s: %s が %q を出すが %s に宣言が無い——Console からは型の上で見えない",
+			t.Errorf("%s: %s emits %q but %s does not declare it - it is invisible to the Console at the type level",
 				f.name, f.name, k, f.tsName)
 		}
 	}
@@ -335,20 +335,20 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 	// --- exemption lifetime: four directions, "now aligned" and also "now gone" ---
 	for k, why := range f.tsOnly {
 		if goKeys[k] {
-			t.Errorf("%s: 免除 %q (%s) はもう要らない——%s が出すようになった", f.name, k, why, f.name)
+			t.Errorf("%s: the exemption %q (%s) is no longer needed - %s now emits it", f.name, k, why, f.name)
 		}
 		if !scanned[k] {
-			t.Errorf("%s: 免除 %q (%s) はもう要らない——%s から消えた（両側に無いキーの免除は理由ごと嘘になる）",
+			t.Errorf("%s: the exemption %q (%s) is no longer needed - it is gone from %s (an exemption for a key absent on both sides makes its reason a lie)",
 				f.name, k, why, f.tsName)
 		}
 	}
 	for k, why := range f.goOnly {
 		if !goKeys[k] {
-			t.Errorf("%s: 免除 %q (%s) はもう要らない——%s が出さなくなった（両側に無いキーの免除は理由ごと嘘になる）",
+			t.Errorf("%s: the exemption %q (%s) is no longer needed - %s no longer emits it (an exemption for a key absent on both sides makes its reason a lie)",
 				f.name, k, why, f.name)
 		}
 		if scanned[k] {
-			t.Errorf("%s: 免除 %q (%s) はもう要らない——%s が宣言するようになった", f.name, k, why, f.tsName)
+			t.Errorf("%s: the exemption %q (%s) is no longer needed - %s now declares it", f.name, k, why, f.tsName)
 		}
 	}
 }
@@ -357,7 +357,7 @@ func checkContractFamily(t *testing.T, f contractFamily) {
 func contractGoFields(t *testing.T, f contractFamily) map[string]string {
 	t.Helper()
 	if (f.goType == nil) == (f.goPath == "") {
-		t.Fatalf("%s: goType と goPath はどちらか一方だけを埋めること（両方 or どちらも空）", f.name)
+		t.Fatalf("%s: fill in exactly one of goType and goPath (both are set, or both are empty)", f.name)
 	}
 	if f.goPath != "" {
 		return goStructFieldsFromSource(t, f.goPath, f.goName)
@@ -367,7 +367,7 @@ func contractGoFields(t *testing.T, f contractFamily) map[string]string {
 		t.Fatalf("%s: %v", f.name, err)
 	}
 	if len(out) == 0 {
-		t.Fatalf("%s から json タグを 1 つも読めなかった＝この検査が無言化している", f.goType)
+		t.Fatalf("not a single json tag could be read from %s = this check has gone silent", f.goType)
 	}
 	return out
 }
@@ -388,7 +388,7 @@ func contractGoFields(t *testing.T, f contractFamily) map[string]string {
 // — everything unexpected fails.
 func reflectJSONFields(rt reflect.Type, depth int) (map[string]string, error) {
 	if rt.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("%s は struct ではない", rt)
+		return nil, fmt.Errorf("%s is not a struct", rt)
 	}
 	out := map[string]string{}
 	for i := 0; i < rt.NumField(); i++ {
@@ -407,16 +407,16 @@ func reflectJSONFields(rt reflect.Type, depth int) (map[string]string, error) {
 				// emitted-or-not from the exportedness of a type name is not this
 				// scanner's job, so both fail here.
 				if fl.IsExported() {
-					return nil, fmt.Errorf("%s に公開された非 struct の埋め込みが在る（%s %s）"+
-						"——json は型名をキーにして出すが、この走査は追わない。"+
-						"この家系は埋め込みを解いた型を指すこと", rt, fl.Name, et)
+					return nil, fmt.Errorf("%s has an exported non-struct embedded field (%s %s)"+
+						" - json emits it keyed by the type name, but this scan does not follow it. "+
+						"Point this family at a type with the embedding unfolded", rt, fl.Name, et)
 				}
 				continue
 			}
 			if depth > 0 {
-				return nil, fmt.Errorf("%s に 2 段以上の埋め込みが在る（%s）"+
-					"——json の昇格規則は深さ優先で衝突の扱いも複雑なので、近似で通さない。"+
-					"この家系は埋め込みを解いた型を指すか、経路を作り直すこと", rt, et)
+				return nil, fmt.Errorf("%s has embedding two or more levels deep (%s)"+
+					" - json promotion rules are depth-first and handle collisions intricately, so nothing passes on an approximation. "+
+					"Point this family at a type with the embedding unfolded, or rebuild the route", rt, et)
 			}
 			sub, err := reflectJSONFields(et, depth+1)
 			if err != nil {
@@ -468,7 +468,7 @@ func goStructFieldsFromSource(t *testing.T, path, name string) map[string]string
 	t.Helper()
 	out, err := parseGoStructFields(path, name)
 	if err != nil {
-		t.Fatalf("%v——移送でパスが変わったなら家系表の goPath を直すこと（Skip で黙らせない）", err)
+		t.Fatalf("%v - if a move changed the path, fix goPath in the family table (never silence it with Skip)", err)
 	}
 	return out
 }
@@ -482,7 +482,7 @@ func goStructFieldsFromSource(t *testing.T, path, name string) map[string]string
 func parseGoStructFields(path, name string) (map[string]string, error) {
 	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 	if err != nil {
-		return nil, fmt.Errorf("%s を読めない: %v", path, err)
+		return nil, fmt.Errorf("cannot read %s: %v", path, err)
 	}
 	var st *ast.StructType
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -496,7 +496,7 @@ func parseGoStructFields(path, name string) (map[string]string, error) {
 		return false
 	})
 	if st == nil {
-		return nil, fmt.Errorf("%s に type %s struct が見つからない＝この検査が無言化している", path, name)
+		return nil, fmt.Errorf("%s has no type %s struct = this check has gone silent", path, name)
 	}
 	out := map[string]string{}
 	for _, fl := range st.Fields.List {
@@ -504,9 +504,9 @@ func parseGoStructFields(path, name string) (map[string]string, error) {
 		// instead of returning a shallow result. reflect can see the difference, so move
 		// the family to the reflect route once it needs embedding.
 		if len(fl.Names) == 0 {
-			return nil, fmt.Errorf("%s の %s に埋め込みフィールドが在る（%s）"+
-				"——AST では埋め込み先の json タグを追えない。浅く読むと「TS のみ」の見落としと"+
-				"「Go のみ」の偽の赤が同時に出るので、この家系は reflect 経路へ移すこと",
+			return nil, fmt.Errorf("%s: %s has an embedded field (%s)"+
+				" - the AST cannot follow the json tags inside it. Reading shallow produces a missed 'TS only' and "+
+				"a false 'Go only' red at the same time, so move this family to the reflect route",
 				path, name, exprString(fl.Type))
 		}
 		if fl.Tag == nil {
@@ -514,7 +514,7 @@ func parseGoStructFields(path, name string) (map[string]string, error) {
 		}
 		tv, err := strconv.Unquote(fl.Tag.Value)
 		if err != nil {
-			return nil, fmt.Errorf("%s の %s: タグを読めない (%s): %v", path, name, fl.Tag.Value, err)
+			return nil, fmt.Errorf("%s: %s: cannot read the tag (%s): %v", path, name, fl.Tag.Value, err)
 		}
 		jt := reflect.StructTag(tv).Get("json")
 		if jt == "" || jt == "-" {
@@ -531,7 +531,7 @@ func parseGoStructFields(path, name string) (map[string]string, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("%s の %s から json タグを 1 つも読めなかった＝この検査が無言化している", path, name)
+		return nil, fmt.Errorf("%s: %s yielded not a single json tag = this check has gone silent", path, name)
 	}
 	return out, nil
 }
@@ -669,12 +669,12 @@ func TestTSInterfaceFieldsParser(t *testing.T) {
 		}
 		for k := range want {
 			if !got[k] {
-				t.Errorf("%s: %q を落としている（走査が壊れている）", tc.name, k)
+				t.Errorf("%s: %q was dropped (the scanner is broken)", tc.name, k)
 			}
 		}
 		for k := range got {
 			if !want[k] {
-				t.Errorf("%s: %q を余計に拾っている（入れ子・コメント・文字列を巻き込んでいる）", tc.name, k)
+				t.Errorf("%s: %q was picked up when it should not be (a nested object, a comment or a string got pulled in)", tc.name, k)
 			}
 		}
 	}
@@ -685,12 +685,12 @@ func TestTSInterfaceFieldsParser(t *testing.T) {
 	if got, err := tsInterfaceFields(tmpl, "Tmpl"); err != nil {
 		t.Errorf("Tmpl: %v", err)
 	} else if len(got) != 3 || !got["m1"] || !got["m2"] || !got["m3"] {
-		t.Errorf("Tmpl: テンプレートリテラルで深さを見失っている: %v", got)
+		t.Errorf("Tmpl: the depth count went astray on a template literal: %v", got)
 	}
 
 	// Looking for something absent must be an error — no Skip, no silent empty result.
 	if _, err := tsInterfaceFields(src, "NoSuchInterface"); err == nil {
-		t.Error("存在しない interface でエラーにならない＝この検査が無言化しうる")
+		t.Error("looking for an interface that does not exist is not an error = this check can go silent")
 	}
 }
 
@@ -700,8 +700,8 @@ func consoleInterfaceFields(t *testing.T, path, name string) map[string]bool {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("Console の型を読めない (%s): %v"+
-			"——移送でパスが変わったなら consoleSessionTS を直すこと（Skip で黙らせない）", path, err)
+		t.Fatalf("cannot read the Console type (%s): %v"+
+			" - if a move changed the path, fix consoleSessionTS (never silence it with Skip)", path, err)
 	}
 	out, err := tsInterfaceFields(string(b), name)
 	if err != nil {
@@ -726,7 +726,7 @@ func consoleInterfaceFields(t *testing.T, path, name string) map[string]bool {
 	// TestTSInterfaceFieldsParser (the synthetic fixture): every family's real input is one
 	// field per line and never reaches the broken branch (measured).
 	if len(out) == 0 {
-		t.Fatalf("interface %s のフィールドを 1 つも読めなかった＝走査が無言化している", name)
+		t.Fatalf("not a single field could be read from interface %s = the scan has gone silent", name)
 	}
 	return out
 }
@@ -774,7 +774,7 @@ func tsInterfaceFields(src, name string) (map[string]bool, error) {
 		}
 	}
 	if start < 0 {
-		return nil, fmt.Errorf("interface / type %s が見つからない＝この検査が無言化している", name)
+		return nil, fmt.Errorf("interface / type %s not found = this check has gone silent", name)
 	}
 
 	out := map[string]bool{}
@@ -856,7 +856,7 @@ func tsInterfaceFields(src, name string) (map[string]bool, error) {
 		}
 		stmt = false
 	}
-	return nil, fmt.Errorf("interface %s の本体が閉じていない＝走査が壊れている", name)
+	return nil, fmt.Errorf("the body of interface %s is never closed = the scan is broken", name)
 }
 
 func isTSIdentRune(r rune) bool {
@@ -871,12 +871,12 @@ func isTSIdentRune(r rune) bool {
 func putJSONField(out map[string]string, rt reflect.Type, field, jsonName string) error {
 	for f, j := range out {
 		if j == jsonName {
-			return fmt.Errorf("%s: json 名 %q が %s と %s で重なる"+
-				"——encoding/json は同深さの衝突でどちらも出さない。近似で通さない", rt, jsonName, f, field)
+			return fmt.Errorf("%s: the json name %q collides between %s and %s"+
+				" - encoding/json emits neither on a same-depth collision. nothing passes on an approximation", rt, jsonName, f, field)
 		}
 	}
 	if _, dup := out[field]; dup {
-		return fmt.Errorf("%s: フィールド名 %s が重複している", rt, field)
+		return fmt.Errorf("%s: the field name %s is duplicated", rt, field)
 	}
 	out[field] = jsonName
 	return nil
@@ -912,11 +912,11 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 		v       any
 		wantErr bool // true = a shape we cannot follow, so err out (narrower than json is fine)
 	}{
-		{"① 素の 1 段埋め込み", struct {
+		{"① plain one-level embedding", struct {
 			Hour string `json:"hour"`
 			inner
 		}{}, false},
-		{"② タグ付き埋め込み（入れ子になる）", struct {
+		{"② tagged embedding (becomes nested)", struct {
 			Hour  string `json:"hour"`
 			Inner inner  `json:"inner"`
 		}{}, false},
@@ -930,11 +930,11 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 		//   embedding, ⑨ an exported non-struct embedded field, ⑩ an exported field with
 		//   no tag.
 		// So the shapes only this scanner can protect are ④⑥⑨⑩.
-		{"③ 別の Go 名・同じ json 名（実行時に組む）", reflect.New(reflect.StructOf([]reflect.StructField{
+		{"③ different Go name, same json name (built at run time)", reflect.New(reflect.StructOf([]reflect.StructField{
 			{Name: "X", Type: reflect.TypeOf(""), Tag: `json:"a"`},
 			{Name: "Y", Type: reflect.TypeOf(""), Tag: `json:"a"`},
 		})).Elem().Interface(), true},
-		{"④ 同じ json 名が外側と昇格でぶつかる", struct {
+		{"④ the same json name collides between the outer field and a promotion", struct {
 			A string `json:"a"`
 			inner
 		}{}, true},
@@ -942,7 +942,7 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 		// is not emitted. The label is kept consistent with the body — in a template, a
 		// label that disagrees with its body propagates as far as an error in the
 		// implementation does.
-		{"⑤-a 埋め込み 1 つ・衝突なし（json:\"-\" は出ない）", struct {
+		{"⑤-a one embedded field, no collision (json:\"-\" is not emitted)", struct {
 			innerDup
 			Other struct{} `json:"-"`
 		}{}, false},
@@ -952,26 +952,26 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 		// touching `putJSONField`'s condition or the scan order would have gone unnoticed.
 		// Like ③, written in source it is rejected by `go vet` (structtag), so it is built
 		// at run time.
-		{"⑤-b 同深さの 2 つの埋め込みが同じ json 名（実行時に組む）",
+		{"⑤-b two embedded fields at the same depth with the same json name (built at run time)",
 			reflect.New(reflect.StructOf([]reflect.StructField{
 				{Name: "InnerDupA", Type: reflect.TypeOf(innerDup{}), Anonymous: true},
 				{Name: "InnerDupB", Type: reflect.TypeOf(innerDup2{}), Anonymous: true},
 			})).Elem().Interface(), true},
-		{"⑥ 2 段の埋め込み", struct {
+		{"⑥ two-level embedding", struct {
 			Z string `json:"z"`
 			deep2
 		}{}, true},
 		// A nil pointer embed makes json omit the fields, so compare with a non-nil value.
 		// That is a property of how the control is built, not a difference in the rules.
-		{"⑦ ポインタ埋め込み（非 nil）", struct {
+		{"⑦ pointer embedding (non-nil)", struct {
 			Hour string `json:"hour"`
 			*inner
 		}{Hour: "h", inner: &inner{}}, false},
-		{"⑨ 公開された非 struct の埋め込み", struct {
+		{"⑨ exported non-struct embedding", struct {
 			MyDur
 			C string `json:"c"`
 		}{}, true},
-		{"⑩ タグ無しの公開フィールド（json は Go 名で出す）", struct {
+		{"⑩ exported field with no tag (json emits it under the Go name)", struct {
 			Plain string
 			C     string `json:"c"`
 		}{}, false},
@@ -979,12 +979,12 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 		got, err := reflectJSONFields(reflect.TypeOf(tc.v), 0)
 		if tc.wantErr {
 			if err == nil {
-				t.Errorf("%s: error になるはずが %v を返した（json との食い違いを安全側に倒せていない）", tc.name, got)
+				t.Errorf("%s: should have errored but returned %v (a disagreement with json is not erred on the safe side)", tc.name, got)
 			}
 			continue
 		}
 		if err != nil {
-			t.Errorf("%s: 追えるはずの形で error: %v", tc.name, err)
+			t.Errorf("%s: a shape that should be followable errored: %v", tc.name, err)
 			continue
 		}
 		// Compare against the key set json.Marshal actually emits.
@@ -1004,13 +1004,13 @@ func TestReflectJSONFieldsMatchesEncodingJSON(t *testing.T) {
 		}
 		for k := range raw {
 			if !mine[k] {
-				t.Errorf("%s: json は %q を出すのに走査が落としている（取りこぼし）", tc.name, k)
+				t.Errorf("%s: json emits %q but the scan drops it (a missed key)", tc.name, k)
 			}
 		}
 		for k := range mine {
 			if _, ok := raw[k]; !ok {
-				t.Errorf("%s: 走査が %q を出すのに json は出さない"+
-					"——契約に実在しないキーが載り、免除表に偽の穴が生える", tc.name, k)
+				t.Errorf("%s: the scan emits %q but json does not"+
+					" - a key that does not exist lands in the contract, and a false gap grows in the exemption table", tc.name, k)
 			}
 		}
 	}
@@ -1043,10 +1043,10 @@ func TestReflectJSONFieldsEmbedding(t *testing.T) {
 	}
 	got, err := reflectJSONFields(reflect.TypeOf(promoted{}), 0)
 	if err != nil {
-		t.Fatalf("1 段の埋め込みを読めない: %v", err)
+		t.Fatalf("cannot read one level of embedding: %v", err)
 	}
 	if len(got) != 3 || got["Hour"] != "hour" || got["A"] != "a" || got["B"] != "b" {
-		t.Fatalf("昇格の結果が違う: %v（外側 1 ＋ 昇格 2 のはず）", got)
+		t.Fatalf("wrong promotion result: %v (should be 1 outer + 2 promoted)", got)
 	}
 
 	// ② An exported field with no tag is emitted by json under its Go name, so it is
@@ -1056,7 +1056,7 @@ func TestReflectJSONFieldsEmbedding(t *testing.T) {
 	// On the rules, the standard library is always the authority.
 	got, err = reflectJSONFields(reflect.TypeOf(flat{}), 0)
 	if err != nil || len(got) != 2 || got["X"] != "x" || got["Y"] != "Y" {
-		t.Fatalf("タグ無しフィールドの扱いが違う: %v (%v)", got, err)
+		t.Fatalf("untagged fields are handled wrongly: %v (%v)", got, err)
 	}
 
 	// ③ Two or more levels of embedding is an error, not a shallow result.
@@ -1065,8 +1065,8 @@ func TestReflectJSONFieldsEmbedding(t *testing.T) {
 		deeper
 	}
 	if _, err := reflectJSONFields(reflect.TypeOf(twoLevel{}), 0); err == nil {
-		t.Error("2 段の埋め込みで error にならない" +
-			"——json の昇格規則は深さ優先で衝突の扱いも複雑なので、近似で通してはいけない")
+		t.Error("two-level embedding does not error" +
+			" - json promotion rules are depth-first and handle collisions intricately, so nothing may pass on an approximation")
 	}
 
 	// ④ A promotion colliding with the outer field is an error (json drops both on a
@@ -1076,12 +1076,12 @@ func TestReflectJSONFieldsEmbedding(t *testing.T) {
 		inner
 	}
 	if _, err := reflectJSONFields(reflect.TypeOf(clash{}), 0); err == nil {
-		t.Error("昇格したフィールド名が外側とぶつかっているのに error にならない")
+		t.Error("a promoted field name collides with the outer field yet it does not error")
 	}
 
 	// ⑤ A non-struct argument is an error — never a silent empty result.
 	if _, err := reflectJSONFields(reflect.TypeOf(""), 0); err == nil {
-		t.Error("struct でない型で error にならない＝この経路が無言化しうる")
+		t.Error("a non-struct type does not error = this route can go silent")
 	}
 }
 
@@ -1106,33 +1106,33 @@ func TestGoStructFieldsFromSourceGuards(t *testing.T) {
 	ok := write("ok.go", "type T struct {\n\tA string `json:\"a\"`\n\tB int    `json:\"b,omitempty\"`\n\tC string `json:\"-\"`\n\tD string\n}\n")
 	got, err := parseGoStructFields(ok, "T")
 	if err != nil {
-		t.Fatalf("素の struct を読めない: %v", err)
+		t.Fatalf("cannot read a plain struct: %v", err)
 	}
 	if len(got) != 2 || got["A"] != "a" || got["B"] != "b" {
-		t.Fatalf("素の struct の読み取りが違う: %v（json:\"-\" とタグ無しは落とす）", got)
+		t.Fatalf("a plain struct is read wrongly: %v (json:\"-\" and untagged fields are dropped)", got)
 	}
 
 	// An embedded (anonymous) field is an error, not a shallow result.
 	emb := write("emb.go", "type Base struct {\n\tX string `json:\"x\"`\n}\n\ntype T struct {\n\tBase\n\tA string `json:\"a\"`\n}\n")
 	if _, err := parseGoStructFields(emb, "T"); err == nil {
-		t.Error("埋め込みフィールドが在るのに error にならない" +
-			"——AST は埋め込み先の json タグを追えないので、浅く読むと穴の見落としと偽の赤が同時に出る")
+		t.Error("an embedded field is present yet it does not error" +
+			" - the AST cannot follow the json tags inside it, so reading shallow produces a missed gap and a false red at the same time")
 	}
 
 	// A missing type is an error; this route must not go silent.
 	if _, err := parseGoStructFields(ok, "NoSuchType"); err == nil {
-		t.Error("存在しない型で error にならない＝この経路が無言化しうる")
+		t.Error("a type that does not exist does not error = this route can go silent")
 	}
 
 	// A missing path is an error (the case where a move changed the path).
 	if _, err := parseGoStructFields(filepath.Join(dir, "nope.go"), "T"); err == nil {
-		t.Error("存在しないパスで error にならない＝移送のパス変更を黙って通す")
+		t.Error("a path that does not exist does not error = a path changed by a move passes silently")
 	}
 
 	// Not a single json tag is an error: "zero found" is never taken as a result.
 	none := write("none.go", "type T struct {\n\tA string\n\tB int\n}\n")
 	if _, err := parseGoStructFields(none, "T"); err == nil {
-		t.Error("json タグ 0 件で error にならない＝この経路が無言化しうる")
+		t.Error("zero json tags does not error = this route can go silent")
 	}
 }
 
@@ -1167,11 +1167,11 @@ func TestSharedContractMachineryIsIdentical(t *testing.T) {
 			b = tl[i]
 		}
 		if a != b {
-			t.Fatalf("共有機構が割れている（区間 %d 行目）:\n  control-plane: %q\n  workspace/agent: %q\n"+
-				"——片方だけ直すと、もう片方は古い走査で契約を測り続ける。両方に同じ変更を入れること", i+1, a, b)
+			t.Fatalf("the shared machinery has drifted apart (line %d of the region):\n  control-plane: %q\n  workspace/agent: %q\n"+
+				" - fix only one side and the other keeps measuring the contract with the old scanner. Make the same change in both", i+1, a, b)
 		}
 	}
-	t.Fatalf("共有機構の長さが違う（control-plane %d 行 / workspace/agent %d 行）", len(ml), len(tl))
+	t.Fatalf("the shared machinery differs in length (control-plane %d lines / workspace/agent %d lines)", len(ml), len(tl))
 }
 
 const (
@@ -1185,7 +1185,7 @@ func sharedContractRegion(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("%s を読めない: %v——移送でパスが変わったならこの検査を直すこと（Skip で黙らせない）", path, err)
+		t.Fatalf("cannot read %s: %v - if a move changed the path, fix this check (never silence it with Skip)", path, err)
 	}
 	got, err := extractSharedRegion(string(b))
 	if err != nil {
@@ -1199,20 +1199,20 @@ func sharedContractRegion(t *testing.T, path string) string {
 func extractSharedRegion(src string) (string, error) {
 	i := strings.Index(src, sharedRegionStart)
 	if i < 0 {
-		return "", fmt.Errorf("開始の番兵 %q が無い＝この検査が無言化している", sharedRegionStart)
+		return "", fmt.Errorf("the opening sentinel %q is missing = this check has gone silent", sharedRegionStart)
 	}
 	i = strings.Index(src[i:], "\n")
 	if i < 0 {
-		return "", fmt.Errorf("開始の番兵の行が閉じていない")
+		return "", fmt.Errorf("the opening sentinel line is never closed")
 	}
 	rest := src[strings.Index(src, sharedRegionStart)+i+1:]
 	j := strings.Index(rest, sharedRegionEnd)
 	if j < 0 {
-		return "", fmt.Errorf("終了の番兵 %q が無い＝この検査が無言化している", sharedRegionEnd)
+		return "", fmt.Errorf("the closing sentinel %q is missing = this check has gone silent", sharedRegionEnd)
 	}
 	out := rest[:j]
 	if strings.TrimSpace(out) == "" {
-		return "", fmt.Errorf("番兵の間が空＝区間の取り出しが壊れている")
+		return "", fmt.Errorf("the space between the sentinels is empty = extracting the region is broken")
 	}
 	return out, nil
 }
@@ -1228,10 +1228,10 @@ func TestSharedContractRegionExtractor(t *testing.T) {
 	}
 	a, err := extractSharedRegion(mk("func f() {}\n"))
 	if err != nil {
-		t.Fatalf("素の入力から区間を取り出せない: %v", err)
+		t.Fatalf("cannot extract the region from a plain input: %v", err)
 	}
 	if a != "func f() {}\n" {
-		t.Fatalf("区間の取り出しが違う: %q（番兵の行と外側を含めてはいけない）", a)
+		t.Fatalf("the region was extracted wrongly: %q (the sentinel lines and anything outside must not be included)", a)
 	}
 	// One character of difference must show up as a difference.
 	b, err := extractSharedRegion(mk("func g() {}\n"))
@@ -1239,17 +1239,17 @@ func TestSharedContractRegionExtractor(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a == b {
-		t.Error("中身を変えても区間が同じに見える＝比較器が中身を見ていない")
+		t.Error("changing the body still looks like the same region = the comparator is not looking at the body")
 	}
 	// A missing sentinel is an error — no Skip, no silent empty result.
 	if _, err := extractSharedRegion("package x\n\nfunc f() {}\n"); err == nil {
-		t.Error("番兵が無いのに error にならない＝この検査が無言化しうる")
+		t.Error("a missing sentinel does not error = this check can go silent")
 	}
 	if _, err := extractSharedRegion("package x\n\n" + sharedRegionStart + "=====\nfunc f() {}\n"); err == nil {
-		t.Error("終了の番兵が無いのに error にならない")
+		t.Error("a missing closing sentinel does not error")
 	}
 	// An empty region is an error: stop short of a thin non-zero result.
 	if _, err := extractSharedRegion(mk("\n")); err == nil {
-		t.Error("区間が空なのに error にならない")
+		t.Error("an empty region does not error")
 	}
 }

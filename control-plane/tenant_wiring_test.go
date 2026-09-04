@@ -101,7 +101,7 @@ func cpTenantMethods(t *testing.T) map[string]*ast.FuncDecl {
 	t.Helper()
 	f, err := parser.ParseFile(token.NewFileSet(), "tenant_wiring.go", nil, 0)
 	if err != nil {
-		t.Fatalf("tenant_wiring.go を読めない: %v", err)
+		t.Fatalf("cannot read tenant_wiring.go: %v", err)
 	}
 	out := map[string]*ast.FuncDecl{}
 	for _, d := range f.Decls {
@@ -122,17 +122,17 @@ func TestCPTenantAdaptersDelegateToMatchingTarget(t *testing.T) {
 	methods := cpTenantMethods(t)
 	// Close off the "found none, therefore checked nothing" shape first.
 	if len(methods) == 0 {
-		t.Fatal("tenant_wiring.go に cpTenant のメソッドを 1 本も見つけられなかった＝この検査が無言化している")
+		t.Fatal("found no cpTenant method at all in tenant_wiring.go = this check has gone silent")
 	}
 	for name, want := range cpTenantDelegates {
 		fd, ok := methods[name]
 		if !ok {
-			t.Errorf("cpTenant.%s が tenant_wiring.go に無い（改名したなら表も直すこと）", name)
+			t.Errorf("cpTenant.%s is not in tenant_wiring.go (if you renamed it, fix the table too)", name)
 			continue
 		}
 		if !bodyNames(fd)[want] {
-			t.Errorf("cpTenant.%s が %q を参照していない＝別の本物へ繋がっている。"+
-				"同じ型の隣と入れ替わっていないか見ること（実際に参照しているのは %s）",
+			t.Errorf("cpTenant.%s does not reference %q = it is wired to a different target. "+
+				"Check whether it got swapped with a same-typed neighbour (what it actually references is %s)",
 				name, want, strings.Join(sortedNames(bodyNames(fd)), " "))
 		}
 	}
@@ -141,7 +141,7 @@ func TestCPTenantAdaptersDelegateToMatchingTarget(t *testing.T) {
 func TestCPTenantWiringCheckCoversInterface(t *testing.T) {
 	iface := reflect.TypeOf((*tenantsrv.CP)(nil)).Elem()
 	if iface.NumMethod() == 0 {
-		t.Fatal("tenantsrv.CP のメソッドを 1 本も読めなかった＝この検査が無言化している")
+		t.Fatal("could not read a single tenantsrv.CP method = this check has gone silent")
 	}
 	var missing []string
 	inIface := map[string]bool{}
@@ -154,8 +154,8 @@ func TestCPTenantWiringCheckCoversInterface(t *testing.T) {
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		t.Errorf("tenantsrv.CP に %v が増えたのに cpTenantDelegates に無い。"+
-			"アダプタを足したら、どの本物へ繋ぐのかをここに書くこと", missing)
+		t.Errorf("%v were added to tenantsrv.CP but are not in cpTenantDelegates. "+
+			"When you add an adapter, record here which target it wires to", missing)
 	}
 	var stale []string
 	for n := range cpTenantDelegates {
@@ -165,7 +165,7 @@ func TestCPTenantWiringCheckCoversInterface(t *testing.T) {
 	}
 	if len(stale) > 0 {
 		sort.Strings(stale)
-		t.Errorf("cpTenantDelegates の %v は tenantsrv.CP に無い（消えたなら表からも消すこと）", stale)
+		t.Errorf("%v in cpTenantDelegates are not in tenantsrv.CP (if they are gone, remove them from the table too)", stale)
 	}
 }
 

@@ -133,7 +133,7 @@ func TestOlderAgentWithoutTheRouteDegrades(t *testing.T) {
 
 	out := memberStatsJSON(t, mgr)
 	if out["running"] != true {
-		t.Errorf("running = %v, want true — 版ずれでも稼働の事実は変わらない", out["running"])
+		t.Errorf("running = %v, want true - a version skew does not change the fact that it is running", out["running"])
 	}
 	if _, ok := out["mem_used"]; ok {
 		t.Errorf("mem_used present (%v) from a 404 body", out["mem_used"])

@@ -45,8 +45,9 @@ Resources:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
-      # 中身はデプロイのたびに使い捨てられる転送物なので、放っておくと積み上がるだけ。
-      # 7 日で expire させる（撤収時に空にする手間も、これで軽くなる）。
+      # The contents are transfer artifacts thrown away on every deploy, so left alone they
+      # only pile up. Expire them after 7 days (which also lightens the work of emptying the
+      # bucket at teardown).
       LifecycleConfiguration:
         Rules:
           - Id: expire-staged-templates
@@ -165,12 +166,12 @@ Resources:
                   - ecs:ListTasks
                   - ecs:TagResource
                 Resource: "*"          # ECS actions are not tightly resource-scopable; dev-acceptable
-              # --- Backend drift ("要再起動" badge; control-plane/runtime_ecs_stale.go) ---
+              # --- Backend drift ("restart required" badge; control-plane/runtime_ecs_stale.go) ---
               # Read-only, one repository: resolve the workspace image TAG to the content
               # it points at now, so the CP can tell that a running workspace was launched
               # from an older image and the Console can offer a stop→start.
               #
-              # ⚠️ This role, not the deployer's. The whole class of bug ADR 0045 決定 21 /
+              # This role, not the deployer's. The whole class of bug ADR 0045 decision 21 /
               # docs/log/64 §64.22 documents is "it passed against real AWS" while the live
               # test ran as the deployer — the CP task role is the only identity that
               # matters here. Without this statement the probe fails with AccessDenied,
@@ -208,10 +209,10 @@ Resources:
               # value that moves. The CP now re-reads the secret when Postgres refuses
               # its credentials (control-plane/store_postgres_secret.go).
               #
-              # ⚠️ THIS role, not the exec role. The exec role's identical statement
+              # THIS role, not the exec role. The exec role's identical statement
               # (above) is what injects the env var at task start and does nothing
               # afterwards — the running process has its own identity. Missing this is
-              # the silent kind of failure ADR 0045 決定 21 keeps warning about: the CP
+              # the silent kind of failure ADR 0045 decision 21 keeps warning about: the CP
               # falls back to the injected value, works perfectly, and only stops
               # working at the next rotation. Grep the log for DB_SECRET_REFRESH_FAILED
               # to tell whether it is actually allowed.
@@ -251,7 +252,7 @@ Resources:
                   # and not only the optional ones. createHomeVolume asks for the user's
                   # hibernation snapshot FIRST, so a brand-new user's Start would have failed
                   # outright, not merely started slowly. (docs/log/64 §64.22.)
-                  #   DescribeSnapshots — restore (決定 4), golden lookup (決定 9), backups (決定 17)
+                  #   DescribeSnapshots — restore (decision 4), golden lookup (decision 9), backups (decision 17)
                   #   CreateSnapshot    — hibernation and backups
                   #   DeleteSnapshot    — retention, superseded captures, Destroy
                   - ec2:DescribeSnapshots
@@ -264,7 +265,7 @@ Resources:
                   - ecs:ListContainerInstances
                   - ecs:DescribeContainerInstances
                   # Stopped instances and disconnected agents are NOT deregistered
-                  # automatically, even on terminate (ADR 0045 決定 3-2). The sweeper
+                  # automatically, even on terminate (ADR 0045 decision 3-2). The sweeper
                   # has to do it or ghosts accumulate and satisfy placement constraints.
                   - ecs:DeregisterContainerInstance
                 Resource: "*"
@@ -300,8 +301,8 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: ecs-tasks.amazonaws.com
-              # --- Cloud cost (docs/log/67, ADR 0048 決定 8) ---
-              # ADR 0045 決定 21 refused to add IAM just to DISPLAY something (the vCPU
+              # --- Cloud cost (docs/log/67, ADR 0048 decision 8) ---
+              # ADR 0045 decision 21 refused to add IAM just to DISPLAY something (the vCPU
               # count became an env declaration instead). This reverses that, on purpose:
               # there the same number was obtainable another way, and here the alternative
               # to real money is a DIFFERENT number (an estimate from operator-declared
@@ -312,7 +313,7 @@ Resources:
               # Resource must be "*" — but what comes back is aggregated amounts, not
               # access to any resource or secret.
               #
-              # ⚠️ Account prerequisite, not expressible here: an IAM role can only call
+              # Account prerequisite, not expressible here: an IAM role can only call
               # the Billing APIs when the account has "IAM user and role access to Billing
               # Information" enabled. Without it this policy is present and every call
               # still fails — see deploy/aws/ecs/README.md.
@@ -322,9 +323,9 @@ Resources:
                   - ce:GetCostAndUsage
                   - ce:ListCostAllocationTags
                 Resource: "*"
-              # ⚠️ ACCOUNT-LEVEL BILLING CONFIGURATION — the one place the Control Plane
+              # ACCOUNT-LEVEL BILLING CONFIGURATION — the one place the Control Plane
               # writes something outside the resources it created itself. Read the reason
-              # before removing it (docs/log/67 §67.5, ADR 0048 決定 11).
+              # before removing it (docs/log/67 §67.5, ADR 0048 decision 11).
               #
               # A cost allocation tag only applies from the moment it is switched on, and
               # AWS will not activate a key it has not yet discovered on a real resource —
@@ -367,8 +368,8 @@ Resources:
                 Resource: "*"
 
 Outputs:
-  # ⚠️ 空にならない値であること。空の Export は CREATE の最終段で全ロールバックを起こす
-  # （docs/log/64 の実例）。BucketName は必ず解決するので安全。
+  # The value must never be empty: an empty Export rolls the whole CREATE back at its final
+  # stage (seen for real, docs/log/64). BucketName always resolves, so it is safe.
   CfnTemplatesBucket:
     Value: !Ref CfnTemplates
     Export: { Name: !Sub "${AWS::StackName}-CfnTemplatesBucket" }

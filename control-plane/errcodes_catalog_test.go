@@ -51,7 +51,7 @@ func cpConsoleCatalog(t *testing.T, locale string) string {
 		n++
 	}
 	if n == 0 {
-		t.Fatalf("%s に .ts が 1 つも無い（カタログの置き場所が変わった？）", dir)
+		t.Fatalf("no .ts file at all under %s (did the catalog move?)", dir)
 	}
 	return b.String()
 }
@@ -60,7 +60,7 @@ func TestCPEmittedErrCodesHaveConsoleCatalogEntry(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "errcodes.go", nil, 0)
 	if err != nil {
-		t.Fatalf("errcodes.go を読めない: %v", err)
+		t.Fatalf("cannot read errcodes.go: %v", err)
 	}
 	codeOf := map[string]string{}
 	for _, d := range f.Decls {
@@ -84,7 +84,7 @@ func TestCPEmittedErrCodesHaveConsoleCatalogEntry(t *testing.T) {
 		}
 	}
 	if len(codeOf) == 0 {
-		t.Fatal("errcodes.go から定数を 1 つも読めなかった＝この検査が無言化している")
+		t.Fatal("could not read a single constant from errcodes.go = this check has gone silent")
 	}
 
 	ents, err := os.ReadDir(".")
@@ -113,17 +113,17 @@ func TestCPEmittedErrCodesHaveConsoleCatalogEntry(t *testing.T) {
 		})
 	}
 	if scanned < 50 {
-		t.Fatalf(".go を %d 本しか読めていない＝この検査が無言化している", scanned)
+		t.Fatalf("only %d .go files were read = this check has gone silent", scanned)
 	}
 	if len(emitted) == 0 {
-		t.Fatal("送出されているエラーコードを 1 つも見つけられなかった（走査が壊れている）")
+		t.Fatal("found no emitted error code at all (the scan is broken)")
 	}
 
 	catalog := cpConsoleCatalog(t, "ja")
 	for code, constName := range emitted {
 		if !consoleCatalogHasKeyCP(catalog, "err."+code) {
-			t.Errorf("%s = %q を送出しているのに、Console のカタログに \"err.%s\" が無い。"+
-				"console/src/lib/i18n/locales/{ja,en}/errors.ts へ同時に足すこと",
+			t.Errorf("%s = %q is emitted, but the Console catalog has no \"err.%s\". "+
+				"Add it to console/src/lib/i18n/locales/{ja,en}/errors.ts at the same time",
 				constName, code, code)
 		}
 	}

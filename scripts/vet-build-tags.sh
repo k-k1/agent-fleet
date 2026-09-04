@@ -1,27 +1,29 @@
 #!/usr/bin/env bash
-# build tag 付きのファイルを vet する。カレントの Go モジュールに対して実行する。
+# Vets the build-tagged files of the current Go module.
 #
-# ⚠️ **build tag 付きのファイルは既定ビルドに入らないので、gofmt / go vet / go build /
-# go test のどれも触らない。CI の 6 ジョブも同じで、参照が腐っても緑のまま通る。**
-# 実測 2026-09-02: 回収 PR #322 が opencode_contract_test.go に不要 import を残したが、
-# ワーカー側の全ゲートと CI 6/6 が緑で、`go vet -tags clicontract` だけが exit 1 になった。
-# タグ付きテストの**実行**には実 CLI バイナリが要るので CI では回せないが、
-# **vet は型検査だけなので走る**。
+# Build-tagged files are not part of the default build, so none of gofmt / go vet /
+# go build / go test touches them, and neither do the six CI jobs — a rotten reference
+# passes green. Measured: an unused import left in opencode_contract_test.go kept every
+# worker-side gate and 6/6 CI jobs green while only `go vet -tags clicontract` exited 1.
+# Running the tagged tests needs the real CLI binaries and cannot happen in CI, but vet is
+# type checking only, so it runs.
 #
-# 使い方: scripts/vet-build-tags.sh <既知のタグ...>
-#   既知のタグを 1 つも渡さない = 「このモジュールにタグ付きは無いはず」の宣言。
-#   ソースにタグが現れたら赤くなる（＝増えたことに誰かが気付く）。
+# Usage: scripts/vet-build-tags.sh <known tags...>
+#   Passing no known tag declares "this module should have no tagged files".
+#   A tag appearing in the source turns this red, which is how anyone notices.
 set -euo pipefail
 
 known=("$@")
 
-# プラットフォーム語（GOOS/GOARCH）は vet の対象にしてはいけない。
-# ⚠️ ここを手書きにすると、`//go:build riscv64` のファイルが 1 枚増えた日に「未知のタグ」で
-# 赤くなり、**直し方として known に足すという最悪の手**（linux で `go vet -tags riscv64` を
-# 回す＝プラットフォーム限定ファイルを無理に取り込む）へ人を誘導する。だから Go 自身に列挙させる。
+# Platform words (GOOS/GOARCH) must never be vetted.
+# Hand-writing this list means that the day a `//go:build riscv64` file appears it goes red
+# as an "unknown tag" and pushes whoever hits it toward the worst possible fix — adding it
+# to known, i.e. running `go vet -tags riscv64` on linux and forcing a platform-only file
+# into the build. So Go itself enumerates them.
 mapfile -t platform < <(go tool dist list | tr '/' '\n' | sort -u)
 
-# ツールチェーンが定義するタグも同じ理由で対象外。`goexperiment.*` と `go1.*` は前置一致。
+# Tags defined by the toolchain are out of scope for the same reason. `goexperiment.*` and
+# `go1.*` match by prefix.
 toolchain=(cgo gc gccgo race msan asan purego boringcrypto unix ignore)
 
 is_excluded() {
@@ -32,12 +34,13 @@ is_excluded() {
   return 1
 }
 
-# ⚠️ 抽出は「識別子の形」で弾かない。`^[a-z][a-z_]*$` のような形の allowlist は、
-# **数字やドットを含むタグ（newtag2 / goexperiment.arenas）を「未知」ではなく黙って落とす**
-# ＝「知らないものは落とす」設計の唯一の穴になる（レビュワーが PR #323 で実測）。
-# 広く拾って、除外は上の 2 つの表だけで行う。
-# ⚠️ `|| true` が要る: 1 件も残らないと pipefail でパイプライン全体が exit 1 になり、
-# **理由の出ない赤**になる（タグ 0 件のモジュールでは必ず起きる）。
+# Extraction must not reject on "identifier shape". A shape allowlist such as
+# `^[a-z][a-z_]*$` silently drops tags containing digits or dots (newtag2,
+# goexperiment.arenas) instead of reporting them as unknown — the one hole in a design
+# whose rule is "reject what you do not know" (measured during review). Collect broadly and
+# exclude only through the two tables above.
+# `|| true` is required: when nothing remains, pipefail makes the whole pipeline exit 1 and
+# produces a red with no reason given (which always happens in a module with zero tags).
 found=$(grep -rhE '^//go:build ' --include='*.go' . 2>/dev/null \
   | sed 's|^//go:build ||' \
   | tr ' ' '\n' | tr -d '()!' \
@@ -51,7 +54,7 @@ for t in $found; do
   hit=0
   for k in ${known[@]+"${known[@]}"}; do [ "$t" = "$k" ] && hit=1 && break; done
   if [ "$hit" -eq 0 ]; then
-    echo "::error::未知の build tag '$t' がソースに在る。scripts/vet-build-tags.sh の呼び出しに足すこと" >&2
+    echo "::error::unknown build tag '$t' is present in the source. Add it to the scripts/vet-build-tags.sh invocation" >&2
     unknown=1
   fi
 done

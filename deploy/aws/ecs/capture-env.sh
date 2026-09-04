@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
-# Agent Fleet — 生きている配備の「立て直しに要る引数」を手元に控える（env.sh を読むこと）。
+# Agent Fleet — capture the arguments a live deployment would need to be rebuilt (read env.sh).
 #
 #   deploy/aws/ecs/capture-env.sh --profile <p> --region <r>
 #
-# 出力は `~/.config/agent-fleet/deploy/<profile>.<region>/`（**リポジトリの外**）。
-#   env             … スタック名 / FQDN / 実行時の性質（立て直しのときの土台）
-#   params/<slug>   … 各スタックの引数を **1 行 1 個**（`Key=Value`）
+# Output goes to `~/.config/agent-fleet/deploy/<profile>.<region>/` (outside the repository).
+#   env             … stack names / FQDN / runtime properties (the base for standing it back up)
+#   params/<slug>   … each stack's parameters, one per line (`Key=Value`)
 #
-# ## これは「畳む前に必ず走らせるもの」である
+# ## This is what you always run before folding a deployment away
 #
-# 2026-08-22 に 2 配備を削除したとき、引数一式は**手で JSON に退避**した。それが無ければ
-# 再構築は不可能に近い——テンプレートは repo にあるが、**そのテンプレートに何を渡したかは
-# 配備の中にしか無い**。しかも `delete-stack` を出した瞬間に読めなくなる。
-# だから撤収の第 0 歩をスクリプトにする。
+# The templates are in the repo, but what was passed TO those templates exists only inside the
+# deployment — and it becomes unreadable the moment `delete-stack` is issued. Without it a
+# rebuild is next to impossible, so step 0 of a teardown is a script.
 #
-# ⚠️ **秘密は入らない。** SSM SecureString（cookie-secret / master-key / IdP の client
-# secret）は CFN の引数ではないのでここには現れず、復元もされない。ただし**アカウント
-# 固有の値は入る**（ホストゾーン ID・許可メール・OAuth クライアント ID）。だから置き場は
-# repo の外で、パーミッションも絞る。
+# No secrets are captured. SSM SecureStrings (cookie-secret / master-key / the IdP client
+# secret) are not CFN parameters, so they do not appear here and are not restored either.
+# Account-specific values DO appear (hosted zone ID, allowed e-mail addresses, OAuth client
+# IDs) — which is why this is stored outside the repo, with tight permissions.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,13 +56,13 @@ af_env_init "$PROFILE" "$REGION" "$STACK"
 OUT="$AF_ENV_DIR"
 if [ -e "$OUT/env" ] && [ "$FORCE" != 1 ]; then
   echo "ERROR: $OUT is already captured (--force to refresh)" >&2
-  # ★ **何が古いのかをここで言う。** 断るだけだと、控えの ImageTag が生きている配備と
-  # ずれていても操作者には見えない —— `dev-deploy.sh` は ImageTag を動かすたびに
-  # 控えを置き去りにするので、**この断りこそが「腐った控えが残る」入口**だった。
+  # Say what is stale while refusing. Refusing alone hides a captured ImageTag that has drifted
+  # from the live deployment, and since `dev-deploy.sh` leaves the capture behind every time it
+  # moves ImageTag, this refusal was itself the way stale captures survived.
   captured_tag="$(sed -n 's/^AF_IMAGE_TAG=//p' "$OUT/env" | head -1)"
   if [ -n "$AF_IMAGE_TAG" ] && [ "$captured_tag" != "$AF_IMAGE_TAG" ]; then
-    echo "       🔴 控えは古い: AF_IMAGE_TAG=${captured_tag:-<無し>} / いま動いているのは $AF_IMAGE_TAG" >&2
-    echo "       このまま撤収すると、立て直しは古いタグを指す（ECR は EmptyOnDelete）。--force で取り直すこと。" >&2
+    echo "       the capture is stale: AF_IMAGE_TAG=${captured_tag:-<none>} / live is $AF_IMAGE_TAG" >&2
+    echo "       Tearing down like this leaves the rebuild pointing at the old tag (ECR is EmptyOnDelete). Re-capture with --force." >&2
   fi
   exit 1
 fi
@@ -78,24 +77,25 @@ save_params() {  # save_params <stack> <slug>
     echo "  - $slug: stack '$stack' not found — skipped"
     return 0
   fi
-  # `join` で `Key=Value` の 1 行にする。値そのものに改行は入らない（CFN の引数は
-  # 単一行）ので、これで空白・括弧・`|`・カンマを含む値がそのまま往復する。
+  # `join` makes one `Key=Value` per line. A value never contains a newline (CFN parameters are
+  # single-line), so values with spaces, brackets, `|` or commas round-trip unchanged.
   "${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
     --query "Stacks[0].Parameters[].join('=',[ParameterKey,ParameterValue])" \
     --output text | tr '\t' '\n' | grep -v '^$' > "$f"
 
-  # 🔴 **空の引数は、その空値が「自分で作る」分岐を選んだという意味であることがある。**
-  # その場合、作られた実体の id は引数ではなく **Output** 側にしかない。引数だけを写すと、
-  # 立て直したときに同じ空値がもう一度「作る」を選び、**前の実体は孤児になる**。
+  # An empty parameter can mean that the empty value selected the "create it myself" branch,
+  # and then the id of what was created exists only in the Outputs, not in the parameters.
+  # Copy the parameters alone and the next stand-up sees the same empty value, picks "create"
+  # again, and the previous resource is orphaned.
   #
-  # 実例（2026-09-02 の一巡で踏んだ）: `NatEipAllocationId`。空なら 00-network が EIP を
-  # 自分で確保し（Retain なので撤収でも残る）、その allocation id は Output にだけ出る。
-  # 控えが引数しか持っていないと、次の stand-up が **2 本目の EIP** を取り、
-  # **顧客が許可リストに載せた egress アドレスが黙って変わる**（孤児は月 $3.6）。
+  # Measured on a real round trip: `NatEipAllocationId`. When empty, 00-network allocates the
+  # EIP itself (Retain, so a teardown leaves it behind) and its allocation id appears only in
+  # the Outputs. With parameters alone captured, the next stand-up takes a SECOND EIP and the
+  # egress address customers have allow-listed silently changes (the orphan costs $3.6/month).
   #
-  # ★ 規則は 1 つだけ: **空で捕まえた引数と同じ名前の Output があれば、Output の値を採る。**
-  # 引数に無い名前の Output は写さない —— CFN は知らない引数を拒むし、Output の大半
-  # （VpcId など）はそもそも引数ではない。
+  # One rule: when an Output has the same name as a parameter captured empty, take the Output's
+  # value. Outputs whose name is not a parameter are not copied — CFN rejects parameters it does
+  # not know, and most Outputs (VpcId and friends) are not parameters at all.
   local outs key val
   outs="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
     --query "Stacks[0].Outputs[].join('=',[OutputKey,OutputValue])" \
@@ -104,9 +104,9 @@ save_params() {  # save_params <stack> <slug>
     [ -n "$line" ] || continue
     key="${line%%=*}"; val="${line#*=}"
     [ -n "$val" ] && [ "$val" != "None" ] || continue
-    grep -q "^$key=\$" "$f" || continue          # 空で捕まえた引数だけが対象
+    grep -q "^$key=\$" "$f" || continue          # only parameters captured empty
     sed -i "s|^$key=\$|$key=$val|" "$f"
-    echo "  - $slug: $key は Output から採った（空の引数は「作る」分岐の印）"
+    echo "  - $slug: $key taken from the Outputs (an empty parameter marks the 'create it' branch)"
   done <<EOF
 $outs
 EOF
@@ -122,12 +122,13 @@ save_params "$AF_STACK_PLATFORM" 20-platform
 [ -n "${AF_STACK_POOL:-}" ] && save_params "$AF_STACK_POOL" 40-ec2-pool
 save_params "$AF_STACK_INGRESS"  30-ingress
 
-# 既に印が付いていたら残す（--force の再取得で開発配備の印が消えないように）。
+# Keep an existing mark, so that a --force re-capture does not erase the dev-deployment mark.
 DEV_MARK=0
 if [ -r "$OUT/env" ] && grep -q '^AF_DEV_DEPLOY=1' "$OUT/env"; then DEV_MARK=1; fi
 
-# ★ **控えが指すイメージが、撤収後も引けるか**を捕まえた時点で見る（env.sh の解説を読むこと）。
-# ここで測るのは「控えのファイルが在るか」ではなく「復旧点が実在するか」。
+# Decide at capture time whether the image this capture points at can still be pulled after a
+# teardown (read the explanation in env.sh). What is measured is whether the restore point
+# exists, not whether the capture file exists.
 RECOVERABLE="$(af_image_recoverable "$AF_IMAGE_TAG")"
 
 cat > "$OUT/env" <<EOF
@@ -143,13 +144,15 @@ AF_STACK_INGRESS=$AF_STACK_INGRESS
 AF_WS_RUNTIME=$AF_WS_RUNTIME
 AF_PERSISTENCE=$AF_PERSISTENCE
 AF_IMAGE_TAG=$AF_IMAGE_TAG
-# 開発配備なら 1 にする。dev-deploy.sh（develop をタグ無しで載せる）はこの印が付いた
-# 配備にしか当たらない —— ImageTag を動かすのは、そこで走っている人に「要再起動」
-# バッジを出す操作だから。★この印を repo ではなくここに置くのは、「どの配備が開発用か」
-# もまた配備の身元だからである（このリポジトリは公開）。
+# Set to 1 for a development deployment. dev-deploy.sh (which puts develop on a deployment
+# without cutting a version tag) only ever touches a deployment carrying this mark, because
+# moving ImageTag raises a "restart required" badge for everyone running there. The mark lives
+# here rather than in the repo because which deployment is the development one is part of a
+# deployment's identity, and this repository is public.
 AF_DEV_DEPLOY=$DEV_MARK
-# この控えが指す AF_IMAGE_TAG を、撤収後（ECR は EmptyOnDelete）にもう一度引けるか。
-# yes=GHCR に両方ある / no=引けない（ECR にしか無いタグ）/ unknown=crane が無くて測れず。
+# Whether the AF_IMAGE_TAG this capture points at can be pulled again after a teardown (ECR is
+# EmptyOnDelete). yes=both are in GHCR / no=not pullable (a tag that exists only in ECR) /
+# unknown=crane is missing, so it could not be measured.
 AF_IMAGE_RECOVERABLE=$RECOVERABLE
 EOF
 chmod 600 "$OUT/env" 2>/dev/null || true
@@ -157,14 +160,14 @@ chmod 600 "$OUT/env" 2>/dev/null || true
 if [ "$RECOVERABLE" = no ]; then
   cat >&2 <<EOF
 
-🔴 この控えの復旧点は**このままでは失われる**。
-   AF_IMAGE_TAG=$AF_IMAGE_TAG は GHCR に揃っていない（dev-deploy.sh が workspace を
-   ECR の中で再タグしただけの回は、そのタグの workspace が GHCR に存在しない）。
-   一方 20-platform の ECR は EmptyOnDelete: true なので、**撤収でイメージごと消える。**
-   撤収の前にどれかを済ませること:
-     - GHCR へ持ち出す:  crane copy <account>.dkr.ecr.$AF_REGION.amazonaws.com/af-workspace:$AF_IMAGE_TAG $AF_GHCR_DEFAULT/workspace:$AF_IMAGE_TAG
-     - 両方を焼き直す:    deploy/aws/ecs/dev-deploy.sh --image both（新しいタグで焼き直して控えを取り直す）
-     - 立て直しのときに --image-tag で「両方が揃っているタグ」を指す（standup.sh の preflight が名指しする）
+This capture's restore point WILL BE LOST as it stands.
+   AF_IMAGE_TAG=$AF_IMAGE_TAG is not complete in GHCR (when dev-deploy.sh only re-tagged the
+   workspace inside ECR, no workspace exists in GHCR under that tag).
+   Meanwhile 20-platform's ECR is EmptyOnDelete: true, so a teardown deletes the images too.
+   Do one of these before tearing down:
+     - Copy it out to GHCR:  crane copy <account>.dkr.ecr.$AF_REGION.amazonaws.com/af-workspace:$AF_IMAGE_TAG $AF_GHCR_DEFAULT/workspace:$AF_IMAGE_TAG
+     - Re-bake both:         deploy/aws/ecs/dev-deploy.sh --image both (bakes under a new tag; re-capture afterwards)
+     - At stand-up, point --image-tag at a tag that has both (standup.sh's preflight names one)
 EOF
 fi
 
@@ -174,12 +177,12 @@ cat <<EOF
     stacks: $AF_STACK_NETWORK / $AF_STACK_DATA / $AF_STACK_PLATFORM${AF_STACK_POOL:+ / $AF_STACK_POOL} / $AF_STACK_INGRESS
     runtime=$AF_WS_RUNTIME persistence=$AF_PERSISTENCE image=$AF_IMAGE_TAG
 
-配備を触る道具はどれも --profile / --region で同じ配備を指す:
+Every tool that touches a deployment addresses the same one with --profile / --region:
     deploy/aws/ecs/pause.sh      --profile $AF_PROFILE --region $AF_REGION [--up]
     deploy/aws/ecs/teardown.sh   --profile $AF_PROFILE --region $AF_REGION
     deploy/aws/ecs/standup.sh    --profile $AF_PROFILE --region $AF_REGION
-    deploy/aws/ecs/dev-deploy.sh --profile $AF_PROFILE --region $AF_REGION   # 要 AF_DEV_DEPLOY=1
+    deploy/aws/ecs/dev-deploy.sh --profile $AF_PROFILE --region $AF_REGION   # needs AF_DEV_DEPLOY=1
 
-⚠️ SSM の秘密（$(af_stack_param "$AF_STACK_INGRESS" SsmPrefix)/cookie-secret ・ master-key ・ IdP の client secret）は
-   ここには入っていない。撤収してもそれらを消さなければ、再構築時にそのまま使える。
+Note: the SSM secrets ($(af_stack_param "$AF_STACK_INGRESS" SsmPrefix)/cookie-secret, master-key, the IdP client secret)
+   are NOT in here. Tear down without deleting them and they can be used as-is on a rebuild.
 EOF

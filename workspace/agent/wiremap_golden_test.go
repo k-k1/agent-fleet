@@ -279,13 +279,13 @@ func writeWireMapGolden(t *testing.T, path string, lines []string) {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
 	var b strings.Builder
-	b.WriteString("# map[string]any を直に返している JSON 書き出し地点のキー集合。生成物 —— 手で編集しない。\n")
-	b.WriteString("# 更新: cd workspace/agent && go test -run TestWireMapGolden -update-wiremap-golden ./...\n")
-	b.WriteString("# 形式: <ファイル> <関数> x<同一形状の件数> {キー集合} [cond{条件付きキー}] [dyn|partial]\n")
-	b.WriteString("#   cond    = 条件文の中で足されるキー（struct 化するなら omitempty の要否を判断する対象）\n")
-	b.WriteString("#   dyn     = 非リテラルのキーがある（キー集合は静的に確定しない＝struct 化できない）\n")
-	b.WriteString("#   partial = 変数が複数回代入されており、キー集合を開けきれていない\n")
-	b.WriteString("# 🔴 キーが減った/増えた差分は、ワイヤが変わった可能性そのもの。撮り直す理由を PR に書くこと。\n")
+	b.WriteString("# Key sets of the JSON write sites that still return a map[string]any directly.\n# Generated - do not edit by hand.\n")
+	b.WriteString("# Update: cd workspace/agent && go test -run TestWireMapGolden -update-wiremap-golden ./...\n")
+	b.WriteString("# Format: <file> <func> x<count of identical shapes> {key set} [cond{conditional keys}] [dyn|partial]\n")
+	b.WriteString("#   cond    = keys added inside a conditional (decide omitempty for these when converting)\n")
+	b.WriteString("#   partial = the variable is assigned more than once, so the key set is not fully opened\n")
+	b.WriteString("#   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct\n")
+	b.WriteString("# A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.\n")
 	fmt.Fprintf(&b, "# count: %d\n", len(lines))
 	for _, ln := range lines {
 		b.WriteString(ln)

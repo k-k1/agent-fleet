@@ -45,11 +45,11 @@ func TestDockerStaleImageStamp(t *testing.T) {
 	d := &dockerRuntime{image: "agent-fleet/workspace:dev", name: "af-ws-x", dataDir: dir}
 	d.inspect = func(_ context.Context, typ, _, format string) string {
 		if typ == "container" {
-			t.Errorf("コンテナの {{.Image}} を参照した — 表現差で恒久誤点灯する二辺比較に戻っている")
+			t.Errorf("read the container's {{.Image}} - back to the two-sided comparison that lights up permanently on a representation difference")
 			return ctrLocal
 		}
 		if strings.Contains(format, "{{.Id}}") {
-			t.Errorf("イメージの {{.Id}} を控えている — 内容が同じでも動く表現で、再び恒久誤点灯する")
+			t.Errorf("stamping the image's {{.Id}} - a value that moves even when the content is identical, so it lights up permanently again")
 		}
 		return fp
 	}

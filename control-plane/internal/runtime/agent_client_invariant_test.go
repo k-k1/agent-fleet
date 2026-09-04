@@ -47,15 +47,15 @@ func TestAdapterAgentCallsUseTheSharedClient(t *testing.T) {
 				code = code[:j] // naming it in a comment is fine; the call is what is banned
 			}
 			if strings.Contains(code, "http.DefaultClient") {
-				t.Errorf("%s:%d: CP→Agent の経路で http.DefaultClient を使っている。"+
-					"healthzClient（deps.go）を使うこと——Cloud Map へのフォールバックは "+
-					"CP が注入する Transport に載っているので、素のクライアントでは CP 起動より"+
-					"後にできたワークスペースが no such host になる。\n\t%s",
+				t.Errorf("%s:%d: http.DefaultClient is used on a CP->Agent path. "+
+					"Use healthzClient (deps.go) - the fallback to Cloud Map lives on the "+
+					"Transport the CP injects, so with a plain client any workspace created "+
+					"after the CP started becomes no such host.\n\t%s",
 					name, i+1, strings.TrimSpace(line))
 			}
 		}
 	}
 	if checked == 0 {
-		t.Fatal("Endpoint() を参照するファイルが 1 つも無い — 検査が空振りしている")
+		t.Fatal("no file references Endpoint() - the check is measuring nothing")
 	}
 }

@@ -33,7 +33,7 @@ import (
 )
 
 var updateRoutesGolden = flag.Bool("update-routes-golden", false,
-	"testdata/routes.golden を実際のルート表で書き換える（ルートを意図して増減させたときだけ）")
+	"rewrite testdata/routes.golden from the actual route table (only when routes were added or removed on purpose)")
 
 const routesGoldenPath = "testdata/routes.golden"
 
@@ -71,8 +71,8 @@ func TestRouteTableMCPIsTheOnlyOptIn(t *testing.T) {
 		}
 	}
 	if diff := lineDiff(want, off); diff != "" {
-		t.Errorf("AF_MCP_ENABLED 無効時のルート表がゴールデン−/mcp と一致しない"+
-			"（env で分岐するルートが増えた？）:\n%s", diff)
+		t.Errorf("with AF_MCP_ENABLED off, the route table does not match golden minus /mcp"+
+			" (did another env-conditional route appear?):\n%s", diff)
 	}
 }
 
@@ -89,15 +89,15 @@ func muxRoutes(t *testing.T, mux *http.ServeMux) []string {
 	t.Helper()
 	root := reflect.ValueOf(mux).Elem().FieldByName("tree")
 	if !root.IsValid() {
-		t.Fatalf("http.ServeMux に tree フィールドが無い: net/http の内部表現が変わった。" +
-			"go/src/net/http/routing_tree.go を読んで muxRoutes を直すこと")
+		t.Fatalf("http.ServeMux has no tree field: net/http's internal representation changed. " +
+			"read go/src/net/http/routing_tree.go and fix muxRoutes")
 	}
 	var raw []string
 	if err := walkRoutingNode(root, &raw); err != nil {
-		t.Fatalf("routingNode の走査に失敗: %v（net/http の内部表現が変わった）", err)
+		t.Fatalf("failed to walk the routingNode: %v (net/http's internal representation changed)", err)
 	}
 	if len(raw) == 0 {
-		t.Fatal("ルートが 1 本も取れなかった: 走査が壊れている（buildMux は必ず登録する）")
+		t.Fatal("not a single route was picked up: the walk is broken (buildMux always registers)")
 	}
 
 	seen := map[string]bool{}
@@ -157,23 +157,23 @@ func walkRoutingNode(n reflect.Value, out *[]string) error {
 		n = n.Elem()
 	}
 	if n.Kind() != reflect.Struct {
-		return fmt.Errorf("routingNode が struct でない: %s", n.Kind())
+		return fmt.Errorf("routingNode is not a struct: %s", n.Kind())
 	}
 	pat := n.FieldByName("pattern")
 	if !pat.IsValid() {
-		return fmt.Errorf("routingNode に pattern フィールドが無い")
+		return fmt.Errorf("routingNode has no pattern field")
 	}
 	if !pat.IsNil() {
 		str := pat.Elem().FieldByName("str")
 		if !str.IsValid() {
-			return fmt.Errorf("pattern に str フィールドが無い")
+			return fmt.Errorf("pattern has no str field")
 		}
 		*out = append(*out, str.String())
 	}
 	if ch := n.FieldByName("children"); ch.IsValid() {
 		s := ch.FieldByName("s")
 		if !s.IsValid() {
-			return fmt.Errorf("mapping に s フィールドが無い")
+			return fmt.Errorf("mapping has no s field")
 		}
 		for i := 0; i < s.Len(); i++ {
 			if err := walkRoutingNode(s.Index(i).FieldByName("value"), out); err != nil {
@@ -182,7 +182,7 @@ func walkRoutingNode(n reflect.Value, out *[]string) error {
 		}
 		m := ch.FieldByName("m")
 		if !m.IsValid() {
-			return fmt.Errorf("mapping に m フィールドが無い")
+			return fmt.Errorf("mapping has no m field")
 		}
 		if !m.IsNil() {
 			for _, k := range m.MapKeys() {
@@ -205,7 +205,7 @@ func readGoldenLines(t *testing.T, path string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v（初回は -update-routes-golden で生成する）", path, err)
+		t.Fatalf("read %s: %v (generate it the first time with -update-routes-golden)", path, err)
 	}
 	var out []string
 	for _, ln := range strings.Split(string(raw), "\n") {
@@ -224,9 +224,9 @@ func writeRoutesGolden(t *testing.T, path string, lines []string) {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
 	var b strings.Builder
-	b.WriteString("# buildMux() が登録する (method, path) の全件。生成物 —— 手で編集しない。\n")
-	b.WriteString("# 更新: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...\n")
-	b.WriteString("# ANY = メソッド指定なしの登録。AF_MCP_ENABLED=true で撮っている。\n")
+	b.WriteString("# Every (method, path) buildMux() registers. Generated - do not edit by hand.\n")
+	b.WriteString("# Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...\n")
+	b.WriteString("# ANY = registered without a method. Taken with AF_MCP_ENABLED=true.\n")
 	fmt.Fprintf(&b, "# count: %d\n", len(lines))
 	for _, ln := range lines {
 		b.WriteString(ln)
@@ -240,9 +240,9 @@ func writeRoutesGolden(t *testing.T, path string, lines []string) {
 func assertGoldenLines(t *testing.T, path string, got []string) {
 	t.Helper()
 	if diff := lineDiff(readGoldenLines(t, path), got); diff != "" {
-		t.Errorf("%s と一致しない:\n%s\n"+
-			"意図した増減なら -update-routes-golden で撮り直す。"+
-			"身に覚えが無いなら、移送でルートを落としている。", path, diff)
+		t.Errorf("does not match %s:\n%s\n"+
+			"if the gain/loss was intended, retake with -update-routes-golden. "+
+			"if you have no memory of it, a move dropped a route.", path, diff)
 	}
 }
 

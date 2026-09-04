@@ -78,7 +78,7 @@ type Result struct {
 }
 
 func (r Result) String() string {
-	return fmt.Sprintf("%s: %d ケース (bytes=%d parsed=%d)",
+	return fmt.Sprintf("%s: %d cases (bytes=%d parsed=%d)",
 		r.Name, r.Cases, r.Modes[ModeBytes], r.Modes[ModeParsed])
 }
 
@@ -101,12 +101,12 @@ func AssertEquiv[In any](t TB, name string, inputs []In, oldFn, newFn func(In) a
 	for i, in := range all {
 		oldB, err := json.Marshal(oldFn(in))
 		if err != nil {
-			t.Errorf("%s[case %d]: 旧 map の Marshal が失敗した: %v", name, i, err)
+			t.Errorf("%s[case %d]: marshalling the old map failed: %v", name, i, err)
 			continue
 		}
 		newB, err := json.Marshal(newFn(in))
 		if err != nil {
-			t.Errorf("%s[case %d]: 新 struct の Marshal が失敗した: %v", name, i, err)
+			t.Errorf("%s[case %d]: marshalling the new struct failed: %v", name, i, err)
 			continue
 		}
 		if bytes.Equal(oldB, newB) {
@@ -115,16 +115,16 @@ func AssertEquiv[In any](t TB, name string, inputs []In, oldFn, newFn func(In) a
 		}
 		oldV, err := decodeValue(oldB)
 		if err != nil {
-			t.Errorf("%s[case %d]: 旧 JSON を読み戻せない: %v", name, i, err)
+			t.Errorf("%s[case %d]: cannot decode the old JSON back: %v", name, i, err)
 			continue
 		}
 		newV, err := decodeValue(newB)
 		if err != nil {
-			t.Errorf("%s[case %d]: 新 JSON を読み戻せない: %v", name, i, err)
+			t.Errorf("%s[case %d]: cannot decode the new JSON back: %v", name, i, err)
 			continue
 		}
 		if diffs := valueDiff("", oldV, newV); len(diffs) > 0 {
-			t.Errorf("%s[case %d]: ワイヤが変わった\n  旧: %s\n  新: %s\n  差:\n    %s",
+			t.Errorf("%s[case %d]: the wire changed\n  old: %s\n  new: %s\n  diff:\n    %s",
 				name, i, oldB, newB, strings.Join(diffs, "\n    "))
 			continue
 		}
@@ -161,7 +161,7 @@ func valueDiff(path string, oldV, newV any) []string {
 	case map[string]any:
 		n, ok := newV.(map[string]any)
 		if !ok {
-			return []string{fmt.Sprintf("%s: オブジェクトが %T になった", at(), newV)}
+			return []string{fmt.Sprintf("%s: the object became %T", at(), newV)}
 		}
 		var keys []string
 		seen := map[string]bool{}
@@ -185,9 +185,9 @@ func valueDiff(path string, oldV, newV any) []string {
 			}
 			switch {
 			case oOK && !nOK:
-				out = append(out, fmt.Sprintf("%s: キーが消えた（旧 %v）", p, ov))
+				out = append(out, fmt.Sprintf("%s: key disappeared (old %v)", p, ov))
 			case !oOK && nOK:
-				out = append(out, fmt.Sprintf("%s: キーが増えた（新 %v）", p, nv))
+				out = append(out, fmt.Sprintf("%s: key appeared (new %v)", p, nv))
 			default:
 				out = append(out, valueDiff(p, ov, nv)...)
 			}
@@ -196,10 +196,10 @@ func valueDiff(path string, oldV, newV any) []string {
 	case []any:
 		n, ok := newV.([]any)
 		if !ok {
-			return []string{fmt.Sprintf("%s: 配列が %T になった（null と [] の取り違えを疑う）", at(), newV)}
+			return []string{fmt.Sprintf("%s: the array became %T (suspect a null vs [] mix-up)", at(), newV)}
 		}
 		if len(o) != len(n) {
-			return []string{fmt.Sprintf("%s: 要素数 %d → %d", at(), len(o), len(n))}
+			return []string{fmt.Sprintf("%s: element count %d -> %d", at(), len(o), len(n))}
 		}
 		var out []string
 		for i := range o {
@@ -208,7 +208,7 @@ func valueDiff(path string, oldV, newV any) []string {
 		return out
 	default:
 		if !reflect.DeepEqual(oldV, newV) {
-			return []string{fmt.Sprintf("%s: %s → %s", at(), lit(oldV), lit(newV))}
+			return []string{fmt.Sprintf("%s: %s -> %s", at(), lit(oldV), lit(newV))}
 		}
 		return nil
 	}

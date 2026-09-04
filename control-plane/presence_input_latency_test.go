@@ -58,8 +58,8 @@ func TestTerminalNoteInputDoesNotBlockOnTheStore(t *testing.T) {
 	}
 	elapsed := time.Since(start)
 	if elapsed > 50*time.Millisecond {
-		t.Fatalf("50 打鍵の中継に %v かかった（store の 1 往復 = %v）— 打鍵経路で "+
-			"在席の書き込みを待っている", elapsed, st.delay)
+		t.Fatalf("relaying 50 keystrokes took %v (one store round trip = %v) - the keystroke path "+
+			"is waiting on the presence write", elapsed, st.delay)
 	}
 
 	// Not blocking is not enough: the record must still be written (coalesced, then run
@@ -69,11 +69,11 @@ func TestTerminalNoteInputDoesNotBlockOnTheStore(t *testing.T) {
 		if st.calls.Load() > before {
 			// The in-memory side of presence must be immediate — the reaper reads it.
 			if !m.conns.watched(wsID, time.Minute, time.Now()) {
-				t.Fatal("打鍵したのに在席と数えられていない")
+				t.Fatal("a keystroke happened but it is not counted as presence")
 			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("打鍵しても共有ウォーターマークが一度も進まなかった（非同期化で書き込みごと落ちている）")
+	t.Fatal("keystrokes never advanced the shared watermark (making it asynchronous dropped the write itself)")
 }

@@ -1,54 +1,57 @@
 #!/bin/bash
-# bake-golden.sh — 新規ユーザーの home の種になる「golden snapshot」を焼く。
-# ADR 0045 決定 9 / docs/log/64 §64.18。対象は AF_RUNTIME=ecs-ec2 のデプロイのみ。
+# bake-golden.sh — bake the "golden snapshot" that seeds a new user's home.
+# ADR 0045 decision 9 / docs/log/64 §64.18. Only for AF_RUNTIME=ecs-ec2 deployments.
 #
-# 何をするか: **既に立ち上げ済みの「種」Workspace の home ボリュームを snapshot に取り、
-# af-role=golden と af-image を刻む**だけ。boot-install（4CLI 41s ＋ rtk 1s ＋ agy 6s）と
-# npm キャッシュの温めは、製品そのものに任せる——このスクリプトが entrypoint を再実装すると、
-# 「焼いた home」と「製品が作る home」が静かにズレていく。
+# What it does: snapshot the home volume of an already fully started "seed" Workspace and stamp
+# it with af-role=golden and af-image — nothing else. boot-install (4 CLIs 41s + rtk 1s + agy
+# 6s) and warming the npm cache are left to the product itself: if this script re-implemented
+# the entrypoint, the "baked home" and the home the product builds would silently drift apart.
 #
-# 手順（全体）:
-#   1. 種にするメンバーを 1 人用意し、Console から Workspace を起動して**完全に立ち上がる**まで待つ
-#      （boot-install が終わるまで）
-#   2. その Workspace を停止する
-#   3. **スロットが眠るまで待つ**（AF_ECS_EC2_SLOT_SLEEP_SEC・既定 15 分 ＋ 1 スイープ）。
-#      待つ対象は「インスタンスが stopped になること」であって、**ボリュームが外れることではない**
-#      —— 下の ★ を読むこと
-#   4. このスクリプトを実行する
-#   5. 種の Workspace を破棄する（DELETE /api/admin/workspaces）。golden は af-role=golden
-#      なので、per-membership の掃除には巻き込まれない
+# Procedure (end to end):
+#   1. Prepare one member as the seed, start a Workspace from the Console and wait until it is
+#      fully up (until boot-install has finished)
+#   2. Stop that Workspace
+#   3. Wait for the slot to go to sleep (AF_ECS_EC2_SLOT_SLEEP_SEC, default 15 min, + one
+#      sweep). What you wait for is the instance reaching stopped, NOT the volume detaching
+#      — see below
+#   4. Run this script
+#   5. Destroy the seed Workspace (DELETE /api/admin/workspaces). The golden is af-role=golden,
+#      so per-membership cleanup does not take it with it
 #
-# ★ **停止しても home は外れない。** Stop はボリュームを付けたままにする設計で（affinity ＝
-# 「その人のスロット」そのもの）、スイーパーが 15 分後にやるのも**インスタンスの停止だけ**である
-# （runtime_ecs_ec2.go の `(home stays attached)`）。実際に外すのは eviction / Destroy /
-# ドリフト修復 / 退避だけなので、**「detached になるのを待つ」といつまでも始められない**。
-# 代わりに「**stopped なスロットに付いたまま**撮る」で正しい: インスタンスの停止は通常の
-# シャットダウンで、降りる途中でファイルシステムを umount する —— 製品自身が
-# releaseSlotSince で同じ根拠に立っている（停止済みスロットは SSM が届かないので umount を
-# 省く）。だから下のガードが拒むのは **running なスロットに付いている場合だけ**である。
+# Stopping does not detach the home. Stop deliberately leaves the volume attached (affinity IS
+# "that person's slot"), and all the sweeper does 15 minutes later is stop the instance
+# (`(home stays attached)` in runtime_ecs_ec2.go). Only eviction / Destroy / drift repair /
+# hibernation actually detach it, so "wait until it is detached" never starts at all. Taking
+# the snapshot while it is still attached to a stopped slot is the correct thing instead:
+# stopping an instance is an ordinary shutdown, which unmounts the filesystem on the way down
+# — the product stands on the same ground in releaseSlotSince (it skips the umount for a
+# stopped slot because SSM cannot reach it). So the guard below refuses only a slot that is
+# running.
 #
-# ⚠️ **リリースのたびに焼き直すこと。** イメージや CLI のピンが上がると golden は古くなる。
-# ⚠️ **ここで焼いた golden は `af-image-fp`（内容の指紋）を持たない。** CP は指紋が両側に
-# あるときだけ内容で突合し、無ければこれまでどおり af-image の**文字列**で比べる（docs/log/73
-# 決定 3）ので、手焼きの golden も普通に使われる。ただし文字列で比べる以上、**同じ中身を
-# 別タグに置き直した瞬間に「無い」ことになり、CP が焼き直しに入る**（docs/log/72 §72.6.4 —
-# 開発デプロイは毎回それをやる）。CP に焼かせた golden にはその心配は無い。
+# Re-bake on every release: a golden goes stale as the image and the CLI pins move.
+# A golden baked here carries no `af-image-fp` (content fingerprint). The CP matches on content
+# only when both sides have a fingerprint and otherwise compares the af-image string as before
+# (docs/log/73 decision 3), so a hand-baked golden is used normally. But comparing strings
+# means that the moment the same content is put under a different tag it counts as absent and
+# the CP starts a re-bake (docs/log/72 §72.6.4 — a dev deploy does exactly that every time).
+# A golden the CP baked itself has no such problem.
 #
-# CP は af-image を突合し、一致しない golden は**使わずに空 home を作る**（起動が遅くなるだけで
-# 壊れはしないが、ログに警告が出続ける）。
+# The CP matches af-image, and for a golden that does not match it creates an empty home
+# instead of using it (only a slower start, nothing breaks, but the log keeps warning).
 #
-# ⚠️ **種に repo を clone しないこと。** `~/repos` は home 上にあるので、種で clone すると
-# **その clone が新規ユーザー全員の home に配られる**。焼く範囲は boot-install までとする。
+# Do not clone repos into the seed. `~/repos` lives on the home, so a clone made in the seed is
+# handed out to every new user's home. Bake no further than boot-install.
 set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
 usage: bake-golden.sh --workspace <af-ws-name> --image <image:tag> [--pool <cluster>] [--region <region>]
 
-  --workspace  種にした Workspace のコンテナ名（= ECS サービス名 / af-workspace タグの値）
-  --image      この golden が対応する Workspace イメージ。CP の AF_ECS_WORKSPACE_IMAGE と
-               **完全一致**していること（CP はこの文字列で突合する）
-  --pool       af-pool タグの値（既定: AF_ECS_EC2_POOL、無ければ AF_ECS_CLUSTER）
+  --workspace  container name of the Workspace used as the seed (= ECS service name / the
+               value of the af-workspace tag)
+  --image      the Workspace image this golden corresponds to. Must match the CP's
+               AF_ECS_WORKSPACE_IMAGE exactly (the CP matches on this string)
+  --pool       value of the af-pool tag (default: AF_ECS_EC2_POOL, else AF_ECS_CLUSTER)
 EOF
   exit 2
 }
@@ -74,19 +77,19 @@ if [ "$vol" = "None" ] || [ -z "$vol" ]; then
   exit 1
 fi
 
-# **動いているスロットに付いたまま**撮ると、マウント中のファイルシステムのクラッシュ一貫コピーに
-# なる。全ユーザーの初期状態になるものでそれをやる理由は無い。
+# Snapshotting while attached to a RUNNING slot gives a crash-consistent copy of a mounted
+# filesystem. There is no reason to accept that for the initial state of every user.
 #
-# ★ stopped なスロットに付いたままは OK（ヘッダの ★ 参照）。ここを「detached でなければ拒否」
-# にしていた頃は、手順どおり停止して待った操作者が**絶対に抜けられなかった** —— 停止では外れず、
-# スイーパーも外さないため。live test は Go から releaseSlot() を直接呼んでこのガードを満たして
-# いたので、その穴は最後まで見えていなかった。
+# Still attached to a stopped slot is fine (see the header). While this refused anything not
+# detached, an operator who stopped and waited exactly as documented could never get through
+# — a stop does not detach, and neither does the sweeper. The live test satisfied the guard by
+# calling releaseSlot() directly from Go, which is why that hole stayed invisible.
 attached=$(aws ec2 describe-volumes --volume-ids "$vol" \
   --query 'Volumes[0].Attachments[0].InstanceId' --output text)
 if [ "$attached" != "None" ] && [ -n "$attached" ]; then
   state=$(aws ec2 describe-instances --instance-ids "$attached" \
     --query 'Reservations[0].Instances[0].State.Name' --output text)
-  # stopping / pending の途中は駄目: シャットダウンが終わって初めて umount が済んでいる。
+  # Mid-flight stopping / pending will not do: the umount is only done once the shutdown is.
   if [ "$state" != "stopped" ]; then
     echo "$vol is attached to $attached, which is $state." >&2
     echo "Stop the seed workspace and wait for the sweeper to put the slot to sleep" >&2
@@ -105,16 +108,17 @@ snap=$(aws ec2 create-snapshot --volume-id "$vol" \
   --tag-specifications \
     "ResourceType=snapshot,Tags=[{Key=af-pool,Value=$POOL},{Key=af-role,Value=golden},{Key=af-image,Value=$IMAGE},{Key=Name,Value=af-golden}]" \
   --query SnapshotId --output text)
-# 待ち時間は**ボリュームのサイズではなく、使っているブロックの量**で決まる。boot-install だけの
-# home（種として正しい状態）なら 50 GiB のボリュームでも実測 **3 分弱**である。
-# 退避 snapshot の「45 GiB で 30〜40 分」を種にも当てはめて 30 分待つ気でいると、
-# 「進んでいないのでは」と余計な手を出す方に転ぶ。
+# The wait is decided by the number of blocks in use, not by the size of the volume: a home
+# with only boot-install on it (the state a seed should be in) measures just under 3 minutes
+# even on a 50 GiB volume. Carrying over "30-40 min for 45 GiB" from hibernation snapshots and
+# expecting to wait 30 minutes here pushes you into meddling because "it looks stuck".
 echo "snapshot $snap started; waiting for it to complete (~3 min for a boot-install-only home)"
 aws ec2 wait snapshot-completed --snapshot-ids "$snap"
 echo "$snap completed."
 
-# 古い golden は消す。CP は完了済みかつ af-image が一致する最新を選ぶので、放置しても
-# 誤って使われはしないが、$0.05/GB-月 を払い続ける理由も無い。
+# Delete superseded goldens. The CP picks the newest completed one whose af-image matches, so
+# leaving them cannot cause a wrong one to be used — but there is no reason to keep paying
+# $0.05/GB-month either.
 for old in $(aws ec2 describe-snapshots --owner-ids self \
   --filters "Name=tag:af-pool,Values=$POOL" "Name=tag:af-role,Values=golden" \
   --query "Snapshots[?SnapshotId!='$snap'].SnapshotId" --output text); do

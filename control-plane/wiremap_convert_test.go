@@ -69,7 +69,7 @@ func wiremapConvertedWireTypes(t *testing.T, root string) []string {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("走査に失敗: %v", err)
+		t.Fatalf("scan failed: %v", err)
 	}
 	sort.Strings(out)
 	return out
@@ -103,7 +103,7 @@ func TestWireEquivEgressCheck(t *testing.T) {
 				Configured: in.Configured, Mode: in.Mode, Enforce: in.Enforce, Hosts: in.Hosts,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 // --- (2) adminAPI.hostStats (Console: HostStats) ---
@@ -133,7 +133,7 @@ func TestWireEquivHostStats(t *testing.T) {
 				Load1: in.Load1, Ncpu: in.Ncpu, MemUsed: in.MemUsed, MemTotal: in.MemTotal,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 // --- (3) updateStatus (Console: HostUpdateStatus) ---
@@ -168,7 +168,7 @@ func TestWireEquivUpdateStatus(t *testing.T) {
 				Systemd:         in.Systemd,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 // --- (4) workItemsAPI.workItemsPayload (Console: WorkItemPayload) ---
@@ -213,7 +213,7 @@ func TestWireEquivWorkItemsPayload(t *testing.T) {
 				FetchedAt: in.FetchedAt, Running: in.Running,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 // --- (5) gitServerAPI.blob (Console: Blob) ---
@@ -267,7 +267,7 @@ func TestWireEquivGitBlob(t *testing.T) {
 				TooLarge: in.TooLarge, LFS: in.LFS, LFSOID: in.LFSOID,
 				Binary: in.Binary, Content: in.Content}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 // --- (6) gitServerAPI.repoDTO (Console: InternalRepo) ---
@@ -290,7 +290,7 @@ func TestWireEquivInternalRepo(t *testing.T) {
 			return internalRepoWire{Name: in.Name, DefaultBranch: in.DefaultBranch,
 				CloneURL: in.CloneURL, CreatedAt: in.CreatedAt, Provider: "internal"}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 // --- (7) the two variants of sessionHandoffAPI (Console: HandoffOffer) ---
@@ -341,7 +341,7 @@ func TestWireEquivHandoffOfferCreate(t *testing.T) {
 	got := wiretest.AssertEquiv(t, "sessionHandoffAPI.create", handoffInputs(),
 		func(in handoffIn) any { return handoffOldBase(in) },
 		func(in handoffIn) any { return handoffNewBase(in) })
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 func TestWireEquivHandoffOfferInbox(t *testing.T) {
@@ -361,7 +361,7 @@ func TestWireEquivHandoffOfferInbox(t *testing.T) {
 				SourceSessionKind: in.SourceSessionKind,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 // TestWireHandoffKeyCountsAreIndependentlyFixed pins the absolute key counts independently.
@@ -379,8 +379,8 @@ func TestWireHandoffKeyCountsAreIndependentlyFixed(t *testing.T) {
 		v    any
 		want int
 	}{
-		{"create（基本形）", handoffNewBase(in), 13},
-		{"listReceived（受信箱）", handoffOfferInboxWire{
+		{"create (the base shape)", handoffNewBase(in), 13},
+		{"listReceived (the inbox)", handoffOfferInboxWire{
 			handoffOfferWire:  handoffNewBase(in),
 			OwnerUserKey:      in.OwnerUserKey,
 			Prompt:            in.Prompt,
@@ -401,9 +401,9 @@ func TestWireHandoffKeyCountsAreIndependentlyFixed(t *testing.T) {
 				keys = append(keys, k)
 			}
 			sort.Strings(keys)
-			t.Errorf("%s のキー数 = %d, want %d\n  実際: %v\n"+
-				"  減っているなら埋め込みで実効 json 名が衝突している疑い"+
-				"（encoding/json は同深さで同名ならどちらも出さない）。", tc.name, len(m), tc.want, keys)
+			t.Errorf("%s: key count = %d, want %d\n  got: %v\n"+
+				"  if it dropped, suspect an embedded field whose effective json name collides "+
+				"(encoding/json emits neither when two names clash at the same depth).", tc.name, len(m), tc.want, keys)
 		}
 	}
 }
@@ -436,8 +436,8 @@ func TestWireEquivConvertedSitesAreAllCovered(t *testing.T) {
 	declared := wiremapConvertedWireTypes(t, ".")
 	for _, name := range declared {
 		if _, ok := covered[name]; !ok {
-			t.Errorf("%s は CONTRACT-MAP が足した wire 型だが、等価テストが登録されていない。"+
-				"変換だけして証明を書き忘れると全ゲート緑のまま通るので、ここで止める。", name)
+			t.Errorf("%s is a wire type CONTRACT-MAP added, but no equivalence test is registered for it. "+
+				"Converting and forgetting the proof passes every gate green, so stop here.", name)
 		}
 	}
 	for name := range covered {
@@ -449,11 +449,11 @@ func TestWireEquivConvertedSitesAreAllCovered(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("%s の等価テストが登録されているが、型がソースに無い（消したなら表からも消すこと）", name)
+			t.Errorf("an equivalence test is registered for %s, but the type is not in the source (if you deleted it, delete it from this table too)", name)
 		}
 	}
 	if len(declared) == 0 {
-		t.Fatal("wire 型を 1 つも見つけられなかった（走査が壊れている）")
+		t.Fatal("not a single wire type was found (the scan is broken)")
 	}
-	t.Logf("変換済みの wire 型: %d 個", len(declared))
+	t.Logf("converted wire types: %d", len(declared))
 }

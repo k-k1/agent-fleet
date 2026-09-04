@@ -37,7 +37,7 @@ func TestIsDNSNotFound(t *testing.T) {
 	// Only "the name does not exist" is matched. Taking connection refusals or timeouts
 	// too would hammer Cloud Map for an Agent that is merely down.
 	if !isDNSNotFound(&net.DNSError{Err: "no such host", IsNotFound: true}) {
-		t.Fatal("NXDOMAIN を拾えていない")
+		t.Fatal("NXDOMAIN was not matched")
 	}
 	for _, err := range []error{
 		errors.New("connection refused"),
@@ -45,7 +45,7 @@ func TestIsDNSNotFound(t *testing.T) {
 		&net.OpError{Op: "dial", Err: errors.New("connection refused")},
 	} {
 		if isDNSNotFound(err) {
-			t.Fatalf("拾ってはいけないエラーを拾った: %v", err)
+			t.Fatalf("matched an error that must not be matched: %v", err)
 		}
 	}
 }
@@ -90,11 +90,11 @@ func TestLookupCaches(t *testing.T) {
 	r := newResolver(f)
 	for i := 0; i < 3; i++ {
 		if _, ok := r.lookup(context.Background(), "af-ws-dave:7700"); !ok {
-			t.Fatal("解決できていない")
+			t.Fatal("not resolved")
 		}
 	}
 	if f.calls != 1 {
-		t.Fatalf("Cloud Map を %d 回叩いた（1 回であるべき）", f.calls)
+		t.Fatalf("called Cloud Map %d times (must be once)", f.calls)
 	}
 }
 
@@ -108,7 +108,7 @@ func TestLookupExpires(t *testing.T) {
 	r.lookup(context.Background(), "af-ws-erin:7700")
 	r.lookup(context.Background(), "af-ws-erin:7700")
 	if f.calls != 2 {
-		t.Fatalf("calls = %d（期限切れなら毎回引き直す）", f.calls)
+		t.Fatalf("calls = %d (once expired, it must look up again every time)", f.calls)
 	}
 }
 
@@ -117,17 +117,17 @@ func TestLookupIgnoresLiteralIP(t *testing.T) {
 	// be called.
 	f := &fakeDiscover{}
 	if _, ok := newResolver(f).lookup(context.Background(), "10.20.11.172:7700"); ok {
-		t.Fatal("IP 直指定を引いてしまった")
+		t.Fatal("looked up a literal IP")
 	}
 	if f.calls != 0 {
-		t.Fatalf("calls = %d（0 であるべき）", f.calls)
+		t.Fatalf("calls = %d (must be 0)", f.calls)
 	}
 }
 
 func TestLookupErrorIsNotFatal(t *testing.T) {
 	f := &fakeDiscover{err: errors.New("AccessDenied")}
 	if _, ok := newResolver(f).lookup(context.Background(), "af-ws-frank:7700"); ok {
-		t.Fatal("失敗したのに解決したことになっている")
+		t.Fatal("reported as resolved even though the lookup failed")
 	}
 }
 
@@ -139,6 +139,6 @@ func TestDialAgentWithoutResolver(t *testing.T) {
 	defer func() { agentDialer = prev }()
 	_, err := dialAgent(context.Background(), "tcp", "af-no-such-host.invalid:7700")
 	if err == nil {
-		t.Fatal("エラーになるべき")
+		t.Fatal("must return an error")
 	}
 }

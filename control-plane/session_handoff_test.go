@@ -103,7 +103,7 @@ func TestHandoffRecipientsUnsharedSessionAnswers(t *testing.T) {
 	f := newHandoffAPIFixture(t, oneSession)
 	rec := f.getRecipients(t, "session-1")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s — 共有していないのは正常な状態なので 200 で答えるべき", rec.Code, rec.Body.String())
+		t.Fatalf("status=%d body=%s - being unshared is a normal state, so the answer must be 200", rec.Code, rec.Body.String())
 	}
 	var got struct {
 		Members []map[string]string `json:"members"`
@@ -144,7 +144,7 @@ func TestHandoffRecipientsListsSharedMembers(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "recipient@example.com") {
-		t.Fatalf("RO 共有の相手が宛先候補に出ていない: %s", rec.Body.String())
+		t.Fatalf("the RO share recipient is missing from the candidate list: %s", rec.Body.String())
 	}
 }
 
@@ -162,7 +162,7 @@ func TestHandoffRecipientsThrottlesInventorySync(t *testing.T) {
 	}
 	first := f.agentHits["/repos"]
 	if first == 0 {
-		t.Fatal("最初の 1 回は同期するはず")
+		t.Fatal("the very first call must sync")
 	}
 	for i := 0; i < 3; i++ {
 		if rec := f.getRecipients(t, "session-1"); rec.Code != http.StatusOK {
@@ -170,6 +170,6 @@ func TestHandoffRecipientsThrottlesInventorySync(t *testing.T) {
 		}
 	}
 	if got := f.agentHits["/repos"]; got != first {
-		t.Fatalf("/repos hits=%d (first=%d) — TTL 内の再取得で在庫同期が走っている", got, first)
+		t.Fatalf("/repos hits=%d (first=%d) - a re-read within the TTL is running the inventory sync", got, first)
 	}
 }

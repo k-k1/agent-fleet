@@ -167,7 +167,7 @@ func TestSharedMarksDropNonProseKind(t *testing.T) {
 	}
 	for _, secret := range []string{"mk_bad", "/home/dev/repos/private/secret.ts"} {
 		if strings.Contains(body, secret) {
-			t.Fatalf("非本文の印が中継された（%q）: %s", secret, body)
+			t.Fatalf("a non-prose mark was relayed (%q): %s", secret, body)
 		}
 	}
 }
@@ -184,7 +184,7 @@ func TestSharedMarksWriteNeedsRW(t *testing.T) {
 		t.Fatalf("RO DELETE status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if f.seenPOST != nil || f.seenDELETE != "" {
-		t.Fatalf("RO の書き込みが Agent へ届いた: post=%+v delete=%q", f.seenPOST, f.seenDELETE)
+		t.Fatalf("an RO write reached the Agent: post=%+v delete=%q", f.seenPOST, f.seenDELETE)
 	}
 }
 
@@ -198,10 +198,10 @@ func TestSharedMarksStampAuthor(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if f.seenPOST["author"] != "recipient@example.com" {
-		t.Fatalf("author が上書きされていない: %+v", f.seenPOST)
+		t.Fatalf("author was not overwritten: %+v", f.seenPOST)
 	}
 	if !strings.Contains(rec.Body.String(), "recipient@example.com") {
-		t.Fatalf("応答に作成者が無い: %s", rec.Body.String())
+		t.Fatalf("the response carries no author: %s", rec.Body.String())
 	}
 
 	// Not even RW may place a mark on a part that carries coordinates.
@@ -220,6 +220,6 @@ func TestSharedMarksDeleteCarriesAuthor(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(f.seenDELETE, "author=recipient%40example.com") || !strings.Contains(f.seenDELETE, "id=mk_9") {
-		t.Fatalf("Agent へ渡ったクエリ: %q", f.seenDELETE)
+		t.Fatalf("query passed to the Agent: %q", f.seenDELETE)
 	}
 }

@@ -14,26 +14,26 @@ func TestSessionActivityClassification(t *testing.T) {
 		in   sessionWire
 		want activity
 	}{
-		{"working は機械が動いている", sessionWire{Alive: true, State: stateWorking}, activityMachineBusy},
+		{"working: a machine is running", sessionWire{Alive: true, State: stateWorking}, activityMachineBusy},
 		// codex context compaction. Missing from the table it falls to unknown, and the
 		// whole workspace can then stop in the middle of the compaction.
-		{"compacting も機械が動いている", sessionWire{Alive: true, State: stateCompacting}, activityMachineBusy},
-		{"idle は畳んでよい", sessionWire{Alive: true, State: stateIdle}, activityIdleWait},
-		{"limited は時計待ちで idle と同じ", sessionWire{Alive: true, State: stateLimited}, activityIdleWait},
-		{"question は人待ち", sessionWire{Alive: true, State: stateQuestion}, activityHumanWait},
-		{"plan は人待ち", sessionWire{Alive: true, State: statePlan}, activityHumanWait},
-		{"permission は人待ち", sessionWire{Alive: true, State: statePermission}, activityHumanWait},
-		{"blocked は人待ち", sessionWire{Alive: true, State: stateBlocked}, activityHumanWait},
-		{"auth は人待ち", sessionWire{Alive: true, State: stateAuth}, activityHumanWait},
-		{"spend_limit は人待ち", sessionWire{Alive: true, State: stateSpendLimit}, activityHumanWait},
+		{"compacting: a machine is running too", sessionWire{Alive: true, State: stateCompacting}, activityMachineBusy},
+		{"idle: foldable", sessionWire{Alive: true, State: stateIdle}, activityIdleWait},
+		{"limited: waiting on a clock, same as idle", sessionWire{Alive: true, State: stateLimited}, activityIdleWait},
+		{"question: waiting on a human", sessionWire{Alive: true, State: stateQuestion}, activityHumanWait},
+		{"plan: waiting on a human", sessionWire{Alive: true, State: statePlan}, activityHumanWait},
+		{"permission: waiting on a human", sessionWire{Alive: true, State: statePermission}, activityHumanWait},
+		{"blocked: waiting on a human", sessionWire{Alive: true, State: stateBlocked}, activityHumanWait},
+		{"auth: waiting on a human", sessionWire{Alive: true, State: stateAuth}, activityHumanWait},
+		{"spend_limit: waiting on a human", sessionWire{Alive: true, State: stateSpendLimit}, activityHumanWait},
 		// backgroundBusy is orthogonal to state (docs/log/75 D3).
-		{"idle でも背景作業中なら machineBusy", sessionWire{Alive: true, State: stateIdle, BackgroundBusy: true}, activityMachineBusy},
-		{"question でも背景作業中なら machineBusy", sessionWire{Alive: true, State: stateQuestion, BackgroundBusy: true}, activityMachineBusy},
+		{"idle with background work is machineBusy", sessionWire{Alive: true, State: stateIdle, BackgroundBusy: true}, activityMachineBusy},
+		{"question with background work is machineBusy", sessionWire{Alive: true, State: stateQuestion, BackgroundBusy: true}, activityMachineBusy},
 		// What cannot be known falls on neither side.
-		{"shell は state が空", sessionWire{Alive: true, Kind: "shell", State: ""}, activityUnknown},
-		{"知らない状態は unknown", sessionWire{Alive: true, State: "teleported"}, activityUnknown},
-		{"停止中の行は対象外", sessionWire{Alive: false, State: stateWorking}, activityUnknown},
-		{"停止中は背景フラグが残っていても対象外", sessionWire{Alive: false, BackgroundBusy: true}, activityUnknown},
+		{"shell has an empty state", sessionWire{Alive: true, Kind: "shell", State: ""}, activityUnknown},
+		{"an unknown state is unknown", sessionWire{Alive: true, State: "teleported"}, activityUnknown},
+		{"a stopped row is out of scope", sessionWire{Alive: false, State: stateWorking}, activityUnknown},
+		{"a stopped row is out of scope even with the background flag still set", sessionWire{Alive: false, BackgroundBusy: true}, activityUnknown},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -97,7 +97,7 @@ func TestTier1Reapable(t *testing.T) {
 	}
 	// An idle row holding background work is not folded (D3).
 	if tier1Reapable(sessionWire{Alive: true, State: stateIdle, BackgroundBusy: true}) {
-		t.Error("tier1Reapable(idle+backgroundBusy) = true, want false: 走っている背景作業を殺す")
+		t.Error("tier1Reapable(idle+backgroundBusy) = true, want false: it kills background work that is running")
 	}
 	if tier1Reapable(sessionWire{State: stateIdle}) {
 		t.Error("tier1Reapable(dead) = true, want false")
@@ -123,13 +123,13 @@ func TestTierClocksTier1For(t *testing.T) {
 	// Either side can be disabled alone: human waits not folded while idle still is.
 	off := tierClocks{session: 1, sessionOn: true}
 	if _, on := off.tier1For(sessionWire{Alive: true, State: stateQuestion}); on {
-		t.Error("interaction_idle_timeout=0 なのに人待ちを畳もうとした")
+		t.Error("interaction_idle_timeout=0, yet a human wait was about to be folded")
 	}
 	if _, on := off.tier1For(sessionWire{Alive: true, State: stateIdle}); !on {
-		t.Error("idle まで畳まなくなった")
+		t.Error("idle stopped being folded as well")
 	}
 	if _, on := cl.tier1For(sessionWire{Alive: true, State: stateWorking}); on {
-		t.Error("working を畳もうとした")
+		t.Error("working was about to be folded")
 	}
 }
 
@@ -143,11 +143,11 @@ func TestInteractionTimeoutFallbackChain(t *testing.T) {
 		wantDur time.Duration
 		wantOn  bool
 	}{
-		{"未設定はデプロイ既定", tenantLimits{}, def, true},
-		{"session だけ設定したらそれに従う", tenantLimits{SessionIdleTimeout: "5m"}, 5 * time.Minute, true},
-		{"明示値が最優先", tenantLimits{SessionIdleTimeout: "5m", InteractionIdleTimeout: "4h"}, 4 * time.Hour, true},
-		{"明示 0 で人待ちだけ無効", tenantLimits{SessionIdleTimeout: "5m", InteractionIdleTimeout: "0"}, 0, false},
-		{"session が 0 なら人待ちも 0", tenantLimits{SessionIdleTimeout: "0"}, 0, false},
+		{"unset falls back to the deployment default", tenantLimits{}, def, true},
+		{"with only session set, follow that", tenantLimits{SessionIdleTimeout: "5m"}, 5 * time.Minute, true},
+		{"an explicit value wins", tenantLimits{SessionIdleTimeout: "5m", InteractionIdleTimeout: "4h"}, 4 * time.Hour, true},
+		{"an explicit 0 disables human waits alone", tenantLimits{SessionIdleTimeout: "5m", InteractionIdleTimeout: "0"}, 0, false},
+		{"session = 0 makes human waits 0 too", tenantLimits{SessionIdleTimeout: "0"}, 0, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -170,32 +170,32 @@ func TestKeepAwakePin(t *testing.T) {
 	// A shell (empty state) is protected too — the reason the pin exists.
 	shell := sessionWire{Alive: true, Kind: "shell", KeepAwakeUntil: future}
 	if got := sessionActivity(shell); got != activityMachineBusy {
-		t.Errorf("ピンされた shell = %v, want machineBusy", got)
+		t.Errorf("pinned shell = %v, want machineBusy", got)
 	}
 	if !holdsWorkspace(shell) {
-		t.Error("ピンされた shell が Workspace を守っていない")
+		t.Error("a pinned shell is not holding the workspace")
 	}
 	if tier1Reapable(shell) {
-		t.Error("ピンされた行を tier1 が畳もうとした")
+		t.Error("tier 1 was about to fold a pinned row")
 	}
 	// An idle claude is protected the same way (a long unattended run one wants left alone).
 	if !holdsWorkspace(sessionWire{Alive: true, Kind: "claude", State: stateIdle, KeepAwakeUntil: future}) {
-		t.Error("ピンされた idle セッションが守られていない")
+		t.Error("a pinned idle session is not protected")
 	}
 	// An expired pin does not hold — this is what keeps a forgotten pin from billing forever.
 	if holdsWorkspace(sessionWire{Alive: true, Kind: "shell", KeepAwakeUntil: past}) {
-		t.Error("期限切れのピンがまだ効いている")
+		t.Error("an expired pin is still in force")
 	}
 	// A pin on a dead session does not hold the container.
 	if holdsWorkspace(sessionWire{Kind: "shell", KeepAwakeUntil: future}) {
-		t.Error("停止中のセッションのピンが Workspace を守った")
+		t.Error("a pin on a stopped session held the workspace")
 	}
 	// An unreadable value falls to "not pinned" rather than to billing on in silence.
 	if holdsWorkspace(sessionWire{Alive: true, Kind: "shell", KeepAwakeUntil: "いつまでも"}) {
-		t.Error("読めない期限がピンとして効いた")
+		t.Error("an unreadable deadline took effect as a pin")
 	}
 	if keepAwake("", time.Now()) {
-		t.Error("空はピンではない")
+		t.Error("an empty value is not a pin")
 	}
 }
 
@@ -204,12 +204,12 @@ func TestKeepAwakePin(t *testing.T) {
 func TestTier1Foldable(t *testing.T) {
 	for _, k := range []string{"claude", "codex", "opencode", "copilot", "cursor", "kiro", "agy", ""} {
 		if !tier1Foldable(k) {
-			t.Errorf("tier1Foldable(%q) = false, want true（halt は resumable）", k)
+			t.Errorf("tier1Foldable(%q) = false, want true (halt is resumable)", k)
 		}
 	}
 	for _, k := range []string{"shell", "ssm"} {
 		if tier1Foldable(k) {
-			t.Errorf("tier1Foldable(%q) = true, want false（走っているジョブを殺す）", k)
+			t.Errorf("tier1Foldable(%q) = true, want false (it kills a running job)", k)
 		}
 	}
 }

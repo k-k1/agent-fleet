@@ -58,7 +58,7 @@ func TestRule15JoinsAcrossAppRegistrationsByStableClaim(t *testing.T) {
 		t.Fatalf("subsidiary must not be refused: %v", err)
 	}
 	if isNew || second.ID != first.ID {
-		t.Fatalf("同じ Entra アカウントが別人になった: %+v vs %+v (isNew=%v)", first, second, isNew)
+		t.Fatalf("the same Entra account became a different person: %+v vs %+v (isNew=%v)", first, second, isNew)
 	}
 	if n := countRows(t, st, "identity"); n != 1 {
 		t.Fatalf("identity rows = %d, want 1", n)
@@ -71,12 +71,12 @@ func TestRule15JoinsAcrossAppRegistrationsByStableClaim(t *testing.T) {
 		subs[r.Subject] = true
 	}
 	if !subs["pairwise-A"] || !subs["pairwise-B"] {
-		t.Fatalf("subject が sub 以外に書き換わっている: %+v", lp)
+		t.Fatalf("subject has been rewritten to something other than sub: %+v", lp)
 	}
 	// A second login hits rule 1 — the evidence that the key did not move.
 	again, isNew, err := st.LinkIdentity(ctx, oidLink("t:sub:entra", "pairwise-B", "oid-1", email, false))
 	if err != nil || isNew || again.ID != first.ID {
-		t.Fatalf("2 回目のログイン: %+v isNew=%v err=%v", again, isNew, err)
+		t.Fatalf("second login: %+v isNew=%v err=%v", again, isNew, err)
 	}
 }
 
@@ -97,7 +97,7 @@ func TestRule15DoesNotJoinWhenTheClaimNameDiffers(t *testing.T) {
 		t.Fatalf("second: %v", err)
 	}
 	if got.ID == me.ID {
-		t.Fatal("クレーム名が違うのに結合した — 値の衝突で他人になる")
+		t.Fatal("joined even though the claim name differs - a colliding value turns two different people into one")
 	}
 }
 
@@ -122,7 +122,7 @@ func TestRule15IgnoresRowsWithoutAStableClaim(t *testing.T) {
 		t.Fatalf("b: %v", err)
 	}
 	if a.ID == b.ID {
-		t.Fatal("realm_claim / realm_subject が空同士で結合した")
+		t.Fatal("two rows with an empty realm_claim / realm_subject were joined")
 	}
 	// The original realm+subject form of rule 1.5 still holds (the GitHub path).
 	c, _, err := st.LinkIdentity(ctx, store.IdentityLink{
@@ -130,7 +130,7 @@ func TestRule15IgnoresRowsWithoutAStableClaim(t *testing.T) {
 		Email: "yamada@acme.co.jp", FallbackKey: "yamada-acme-co-jp", EmailJoin: false,
 	})
 	if err != nil || c.ID != a.ID {
-		t.Fatalf("realm+subject の規則 1.5 が壊れた: %+v err=%v", c, err)
+		t.Fatalf("the realm+subject form of rule 1.5 is broken: %+v err=%v", c, err)
 	}
 }
 
@@ -186,11 +186,11 @@ func TestTenantLinkClaimIsWhitelistedOnSaveAndAtRuntime(t *testing.T) {
 	for _, claim := range []string{"email", "upn", "preferred_username", "name"} {
 		w := post(`{"name":"entra-` + strings.ReplaceAll(claim, "_", "") + `",` + base + `,"link_claim":"` + claim + `"}`)
 		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "tenant_idp_link_claim_invalid") {
-			t.Fatalf("link_claim=%q は保存できてはいけない: %d %s", claim, w.Code, w.Body.String())
+			t.Fatalf("link_claim=%q must not be savable: %d %s", claim, w.Code, w.Body.String())
 		}
 	}
 	if w := post(`{"name":"entra",` + base + `,"link_claim":"oid"}`); w.Code != http.StatusOK {
-		t.Fatalf("oid は保存できるはず: %d %s", w.Code, w.Body.String())
+		t.Fatalf("oid should be savable: %d %s", w.Code, w.Body.String())
 	}
 	rows, _ := stt.ListTenantIdPs(ctx, tn.ID)
 	if len(rows) != 1 || rows[0].LinkClaim != "oid" {
@@ -201,19 +201,19 @@ func TestTenantLinkClaimIsWhitelistedOnSaveAndAtRuntime(t *testing.T) {
 	bad := rows[0]
 	bad.LinkClaim = "email"
 	if _, err := auth.BuildTenantProvider(bad, store.TenantRef{Slug: "sub", Name: "子会社"}, "s"); err == nil {
-		t.Fatal("実行時側の検証が無い — 保存できてしまえば承認後に効いてしまう")
+		t.Fatal("the runtime side has no validation - once such a row can be saved, it takes effect after approval")
 	}
 	if _, err := auth.BuildTenantProvider(rows[0], store.TenantRef{Slug: "sub", Name: "子会社"}, "s"); err != nil {
-		t.Fatalf("oid の行は組めるはず: %v", err)
+		t.Fatalf("an oid row should be buildable: %v", err)
 	}
 	// A github row has no second key: its subject is the same across every app already.
 	if w := post(`{"name":"github","kind":"github","client_id":"c","client_secret":"s","allowed_orgs":"acme-sub","allowed_domains":"@sub2.co.jp","link_claim":"oid"}`); w.Code != http.StatusOK {
-		t.Fatalf("github 行: %d %s", w.Code, w.Body.String())
+		t.Fatalf("github row: %d %s", w.Code, w.Body.String())
 	}
 	rows, _ = stt.ListTenantIdPs(ctx, tn.ID)
 	for _, row := range rows {
 		if row.Kind == auth.TenantIdPKindGitHub && row.LinkClaim != "" {
-			t.Fatalf("github 行に link_claim が残っている: %+v", row)
+			t.Fatalf("link_claim is left on the github row: %+v", row)
 		}
 	}
 }
@@ -229,12 +229,12 @@ func TestLinkClaimChangeRepends(t *testing.T) {
 	next := active
 	next.LinkClaim = "oid"
 	if !repend(active, next) {
-		t.Fatal("link_claim を足したら承認をやり直す")
+		t.Fatal("adding link_claim must send the row back for approval")
 	}
 	back := next
 	back.LinkClaim = ""
 	if !repend(next, back) {
-		t.Fatal("外すのも同じ — 着地先が変わることに変わりはない")
+		t.Fatal("removing it is the same - where people land still changes")
 	}
 }
 
@@ -258,7 +258,7 @@ func TestLinkClaimValueComesFromTheToken(t *testing.T) {
 		t.Fatalf("exchange: %v", err)
 	}
 	if pr.Subject != "pairwise-A" {
-		t.Fatalf("subject = %q — sub のままでなければ既存行の鍵が変わる", pr.Subject)
+		t.Fatalf("subject = %q - anything but sub moves the key of every existing row", pr.Subject)
 	}
 	if pr.RealmClaim != "oid" || pr.RealmSubject != "oid-1" {
 		t.Fatalf("realm claim = %q / %q", pr.RealmClaim, pr.RealmSubject)
@@ -272,7 +272,7 @@ func TestLinkClaimValueComesFromTheToken(t *testing.T) {
 		t.Fatalf("exchange: %v", err)
 	}
 	if pr2.RealmClaim != "" || pr2.RealmSubject != "" {
-		t.Fatalf("出ていないクレームで値が入った: %q / %q", pr2.RealmClaim, pr2.RealmSubject)
+		t.Fatalf("a value was filled in from a claim that was never emitted: %q / %q", pr2.RealmClaim, pr2.RealmSubject)
 	}
 	// Name no claim and nothing is read.
 	p3 := stubProvider("plain", idp, auth.TrustEmailVerified)
@@ -281,6 +281,6 @@ func TestLinkClaimValueComesFromTheToken(t *testing.T) {
 		t.Fatalf("exchange: %v", err)
 	}
 	if pr3.RealmClaim != "" || pr3.RealmSubject != "" {
-		t.Fatalf("link_claim 未設定で値が入った: %q / %q", pr3.RealmClaim, pr3.RealmSubject)
+		t.Fatalf("a value was filled in with link_claim unset: %q / %q", pr3.RealmClaim, pr3.RealmSubject)
 	}
 }

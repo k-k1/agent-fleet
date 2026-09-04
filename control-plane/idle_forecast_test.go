@@ -13,23 +13,23 @@ func TestHoldersOf(t *testing.T) {
 	future := now.Add(time.Hour).Format(time.RFC3339)
 	past := now.Add(-time.Minute).Format(time.RFC3339)
 
-	t.Run("何も無ければ空", func(t *testing.T) {
+	t.Run("empty when there is nothing", func(t *testing.T) {
 		got := holdersOf([]sessionWire{{Alive: true, State: stateIdle}}, false, now, 0)
 		if len(got) != 0 {
 			t.Errorf("holders = %+v, want empty", got)
 		}
 	})
 
-	t.Run("人待ちは止める理由にならない", func(t *testing.T) {
+	t.Run("waiting for a human is not a reason to stay up", func(t *testing.T) {
 		// The point of docs/log/75: a pending question does not keep the workspace up.
 		for _, st := range []string{stateQuestion, statePlan, statePermission, stateBlocked, stateAuth, stateSpendLimit, stateLimited} {
 			if got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: st}}, false, now, 0); len(got) != 0 {
-				t.Errorf("state %q が止める理由になっている: %+v", st, got)
+				t.Errorf("state %q is being treated as a reason to stay up: %+v", st, got)
 			}
 		}
 	})
 
-	t.Run("実行中・背景作業・在席をそれぞれ挙げる", func(t *testing.T) {
+	t.Run("lists working, background work and presence separately", func(t *testing.T) {
 		got := holdersOf([]sessionWire{
 			{Alive: true, Name: "s2", State: stateWorking},
 			{Alive: true, Name: "s1", State: stateIdle, BackgroundBusy: true},
@@ -40,13 +40,13 @@ func TestHoldersOf(t *testing.T) {
 		}
 		// Sessions by name, presence last: the reasons someone can act on come first.
 		if got[0].Session != "s1" || got[0].Kind != "background" {
-			t.Errorf("1 件目 = %+v, want background/s1", got[0])
+			t.Errorf("item 1 = %+v, want background/s1", got[0])
 		}
 		if got[1].Session != "s2" || got[1].Kind != "working" {
-			t.Errorf("2 件目 = %+v, want working/s2", got[1])
+			t.Errorf("item 2 = %+v, want working/s2", got[1])
 		}
 		if got[2].Kind != "watching" || got[2].Session != "" {
-			t.Errorf("3 件目 = %+v, want watching", got[2])
+			t.Errorf("item 3 = %+v, want watching", got[2])
 		}
 	})
 
@@ -54,27 +54,27 @@ func TestHoldersOf(t *testing.T) {
 	// context compaction) from holders and the screen shows a StopAt for a workspace the
 	// reaper will not stop — it promises a stop that never comes, which docs/log/75
 	// decision 11 forbids.
-	t.Run("reaper が busy と見る状態は全部挙げる", func(t *testing.T) {
+	t.Run("lists every state the reaper reads as busy", func(t *testing.T) {
 		for _, st := range []string{stateWorking, stateCompacting} {
 			s := sessionWire{Alive: true, Name: "s1", State: st}
 			got := holdersOf([]sessionWire{s}, false, now, 0)
 			if len(got) != 1 || got[0].Kind != "working" {
-				t.Errorf("state %q: holders = %+v, want working（holdsWorkspace=%v）", st, got, holdsWorkspace(s))
+				t.Errorf("state %q: holders = %+v, want working (holdsWorkspace=%v)", st, got, holdsWorkspace(s))
 			}
 			if !holdsWorkspace(s) {
-				t.Errorf("state %q が reaper 側で busy でなくなっている（前提が変わった）", st)
+				t.Errorf("state %q is no longer busy on the reaper side (the premise changed)", st)
 			}
 		}
 	})
 
-	t.Run("ピンは working より先に説明される", func(t *testing.T) {
+	t.Run("a pin is explained before working", func(t *testing.T) {
 		got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: stateWorking, KeepAwakeUntil: future}}, false, now, 0)
 		if len(got) != 1 || got[0].Kind != "pin" || got[0].Until != future {
-			t.Errorf("holders = %+v, want pin（解除すれば止まる、が正しい説明）", got)
+			t.Errorf("holders = %+v, want pin (the correct explanation is: release it and it stops)", got)
 		}
 	})
 
-	t.Run("期限切れのピンは理由にならない", func(t *testing.T) {
+	t.Run("an expired pin is not a reason", func(t *testing.T) {
 		got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: stateIdle, KeepAwakeUntil: past}}, false, now, 0)
 		if len(got) != 0 {
 			t.Errorf("holders = %+v, want empty", got)
@@ -84,7 +84,7 @@ func TestHoldersOf(t *testing.T) {
 	// A workspace with no sessions at all still does not stop while a repository import
 	// is running (docs/log/78). This is the pair of the reaper's own busy check; with only
 	// one of the two the workspace stays up with no reason to show.
-	t.Run("取り込み中はセッションが無くても理由になる", func(t *testing.T) {
+	t.Run("a running import is a reason even with no sessions", func(t *testing.T) {
 		got := holdersOf(nil, false, now, 1)
 		if len(got) != 1 || got[0].Kind != "repojob" {
 			t.Errorf("holders = %+v, want repojob", got)
@@ -95,7 +95,7 @@ func TestHoldersOf(t *testing.T) {
 func TestIdleForecastStore(t *testing.T) {
 	m := &manager{}
 	if _, ok := m.idleForecastFor("ws1"); ok {
-		t.Error("観測が無いのに返した")
+		t.Error("returned a forecast although nothing was observed")
 	}
 	f := idleForecast{Enabled: true, StopAt: time.Now().Add(time.Hour), ObservedAt: time.Now()}
 	m.putIdleForecast("ws1", f)

@@ -869,7 +869,7 @@ func TestECSEC2StartOnHotSlotIsSynchronous(t *testing.T) {
 		t.Errorf("subnets = %v, want [sub-1a]", subs)
 	}
 	if create.NetworkConfiguration.AwsvpcConfiguration.AssignPublicIp != ecstypes.AssignPublicIpDisabled {
-		t.Error("a slot task must never ask for a public IP (ADR 0045 決定 3-3)")
+		t.Error("a slot task must never ask for a public IP (ADR 0045 decision 3-3)")
 	}
 }
 
@@ -1397,7 +1397,7 @@ func TestECSEC2TaskDefinitionShape(t *testing.T) {
 		env[aws.ToString(kv.Name)] = aws.ToString(kv.Value)
 	}
 	if _, ok := env["AF_WS_SCRATCH"]; ok {
-		t.Error("AF_WS_SCRATCH must not be injected on EC2 (ADR 0045 決定 10-3): home is already local EBS")
+		t.Error("AF_WS_SCRATCH must not be injected on EC2 (ADR 0045 decision 10-3): home is already local EBS")
 	}
 	if env["AF_WS_KEEP"] != ec2KeepPath {
 		t.Errorf("AF_WS_KEEP = %q, want %q", env["AF_WS_KEEP"], ec2KeepPath)

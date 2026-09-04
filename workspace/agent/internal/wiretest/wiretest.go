@@ -1,38 +1,41 @@
-// Package wiretest — map → struct の変換が「ワイヤを 1 バイトも変えていない」ことを
-// 示すための共有ハーネス（CONTRACT-MAP / 脚③）。
+// Package wiretest — the shared harness for showing that a map → struct conversion did
+// not change the wire by a single byte (CONTRACT-MAP, leg 3).
 //
-// 🔴 **テストからしか import されない。**製品バイナリの依存グラフには入らないことを
-// wiremap_golden_test.go の TestWireMapScanExclusionsAreJustified が `go list -deps` で
-// 機械的に確かめている（主張ではなく検査）。
+// It is imported from tests only, and that it stays out of the product binary's
+// dependency graph is checked mechanically rather than asserted:
+// TestWireMapScanExclusionsAreJustified (wiremap_golden_test.go) runs `go list -deps`.
 //
-// なぜ 1 つに出すか。変換の対象は internal パッケージへ広がり続けるが、wire 型は
-// 非公開なので**そのパッケージの中でしか等価を測れない**。ハーネスを写すと
-// モジュール内で何コピーにもなり、直したときに漂流する
-// （運用キット 0.5「手書きの複製が漂流する」）。
+// Why one shared harness. Conversion keeps spreading into internal packages, and wire
+// types are unexported, so equivalence can only be measured INSIDE the package that owns
+// them. Copying the harness would leave many copies within the module, and they drift the
+// moment one of them is fixed (ops kit §0.5, "hand-written copies drift").
 //
-// 🔴 **control-plane 側の同名パッケージと byte 一致で保たれている。**
-// モジュール横断の共有パッケージは見送られている（ADR 0012 決定 3）ので写しは 2 つ必要だが、
-// **漂流は wiretest_dup_test.go が機械で止める**（共有区間の byte 比較 ＋ ファイル名集合の一致）。
+// It is kept byte-identical with the package of the same name under workspace/agent. A
+// cross-module shared package was declined (ADR 0012 decision 3), so two copies are
+// necessary; wiretest_dup_test.go is what stops them drifting (byte comparison of the
+// shared region, plus matching file-name sets).
 //
-// 既知の 5 つの罠は全部「同じキー・同じ値に見えるのに違う」形をしている:
+// All five known traps have the same shape — the key and the value look the same and are
+// not:
 //
-//	① omitempty の有無      — map はキーを入れなければ出ない。struct はゼロ値でも出る
-//	② nil と空              — nil スライスは null、[]T{} は []
-//	③ 数値の型と精度        — int64 の大きな値を float64 で受けると桁が落ちる
-//	④ キーの綴り            — json タグを書き忘れると Go の公開名がそのまま出る
-//	⑤ キーの有無とゼロ値    — Console が `if (x.foo)` で見ていると両者が潰れる
+//  1. omitempty          — a map omits a key by not setting it; a struct emits the zero
+//  2. nil vs empty       — a nil slice is null, []T{} is []
+//  3. numeric precision  — a large int64 received as float64 loses digits
+//  4. key spelling       — a missing json tag emits Go's exported name as-is
+//  5. absence vs zero    — collapsed together when the Console tests `if (x.foo)`
 //
-// ⑥ として、運用キット §4 が全トラックに課している「同じ型のフィールドを 2 つ
-// 入れ替える変異」も同じ道具で捕まる（型が合うので型検査は絶対に鳴らない）。
+// A sixth is the "swap two fields of the same type" mutation the ops kit §4 requires of
+// every track: the same tool catches it, and nothing else can — the types match, so the
+// type checker can never fire.
 //
-// 使い方（変換する 1 サイトにつき 1 回）:
+// Usage, once per conversion site:
 //
 //	wiretest.AssertEquiv(t, "HandleServersGet", inputs,
-//	    func(in fixture) any { /* 旧 map リテラルをそのまま写す */ },
-//	    func(in fixture) any { /* 新 struct を組む */ })
+//	    func(in fixture) any { /* copy the old map literal verbatim */ },
+//	    func(in fixture) any { /* build the new struct */ })
 //
-// 🔴 **旧 map リテラルは消さずにテストへ写す。** それが唯一の参照実装であり、
-// 「変えていない」の基準になるものが他に無い。
+// Copy the old map literal into the test rather than deleting it: it is the only
+// reference implementation, and without it there is no baseline for "unchanged".
 package wiretest
 
 import (
@@ -75,7 +78,7 @@ type Result struct {
 }
 
 func (r Result) String() string {
-	return fmt.Sprintf("%s: %d ケース (bytes=%d parsed=%d)",
+	return fmt.Sprintf("%s: %d cases (bytes=%d parsed=%d)",
 		r.Name, r.Cases, r.Modes[ModeBytes], r.Modes[ModeParsed])
 }
 
@@ -98,12 +101,12 @@ func AssertEquiv[In any](t TB, name string, inputs []In, oldFn, newFn func(In) a
 	for i, in := range all {
 		oldB, err := json.Marshal(oldFn(in))
 		if err != nil {
-			t.Errorf("%s[case %d]: 旧 map の Marshal が失敗した: %v", name, i, err)
+			t.Errorf("%s[case %d]: marshalling the old map failed: %v", name, i, err)
 			continue
 		}
 		newB, err := json.Marshal(newFn(in))
 		if err != nil {
-			t.Errorf("%s[case %d]: 新 struct の Marshal が失敗した: %v", name, i, err)
+			t.Errorf("%s[case %d]: marshalling the new struct failed: %v", name, i, err)
 			continue
 		}
 		if bytes.Equal(oldB, newB) {
@@ -112,16 +115,16 @@ func AssertEquiv[In any](t TB, name string, inputs []In, oldFn, newFn func(In) a
 		}
 		oldV, err := decodeValue(oldB)
 		if err != nil {
-			t.Errorf("%s[case %d]: 旧 JSON を読み戻せない: %v", name, i, err)
+			t.Errorf("%s[case %d]: cannot decode the old JSON back: %v", name, i, err)
 			continue
 		}
 		newV, err := decodeValue(newB)
 		if err != nil {
-			t.Errorf("%s[case %d]: 新 JSON を読み戻せない: %v", name, i, err)
+			t.Errorf("%s[case %d]: cannot decode the new JSON back: %v", name, i, err)
 			continue
 		}
 		if diffs := valueDiff("", oldV, newV); len(diffs) > 0 {
-			t.Errorf("%s[case %d]: ワイヤが変わった\n  旧: %s\n  新: %s\n  差:\n    %s",
+			t.Errorf("%s[case %d]: the wire changed\n  old: %s\n  new: %s\n  diff:\n    %s",
 				name, i, oldB, newB, strings.Join(diffs, "\n    "))
 			continue
 		}
@@ -158,7 +161,7 @@ func valueDiff(path string, oldV, newV any) []string {
 	case map[string]any:
 		n, ok := newV.(map[string]any)
 		if !ok {
-			return []string{fmt.Sprintf("%s: オブジェクトが %T になった", at(), newV)}
+			return []string{fmt.Sprintf("%s: the object became %T", at(), newV)}
 		}
 		var keys []string
 		seen := map[string]bool{}
@@ -182,9 +185,9 @@ func valueDiff(path string, oldV, newV any) []string {
 			}
 			switch {
 			case oOK && !nOK:
-				out = append(out, fmt.Sprintf("%s: キーが消えた（旧 %v）", p, ov))
+				out = append(out, fmt.Sprintf("%s: key disappeared (old %v)", p, ov))
 			case !oOK && nOK:
-				out = append(out, fmt.Sprintf("%s: キーが増えた（新 %v）", p, nv))
+				out = append(out, fmt.Sprintf("%s: key appeared (new %v)", p, nv))
 			default:
 				out = append(out, valueDiff(p, ov, nv)...)
 			}
@@ -193,10 +196,10 @@ func valueDiff(path string, oldV, newV any) []string {
 	case []any:
 		n, ok := newV.([]any)
 		if !ok {
-			return []string{fmt.Sprintf("%s: 配列が %T になった（null と [] の取り違えを疑う）", at(), newV)}
+			return []string{fmt.Sprintf("%s: the array became %T (suspect a null vs [] mix-up)", at(), newV)}
 		}
 		if len(o) != len(n) {
-			return []string{fmt.Sprintf("%s: 要素数 %d → %d", at(), len(o), len(n))}
+			return []string{fmt.Sprintf("%s: element count %d -> %d", at(), len(o), len(n))}
 		}
 		var out []string
 		for i := range o {
@@ -205,7 +208,7 @@ func valueDiff(path string, oldV, newV any) []string {
 		return out
 	default:
 		if !reflect.DeepEqual(oldV, newV) {
-			return []string{fmt.Sprintf("%s: %s → %s", at(), lit(oldV), lit(newV))}
+			return []string{fmt.Sprintf("%s: %s -> %s", at(), lit(oldV), lit(newV))}
 		}
 		return nil
 	}

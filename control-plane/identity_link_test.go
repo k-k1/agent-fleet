@@ -74,7 +74,7 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 		t.Fatalf("first login: %v", err)
 	}
 	if isNew {
-		t.Fatal("既存デプロイの初回ログインが新規アカウント扱いになっている")
+		t.Fatal("the first login on an existing deployment is treated as a new account")
 	}
 	if got.ID != seed.ID || got.UserKey != seed.UserKey {
 		t.Fatalf("identity moved: %+v want id=%s key=%s", got, seed.ID, seed.UserKey)
@@ -101,13 +101,13 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 	}
 	switch {
 	case isNew:
-		t.Fatal("email 変更で新規アカウントになっている")
+		t.Fatal("an email change created a new account")
 	case moved.ID != seed.ID:
-		t.Fatalf("email 変更で identity が変わった: %s -> %s", seed.ID, moved.ID)
+		t.Fatalf("an email change moved the identity: %s -> %s", seed.ID, moved.ID)
 	case moved.UserKey != seed.UserKey:
-		t.Fatalf("user_key が動いた: %q -> %q（home ディレクトリ名なので不変が要件）", seed.UserKey, moved.UserKey)
+		t.Fatalf("user_key moved: %q -> %q (it is the home directory name, so staying put is the requirement)", seed.UserKey, moved.UserKey)
 	case moved.Email != renamed:
-		t.Fatalf("表示用 email が更新されていない: %q", moved.Email)
+		t.Fatalf("the displayed email was not updated: %q", moved.Email)
 	}
 	if n := countRows(t, st, "identity"); n != 1 {
 		t.Fatalf("identity rows after rename = %d, want 1", n)
@@ -130,7 +130,7 @@ func TestLinkIdentityJoinsSameEmailFromAnotherProvider(t *testing.T) {
 		t.Fatalf("entra: %v", err)
 	}
 	if isNew || second.ID != first.ID || second.UserKey != first.UserKey {
-		t.Fatalf("別 IdP・同 email が別人になった: %+v want %+v (isNew=%v)", second, first, isNew)
+		t.Fatalf("a different IdP with the same email became a different person: %+v want %+v (isNew=%v)", second, first, isNew)
 	}
 	if n := countRows(t, st, "identity"); n != 1 {
 		t.Fatalf("identity rows = %d, want 1", n)
@@ -158,10 +158,10 @@ func TestLinkIdentityNewAccountWhenEmailIsUnknown(t *testing.T) {
 		t.Fatalf("new person: %v", err)
 	}
 	if !isNew {
-		t.Fatal("未知の email が新規アカウントとして報告されていない")
+		t.Fatal("an unknown email is not reported as a new account")
 	}
 	if got.ID == first.ID {
-		t.Fatal("別 email が既存 identity に合流した（結合はしない設計）")
+		t.Fatal("a different email joined an existing identity (by design there is no join)")
 	}
 	if got.UserKey != sanitizeUser(other) {
 		t.Fatalf("user_key = %q, want %q", got.UserKey, sanitizeUser(other))
@@ -182,7 +182,7 @@ func TestLinkIdentityNewAccountWhenEmailIsUnknown(t *testing.T) {
 		t.Fatalf("claim: %v", err)
 	}
 	if isNew || claimed.ID != inv.ID {
-		t.Fatalf("招待行の引き取り: id=%s want %s isNew=%v", claimed.ID, inv.ID, isNew)
+		t.Fatalf("claiming an invited row: id=%s want %s isNew=%v", claimed.ID, inv.ID, isNew)
 	}
 }
 
@@ -213,7 +213,7 @@ func TestIdentityResolutionUnchangedWithoutAnIdPSubject(t *testing.T) {
 		t.Fatalf("dev user_key = %q, want dev", ident.UserKey)
 	}
 	if n := countRows(t, st, "identity_provider"); n != 0 {
-		t.Fatalf("subject の無いモードで identity_provider に %d 行書かれている", n)
+		t.Fatalf("%d identity_provider rows were written in a mode that has no subject", n)
 	}
 }
 
@@ -262,7 +262,7 @@ func TestAuthGateCarriesTheIdPSubjectIntoIdentityResolution(t *testing.T) {
 	// Same subject, different email. Falling back to the email-derived key moves the home.
 	const renamed = "yamada-hanako@acme.co.jp"
 	if got := call(renamed); got != seed.UserKey {
-		t.Fatalf("改名後の user_key = %q, want %q（%q に落ちていれば prov/sub が届いていない）",
+		t.Fatalf("user_key after the rename = %q, want %q (falling back to %q means prov/sub never arrived)",
 			got, seed.UserKey, sanitizeUser(renamed))
 	}
 	if n := countRows(t, st, "identity"); n != 1 {
@@ -291,21 +291,21 @@ func TestNewAccountNoticeIsShownOnceOnMultiIdPDeployments(t *testing.T) {
 	st1, au := startLogin(t, cfg, "?provider=okta&next=%2Fsessions")
 	w := callback(t, cfg, st1, "code", au.Query().Get("state"))
 	if w.Code != http.StatusOK {
-		t.Fatalf("新規アカウントで通知が出ていない: %d -> %s", w.Code, w.Header().Get("Location"))
+		t.Fatalf("no notice is shown for a new account: %d -> %s", w.Code, w.Header().Get("Location"))
 	}
 	page := w.Body.String()
 	if !strings.Contains(page, "新しいワークスペース") || !strings.Contains(page, "tanaka@acme.co.jp") {
-		t.Fatalf("通知の中身:\n%s", page)
+		t.Fatalf("notice body:\n%s", page)
 	}
 	if sessionCookieOf(t, w) == nil {
-		t.Fatal("通知を出すために session を落としてはいけない")
+		t.Fatal("the session must not be dropped in order to show the notice")
 	}
 
 	// The second time the (provider, subject) is the same, so it is not new: pass through.
 	st2, au := startLogin(t, cfg, "?provider=okta&next=%2Fsessions")
 	w = callback(t, cfg, st2, "code", au.Query().Get("state"))
 	if w.Code != http.StatusFound || w.Header().Get("Location") != "/sessions" {
-		t.Fatalf("再ログイン: %d -> %q", w.Code, w.Header().Get("Location"))
+		t.Fatalf("re-login: %d -> %q", w.Code, w.Header().Get("Location"))
 	}
 
 	// A deployment with a single IdP passes through even for someone new.
@@ -314,6 +314,6 @@ func TestNewAccountNoticeIsShownOnceOnMultiIdPDeployments(t *testing.T) {
 	st3, au := startLogin(t, single, "?next=%2Fsessions")
 	w = callback(t, single, st3, "code", au.Query().Get("state"))
 	if w.Code != http.StatusFound || w.Header().Get("Location") != "/sessions" {
-		t.Fatalf("単一 IdP デプロイ: %d -> %q", w.Code, w.Header().Get("Location"))
+		t.Fatalf("single-IdP deployment: %d -> %q", w.Code, w.Header().Get("Location"))
 	}
 }

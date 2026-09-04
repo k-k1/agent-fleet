@@ -227,9 +227,9 @@ func writeWireGolden(t *testing.T, path string, lines []string) {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
 	var b strings.Builder
-	b.WriteString("# Console / CP が読む代表的な DTO の JSON キー集合。生成物 —— 手で編集しない。\n")
-	b.WriteString("# 更新: cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .\n")
-	b.WriteString("# 形式: <型>.<キーパス> <JSON上の型>[,omitempty]（[]=配列 / raw=素通し JSON）\n")
+	b.WriteString("# JSON key sets of the DTOs the Console and CP read. Generated - do not edit by hand.\n")
+	b.WriteString("# Update: cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .\n")
+	b.WriteString("# Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)\n")
 	fmt.Fprintf(&b, "# count: %d\n", len(lines))
 	for _, ln := range lines {
 		b.WriteString(ln)

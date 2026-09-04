@@ -59,9 +59,9 @@ func TestWiretestCopiesDoNotDrift(t *testing.T) {
 		a := mustShared(t, filepath.Join(self, name))
 		b := mustShared(t, filepath.Join(peer, name))
 		if a != b {
-			t.Errorf("%s の共有区間が一致しない（%d バイト 対 %d バイト）。\n"+
-				"  片方だけ直すと、両モジュールのテストは独立に緑のまま漂流する。\n"+
-				"  どちらかへ揃えること: %s / %s", name, len(a), len(b), self, peer)
+			t.Errorf("the shared region of %s does not match (%d bytes vs %d bytes).\n"+
+				"  Fix only one side and both modules' tests stay independently green while they drift.\n"+
+				"  Make them identical: %s / %s", name, len(a), len(b), self, peer)
 		}
 	}
 }
@@ -73,11 +73,11 @@ func TestWiretestCopiesHaveSameFiles(t *testing.T) {
 	self, peer := selfAndPeer(t)
 	got, want := goFiles(t, self), goFiles(t, peer)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("2 つの写しのファイル構成が違う。\n  %s: %v\n  %s: %v\n"+
-			"  片方だけにファイルを足すと、byte 比較は全部緑のまま漂流する。", self, got, peer, want)
+		t.Errorf("the two copies have different file sets.\n  %s: %v\n  %s: %v\n"+
+			"  Add a file to one side only and the byte comparison stays entirely green while they drift.", self, got, peer, want)
 	}
 	if len(got) == 0 {
-		t.Fatal(".go が 1 枚も見つからない（走査が壊れている）")
+		t.Fatal("not a single .go file was found (the scan is broken)")
 	}
 }
 
@@ -109,8 +109,8 @@ func selfAndPeer(t *testing.T) (string, string) {
 	}
 	// Fatal, not Skip: skipping when nothing is found makes "not checked" green while it
 	// reads as "not drifting".
-	t.Fatalf("リポジトリ根（%v の両方を持つ階層）が %s から見つからない。"+
-		"移動したならこの表を直すこと——見つからないまま緑にはしない。", wiretestCopies, wd)
+	t.Fatalf("the repository root (the level holding both of %v) was not found from %s. "+
+		"If they moved, fix this table - not finding them must never be green.", wiretestCopies, wd)
 	return "", ""
 }
 
@@ -158,8 +158,8 @@ func mustShared(t *testing.T, path string) string {
 	}
 	s := string(b)
 	if n := strings.Count(s, wiretestSentinel); n != 1 {
-		t.Fatalf("%s の番兵が %d 個（1 個であるべき）。"+
-			"番兵が消えると比較範囲が変わり、**検査が黙って別のものを見る**。", path, n)
+		t.Fatalf("%s has %d sentinels (there must be exactly 1). "+
+			"Lose the sentinel and the compared range changes, so the check silently looks at something else.", path, n)
 	}
 	return s[strings.Index(s, wiretestSentinel)+len(wiretestSentinel):]
 }

@@ -222,7 +222,7 @@ func (b *goldenBaker) bake(ctx context.Context, image, arch string) {
 			return
 		}
 		b.loggedBlocked = ""
-		log.Printf("golden[%s]: no golden for %s; baking one (ADR 0045 決定 9)", arch, image)
+		log.Printf("golden[%s]: no golden for %s; baking one (ADR 0045 decision 9)", arch, image)
 		seedRes, err = b.create(ctx, b.seedKey(arch), arch)
 		if err != nil {
 			log.Printf("golden[%s]: creating the seed workspace failed: %v", arch, err)

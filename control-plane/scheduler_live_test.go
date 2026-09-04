@@ -86,7 +86,7 @@ func (f *recordingFirer) waitFire(t *testing.T, d time.Duration) {
 	select {
 	case <-f.fires:
 	case <-time.After(d):
-		t.Fatalf("%v 待っても発火しなかった (count=%d)", d, f.count())
+		t.Fatalf("no fire after waiting %v (count=%d)", d, f.count())
 	}
 }
 
@@ -118,16 +118,16 @@ func waitLedger(t *testing.T, ctx context.Context, st *store.SQL, id string, d t
 	for {
 		got, ok, err := st.GetSchedule(ctx, id)
 		if err != nil {
-			t.Fatalf("台帳の読み出しに失敗した (%s): %v", id, err)
+			t.Fatalf("failed to read the ledger (%s): %v", id, err)
 		}
 		if !ok {
-			t.Fatalf("台帳から schedule %s が消えた", id)
+			t.Fatalf("schedule %s disappeared from the ledger", id)
 		}
 		if cond(got) {
 			return got
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("%v 待っても台帳が前進しなかった: last_status=%q next_run=%q enabled=%v",
+			t.Fatalf("the ledger did not advance after waiting %v: last_status=%q next_run=%q enabled=%v",
 				d, got.LastStatus, got.NextRun, got.Enabled)
 		}
 		time.Sleep(time.Millisecond)
@@ -143,13 +143,13 @@ func waitRuns(t *testing.T, ctx context.Context, st *store.SQL, id, membershipID
 	for {
 		runs, err := st.ListScheduleRuns(ctx, id, membershipID, 50)
 		if err != nil {
-			t.Fatalf("実行履歴の読み出しに失敗した (%s): %v", id, err)
+			t.Fatalf("failed to read the run history (%s): %v", id, err)
 		}
 		if len(runs) >= n {
 			return runs
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("%v 待っても実行履歴が %d 行に達しなかった: %+v", d, n, runs)
+			t.Fatalf("waited %v and the run history still did not reach %d rows: %+v", d, n, runs)
 		}
 		time.Sleep(time.Millisecond)
 	}

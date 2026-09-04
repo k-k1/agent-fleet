@@ -221,10 +221,10 @@ func TestPreviewTenantShareSurvivesRestartWhilePublicDoesNot(t *testing.T) {
 	raw, _ := e.mgr.store.GetWorkspaceSettings(context.Background(), e.ws.ID)
 	st := parseWSSettings(raw)
 	if st.PreviewPublic {
-		t.Error("public mode survived a start (fail-closed・決定 12)")
+		t.Error("public mode survived a start (fail-closed, decision 12)")
 	}
 	if !st.PreviewTenantShare {
-		t.Error("tenant sharing was reset by a start — 用途が必ず再起動をまたぐので使えなくなる（決定 14）")
+		t.Error("tenant sharing was reset by a start - its use always spans a restart, so this makes it useless (decision 14)")
 	}
 }
 
