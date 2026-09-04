@@ -244,6 +244,11 @@ else
   echo "==> re-tag the workspace image $CUR_TAG -> $TAG (same bytes)"
   run crane copy "$WS_OLD" "$WS_NEW"
   ws_same_content=1
+  # 🔴 再タグは **ECR の中だけ**の出来事。この $TAG の workspace は GHCR に無く、
+  # 20-platform の ECR は EmptyOnDelete: true なので、**撤収した瞬間にどこにも無くなる。**
+  # 控えがこのタグを指したまま残ると「ファイルは在るのに復旧点が無い」形になる（env.sh）。
+  echo "    ⚠️ この workspace は ECR にしか無い（GHCR には $TAG が無い）。撤収でイメージごと消える。"
+  echo "       立て直しの材料として残すなら --image both で焼き直すか、GHCR へ crane copy すること。"
 fi
 
 # --- 6) golden を貼り替える（落とし穴 4） -----------------------------------
@@ -291,6 +296,20 @@ if [ "$DRY" = 1 ]; then
 ==> dry-run: 何も変えていない。上の DRY: 行が実際に走る操作。
 EOF
 else
+  # --- 8) 控えを腐らせない ----------------------------------------------------
+  # ★ **ImageTag を動かした側が、控えも動かす。** capture-env.sh は `--force` が無いと
+  # 断るので、「デプロイのたびに取り直す」運用は成立しない —— 結果、控えの
+  # AF_IMAGE_TAG は最初に撮った日のまま古び、撤収したあとで初めてそれが分かる。
+  # 書き替えるのは 2 行だけ（AF_DEV_DEPLOY の印など、AWS 側に無い情報を落とさないため）。
+  if [ -w "$AF_ENV_DIR/env" ]; then
+    af_env_set AF_IMAGE_TAG "$TAG"
+    recoverable=yes
+    [ "$ws_same_content" = 1 ] && recoverable=no   # 再タグ＝GHCR に workspace が無い
+    af_env_set AF_IMAGE_RECOVERABLE "$recoverable"
+    echo "==> 控えを更新した: $AF_ENV_DIR/env (AF_IMAGE_TAG=$TAG / AF_IMAGE_RECOVERABLE=$recoverable)"
+  else
+    echo "⚠️  控え（$AF_ENV_DIR/env）を更新できなかった。撤収の前に capture-env.sh --force を走らせること。"
+  fi
   cat <<EOF
 
 ==> dev deploy: $FQDN は origin/$REF ($SHORT) で走っている（ImageTag=$TAG）

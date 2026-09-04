@@ -178,6 +178,23 @@ jobs:
           bash -n workspace/entrypoint.sh
           ./deploy/local/keep-relocate-test.sh
 
+  # 配備物（deploy/aws/ecs）は **実 AWS でしか全体は動かない**が、動かない理由で
+  # 何も検査しないと、壊れたことに気付くのが「立て直せなかった日」になる。ここでは
+  # `aws` / `crane` を差し替えて踏める分岐＝**控えの復旧点まわり**だけを見る
+  # （何を測っていないかはスクリプトの冒頭に書いてある）。**CFN の作成・削除・更新は 0 回**
+  # ——呼び出し自体は 198 回あるが全部**偽 `aws` 宛の読み取り**（`describe-stacks` 180 ほか）。
+  deploy-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: capture / teardown の復旧点まわり
+        run: ./deploy/aws/ecs/capture-restore-test.sh
+      # ⚠️ この 1 本は**既にある検査**で、いままで release-gate.yml でしか走っていなかった
+      # （＝撤収の順序を壊した PR は、リリースの日まで緑に見える）。同じ偽 aws の上で
+      # 5 秒なので、PR ごとにも回す。**中身は 1 行も変えていない。**
+      - name: 撤収／立ち上げの順序（release-gate と同じ 1 本）
+        run: ./deploy/local/ecs-lifecycle-stub-test.sh
+
   console:
     runs-on: ubuntu-latest
     defaults:
@@ -198,5 +215,22 @@ jobs:
         run: npm run i18n:lint
       - name: vitest
         run: npm test
+      # 実ブラウザの検査（docs/log/82）。**jsdom では原理的に測れない面**をここでだけ見る:
+      # pdf:check は canvas の画素と同梱アセットの配信、doc:check は WASM が実際に
+      # 初期化されて OOXML を変換すること。定義は console/package.json にあったのに
+      # `.github/` からは 1 度も呼ばれていなかった（2026-09-04 まで）。
+      #
+      # ブラウザは **ランナー像の /usr/bin/chromium をそのまま使う**。使い捨ての probe を
+      # 1 回流して実測した（2026-09-04・run 33847589713）:
+      #   /usr/bin/chromium = Chromium 151.0.7922.0 / /usr/bin/google-chrome = 151.0.7922.173
+      #   CHROME_BIN=/usr/bin/google-chrome ・ doc:check 13 秒 / pdf:check 4 秒
+      # なので **入れる段も CHROMIUM= も要らない**（headless.mjs が候補から解決し、
+      # 1 本も無ければ探した先を名指しして落ちる）。⚠️ ランナー像に日本語フォントは
+      # **0 件**（`fc-list :lang=ja`）。標本の日本語は豆腐で描かれるが、この 2 本は
+      # 字形ではなく「描かれたか・アセットを配れたか」を見るので判定は変わらない。
+      - name: pdf:check (real browser)
+        run: npm run pdf:check
+      - name: doc:check (real browser)
+        run: npm run doc:check
       - name: build
         run: npm run build
