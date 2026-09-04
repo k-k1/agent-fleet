@@ -1,12 +1,12 @@
 package kiro
 
-// kiro の起動コマンド組み立てと、セッションストア（v2 JSONL）のパス解決・sid 発見
-// （docs/log/43 Track A）。
+// Building kiro's launch command, plus resolving the session store's paths (v2 JSONL) and
+// discovering a sid (docs/log/43 Track A).
 //
-// セッション ID は CLI 採番（cursor と違い AF では先取りできない — kiro.go 参照）。
-// 起動は `kiro-cli chat --agent-engine v2 --trust-all-tools [--model …] [--effort …]
-// [--resume-id …]`。--agent-engine v2 を明示ピンするのは、既定が現状 v2 でも将来
-// v3 へ既定が振れるドリフト保険（docs/log/43 §5-2 決定）。
+// The session id is allocated by the CLI: unlike cursor, AF cannot impose one (see
+// kiro.go). The launch is `kiro-cli chat --agent-engine v2 --trust-all-tools [--model …]
+// [--effort …] [--resume-id …]`. --agent-engine v2 is pinned explicitly as insurance
+// against drift: the default is v2 today, but it could swing to v3 (docs/log/43 §5-2).
 
 import (
 	"encoding/json"
@@ -21,7 +21,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// envOr は極小ヘルパ（cursor/program.go と同様、共有せず重複を許容）。
+// envOr is a tiny helper, duplicated rather than shared (as in cursor/program.go).
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -29,7 +29,7 @@ func envOr(key, def string) string {
 	return def
 }
 
-// bin returns the kiro CLI binary. AGENT_KIRO_BIN で差し替え可（テスト／別パス）。
+// bin returns the kiro CLI binary. AGENT_KIRO_BIN overrides it (tests, alternate paths).
 func bin() string { return envOr("AGENT_KIRO_BIN", "kiro-cli") }
 
 // Bin exposes the resolved kiro CLI binary for callers outside this package.
@@ -43,9 +43,9 @@ func Installed() bool {
 	return err == nil
 }
 
-// Home is kiro's config/session root (~/.kiro): settings/cli.json、settings/mcp.json、
-// agents/、そして sessions/cli/（v2 セッションストア）。資格情報は別ツリー
-// （~/.local/share/kiro-cli/data.sqlite3）で、両方とも fs.go の denylist 対象。
+// Home is kiro's config/session root (~/.kiro): settings/cli.json, settings/mcp.json,
+// agents/, and sessions/cli/ (the v2 session store). Credentials live in a separate tree
+// (~/.local/share/kiro-cli/data.sqlite3); both are on fs.go's denylist.
 func Home() string { return paths.KiroHome() }
 
 // sessionsDir is ~/.kiro/sessions/cli — the flat v2 session store (per-sid
@@ -65,7 +65,7 @@ type sessionMeta struct {
 }
 
 // discoverSid finds the newest v2 session launched in dir AT OR AFTER notBefore. kiro
-// writes <sid>.json at session start (before the first turn — 実測), so a fresh
+// writes <sid>.json at session start (before the first turn — measured), so a fresh
 // launch's session is the newest for its cwd; once resolveSid caches it, the choice
 // sticks.
 //
@@ -122,19 +122,22 @@ func discoverSid(dir string, notBefore time.Time) string {
 
 // defaultFlags is the fleet-standard posture for a TUI launch:
 //   - chat: the interactive subcommand.
-//   - --agent-engine v2: pin the v2 engine (v2 JSONL store は本実装の read 正本。
-//     既定 v2 でも将来 v3 に振れないよう明示。v3 は別ストア/別状態契約になり得る)。
-//   - --trust-all-tools: fleet 既定の bypass 相当（claude skip-permissions と同格）。
-//     初回の危険モード確認ダイアログは chat.disableTrustAllConfirmation で抑止する
-//     （ensureSettings が固定）。
+//   - --agent-engine v2: pin the v2 engine. The v2 JSONL store is what this
+//     implementation reads, and v3 could be a different store with a different state
+//     contract, so the default must not be allowed to swing there on its own.
+//   - --trust-all-tools: the fleet's default bypass posture, the counterpart of claude's
+//     skip-permissions. The first-run dangerous-mode confirmation dialog is suppressed by
+//     chat.disableTrustAllConfirmation, which ensureSettings pins.
 const defaultFlags = "chat --agent-engine v2 --trust-all-tools"
 
-// buildProgram returns the tmux pane program for a kiro TUI session. 認証は環境依存
-// （~/.local/share/kiro-cli を CLI 自身が拾う — 実測）なのでトークンは注入しない。
-// bypass=false は「権限確認をスキップしない」（docs/log/76 の利用者選択、または plan 起動）。
-// 承認待ちは state.go が "question" として拾える（明示テキスト "requires approval"）。
-// 外すのは --trust-all-tools だけで、chat.disableTrustAllConfirmation（初回の危険モード
-// 確認ダイアログの抑止・ensureSettings が固定）は権限確認とは別軸なのでそのまま。
+// buildProgram returns the tmux pane program for a kiro TUI session. No token is
+// injected: authentication is environmental, since the CLI picks up
+// ~/.local/share/kiro-cli itself (measured). bypass=false means "do not skip the
+// permission prompts" (the user's choice per docs/log/76, or a plan launch); state.go
+// then picks a pending approval up as "question" from the explicit text "requires
+// approval". Only --trust-all-tools is removed — chat.disableTrustAllConfirmation
+// (suppressing the first-run dangerous-mode dialog, pinned by ensureSettings) is a
+// different axis and stays.
 func buildProgram(model, effort, mode, resumeID string, bypass bool) string {
 	if override := os.Getenv("AGENT_KIRO_CMD"); override != "" {
 		return override
@@ -143,7 +146,8 @@ func buildProgram(model, effort, mode, resumeID string, bypass bool) string {
 	if !bypass {
 		flags = strings.TrimSpace(strings.ReplaceAll(flags, "--trust-all-tools", ""))
 	}
-	// "auto"（既定・1M ctx）はフラグ無し。named モデルは Free でも指定可（実測）。
+	// "auto" is the default (1M ctx) and takes no flag. A named model is selectable even
+	// on Free (measured).
 	if model != "" && model != "auto" {
 		flags += " --model " + session.ShellQuote(model)
 	}
@@ -177,13 +181,16 @@ func buildProgram(model, effort, mode, resumeID string, bypass bool) string {
 
 // ensureSettings pins the two fleet-required kiro settings ONCE per process, best
 // effort:
-//   - app.disableAutoupdates=true — 版はイメージ再ビルド/オンデマンド導入で管理し、
-//     背景自己更新を止める（entrypoint も再固定するが lean/フル両対応でここでも保険）。
-//   - chat.disableTrustAllConfirmation=true — --trust-all-tools 初回の危険モード確認
-//     ダイアログを抑止（未設定だと launch pane がダイアログで固着する — 実測）。
+//   - app.disableAutoupdates=true — the version is managed by image rebuild and on-demand
+//     install, so background self-update is off. The entrypoint pins it too; this is the
+//     backstop that covers both the lean and the full image.
+//   - chat.disableTrustAllConfirmation=true — suppresses the first-run dangerous-mode
+//     dialog for --trust-all-tools (measured: without it the launch pane sticks on the
+//     dialog).
 //
-// 導入（Track B）が両設定を固めるのが本筋だが、素の home でも launch が固着しないよう
-// read 層側でも冪等に固める。バイナリ非存在時は no-op。
+// Install (Track B) pinning both settings is the primary path; doing it idempotently here
+// in the read layer keeps a launch from sticking on a bare home as well. No-op when the
+// binary is absent.
 var settingsOnce sync.Once
 
 func ensureSettings() {

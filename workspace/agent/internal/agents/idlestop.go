@@ -1,17 +1,18 @@
 package agents
 
-// 共有デーモン（codex app-server / opencode serve）の「需要ゼロで畳む」監視。
+// The "shut down when nothing needs it" watch for the shared daemons (codex app-server /
+// opencode serve).
 //
-// どちらのデーモンも常駐コストが重い（実測 RSS: codex app-server 約 110 MB＝
-// native 62 MB＋node シム 48 MB、opencode serve 約 305 MB）のに対し、冷起動は
-// codex で 217 ms しかかからない。つまり「起動時から上げっぱなし」に見合う理由は
-// なく、需要（managed ハンドル、および codex では --remote で動いている TUI
-// セッション）が無い間は落としておくのが正しい。
+// Keeping either daemon resident is expensive (measured RSS: codex app-server about 110 MB =
+// 62 MB native + 48 MB node shim, opencode serve about 305 MB), while a cold start costs codex
+// only 217 ms. There is no case for keeping them up from boot, so they stay down while there is
+// no demand (managed handles, and for codex the TUI sessions running with --remote).
 //
-// 監視は supervisor 側が Ensure 成功時に 1 本だけ張り、停止したら自分で終わる
-// （次に必要になった Ensure が張り直す）。判定と停止の競合は stopIfIdle 側が
-// ロック内で needs を再確認して潰す — ここは「生きているデーモンを引き抜く」に
-// 直結するので、監視ループ側の判定だけを信じない。
+// The supervisor arms exactly one watch when Ensure succeeds, and the watch ends itself once
+// it stops the daemon (the next Ensure that needs one arms it again). The race between
+// deciding and stopping is settled inside stopIfIdle, which re-checks needs under the lock:
+// getting this wrong pulls a live daemon out from under its users, so the loop's own verdict
+// is never trusted alone.
 
 import (
 	"log"
@@ -20,8 +21,8 @@ import (
 	"time"
 )
 
-// idleTick は需要の観測間隔。停止までの猶予より十分細かければよい（var なのは
-// テストが縮めるため）。
+// idleTick is how often demand is observed; it only has to be well finer than the grace
+// period before a stop. It is a var so tests can shorten it.
 var idleTick = 15 * time.Second
 
 // IdleTickForTest swaps the observation interval and returns the previous value,
@@ -32,8 +33,9 @@ func IdleTickForTest(d time.Duration) time.Duration {
 	return prev
 }
 
-// IdleGrace reads a "<n> 秒間ゼロなら停止" knob from env. 0 で自動停止を無効化
-// （一度上げたら Agent が死ぬまで畳まない）。不正値は既定にフォールバックする。
+// IdleGrace reads a "stop after <n> seconds at zero demand" knob from env. 0 disables the
+// automatic stop (once up, the daemon stays until the Agent dies). An invalid value falls
+// back to the default.
 func IdleGrace(env string, def time.Duration) time.Duration {
 	v := os.Getenv(env)
 	if v == "" {
@@ -46,10 +48,10 @@ func IdleGrace(env string, def time.Duration) time.Duration {
 	return time.Duration(n) * time.Second
 }
 
-// WatchIdle runs the observation loop: needs() が 0 の状態が grace 続いたら
-// stopIfIdle() を呼ぶ。stopIfIdle が true（停止した／既に停止していた）を返したら
-// ループを終える。false は「ロック内の再確認で需要が復活していた」の意味なので、
-// 猶予を数え直して監視を続ける。grace<=0 なら監視自体を張らない。
+// WatchIdle runs the observation loop: once needs() has been 0 for grace, it calls
+// stopIfIdle(). A true result (stopped, or already stopped) ends the loop; false means the
+// re-check under the lock found demand again, so the grace period restarts and the watch goes
+// on. With grace <= 0 no watch is armed at all.
 func WatchIdle(name string, needs func() int, stopIfIdle func() bool, grace time.Duration) {
 	if grace <= 0 {
 		return
@@ -71,9 +73,9 @@ func WatchIdle(name string, needs func() int, stopIfIdle func() bool, grace time
 		if stopIfIdle() {
 			return
 		}
-		// ロック内の再確認で需要が戻っていた（畳む直前にセッションが立った）。
-		// 結果は supervisor 側が記録するので、ここでは数え直すだけ。
-		log.Printf("%s: 需要ゼロ %s のあと停止を見送りました（需要が戻った）", name, grace)
+		// The re-check under the lock found demand again (a session started just before the
+		// shutdown). The supervisor records the outcome, so here we only restart the count.
+		log.Printf("%s: skipped the stop after %s at zero demand (demand came back)", name, grace)
 		idleSince = time.Time{}
 	}
 }

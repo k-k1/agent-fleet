@@ -1,23 +1,26 @@
 package agy
 
-// チャットミラーの ContextBar 用のセッションレベル context 充填率（docs/log/32）。
-// agy の転写（transcript_full.jsonl）にも他の永続状態にも token 数は一切無い
-// （実機 grep 0 件）ので、TUI の /context パネル（"Visualize current context
-// usage" — 合計 `26.0k/1.0M tokens` とカテゴリ別内訳を描く）が唯一の取得元。
-// /usage スクレイプ（usage.go）と同じ agents.Flow 配管で、会話を
-// `--conversation <uuid>` で別プロセスに復帰して /context を打ち、合計行だけを
-// パースする。数値は agy 自身のクライアント側推定（パネル自ら "Estimated
-// usage" と表示）で、API 報告値ではない。
+// Session-level context fill for the chat mirror's ContextBar (docs/log/32).
+// Neither agy's transcript (transcript_full.jsonl) nor any other persisted state
+// holds a token count (measured: 0 hits on a real machine), so the TUI's /context
+// panel ("Visualize current context usage" - it draws the total `26.0k/1.0M
+// tokens` plus a per-category breakdown) is the only source. Through the same
+// agents.Flow plumbing as the /usage scrape (usage.go), the conversation is
+// resumed in a separate process with `--conversation <uuid>`, /context is typed
+// and only the total line is parsed. The numbers are agy's own client-side
+// estimate (the panel says "Estimated usage" itself), not API-reported values.
 //
-// ライブ会話への並行復帰は実機検証済み（2026-07-20, v1.1.4）: 稼働中セッション
-// A の会話へ第二プロセス B が --conversation 復帰 → /context 実数取得 → B を
-// kill しても A は応答継続・transcript_full.jsonl も無傷（SQLite WAL・/context
-// は読み取りのみ）。
+// Resuming a live conversation in parallel is verified on a real machine
+// (2026-07-20, v1.1.4): a second process B resumes running session A's
+// conversation with --conversation, reads /context, and killing B leaves A
+// answering and transcript_full.jsonl intact (SQLite WAL, and /context only
+// reads).
 //
-// TUI 起動は数秒かかるため、poll 毎には走らせない: 会話ごとにキャッシュし、
-// 転写ファイルの size+mtime が変わった時だけ ctxScrapeMinInterval を下限に
-// バックグラウンドで更新する。ContextFill 自体は常に非ブロッキング（キャッシュ
-// を即返し、初回は nil）。
+// Starting the TUI takes seconds, so it must not run on every poll: the reading
+// is cached per conversation and refreshed in the background only when the
+// transcript's size+mtime changed, no more often than ctxScrapeMinInterval.
+// ContextFill itself never blocks (it returns the cache immediately, nil before
+// the first scrape).
 
 import (
 	"os"
@@ -36,7 +39,7 @@ import (
 
 // ctxScrapeMinInterval floors how often one conversation may be re-scraped —
 // a running turn touches the transcript every few seconds, and each scrape
-// spawns a whole TUI (メモリ制約ホスト).
+// spawns a whole TUI (memory-constrained host).
 const ctxScrapeMinInterval = 60 * time.Second
 
 type ctxCacheEnt struct {
@@ -79,7 +82,8 @@ func contextFill(conv string) *transcript.Context {
 	}
 	// Refresh when the transcript moved past the last reading — but never more
 	// often than the floor, and never two at once for the same conversation.
-	// 失敗時も at が進むので、壊れた会話が poll 毎にスクレイプを連打しない。
+	// at advances on failure too, so a broken conversation cannot fire a scrape on
+	// every poll.
 	if ent.sig != sig && !ent.running && time.Since(ent.at) > ctxScrapeMinInterval {
 		ent.running = true
 		go func() {
@@ -115,10 +119,11 @@ var (
 	ctxTotalRe = regexp.MustCompile(`·\s*([0-9][0-9.]*[kM]?)/([0-9][0-9.]*[kM]?) tokens`)
 )
 
-// scrapeContext resumes conv in a scratch-dir agy (`--conversation` は cwd を
-// 問わず復帰できる — 実機検証), drives it to the /context panel, and parses the
-// total. The scratch dir is pre-trusted so the trust prompt never renders (and
-// interactively accepted as a fallback, same as scrapeUsage).
+// scrapeContext resumes conv in a scratch-dir agy (`--conversation` resumes
+// regardless of cwd — verified on a real machine), drives it to the /context
+// panel, and parses the total. The scratch dir is pre-trusted so the trust
+// prompt never renders (and interactively accepted as a fallback, same as
+// scrapeUsage).
 func scrapeContext(conv string) (*transcript.Context, error) {
 	ctxGate <- struct{}{}
 	defer func() { <-ctxGate }()
@@ -137,8 +142,8 @@ func scrapeContext(conv string) (*transcript.Context, error) {
 	}
 	defer f.Close()
 
-	// 事前 trust が効いていればこの画面は出ない。出た場合でも Enter は盲打ちしない
-	// （既定の選択肢は上流の都合で入れ替わる — trustprompt.go）。
+	// With the pre-trust in place this screen never appears. If it does, never blind-press
+	// Enter: upstream swaps which option is the default (trustprompt.go).
 	if m := f.WaitFor(regexp.MustCompile(trustRe.String()+`|`+readyRe.String()), 25*time.Second); m == "" {
 		return nil, errString("agy did not reach the prompt (timeout)")
 	} else if trustRe.MatchString(m) {

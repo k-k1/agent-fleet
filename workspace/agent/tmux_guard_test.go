@@ -1,18 +1,18 @@
 package main
 
-// tmux 破壊操作ガード（tripwire）: docs/log/32 M1 E2E で、テスト用 agent インスタンスの
-// shutdown が共有デフォルトソケットへ `tmux kill-server` を実行し、Workspace 内の
-// 全セッションを 4 回落としたインシデントの再発防止。
+// Tripwire against destructive tmux operations. Measured (docs/log/32 M1 E2E): a test
+// agent instance's shutdown ran `tmux kill-server` against the shared default socket and
+// killed every session in the Workspace, four times.
 //
-//  1. `kill-server` はサーバ丸ごと（自分が作っていない pane も）を殺すため、agent の
-//     製品コードでの使用を全面禁止する。停止は必ず自メタ管理下セッションへの
-//     `kill-session`（shutdown.go / halt）で行う。
-//  2. tmux の exec は tmuxx.Cmd に集約する。直接 exec.Command("tmux", …) を書くと
-//     AF_TMUX_SOCKET によるソケット分離（dev / E2E の第 2 インスタンス隔離）を
-//     すり抜けるため、これも禁止する。
+//  1. `kill-server` takes down the whole server, including panes this instance never
+//     created, so product code may never use it. Stopping is always a `kill-session`
+//     against a session this instance's meta owns (shutdown.go / halt).
+//  2. Every tmux exec goes through tmuxx.Cmd. A direct exec.Command("tmux", …) escapes
+//     the AF_TMUX_SOCKET socket isolation that keeps a second instance (dev / E2E)
+//     apart, so it is banned too.
 //
-// _test.go は対象外（テストは自前のソケット/セッションを扱ってよい。ただし
-// e2e-tmux-socket-isolation の教訓どおり `tmux -L` で隔離すること）。
+// _test.go files are out of scope: tests may drive their own socket and sessions, but
+// must isolate with `tmux -L` (see e2e-tmux-socket-isolation).
 
 import (
 	"os"
@@ -48,8 +48,8 @@ func scanAgentSources(t *testing.T, visit func(path, src string)) {
 	}
 }
 
-// TestNoKillServer: 製品コードのコード行に "kill-server" が現れたら即失敗。
-// コメント行（経緯の記述）は許す — 再導入は必ずコード行に現れる。
+// TestNoKillServer fails as soon as "kill-server" appears on a code line of product code.
+// Comment lines are allowed: a reintroduction always shows up on a code line.
 func TestNoKillServer(t *testing.T) {
 	scanAgentSources(t, func(path, src string) {
 		for i, line := range strings.Split(src, "\n") {
@@ -63,8 +63,8 @@ func TestNoKillServer(t *testing.T) {
 	})
 }
 
-// TestTmuxExecFunnel: tmux の exec.Command 直呼びは tmuxx.Cmd（AF_TMUX_SOCKET を
-// 反映する唯一の入口）以外で禁止。
+// TestTmuxExecFunnel bans calling exec.Command on tmux directly: tmuxx.Cmd is the only
+// entry point that honours AF_TMUX_SOCKET.
 func TestTmuxExecFunnel(t *testing.T) {
 	scanAgentSources(t, func(path, src string) {
 		if filepath.ToSlash(path) == "internal/tmuxx/tmuxx.go" {

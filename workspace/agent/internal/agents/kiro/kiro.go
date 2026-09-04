@@ -1,22 +1,24 @@
-// Package kiro は Kiro CLI（`kiro-cli`・旧 Amazon Q Developer CLI）種別の縦割り
-// パッケージ（docs/log/43 Track A）。read 層（Agent 実装・v2 JSONL セッションストアの
-// transcript／TUI 文字列契約の状態読み）を種別内に閉じる。managed driver
-// （`kiro-cli acp`、per-session child・ACP JSON-RPC over stdio）は Track A2 で
-// driver.go/acp.go/mirror.go に実装済み（cursor/copilot 同型・session/load の
-// クロスプロセス resume＋文脈保持を実測）。
+// Package kiro is the vertical package for the Kiro CLI kind (`kiro-cli`, formerly the Amazon
+// Q Developer CLI; docs/log/43 Track A). It keeps the read layer inside the kind: the Agent
+// implementation, the transcript over the v2 JSONL session store, and the state read from the
+// TUI string contract. The managed driver (`kiro-cli acp`, a per-session child speaking ACP
+// JSON-RPC over stdio) is implemented in driver.go/acp.go/mirror.go under Track A2 - the same
+// shape as cursor/copilot, with cross-process resume through session/load and context retention
+// measured.
 //
-// セッション同一性（cursor との最大の差異）: kiro は**セッション ID を CLI 側で
-// 採番**する。`--resume-id <uuid>` に自己採番の未知 UUID を渡しても採用されず、CLI
-// は独自の新 ID を切る（実測 2.14.1）。よって cursor の「AF が UUID を先に切る」方式は
-// 使えない。代わりに、起動後に生成される `~/.kiro/sessions/cli/<sid>.json`（cwd 記録
-// 付き）を cwd＋更新時刻で発見し、一度掴んだら sidstore にキャッシュする（codex の
-// rollout 発見と同型）。resume はキャッシュ済み sid を `--resume-id` に渡す。
+// Session identity, the biggest difference from cursor: kiro MINTS THE SESSION ID ITSELF.
+// Passing an unknown self-minted UUID to `--resume-id` is not honoured; the CLI cuts its own
+// new id (measured on 2.14.1). So cursor's "AF allocates the UUID first" approach is unusable.
+// Instead the `~/.kiro/sessions/cli/<sid>.json` written after launch (it records the cwd) is
+// discovered by cwd plus modification time and cached in the sidstore once found, the same
+// shape as codex's rollout discovery. Resume passes the cached sid to `--resume-id`.
 //
-// read 正本は v2 JSONL（`~/.kiro/sessions/cli/<sid>.jsonl`・append-only）——新 TUI と
-// ACP が共用し、toolUse の入力と toolResult の出力まで載る（transcript.go）。非保証の
-// classic SQLite（`~/.local/share/kiro-cli/data.sqlite3`・headless 専用）には依存しない
-// （opencode ストア契約変更で false-idle を踏んだ教訓）。認証は Builder ID/device flow
-// 型で、資格情報は `~/.local/share/kiro-cli/`（auth.go / fs.go denylist）。
+// The read source of truth is the v2 JSONL (`~/.kiro/sessions/cli/<sid>.jsonl`, append-only),
+// shared by the new TUI and ACP and carrying toolUse inputs and toolResult outputs
+// (transcript.go). The unguaranteed classic SQLite (`~/.local/share/kiro-cli/data.sqlite3`,
+// headless only) is deliberately not depended on - the lesson from the false-idle caused by
+// opencode's store contract change. Auth is the Builder ID / device flow kind, with credentials
+// under `~/.local/share/kiro-cli/` (auth.go / fs.go denylist).
 package kiro
 
 import (
@@ -59,11 +61,11 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
-	// kiro の TUI 状態は明示テキスト契約（state.go）で読む——「Kiro is working」/
-	// 「ask a question or describe a task」/「requires approval」。2.14.1 には Stop
-	// hook が無い（トリガは AgentSpawn/PrePrompt/PreToolUse/PostToolUse のみ・実測）
-	// ので、この poll が TUI ルートの状態源。managed（ACP）は driver の runTurn 境界が
-	// 状態源（Track A2）。
+	// kiro's TUI state is read from an explicit text contract (state.go): "Kiro is working" /
+	// "ask a question or describe a task" / "requires approval". 2.14.1 has no Stop hook (the
+	// triggers are only AgentSpawn/PrePrompt/PreToolUse/PostToolUse, measured), so this poll is
+	// the state source for the TUI route. On the managed (ACP) route the driver's runTurn
+	// boundary is the state source (Track A2).
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
 		if st := LiveState(m); st != "" {
@@ -76,15 +78,18 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return li
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。
+// PendingModal hands the human-wait that existed just before shutdown to the carry-over
+// (docs/log/75 P5).
 //
-// kiro の人待ちは承認だけで、在処は経路で違う: TUI はペインの承認パネル（文字列契約・
-// state.go）、managed は ACP の `session/request_permission`（driver の handle）。
-// どちらも**プロセスと一緒に消える**ので、halt / gracefulShutdown より遅い契機では
-// 何も取れない（コンテナごと SIGKILL された場合は素直に失われる — docs/log/75 §75.7）。
+// kiro only ever waits on an approval, and where it lives depends on the route: the pane's
+// approval panel for the TUI (a string contract, state.go), ACP's `session/request_permission`
+// for managed (the driver's handle). Both vanish WITH THE PROCESS, so nothing can be read at a
+// point later than halt / gracefulShutdown (a SIGKILL of the whole container simply loses it -
+// docs/log/75 §75.7).
 //
-// Kind は **permission**: 可否の宛先（TUI のパネル / ACP の JSON-RPC id）が消えている
-// 以上、選ばせても届かない。持ち越すのは事実だけ（docs/log/75 §75.6.4）。
+// Kind is permission: with the destination for the answer gone (the TUI panel, the ACP JSON-RPC
+// id), offering a choice would have nowhere to deliver it. Only the fact carries over
+// (docs/log/75 §75.6.4).
 func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	detail := ""
 	if m.DriverKind() == session.DriverManaged {

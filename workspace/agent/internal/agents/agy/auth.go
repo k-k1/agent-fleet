@@ -22,22 +22,23 @@ import (
 // authorize URL and waits for a pasted code — there is no headless login
 // subcommand, so we drive the real TUI through the shared agents.Flow PTY,
 // scrape the URL, submit the code, then walk the first-run onboarding screens.
-// The measured screen sequence (docs/log/32 Track A 実測, v1.1.4):
+// The measured screen sequence (docs/log/32 Track A, v1.1.4):
 //
-//	ログイン方式セレクタ（1=Google OAuth 既定 / 2=GCP project）
-//	→ 認可 URL ＋コード貼付欄
-//	→ カラースキーム（既定 "terminal"）
-//	→ ToS ＋ Interactions データ収集トグル（既定オン → 必ずオフに倒す）
-//	→ workspace trust（事前 trust 済みならスキップ）
-//	→ メイン画面（"? for shortcuts" フッタ）
+//	login-method selector (1 = Google OAuth, the default / 2 = GCP project)
+//	→ authorize URL + code paste field
+//	→ color scheme (default "terminal")
+//	→ ToS + Interactions data-collection toggle (default on, always turned off here)
+//	→ workspace trust (skipped when the dir is trusted already)
+//	→ main screen ("? for shortcuts" footer)
 //
-// 再ログイン（オンボーディング済み）ではセレクタ→URL→コードの後、画面列は出ず
-// メイン画面に直行する — driveOnboarding は出た画面にだけ応答する。
-// 資格は agy 自身が ~/.gemini/antigravity-cli/antigravity-oauth-token（平文）に
-// 書く＝暗号ストア外・denylist 対象（fs.go）。
+// On a re-login (onboarding already done) the selector, URL and code steps are followed by none
+// of those screens — it goes straight to the main screen, and driveOnboarding only answers the
+// screens that appear. agy writes the credential itself to
+// ~/.gemini/antigravity-cli/antigravity-oauth-token in plaintext: outside the encrypted store,
+// and on the denylist (fs.go).
 
-// trustRe（workspace trust 画面）と readyRe（メイン画面フッタ）、planRe（アカウント
-// 行 email+plan）は usage.go（Track C）と共有。
+// trustRe (the workspace-trust screen), readyRe (the main-screen footer) and planRe (the
+// account line's email+plan) are shared with usage.go (Track C).
 var (
 	selectorRe = regexp.MustCompile(`Select login method:`)
 	urlRe      = regexp.MustCompile(`https://accounts\.google\.com/o/oauth2/auth\?\S+`)
@@ -59,7 +60,7 @@ var flows = agents.NewFlowStore(flowTTL)
 
 // hostcapsOK rejects an auth request on hosts where agy can't run (binary
 // absent / no RDRAND) — the same gate as the Console's kind selector and
-// BuildLaunch (docs/log/32 Track B 契約).
+// BuildLaunch (docs/log/32 Track B contract).
 func hostcapsOK(w http.ResponseWriter) bool {
 	supported, reason := hostcaps.AgyStatus()
 	if !supported {
@@ -146,7 +147,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 // URL: the escape stream carries the URI twice (once as the link target, once
 // as the visible text) with no separator, so after ANSI stripping the buffer
 // reads "<url><url>]8;;" and urlRe's \S+ swallows it all — a mangled state
-// param the OAuth server rejects (統合E2E実測). Keep the first copy and drop
+// param the OAuth server rejects (measured in the integration E2E). Keep the first copy and drop
 // any trailing OSC remnant.
 func sanitizeAuthURL(u string) string {
 	const scheme = "https://"
@@ -187,7 +188,7 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 
 	// Submit the code, then Enter as a separate keystroke after a short delay
-	// (claude と同じ轍: 同一 write に載せた CR は入力欄に食われ得る).
+	// (the same rut as claude: a CR in the same write can be eaten by the input field).
 	if _, err := f.Ptmx.Write([]byte(code)); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
@@ -237,15 +238,15 @@ func driveOnboarding(f *agents.Flow, timeout time.Duration) error {
 		if readyRe.MatchString(out) && SignedIn() {
 			return nil
 		}
-		// カラースキーム: 既定 "terminal" を Enter で確定。
+		// Color scheme: Enter confirms the default "terminal".
 		step(out, "color", colorRe, keyEnter)
-		// ToS: フォーカスはトグル上 → Enter でオフ（[x]→[ ]）、↓ で [Previous]、
-		// → で [Done]、Enter で確定（実測列）。
+		// ToS: focus starts on the toggle, Enter turns it off ([x]→[ ]), Down reaches
+		// [Previous], Right [Done], Enter confirms (the measured sequence).
 		step(out, "tos", tosRe, keyEnter, keyDown, keyRight, keyEnter)
-		// workspace trust: login-flow dir は事前 trust 済みで通常出ないが、出ても答える。
-		// **Enter は盲打ちしない** — 既定の選択肢は上流の都合で入れ替わり、その日から
-		// 「承認」が「終了」になる（claude 2.1.248 で実際に起きた）。必ず「Yes, I trust」
-		// の行に乗ってから押す（trustprompt.go）。
+		// workspace trust: the login-flow dir is trusted in advance so this normally does not
+		// appear, but answer it if it does. Never press Enter blind — upstream reorders the
+		// choices, and from that day on "approve" becomes "exit" (it happened with claude
+		// 2.1.248). Land on the "Yes, I trust" row first (trustprompt.go).
 		if !done["trust"] && trustRe.MatchString(out) {
 			done["trust"] = true
 			if err := answerTrustPrompt(f); err != nil {
@@ -271,11 +272,11 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 
 // Status reports the agy connection state for GET /connections, plus the host
 // capability gate the Console uses to hide the kind (supported/reason — docs/log/32
-// Track B 契約). Login state is the token file's existence (`agy models` is the
+// Track B contract). Login state is the token file's existence (`agy models` is the
 // authoritative probe but hits the network — not for this polled path). method
-// is the token's auth_method ("consumer" = Starter OAuth; GCP 経路は M2);
-// email/plan come from the auth-time main-screen capture (AgyCard 表示用、
-// best-effort — 欠けても Console は劣化表示で受ける).
+// is the token's auth_method ("consumer" = Starter OAuth; the GCP route lands in M2);
+// email/plan come from the auth-time main-screen capture (for AgyCard, best-effort —
+// the Console degrades gracefully without them).
 func Status() map[string]any {
 	m := map[string]any{"connected": false}
 	supported, reason := hostcaps.AgyStatus()

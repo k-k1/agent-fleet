@@ -1,14 +1,14 @@
 package codex
 
-// appClient は codex app-server への managed writer 接続（WS JSON-RPC）。
-// supervisor（serve.go）が generation 単位で 1 本張り、全 managed handle が共有する。
-// 役割: リクエスト/レスポンス相関・通知の handle への配送・server-initiated
-// request（質問/承認）の受け口。読み手は readLoop の 1 goroutine、書き手は wmu で
-// 直列化する（gorilla/websocket の並行制約）。
+// appClient is the managed writer connection to codex app-server (WS JSON-RPC). The supervisor
+// (serve.go) opens one per generation and every managed handle shares it. Its jobs: correlating
+// requests with responses, delivering notifications to handles, and receiving server-initiated
+// requests (questions and approvals). Reading happens on the single readLoop goroutine; writes
+// are serialized through wmu (gorilla/websocket's concurrency constraint).
 //
-// initialize は experimentalApi capability を宣言する — `thread/settings/update`
-// が要求するため（§12.1-4 実測: 無いと -32600）。高頻度の delta 系通知は観測接続
-// （package main の codexObserver）と同じ理由で opt out する。
+// initialize declares the experimentalApi capability because `thread/settings/update` requires
+// it (measured, §12.1-4: -32600 without it). High-frequency delta notifications are opted out
+// of for the same reason as the observation connection (codexObserver in package main).
 
 import (
 	"context"
@@ -100,11 +100,12 @@ func newAppClient(addr string) (*appClient, error) {
 				"name": "agent_fleet_driver", "title": "Agent Fleet Driver", "version": "1",
 			},
 			"capabilities": map[string]any{
-				// thread/settings/update（モデル/effort/モードの動的変更）は
-				// experimentalApi が initialize で必須（§12.1-4 実測）。
+				// thread/settings/update (dynamic model / effort / mode changes) requires
+				// experimentalApi at initialize (measured, §12.1-4).
 				"experimentalApi": true,
-				// token/terminal delta はミラー転写（rollout 読み）に不要 — 観測接続と
-				// 同じ opt out で writer を安く保つ。
+				// token/terminal deltas are not needed for mirror transcription, which reads
+				// the rollout; the same opt out as the observation connection keeps the
+				// writer cheap.
 				"optOutNotificationMethods": []string{
 					"item/agentMessage/delta",
 					"item/plan/delta",
@@ -149,7 +150,7 @@ func newAppClient(addr string) (*appClient, error) {
 		conn.Close()
 		return nil, err
 	}
-	// id 1 は initialize が使用済み — 十分離れた所から採番する。
+	// id 1 is already taken by initialize; number from far enough away.
 	return &appClient{conn: conn, nextID: 100, pending: map[int]chan rpcMsg{}}, nil
 }
 
@@ -173,8 +174,9 @@ func (c *appClient) writeJSON(v any) error {
 	return c.conn.WriteJSON(v)
 }
 
-// call sends a request and waits for its response. timeout 0 = no deadline
-// （turn/start も応答は即返る — turn の完走は notification 側 — ので通常は短い）。
+// call sends a request and waits for its response. timeout 0 = no deadline (even turn/start
+// answers immediately, since a turn's completion arrives as a notification, so it is normally
+// short).
 func (c *appClient) call(method string, params any, timeout time.Duration) (json.RawMessage, error) {
 	c.mu.Lock()
 	if c.closed {
@@ -270,11 +272,11 @@ func (c *appClient) readLoop() {
 	}
 }
 
-// handleServerRequest routes server→client requests. 質問（item/tool/
-// requestUserInput）が本命（§5）。承認系は approvalPolicy=never＋dangerFullAccess
-// で運転しているため来ない想定だが、ユーザー config が承認を足しても managed
-// セッションが黙って固まらないよう自動承認で受ける（opencode の permission.asked
-// 自動 allow と同じ保険、§5 — コンテナがサンドボックス）。
+// handleServerRequest routes server->client requests. Questions (item/tool/requestUserInput)
+// are the real case (§5). Approvals are not expected, because we run with approvalPolicy=never
+// plus dangerFullAccess, but they are auto-approved so that a managed session does not freeze
+// silently when a user config adds approvals back (the same insurance as opencode's automatic
+// allow of permission.asked, §5 - the container is the sandbox).
 func (c *appClient) handleServerRequest(msg rpcMsg) {
 	switch msg.Method {
 	case "item/tool/requestUserInput":
@@ -287,12 +289,12 @@ func (c *appClient) handleServerRequest(msg rpcMsg) {
 		_ = c.respond(msg.ID, map[string]any{"decision": "approved"})
 		log.Printf("codex managed: auto-approved %s", msg.Method)
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
-		// v2 の decision enum は legacy の approved でなく accept。
+		// the v2 decision enum is accept, not legacy's approved.
 		_ = c.respond(msg.ID, map[string]any{"decision": "accept"})
 		log.Printf("codex managed: auto-approved %s", msg.Method)
 	case "item/permissions/requestApproval":
-		// RequestPermissionProfile と GrantedPermissionProfile は同じ
-		// fileSystem/network shape。要求された権限だけを turn scope で返す。
+		// RequestPermissionProfile and GrantedPermissionProfile share one fileSystem/network
+		// shape. Return only the permissions that were asked for, scoped to the turn.
 		var p struct {
 			Permissions json.RawMessage `json:"permissions"`
 		}
@@ -303,7 +305,8 @@ func (c *appClient) handleServerRequest(msg rpcMsg) {
 		_ = c.respond(msg.ID, map[string]any{"permissions": p.Permissions, "scope": "turn"})
 		log.Printf("codex managed: auto-approved %s", msg.Method)
 	default:
-		// 応答できない要求は黙って捨てない — 相関付きで観測できるようログに残す。
+		// A request we cannot answer is never dropped silently - log it so it stays observable
+		// together with its correlation id.
 		log.Printf("codex managed: unhandled server request %s (id %s)", msg.Method, msg.ID)
 	}
 }

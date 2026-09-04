@@ -11,10 +11,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
-// セッションのワイヤ変換とタイトル/ラベル導出。モデル・メタ永続化・UUID は
-// internal/session（docs/log/23 残① Wave A）/ tmux= session_tmux.go /
-// HTTPハンドラ= session_handlers.go / claude の CLI 起動コマンドは
-// internal/agents/claude の program.go（docs/log/23 残① Wave F）
+// Wire conversion for sessions, plus title/label derivation. The model, meta persistence
+// and UUIDs live in internal/session (docs/log/23 remaining item 1 Wave A); tmux in
+// session_tmux.go; the HTTP handlers in session_handlers.go; claude's CLI launch command
+// in internal/agents/claude/program.go (docs/log/23 remaining item 1 Wave F).
 
 // wireSession builds the API representation from a meta and liveness.
 func wireSession(m session.Meta, alive bool) session.Session {
@@ -36,12 +36,13 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		Context: li.Context, Locked: m.Locked, Archived: m.Archived,
 		KeepAwakeUntil: m.KeepAwakeUntil,
 	}
-	// 上限で切れたターンの後始末が済んだ claude（メニューは自動解除済み／モデル別上限は
-	// そもそもメニューを出さない）はペインが待機プロンプトに戻るので、ここまでの状態は
-	// idle＝入力待ちになる。リセットを待っているだけなのに正常終了と見分けが付かない
-	// ので、開いているエピソードがある間は 制限解除待ち として名乗る（docs/log/47 §4-9）。
-	// WireLive ではなくここで見るのはエピソードの持ち主が package main だからで、
-	// DriveState（チャット／ミラーのチップ）にも同じ読み替えが要る。
+	// A claude whose limit-aborted turn has been cleaned up (the menu dismisses itself, and a
+	// per-model limit never raises one) leaves its pane back at the waiting prompt, so
+	// everything up to here reads idle = waiting for input. That is indistinguishable from a
+	// normal finish even though the session is only waiting for the reset, so while an episode
+	// is open it names itself as waiting for the limit to lift (docs/log/47 §4-9). The check
+	// sits here rather than in WireLive because package main owns the episode; DriveState (the
+	// chat / mirror chip) needs the same reinterpretation.
 	if alive && s.State == "idle" && NormalizeKind(m.Kind) == session.KindClaude {
 		if state, at, waiting := rateLimitWaiting(m, time.Now()); waiting {
 			s.State = state
@@ -50,17 +51,17 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	}
 	// For a stopped session, surface WHY it ended (crash / OOM) if the pane recorder
 	// captured a cause. A clean quit (exited) or a deliberate stop (empty reason) leaves
-	// the fields unset so the row shows the plain 停止中 chip.
+	// the fields unset so the row shows the plain stopped chip.
 	if !alive {
 		if e, ok := status.ReadExit(m.Name); ok && e.Reason != "" && e.Reason != "exited" && e.Reason != "stopped" {
 			s.ExitReason = e.Reason
 			s.ExitCode = e.Code
 			s.ExitSignal = e.Signal
 		}
-		// 畳まれたときに答えを待っていた対話（docs/log/75）。生きている行には出さない —
-		// そちらは State（question / plan / permission）が今まさに出ているモーダルを
-		// 語っており、持ち越しと二重に見せると「もう答えたはずのものがまだ出ている」
-		// ように読める。
+		// The dialog that was still waiting for an answer when the session was folded away
+		// (docs/log/75). Never shown on a live row: there State (question / plan / permission)
+		// already describes the modal that is up right now, and showing the carried one
+		// alongside it reads as "something I already answered is still pending".
 		if c, ok := status.ReadCarried(session.UUID(m.Dir, m.Name)); ok {
 			s.Carried = c.Kind
 		}
@@ -68,8 +69,8 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	return s
 }
 
-// remoteSessionURL（claude.ai Remote Control URL の導出）は internal/agents/claude
-// の claude.RemoteSessionURL へ移設（docs/log/23 残① Wave F）。
+// remoteSessionURL (deriving the claude.ai Remote Control URL) lives in
+// internal/agents/claude as claude.RemoteSessionURL.
 
 // dirInfo is a working copy's current branch + worktree flag, cached per dir.
 type dirInfo struct {
@@ -154,4 +155,4 @@ func forkTitle(src session.Meta) string {
 	return strings.TrimSpace(base + " (fork)")
 }
 
-// shellQuote は internal/session の session.ShellQuote へ移設（docs/log/23 残① Wave D）。
+// shellQuote lives in internal/session as session.ShellQuote.

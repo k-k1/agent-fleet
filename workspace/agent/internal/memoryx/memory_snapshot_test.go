@@ -10,9 +10,10 @@ import (
 	"time"
 )
 
-// memoryTestEnv は claude/codex の live ツリーを模した隔離 HOME を組む。メモリ md の隣に
-// 本番同様の「巻き込んではいけないもの」（transcript / 資格情報 / settings / 派生状態
-// sqlite / codex の自前 .git / allowlist 外へ抜けるシンボリックリンク）を必ず置く。
+// memoryTestEnv builds an isolated HOME mimicking the claude/codex live trees. Next to the
+// memory md files it always places, as in production, the things that must not be swept in:
+// transcripts, credentials, settings, the derived-state sqlite, codex's own .git, and a
+// symlink escaping the allowlist.
 func memoryTestEnv(t *testing.T) (home, cfg, slug string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -32,16 +33,17 @@ func memoryTestEnv(t *testing.T) (home, cfg, slug string) {
 	memoryWrite(t, filepath.Join(proj, "memory", "a.md"), "first\n")
 	memoryWrite(t, filepath.Join(proj, "memory", "nested", "b.md"), "nested\n")
 
-	// --- 以下は絶対に repo へ入ってはならないもの（★1） ---
+	// --- must never end up in the repo (★1) ---
 	memoryWrite(t, filepath.Join(proj, "abcd-1234.jsonl"), `{"type":"user"}`)                 // transcript
 	memoryWrite(t, filepath.Join(proj, "subagents", "agent-1.jsonl"), `{"type":"assistant"}`) // subagent transcript
 	memoryWrite(t, filepath.Join(cfg, ".credentials.json"), `{"token":"SECRET"}`)
 	memoryWrite(t, filepath.Join(cfg, "settings.json"), `{"statusLine":{}}`)
 	memoryWrite(t, filepath.Join(cfg, "af-usage.json"), `{"five_hour":{}}`)
-	// allowlist の内側から外へ抜けるシンボリックリンク（辿れば資格情報に届く）。
+	// A symlink leading from inside the allowlist to the outside; following it reaches the
+	// credentials.
 	_ = os.Symlink(filepath.Join(cfg, ".credentials.json"), filepath.Join(proj, "memory", "leak.md"))
 
-	// codex 側: memories 機能が有効な環境を模す。
+	// codex side: mimic an environment where the memories feature is enabled.
 	codex := filepath.Join(home, ".codex", "memories")
 	memoryMkdirAll(t, filepath.Join(codex, ".git", "objects"))
 	memoryMkdirAll(t, filepath.Join(codex, "skills", "demo"))
@@ -62,7 +64,7 @@ func memoryWrite(t *testing.T, p, s string) {
 	}
 }
 
-// memoryTree は repo の HEAD ツリー（全パス）を返す。
+// memoryTree returns the repo's HEAD tree (every path).
 func memoryTree(t *testing.T) []string {
 	t.Helper()
 	out, err := memoryGitRun("ls-tree", "-r", "--name-only", "HEAD")
@@ -95,9 +97,10 @@ func memoryCommitCount(t *testing.T) int {
 	return n
 }
 
-// ★1 巻き込み事故の回帰検出。transcript・資格情報・settings・派生状態 sqlite・codex の
-// 自前 .git・allowlist 外へ抜けるシンボリックリンクのいずれも repo に現れてはならない。
-// これが落ちたら allowlist が壊れている（deny の追加ではなく allowlist を直すこと）。
+// Regression detection for the ★1 collateral-capture accident. None of transcripts,
+// credentials, settings, the derived-state sqlite, codex's own .git or a symlink escaping the
+// allowlist may appear in the repo. If this fails the allowlist is broken - fix the allowlist,
+// do not add a deny.
 func TestMemorySnapshotOnlyCapturesAllowlistedFiles(t *testing.T) {
 	_, _, slug := memoryTestEnv(t)
 
@@ -121,7 +124,8 @@ func TestMemorySnapshotOnlyCapturesAllowlistedFiles(t *testing.T) {
 		t.Fatalf("captured tree mismatch\n got: %v\nwant: %v", got, want)
 	}
 
-	// 明示の否定確認（tree 比較が緩められても意図が残るように、名指しでも見る）。
+	// Explicit negative check by name, so the intent survives even if the tree comparison is
+	// later relaxed.
 	joined := strings.Join(got, "\n")
 	for _, forbidden := range []string{
 		".credentials.json", "settings.json", "af-usage.json",
@@ -131,18 +135,19 @@ func TestMemorySnapshotOnlyCapturesAllowlistedFiles(t *testing.T) {
 			t.Errorf("forbidden entry %q leaked into the repo tree: %v", forbidden, got)
 		}
 	}
-	// live ツリーには痕跡を残さない（.git を作らない・codex の自前 .git を触らない）。
+	// No trace is left in the live tree: no .git is created, and codex's own .git is untouched.
 	if _, err := os.Stat(filepath.Join(claudeProjectsDirForTest(), slug, "memory", ".git")); err == nil {
 		t.Error("snapshot created a .git inside the live memory dir")
 	}
-	// 資格情報の中身が repo のどこにも入っていないこと（blob 内容まで見る）。
+	// The credential contents are nowhere in the repo, blob contents included.
 	if blobs, _ := memoryGitRun("grep", "-I", "-l", "SECRET", memoryBranch); strings.TrimSpace(blobs) != "" {
 		t.Errorf("credential contents reachable in repo: %s", blobs)
 	}
 }
 
-// snapshot 往復: 2 回目は無変更なので commit しない（空コミットで履歴を汚さない）。
-// 変更後は積まれ、trailer から契機と変更プロジェクトが復元できる。
+// Snapshot round trip: the second run has no changes, so it must not commit (empty commits
+// would pollute the history). After a change it is stacked, and the trigger and the changed
+// projects can be recovered from the trailers.
 func TestMemorySnapshotSkipsWhenUnchanged(t *testing.T) {
 	_, cfg, slug := memoryTestEnv(t)
 
@@ -165,7 +170,7 @@ func TestMemorySnapshotSkipsWhenUnchanged(t *testing.T) {
 		t.Fatalf("unchanged snapshot changed the history: %d commits", n)
 	}
 
-	// メモリを 1 つ書き換えると積まれる。
+	// Rewriting one memory file gets a snapshot stacked.
 	memoryWrite(t, filepath.Join(cfg, "projects", slug, "memory", "a.md"), "second\n")
 	third, err := memorySnapshot(memoryTriggerManual, time.Now())
 	if err != nil || !third.Committed {
@@ -182,7 +187,7 @@ func TestMemorySnapshotSkipsWhenUnchanged(t *testing.T) {
 		t.Fatalf("changed projects = %+v", third.Projects)
 	}
 
-	// live 側の削除も差分として乗る（staging を毎回作り直しているか）。
+	// A deletion on the live side also shows up as a diff, i.e. staging is rebuilt every time.
 	if err := os.Remove(filepath.Join(cfg, "projects", slug, "memory", "nested", "b.md")); err != nil {
 		t.Fatal(err)
 	}
@@ -197,8 +202,9 @@ func TestMemorySnapshotSkipsWhenUnchanged(t *testing.T) {
 	}
 }
 
-// 履歴 API は git log だけで組み立てる: 新しい順・契機・変更プロジェクトが復元できること。
-// ★5: ユーザーの ~/.gitconfig を継がず、専用 identity で commit していること。
+// The history API is assembled from git log alone: newest first, with the trigger and the
+// changed projects recoverable. ★5: commits use a dedicated identity and inherit nothing from
+// the user's ~/.gitconfig.
 func TestMemoryListSnapshotsAndIdentity(t *testing.T) {
 	_, cfg, slug := memoryTestEnv(t)
 	if _, err := memorySnapshot(memoryTriggerAuto, time.Now()); err != nil {
@@ -240,7 +246,7 @@ func TestMemoryListSnapshotsAndIdentity(t *testing.T) {
 		t.Errorf("commit identity leaked from the user's gitconfig: %q", who)
 	}
 
-	// diff: 直近 snapshot が入れた変更が読める。
+	// diff: the change the newest snapshot introduced is readable.
 	diff, err := memoryDiff("", list[0].Rev, "")
 	if err != nil {
 		t.Fatalf("diff: %v", err)
@@ -248,15 +254,15 @@ func TestMemoryListSnapshotsAndIdentity(t *testing.T) {
 	if !strings.Contains(diff, "+again") {
 		t.Errorf("diff does not carry the change:\n%s", diff)
 	}
-	// 初回 snapshot（親なし）も差分が取れる。
+	// The first snapshot, which has no parent, can be diffed too.
 	if d, err := memoryDiff("", list[1].Rev, ""); err != nil || !strings.Contains(d, "codex index") {
 		t.Errorf("root-commit diff failed: err=%v\n%s", err, d)
 	}
-	// パススコープは宣言済み prefix の内側だけ。
+	// The path scope stays inside the declared prefixes.
 	if _, err := memoryDiff("", list[0].Rev, "../escape"); err == nil {
 		t.Error("path scope escaped the declared roots")
 	}
 }
 
-// claudeProjectsDirForTest は live の projects ディレクトリ（テスト内の位置確認用）。
+// claudeProjectsDirForTest is the live projects directory, for locating things inside tests.
 func claudeProjectsDirForTest() string { return memoryRootDecls()[0].Dir }

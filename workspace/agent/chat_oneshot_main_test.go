@@ -14,7 +14,7 @@ import (
 
 func TestUsageLedgerLive(t *testing.T) {
 	if os.Getenv("AF_TITLE_LIVE") != "1" {
-		t.Skip("AF_TITLE_LIVE=1 で有効化")
+		t.Skip("set AF_TITLE_LIVE=1 to enable")
 	}
 	useTempUsageDir(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -29,37 +29,37 @@ func TestUsageLedgerLive(t *testing.T) {
 	}
 	rows := usagex.ReadRows()
 	if len(rows) == 0 {
-		t.Fatal("台帳に1行も落ちていない")
+		t.Fatal("not a single row landed in the ledger")
 	}
 	r := rows[0]
 	t.Logf("row = %+v", r)
 	if r.Feature != usagex.FeatureTitleSession || r.Trigger != usagex.TriggerManual || r.Ref != "slot99" {
-		t.Fatalf("タグが行に乗っていない: %+v", r)
+		t.Fatalf("the tag did not make it onto the row: %+v", r)
 	}
 	if !r.OK || r.Kind == "" {
-		t.Fatalf("実行結果の kind と成否が入っていない: %+v", r)
+		t.Fatalf("the run's kind and success flag are missing: %+v", r)
 	}
 	if r.Kind != session.KindClaude {
-		t.Skipf("claude 以外（%s）で実行された — 以降はコスト実測の検証なのでスキップ", r.Kind)
+		t.Skipf("ran on something other than claude (%s); the rest checks measured cost, so skip", r.Kind)
 	}
-	// claude だけはモデル・トークン・コストが全部実測で返る（docs/log/46 §0）。
+	// Only claude reports model, tokens and cost all as measured values (docs/log/46 §0).
 	if r.ModelSrc != usagex.ModelReported || r.Model == "" || r.ModelRaw == "" {
-		t.Fatalf("モデルが報告値として記録されていない: %+v", r)
+		t.Fatalf("the model was not recorded as a reported value: %+v", r)
 	}
 	if r.Model == r.ModelRaw {
-		t.Errorf("canonicalModel と生 id が同じ — 版を畳めていない可能性: %q", r.Model)
+		t.Errorf("canonicalModel equals the raw id; the version may not have been folded: %q", r.Model)
 	}
 	if r.Spend <= 0 || r.Measured != usagex.MeasuredExact {
-		t.Fatalf("トークンが実測で入っていない: %+v", r)
+		t.Fatalf("tokens are not present as measured values: %+v", r)
 	}
 	if r.CostUSD <= 0 {
-		t.Fatalf("コスト実測が入っていない: %+v", r)
+		t.Fatalf("no measured cost is present: %+v", r)
 	}
 }
 
 func TestBranchSuggestLive(t *testing.T) {
 	if os.Getenv("AF_TITLE_LIVE") != "1" {
-		t.Skip("AF_TITLE_LIVE=1 で有効化")
+		t.Skip("set AF_TITLE_LIVE=1 to enable")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -70,14 +70,14 @@ func TestBranchSuggestLive(t *testing.T) {
 	}
 	name := sessionx.CleanBranchName(reply)
 	if name == "" {
-		t.Fatalf("ブランチ名が空: reply=%q", reply)
+		t.Fatalf("branch name is empty: reply=%q", reply)
 	}
 	t.Logf("branch=%q (raw=%q)", name, reply)
 }
 
 func TestReplySuggestLive(t *testing.T) {
 	if os.Getenv("AF_TITLE_LIVE") != "1" {
-		t.Skip("AF_TITLE_LIVE=1 で有効化")
+		t.Skip("set AF_TITLE_LIVE=1 to enable")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -88,7 +88,7 @@ func TestReplySuggestLive(t *testing.T) {
 	}
 	list := sessionx.CleanSuggestedReplies(reply)
 	if len(list) == 0 {
-		t.Fatalf("返信候補が空: reply=%q", reply)
+		t.Fatalf("reply candidates are empty: reply=%q", reply)
 	}
 	t.Logf("suggestions=%q (raw=%q)", list, reply)
 }

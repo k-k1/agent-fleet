@@ -1,8 +1,9 @@
 package kiro
 
-// read 層のユニットテスト: 起動コマンド組み立て・v2 JSONL 転写のパース（tool 出力の
-// toolUseId 突合・Turn.Idx 単調 — agy 7354916 の教訓で必須）・TUI 文字列の状態分類・
-// models JSON パース・cwd による sid 発見。フィクスチャは 2.14.1 の実測（docs/log/43）。
+// Unit tests for the read layer: building the launch command, parsing the v2 JSONL
+// transcript (matching tool output by toolUseId, and monotonic Turn.Idx — required, the
+// lesson of agy 7354916), classifying state from TUI text, parsing the models JSON, and
+// discovering a sid by cwd. The fixtures are measured on 2.14.1 (docs/log/43).
 
 import (
 	"encoding/json"
@@ -21,13 +22,13 @@ func TestBuildProgram(t *testing.T) {
 			t.Errorf("program %q lacks %q", got, want)
 		}
 	}
-	// plan は bypass（--trust-all-tools）を外す。engine ピンと chat は残す。
+	// plan drops the bypass (--trust-all-tools) but keeps the engine pin and chat.
 	got = buildProgram("", "", "plan", sid, false)
 	if strings.Contains(got, "--trust-all-tools") || !strings.Contains(got, "--agent-engine v2") ||
 		!strings.Contains(got, "chat") {
 		t.Errorf("plan program wrong: %q", got)
 	}
-	// model / effort を渡す。"auto" は無指定と同義（--model を付けない）。
+	// model / effort are passed through. "auto" means unspecified, so no --model.
 	got = buildProgram("claude-sonnet-4.5", "high", "", sid, true)
 	if !strings.Contains(got, "--model") || !strings.Contains(got, "claude-sonnet-4.5") ||
 		!strings.Contains(got, "--effort") || !strings.Contains(got, "high") {
@@ -36,7 +37,7 @@ func TestBuildProgram(t *testing.T) {
 	if got := buildProgram("auto", "", "", sid, true); strings.Contains(got, "--model") {
 		t.Errorf("auto must not emit --model: %q", got)
 	}
-	// fresh（resumeID 無し）は --resume-id を付けない。
+	// A fresh launch (no resumeID) emits no --resume-id.
 	if got := buildProgram("", "", "", "", true); strings.Contains(got, "--resume-id") {
 		t.Errorf("fresh launch must not resume: %q", got)
 	}
@@ -46,11 +47,12 @@ func TestBuildProgram(t *testing.T) {
 	}
 }
 
-// TestBuildProgramPinGuard: 既定バイナリの起動には毎回 `install-kiro --if-needed` が
-// 前置される。未導入ユーザーの初回導入だけでなく、**versions.json のピンが上がった
-// 時に home の ~/.local 版を追従させる**のがこのガードの役目（旧 `command -v ||` 形は
-// 「不在」しか見ないため、一度入った kiro が永久に古いままだった）。`;` 連結なので
-// 導入/更新に失敗しても既存バイナリでの起動は続く。AGENT_KIRO_BIN 差し替え時は付けない。
+// TestBuildProgramPinGuard: launching the default binary always has `install-kiro
+// --if-needed` in front of it. The guard is not only the first install for a user who has
+// none; its job is to make the copy in the home volume follow a raised versions.json pin.
+// The old `command -v ||` form only ever saw "missing", so a kiro installed once stayed
+// old forever. Joined with `;`, so a failed install or update still launches the binary
+// that is there. An AGENT_KIRO_BIN override skips the guard.
 func TestBuildProgramPinGuard(t *testing.T) {
 	got := buildProgram("", "", "", "", true)
 	want := "workspace-agent install-kiro --if-needed; "
@@ -66,8 +68,9 @@ func TestBuildProgramPinGuard(t *testing.T) {
 	}
 }
 
-// fixture: 実測 v2 JSONL（2.14.1）。PONG → 1..40 → shell tool（sleep 30 && echo done）で
-// toolUse＋ToolResults（stdout="done\n"）→ 最終 text。末尾に走行中の Prompt を足す。
+// fixture: v2 JSONL as measured on 2.14.1. PONG, then a shell tool (sleep 30 && echo
+// done) as toolUse plus ToolResults (stdout="done\n"), then the closing text. A Prompt
+// for a turn still running is appended at the end.
 const transcriptFixture = `{"version":"v1","kind":"Prompt","data":{"message_id":"a1","content":[{"kind":"text","data":"Reply with exactly: PONG"}],"meta":{"timestamp":1784869360}}}
 {"version":"v1","kind":"AssistantMessage","data":{"message_id":"a2","content":[{"kind":"text","data":"PONG"}]}}
 {"version":"v1","kind":"Prompt","data":{"message_id":"a3","content":[{"kind":"text","data":"Run the shell command: sleep 30 && echo done"}],"meta":{"timestamp":1784869421}}}
@@ -88,7 +91,7 @@ func writeFixture(t *testing.T, content string) string {
 
 func TestParseTranscript(t *testing.T) {
 	turns := parseTranscript(writeFixture(t, transcriptFixture))
-	// user(PONG) / assistant(PONG) / user(shell) / assistant(tool+text 畳み) / user(second)
+	// user(PONG) / assistant(PONG) / user(shell) / assistant(tool+text folded) / user(second)
 	if len(turns) != 5 {
 		t.Fatalf("want 5 turns, got %d: %+v", len(turns), turns)
 	}
@@ -125,7 +128,7 @@ func TestParseTranscript(t *testing.T) {
 	if turns[4].Role != "user" || turns[4].Text != "second" {
 		t.Errorf("trailing user turn wrong: %+v", turns[4])
 	}
-	// Idx は単調増加（Console の pendingEcho/MirrorView 契約 — 必須）。
+	// Idx must increase monotonically — the Console's pendingEcho/MirrorView contract.
 	last := -1
 	for i, tn := range turns {
 		if tn.Idx <= last {
@@ -178,7 +181,7 @@ Some earlier answer text.
 	}
 }
 
-// fixture: 実測 `kiro-cli chat --list-models -f json`（縮約）。
+// fixture: `kiro-cli chat --list-models -f json` as measured, abridged.
 const modelsFixture = `{"models":[
 {"model_name":"auto","description":"Models chosen by task","model_id":"auto","context_window_tokens":1000000},
 {"model_name":"claude-sonnet-4.5","description":"Claude Sonnet 4.5 model","model_id":"claude-sonnet-4.5","context_window_tokens":200000},
@@ -187,7 +190,7 @@ const modelsFixture = `{"models":[
 
 func TestParseModels(t *testing.T) {
 	got, windows := parseModels([]byte(modelsFixture))
-	if len(got) != 2 { // auto は除外
+	if len(got) != 2 { // auto is excluded
 		t.Fatalf("want 2 models (auto excluded), got %+v", got)
 	}
 	want := map[string]string{
@@ -202,14 +205,15 @@ func TestParseModels(t *testing.T) {
 			t.Errorf("model %q label = %q, want %q", mc.ID, mc.Label, want[mc.ID])
 		}
 	}
-	// windows は auto を含め全モデルの context_window_tokens を保持する（pct→token 変換用）。
+	// windows keeps context_window_tokens for every model including auto, for the pct-to-token conversion.
 	wantWin := map[string]int{"auto": 1000000, "claude-sonnet-4.5": 200000, "claude-haiku-4.5": 200000}
 	for id, w := range wantWin {
 		if windows[id] != w {
 			t.Errorf("window[%q] = %d, want %d", id, windows[id], w)
 		}
 	}
-	// 壊れた JSON は非 nil 空リスト＋非 nil 空 window マップ（既定のみで安全側）。
+	// Broken JSON yields a non-nil empty list and a non-nil empty window map, so the
+	// safe side is the default alone.
 	if list, win := parseModels([]byte("not json")); list == nil || len(list) != 0 || win == nil {
 		t.Errorf("broken json must yield non-nil empty list+map: %+v %+v", list, win)
 	}
@@ -241,7 +245,7 @@ func TestStampModelAssistantOnly(t *testing.T) {
 			t.Errorf("user turn must not carry a model: %+v", tn)
 		}
 	}
-	// 空モデルは no-op（既存を汚さない）。
+	// An empty model is a no-op and must not overwrite what is there.
 	turns2 := parseTranscript(writeFixture(t, transcriptFixture))
 	stampModel(turns2, "")
 	for _, tn := range turns2 {
@@ -336,25 +340,27 @@ func TestDiscoverSidFence(t *testing.T) {
 	}
 }
 
-// 承認パネルの本文（docs/log/75 P5 の持ち越し）。ペインの文字列にしか無いので halt より
-// 後では取れない — ここで固定するのは「取れるときに何を取るか」だけ。
+// The body of the approval panel (carried over from docs/log/75 P5). It exists only in
+// the pane text, so it cannot be read after a halt; what this pins is only what gets read
+// while it can be read.
 func TestApprovalLine(t *testing.T) {
 	pane := "some earlier output\n\n  shell requires approval\n  > Enter to allow\n"
 	if got := approvalLine(pane); got != "shell requires approval" {
 		t.Errorf("approvalLine = %q, want %q", got, "shell requires approval")
 	}
-	// 承認待ちでないフレームからは何も取らない（idle 句が最優先されるのは classifyPane と同じ）。
+	// A frame that is not waiting for approval yields nothing; the idle phrase wins
+	// first, the same as in classifyPane.
 	if got := approvalLine("  ask a question or describe a task ↵\n"); got != "" {
-		t.Errorf("idle のフレームから承認本文を取った: %q", got)
+		t.Errorf("read an approval body out of an idle frame: %q", got)
 	}
 	if got := approvalLine(""); got != "" {
-		t.Errorf("空フレームから取った: %q", got)
+		t.Errorf("read something out of an empty frame: %q", got)
 	}
 }
 
-// 権限確認あり（docs/log/76）。消えるのは --trust-all-tools だけで、chat サブコマンドと
-// v2 エンジンのピンは残る。初回の危険モード確認ダイアログの抑止は settings 側
-// （chat.disableTrustAllConfirmation）なのでフラグには現れない。
+// Permission prompts on (docs/log/76). Only --trust-all-tools disappears; the chat
+// subcommand and the v2 engine pin stay. Suppressing the first-run dangerous-mode dialog
+// lives in settings (chat.disableTrustAllConfirmation), so it never shows up in the flags.
 func TestBuildProgramPermissionsOn(t *testing.T) {
 	sid := "32595b50-8232-496c-8c30-e5669f5911cb"
 	got := buildProgram("", "", "", sid, false)

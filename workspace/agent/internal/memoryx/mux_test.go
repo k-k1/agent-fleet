@@ -1,24 +1,23 @@
 package memoryx
 
-// mux_test.go — この家系の HTTP 契約テストが使う mux とその周辺（移送で main から
-// 見えなくなった `buildMux` / `smokeDo` / `containsString` の置き換え）。
+// mux_test.go holds the mux this family's HTTP contract tests use, and the helpers that came
+// with it (`buildMux` / `smokeDo` / `containsString`, which the move put out of sight of main).
 //
-// 移送前、これらのテストは package main の `buildMux()`（routes.go・247 本の全ルート）を
-// 組んでいた。memoryx から routes.go は見えない（逆向きの import になる）ので、memory 系の
-// 10 本だけを**同じパターン文字列で**登録する mux をここに置く。パターン文字列をそのまま
-// 使うのは、`mux.Handler(req)` が返すパターンを見る検査と、ハンドラが読む r.PathValue が
-// 移送前と同じに保たれるため。
+// Before the move these tests built package main's `buildMux()` (routes.go, all 247 routes).
+// routes.go is not visible from memoryx (that import would run the wrong way), so this mux
+// registers just the 10 memory routes, WITH THE SAME PATTERN STRINGS. Reusing the pattern
+// strings verbatim keeps both the checks that read the pattern `mux.Handler(req)` returns and
+// the r.PathValue a handler reads identical to what they were before the move.
 //
-// 🔥 **写しは黙って腐る。** ここの 10 本は routes.go の写しなので、
-// TestMemoryRoutesMatchAgentRouteTable が **本物の mux から撮られた routes.golden** と
-// 突き合わせる（browserx が mux_test.go で採った形と同じ）。
+// A copy rots silently. These 10 are a copy of routes.go, so
+// TestMemoryRoutesMatchAgentRouteTable compares them against routes.golden, which is taken
+// from the real mux (the shape browserx settled on in its own mux_test.go).
 //
-// ★ **「ルート表への登録そのもの」を見る 2 本は package main に残してある**
-// （workspace/agent/memory_routes_test.go の TestMemoryRoutesRegistered /
-// TestMemoryP2RoutesRegistered）。あの 2 本は memoryx の未公開シンボルを 1 つも使わず、
-// 逆に**本物の mux でしか確かめられないこと**——memory の 10 本が既存の
-// `/agents/{kind}/models` を食い潰していない——を見ているので、こちらへ持ってくると
-// 検査が空回りする。
+// The two tests that check registration in the route table ITSELF stay in package main
+// (TestMemoryRoutesRegistered / TestMemoryP2RoutesRegistered in
+// workspace/agent/memory_routes_test.go). They use no unexported memoryx symbol and instead
+// check something only the real mux can show - that the 10 memory routes do not swallow the
+// existing `/agents/{kind}/models` - so moving them here would leave them measuring nothing.
 
 import (
 	"bufio"
@@ -31,7 +30,8 @@ import (
 	"testing"
 )
 
-// memoryTestRoutes は routes.go の memory 節（10 本）と同じ (method, path) → ハンドラ。
+// memoryTestRoutes is the same (method, path) -> handler mapping as the memory section of
+// routes.go (10 routes).
 var memoryTestRoutes = map[string]http.HandlerFunc{
 	"GET /agents/memory/roots":         HandleMemoryRoots,
 	"GET /agents/memory/snapshots":     HandleMemorySnapshots,
@@ -53,7 +53,7 @@ func buildMux() *http.ServeMux {
 	return mux
 }
 
-// smokeDo は package main の routes_test.go にあるものと同じ（docs/log/23 P0-2）。
+// smokeDo is the same helper package main's routes_test.go has (docs/log/23 P0-2).
 func smokeDo(t *testing.T, h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -74,20 +74,22 @@ func containsString(xs []string, want string) bool {
 	return false
 }
 
-// agentRouteGoldenPath: Phase 0（ADR 0067 決定 6）が撮った Agent の全ルート表。
+// agentRouteGoldenPath is the Agent's full route table as captured by Phase 0 (ADR 0067
+// decision 6).
 const agentRouteGoldenPath = "../../testdata/routes.golden"
 
-// TestMemoryRoutesMatchAgentRouteTable: 上の写し（memoryTestRoutes）が、実際に組み上がる
-// Agent のルート表（routes.golden）の memory 節と完全に一致すること。
+// TestMemoryRoutesMatchAgentRouteTable checks that the copy above (memoryTestRoutes) matches
+// the memory section of the Agent's real route table (routes.golden) exactly.
 //
-// **登録の呼び忘れも、パターン文字列のズレも、ここでしか気付けない**: routes.go の
-// `mux.HandleFunc("GET /agents/memory/roots", handleMemoryRoots)` が消えても、この
-// パッケージのテストは自前の mux を組むので全部緑のままになる。golden は本物の mux から
-// 撮られているので、そこだけが差を持つ。
+// A forgotten registration and a drifted pattern string are visible nowhere else: if
+// `mux.HandleFunc("GET /agents/memory/roots", handleMemoryRoots)` disappeared from routes.go,
+// this package's tests would stay green because they build their own mux. The golden is taken
+// from the real mux, so it is the only place the difference shows.
 func TestMemoryRoutesMatchAgentRouteTable(t *testing.T) {
 	f, err := os.Open(filepath.Clean(agentRouteGoldenPath))
 	if err != nil {
-		// Skip にしない —— 移送で相対パスの深さが変わると、Skip は緑のまま黙って飛ぶ。
+		// Not a Skip: if a move changes the depth of this relative path, a Skip would silently
+		// pass over the check and stay green.
 		t.Fatalf("read %s: %v", agentRouteGoldenPath, err)
 	}
 	defer f.Close()
@@ -106,9 +108,10 @@ func TestMemoryRoutesMatchAgentRouteTable(t *testing.T) {
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	// 0 件のゴールデンほど危険なものはない（browserx / routes_golden_test.go と同じ理由）。
+	// Nothing is more dangerous than an empty golden (same reason as browserx /
+	// routes_golden_test.go).
 	if len(want) == 0 {
-		t.Fatalf("%s に memory のルートが 1 本も無い——golden の形式が変わったか、パスが変わった", agentRouteGoldenPath)
+		t.Fatalf("%s contains no memory route at all - the golden format changed, or the path did", agentRouteGoldenPath)
 	}
 
 	got := make([]string, 0, len(memoryTestRoutes))
@@ -118,7 +121,7 @@ func TestMemoryRoutesMatchAgentRouteTable(t *testing.T) {
 	sort.Strings(got)
 	sort.Strings(want)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("memoryx のテスト用 mux が Agent のルート表とずれている\n--- memoryx (%d)\n%s\n--- routes.golden (%d)\n%s",
+		t.Fatalf("memoryx's test mux has drifted from the Agent's route table\n--- memoryx (%d)\n%s\n--- routes.golden (%d)\n%s",
 			len(got), strings.Join(got, "\n"), len(want), strings.Join(want, "\n"))
 	}
 }

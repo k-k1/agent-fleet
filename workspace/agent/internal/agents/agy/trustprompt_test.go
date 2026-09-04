@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-// trustFrame122 is the real 1.1.22 workspace-trust screen (2026-08-28 実測,
-// runner 上の tmux capture-pane)。マーカーは ASCII の "> "、未選択行は空白 2。
+// trustFrame122 is the real 1.1.22 workspace-trust screen (measured 2026-08-28 with
+// tmux capture-pane on the runner). The marker is the ASCII "> "; unselected rows are
+// indented by two spaces.
 const trustFrame122 = `Accessing workspace:
 /tmp/tmp.aGbfGwpLSk
 Do you trust the contents of this project?
@@ -16,7 +17,8 @@ Antigravity CLI requires permission to read, edit, and execute files here.
   ↑/↓ Navigate · enter Confirm
 `
 
-// 上流が並びを入れ替えた場合（claude 2.1.248 で実際に起きた形）。既定は No。
+// The shape after upstream reorders the choices, as claude 2.1.248 actually did. The
+// default is No.
 const trustFrameFlipped = `Accessing workspace:
 /tmp/x
 Do you trust the contents of this project?
@@ -26,12 +28,13 @@ Antigravity CLI requires permission to read, edit, and execute files here.
   ↑/↓ Navigate · enter Confirm
 `
 
-// TestTrustSelectedReadsTheHighlightedRow: 選択行は位置ではなくマーカーで読む。
+// TestTrustSelectedReadsTheHighlightedRow: the selected row is read from the marker, not
+// from its position.
 func TestTrustSelectedReadsTheHighlightedRow(t *testing.T) {
 	for name, tc := range map[string]struct{ frame, want string }{
-		"1.1.22 実測（Yes が先頭・既定）": {trustFrame122, "Yes, I trust this folder"},
-		"並びが反転（既定が No）":         {trustFrameFlipped, "No, exit"},
-		"❯ マーカーに変わっても読める": {
+		"1.1.22 as measured (Yes first, the default)": {trustFrame122, "Yes, I trust this folder"},
+		"order flipped (No is the default)":           {trustFrameFlipped, "No, exit"},
+		"still readable when the marker becomes ❯": {
 			strings.Replace(trustFrame122, "> Yes", "❯ Yes", 1), "Yes, I trust this folder"},
 	} {
 		if got := trustSelected(tc.frame); got != tc.want {
@@ -40,32 +43,33 @@ func TestTrustSelectedReadsTheHighlightedRow(t *testing.T) {
 	}
 }
 
-// TestTrustSelectedUsesTheLastRender: agents.Flow.Clean() は再描画を全部連結した
-// **累積**バッファ。↓ で選択が動くと Ink は選択肢の行だけを描き直して末尾に追記する
-// ので、古い描画の "> Yes" を掴んではいけない（掴むと「乗っている」と誤認して No の
-// 上で Enter を押す＝終了する）。
+// TestTrustSelectedUsesTheLastRender: agents.Flow.Clean() is a cumulative buffer holding
+// every redraw concatenated. When the selection moves with ↓, Ink redraws only the choice
+// rows and appends them, so a "> Yes" from an older render must not be picked up - doing so
+// reads as "sitting on Yes" and presses Enter on No, which exits.
 func TestTrustSelectedUsesTheLastRender(t *testing.T) {
-	// 質問行を含む完全な再描画が後から来る場合。
+	// A full redraw including the question line arrives afterwards.
 	full := trustFrame122 + trustFrameFlipped
 	if got := trustSelected(full); got != "No, exit" {
 		t.Errorf("full redraw: trustSelected = %q, want %q", got, "No, exit")
 	}
-	// 質問行を伴わない部分再描画（選択肢の 2 行だけ）が後から来る場合。
+	// A partial redraw without the question line (just the two choice rows) arrives afterwards.
 	partial := trustFrame122 + "  Yes, I trust this folder\n> No, exit\n"
 	if got := trustSelected(partial); got != "No, exit" {
 		t.Errorf("partial redraw: trustSelected = %q, want %q", got, "No, exit")
 	}
 }
 
-// TestTrustSelectedUnreadable: 読めないものを「読めた」ことにしない。読めないまま
-// Enter を送るのが盲打ちそのものなので、ここは "" を返して呼び出し側を落とさせる。
+// TestTrustSelectedUnreadable: what cannot be read is never treated as read. Sending Enter
+// without having read the row is the blind keystroke itself, so this returns "" and makes the
+// caller fail.
 func TestTrustSelectedUnreadable(t *testing.T) {
 	for name, frame := range map[string]string{
-		"プロンプトが無い": "? for shortcuts\n> \n",
-		"マーカー行が無い": strings.Replace(trustFrame122, "> Yes", "  Yes", 1),
-		"空":        "",
-		// メイン画面の入力欄は "> " だけ。ラベルが無いので選択肢ではない。
-		"入力欄だけの > 行": trustFrame122[:strings.Index(trustFrame122, "> Yes")] + "> \n",
+		"no prompt at all": "? for shortcuts\n> \n",
+		"no marker row":    strings.Replace(trustFrame122, "> Yes", "  Yes", 1),
+		"empty":            "",
+		// The main screen's input line is just "> ". With no label it is not a choice.
+		"a bare > line from the input box": trustFrame122[:strings.Index(trustFrame122, "> Yes")] + "> \n",
 	} {
 		if got := trustSelected(frame); got != "" {
 			t.Errorf("%s: trustSelected = %q, want \"\"", name, got)
@@ -73,21 +77,21 @@ func TestTrustSelectedUnreadable(t *testing.T) {
 	}
 }
 
-// TestTrustStep: 盲打ちをやめた本体。どのフレームで Enter を押し、どのフレームで
-// 押さないか。実 CLI 無しで回る（フレーム文字列を与えるだけ）。
+// TestTrustStep: the body of the fix for the blind keystroke - which frames get an Enter and
+// which do not. Runs without a real CLI; it only needs the frame strings.
 func TestTrustStep(t *testing.T) {
 	for name, tc := range map[string]struct {
 		frame string
 		want  trustAction
 	}{
-		"1.1.22 実測（Yes に乗っている）": {trustFrame122, trustConfirm},
-		// ★ ここが claude 2.1.248 で実害になった形。既定が No なので Enter は禁止、
-		//    まず ↓ で Yes へ動かす。
-		"並びが反転（No に乗っている）": {trustFrameFlipped, trustMove},
-		"↓ で Yes へ動かした後":   {trustFrameFlipped + "> Yes, I trust this folder\n  No, exit\n", trustConfirm},
-		"選択肢の行がまだ描けていない":   {trustFrame122[:strings.Index(trustFrame122, "> Yes")], trustUnreadable},
-		"マーカーの形が変わって読めない":  {strings.Replace(trustFrame122, "> Yes", "* Yes", 1), trustUnreadable},
-		"文言ごと変わった（未知の選択肢だけ）": {
+		"1.1.22 as measured (sitting on Yes)": {trustFrame122, trustConfirm},
+		// The shape that did real harm in claude 2.1.248: with No as the default, Enter is
+		// forbidden and the selection has to move to Yes with ↓ first.
+		"order flipped (sitting on No)":               {trustFrameFlipped, trustMove},
+		"after moving to Yes with ↓":                  {trustFrameFlipped + "> Yes, I trust this folder\n  No, exit\n", trustConfirm},
+		"the choice rows are not drawn yet":           {trustFrame122[:strings.Index(trustFrame122, "> Yes")], trustUnreadable},
+		"the marker changed shape and cannot be read": {strings.Replace(trustFrame122, "> Yes", "* Yes", 1), trustUnreadable},
+		"the wording changed too (unknown choices only)": {
 			strings.Replace(trustFrame122, "> Yes, I trust this folder", "> Sure, go ahead", 1), trustMove},
 	} {
 		if got := trustStep(tc.frame); got != tc.want {
@@ -96,17 +100,18 @@ func TestTrustStep(t *testing.T) {
 	}
 }
 
-// TestTrustYesLabelMatchesTheMeasuredFrame: 文言で選ぶ以上、その文言が実測フレームの
-// Yes 行に当たっていることが契約。ここがズレると「選べない」で毎回落ちる。
+// TestTrustYesLabelMatchesTheMeasuredFrame: since the row is chosen by its text, that text
+// hitting the Yes row of the measured frame is the contract. Once it drifts, every run fails
+// with "cannot select".
 func TestTrustYesLabelMatchesTheMeasuredFrame(t *testing.T) {
 	if sel := trustSelected(trustFrame122); !strings.HasPrefix(sel, trustYesLabel) {
-		t.Fatalf("実測フレームの選択行 %q が trustYesLabel %q に前方一致しません", sel, trustYesLabel)
+		t.Fatalf("the selected row of the measured frame, %q, is not prefixed by trustYesLabel %q", sel, trustYesLabel)
 	}
 	if !trustRe.MatchString(trustFrame122) {
-		t.Fatalf("trustRe が実測フレームに当たりません")
+		t.Fatalf("trustRe does not match the measured frame")
 	}
-	// 反転フレームでは Yes に乗っていない＝そのまま Enter を送ってはいけない。
+	// In the flipped frame the selection is not on Yes, so Enter must not be sent as is.
 	if strings.HasPrefix(trustSelected(trustFrameFlipped), trustYesLabel) {
-		t.Fatal("反転フレームを Yes 選択と誤認しています")
+		t.Fatal("the flipped frame is misread as having Yes selected")
 	}
 }

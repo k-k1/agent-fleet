@@ -1,20 +1,20 @@
 package chatx
 
-// chatx → main の逆向き依存を **引数（Configure に渡す 1 個の struct）で受け取る**
-// （ADR 0067 決定 3・決定 5）。chatx は main を import できないので、これが唯一の方法。
+// The reverse dependency chatx -> main is taken as an argument: one struct passed to Configure
+// (ADR 0067 decisions 3 and 5). chatx cannot import main, so this is the only way.
 //
-// 🔥 **公開フィールドの struct にした理由と、その代償の埋め方**（ADR 決定 5 の但し書き・#317）。
-// Go の複合リテラルは名前付きフィールドを**省略してもコンパイルが通る**ので、
-// このままだと「書き落としても緑」になる。依存が数個なら非公開フィールド＋引数 N 個の
-// コンストラクタで数をコンパイラに数えさせるが、**ここは 40 個あって現実的でない**。
-// そこで internal/mcpx と同じ形を採る:
+// Why the struct has exported fields, and how that price is paid (the proviso in decision 5,
+// #317). A Go composite literal compiles with named fields OMITTED, so as it stands a missing
+// field is green. With a handful of dependencies the fix is unexported fields plus an N-argument
+// constructor, letting the compiler count them - but there are 40 here, which makes that
+// impractical. So this takes the same shape as internal/mcpx:
 //
-//   - `Configure` が **reflect で全フィールドを走査**し、ゼロ値が 1 つでもあれば **panic**。
-//   - `deps_test.go` が **フィールドを 1 つずつ落として panic することを確かめる**
-//     （フィールドを足したときに検査へ足し忘れても、reflect が自動で見る）。
+//   - `Configure` walks every field by reflection and panics if a single one is a zero value.
+//   - `deps_test.go` drops the fields one at a time and checks that each one panics (a field
+//     added later is covered automatically, even if the check is never updated).
 //
-// **既定値で黙って埋めない** — 承認ゲートや報告の宛先が未配線のまま素通りする方が、
-// 起動しないことより悪い（AG-BROWSER の申し送り）。
+// Never fill a gap silently with a default: an approval gate or a report destination left
+// unwired and slipping through is worse than not starting at all (AG-BROWSER handover).
 
 import (
 	"reflect"
@@ -27,17 +27,18 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// ReplyMsg は返信サジェストの窓を組むための「1 発言」。main の replyMsg と同じ形で、
-// 変換は chat_wiring.go のアダプタが行う（main の型を chatx から名指しできないため）。
+// ReplyMsg is one utterance used to build the reply-suggestion window. The same shape as
+// main's replyMsg; the adapter in chat_wiring.go converts between them, because a main type
+// cannot be named from chatx.
 type ReplyMsg struct {
 	Role string
 	Text string
 }
 
-// Deps は main 側にしか置けないものの集合。**フィールドを足したら Configure の
-// reflect 検査が自動で見る**ので、検査側に足し忘れることはない。
+// Deps is everything that can only live on the main side. A field added here is picked up by
+// Configure's reflection check automatically, so the check can never fall behind.
 type Deps struct {
-	// --- errcodes.go（Console の err.<code> カタログと対の凍結文字列）---
+	// --- errcodes.go (frozen strings paired with the Console's err.<code> catalogue) ---
 	ErrCodeChatAgentUnsupported   string
 	ErrCodeChatAssistantNotFound  string
 	ErrCodeChatConversationNotFnd string
@@ -49,10 +50,10 @@ type Deps struct {
 	ErrCodeTitleFeatureDisabled   string
 	ErrCodeTitleNoContent         string
 
-	// --- ui_prefs.go（機能側の定数に依存するアクセサ）---
+	// --- ui_prefs.go (accessors that depend on feature-side constants) ---
 	AssistantAgentOrderPref func() []string
 	AssistantChatModelPref  func(kind string) (string, bool)
-	// AI 補助生成（一発生成）の優先順位とモデル。チャットと別系統なのは docs/log/84。
+	// Order and model for AI-assisted one-shot generation. Separate from chat: docs/log/84.
 	AiAssistOrderPref func() []string
 	AiShortModelPref  func(kind string) (string, bool)
 	AiProseModelPref  func(kind string) (string, bool)
@@ -64,11 +65,11 @@ type Deps struct {
 	VisibleModel        func(kind, model string) string
 	VisibleModelIDs     func(kind string, ids []string) []string
 
-	// --- assistants.go（//go:embed と DI の構築点が main に残っている）---
+	// --- assistants.go (the //go:embed and the DI construction point stay in main) ---
 	AssistantDeps          func() assistants.Deps
 	EnsureBuiltinKnowledge func() string
 
-	// --- session_title.go（件名提案。session 側と共有）---
+	// --- session_title.go (title suggestion; shared with the session side) ---
 	CleanSuggestedTitle      func(s string) string
 	TitleModel               func() string
 	TitleSuggestFooter       func(lang string) string
@@ -76,7 +77,7 @@ type Deps struct {
 	TitleSuggestPersona      func(lang string) string
 	TitleSuggestTimeout      time.Duration
 
-	// --- session_suggest_reply.go（返信サジェスト。session 側と共有）---
+	// --- session_suggest_reply.go (reply suggestion; shared with the session side) ---
 	CleanSuggestedReplies    func(s string) []string
 	ReplyCounterpartChat     int
 	ReplySuggestEnabled      func() bool
@@ -87,24 +88,25 @@ type Deps struct {
 	ReplySuggestTimeout      time.Duration
 	ReplySuggestWindow       func(b *strings.Builder, msgs []ReplyMsg)
 
-	// --- その他 1 本ずつ ---
+	// --- one-offs ---
 	AbortResumeHolds func(name string, a claude.Abort, now time.Time) bool
 	ChatTurnUsageTag func(convID, seedVerb, trigger string) usagex.Tag
 	CleanTitle       func(s string) (string, bool)
 	NormalizeKind    func(kind string) string
 	SafeBrowsePath   func(p string) (full, rel string, ok bool)
-	// MaybePushOperatorReply は Discord/Slack ブリッジへ返信を押し出す（bridge_operator.go）。
+	// MaybePushOperatorReply pushes a reply out to the Discord/Slack bridge (bridge_operator.go).
 	MaybePushOperatorReply func(conv, reply string)
-	// RateLimitState は上限エピソードの予約を読む（rate_limit_resume.go の fstore ハンドル）。
-	// **var を写さないため、値ではなく読み口を受ける** — 遠側は var なので、エイリアス変数で
-	// 受けると写しになる（ウェーブ A で 2 回、ウェーブ B で 1 回踏んだ形）。
+	// RateLimitState reads the reservation of a rate-limit episode (the fstore handle in
+	// rate_limit_resume.go). An accessor rather than the value, so the var is not copied: the
+	// far side is a var, and receiving it into an alias variable makes a copy (hit twice in
+	// wave A and once in wave B).
 	RateLimitState func(name string) (scheduleID, resumeAt string, ok bool)
 }
 
 var deps Deps
 
-// Configure は起動時に 1 回だけ呼ぶ（main の chat_wiring.go / chatx のテストの init）。
-// **ゼロ値のフィールドが 1 つでもあれば panic** する。
+// Configure is called exactly once at startup (main's chat_wiring.go, or the init of chatx's
+// own tests). It panics if a single field is left at its zero value.
 func Configure(d Deps) {
 	v := reflect.ValueOf(d)
 	t := v.Type()

@@ -1,58 +1,61 @@
 package agents
 
-// 「いま画面に出ている人待ちのモーダル」を kind 側から構造で取り出す seam
-// （docs/log/75 P5）。
+// The seam that lets a kind report, as structure, the modal currently on screen waiting on a
+// human (docs/log/75 P5).
 //
-// なぜ必要か: 持ち越し（carried interaction）の昇格は claude では status ストアの
-// pending-question / pending-plan / pending-perm を読めば済む — hooks が ask 時点で
-// ディスクへ書いているからである。他の kind にその hook は無く、保留は
+// Why it exists: promoting a carried interaction is trivial for claude — read pending-question
+// / pending-plan / pending-perm out of the status store, which its hooks write to disk at ask
+// time. No other kind has that hook, and the pending state is scattered:
 //
-//   - 会話 DB の最終 step（agy）
-//   - events.jsonl の未完了 permission.requested（copilot）
-//   - ペインのフッタ（kiro の TUI 承認パネル）
-//   - **driver のメモリ上の handle**（ACP 3 種の session/request_permission）
-//   - ネイティブストアの未応答レコード（codex / opencode の質問ツール）
+//   - the last step in the conversation DB (agy)
+//   - an unfinished permission.requested in events.jsonl (copilot)
+//   - the pane footer (kiro's TUI approval panel)
+//   - a handle in the driver's memory (session/request_permission for the three ACP kinds)
+//   - an unanswered record in the native store (the question tools of codex / opencode)
 //
-// と散らばっている。畳む側（halt / 停止）が kind ごとの事情を知らずに済むよう、
-// 「畳む直前に 1 回訊く」1 メソッドへ寄せる。
+// Folding a session (halt / stop) should not have to know any of that, so it all collapses
+// into one method asked exactly once, immediately before the fold.
 //
-// ★実装には「生きているうちにしか答えられない」ものがある（ACP の handle・ペイン）。
-// 呼ぶ側は必ず**畳む前に**呼ぶこと（session_carried.go の promoteCarriedFor と、
-// その呼び出し元である halt / gracefulShutdown の順序）。
+// Some implementations can only answer while the session is still alive (the ACP handle, the
+// pane), so callers must call this BEFORE folding — see promoteCarriedFor in
+// session_carried.go and the ordering in its callers halt / gracefulShutdown.
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// PendingModal is one kind's answer to「いま人待ちで止まっているか、その中身は何か」。
+// PendingModal is one kind's answer to "is something waiting on a human right now, and what
+// is it?".
 type PendingModal struct {
-	// Kind は "question" | "permission"。plan は claude 固有（ExitPlanMode）なので
-	// ここには現れない。
+	// Kind is "question" or "permission". plan is claude-specific (ExitPlanMode) and never
+	// appears here.
 	//
-	// この 2 つを分けるのは**再開後にできること**が違うからである。質問の回答は文章
-	// として配達すれば意味を持つが、許可の可否は**死んだツール呼び出しには届かない**
-	// （ACP の JSON-RPC id も TUI のモーダルもプロセスと一緒に消える）。許可で持ち越
-	// せるのは「何を訊かれていたか」という事実だけ（docs/log/75 §75.6.4）。
+	// The two are kept apart because what can still be done after a resume differs. A
+	// question's answer means something delivered as text, whereas an approval decision
+	// cannot reach a dead tool call: the ACP JSON-RPC id and the TUI modal both die with
+	// the process. All a permission can carry over is the fact of what was asked
+	// (docs/log/75 §75.6.4).
 	//
-	// ★ここを取り違えると実害が出る: 許可を question として運ぶと、Console は
-	// 「Yes / No」を選ばせるカードを描き、選ばれた答えを**届かない宛先へ送ったつもり**に
-	// なる。利用者から見れば許可したのに実行されない（あるいはその逆）。
+	// Getting this wrong does real damage: carrying a permission as a question makes the
+	// Console draw a Yes/No card and then believe it sent the chosen answer to a
+	// destination that no longer exists. To the user it looks like they approved something
+	// that never ran, or the other way round.
 	Kind string
-	// Questions は Kind=="question" のときの回答フォーム。Console がこれを描いて
-	// 選ばせ、選ばれたラベルが再開後の配達文になる。
+	// Questions is the answer form used when Kind=="question". The Console renders it, the
+	// user picks, and the chosen label becomes the text delivered after the resume.
 	Questions []transcript.Question
-	// Detail は Kind=="permission" のとき、何を訊かれていたか（"Bash · npm ci" 相当）。
-	// 取れないこともある（copilot の events.jsonl は requestId しか持たないことがある）
-	// ——そのときは空で、カードは事実だけを述べる。
+	// Detail is what was being asked when Kind=="permission" (something like "Bash · npm ci").
+	// It is not always available — copilot's events.jsonl sometimes carries only a requestId
+	// — and is then empty, leaving the card to state the bare fact.
 	Detail string
-	// Text は質問直前の地の文。無ければ空。
+	// Text is the prose immediately preceding the question, empty when there is none.
 	Text string
 }
 
 // ModalReporter is implemented by the kinds whose pending modal is NOT in the status
-// store. claude は実装しない — そちらは hooks が書く pending-* が正で、同じことを
-// 2 か所から主張させない。
+// store. claude does not implement it: there the pending-* entries written by its hooks are
+// authoritative, and the same fact must not be claimed from two places.
 type ModalReporter interface {
 	PendingModal(m session.Meta) (PendingModal, bool)
 }

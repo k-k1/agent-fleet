@@ -6,30 +6,34 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// 「押し付け型」スロットの取りこぼし回収。
+// Recovery for slots of the "imposed id" shape.
 //
-// CLI 側に自前の会話 id を採番させて捕捉する種別（codex は hook、opencode は plugin、
-// agy/kiro はディスク探索）と違い、claude・copilot・cursor は **我々が採番した id を
-// CLI に渡して、以後それが正しいと信じ続ける**（`--session-id` / `--resume <uuid>`）。
-// この形は CLI がその id を使わなくなった瞬間に静かに壊れる:
+// Unlike the kinds where the CLI allocates its own conversation id and we capture it
+// (codex via a hook, opencode via a plugin, agy/kiro by disk discovery), claude, copilot
+// and cursor get an id WE allocated and we go on trusting it (`--session-id` /
+// `--resume <uuid>`). That shape breaks silently the moment the CLI stops using the id:
 //
-//	claude 2.1.239 実測 — フルスクリーン TUI への切替などで claude は自分自身を起動し
-//	直すが、その再起動 argv は設定系フラグだけから組み直され、--session-id は構造上
-//	そこに入らない。id を失った claude はランダムな新 id でまっさらな会話を始める。
-//	我々は決定論 sid の転写を探し続け、ミラーは「まだ会話はありません」のまま固まった
-//	（386 スロット中 6 件）。claude は hook が session_id を名乗るので、そちらは
-//	AF_SESSION_NAME を手掛かりに引き戻せた（internal/agents/claude/sid.go）。
+//	measured on claude 2.1.239 — switching to the full-screen TUI makes claude relaunch
+//	itself, and the relaunch argv is rebuilt from the config flags alone, so
+//	--session-id structurally cannot be in it. Having lost the id, claude starts a
+//	blank conversation under a random new one. We kept looking for the transcript of
+//	the deterministic sid and the mirror sat at "no conversation yet" (6 slots out of
+//	386). For claude the hook announces session_id, so that side could be pulled back
+//	using AF_SESSION_NAME (internal/agents/claude/sid.go).
 //
-// copilot と cursor には status hook が無い（それぞれ events.jsonl / 転写末尾から状態を
-// 読む）ので、名乗りを聞く口が無い。残る手掛かりはディスクだけ — それがここ。
+// copilot and cursor have no status hook (their state comes from events.jsonl and from
+// the tail of the transcript), so there is no channel to hear the id announced on. Disk
+// is the only clue left, which is what this does.
 //
-// **押し付けた id が CLI 側にまったく存在しないときだけ**動く、というのがこの回収の
-// 肝。健全なスロットの会話を横取りする経路を作らないための線引きで、実際に観測された
-// 壊れ方（押し付けた id で CLI が一度も書かなかった）にちょうど対応する。
+// The point of the recovery is that it only acts when the imposed id does NOT EXIST at
+// all on the CLI side. That line keeps it from ever hijacking a healthy slot's
+// conversation, and it matches exactly the breakage that was observed: the CLI never
+// wrote anything under the id we imposed.
 
 // CLISession is one conversation the CLI itself keeps on disk, as seen by a kind's
-// enumerator. Created may be zero when the CLI records no creation time (cursor —
-// 転写ディレクトリの mtime を代理に使う; 実測でファイル追記では動かず作成時刻に留まる)。
+// enumerator. Created may be zero when the CLI records no creation time (cursor — the
+// transcript directory's mtime stands in; measured: appending to a file does not move it,
+// so it stays at creation time).
 type CLISession struct {
 	ID      string
 	Created time.Time
@@ -42,23 +46,25 @@ type CLISession struct {
 // has never launched (no id allocated yet) — a fresh slot must never adopt a stranger's
 // conversation, so discovery is deliberately not attempted there.
 //
-// 採用は「この dir の・スロット作成時刻以降の・他スロットに取られていない」候補が
-// **ちょうど 1 つ**のときだけ。曖昧なら動かさない: 誤採用は他人の会話をミラーに映す
-// ことで、固まったままより悪い。同一 dir に生きたスロットが 2 つある場合が既知の縁で、
-// worktree が別 dir を与えるのがフリートの並行分離機構（kiro の discoverSid と同じ判断）。
+// A replacement is adopted only when EXACTLY ONE candidate is in this dir, dates from at
+// or after the slot's creation time, and is not claimed by another slot. Ambiguity means
+// no move: adopting the wrong one shows someone else's conversation in the mirror, which
+// is worse than staying stuck. The known edge is two live slots on the same dir; giving
+// each a separate dir via a worktree is the fleet's isolation mechanism (the same call as
+// kiro's discoverSid).
 func ResolveImposedSID(store SidStore, m session.Meta, sessions func(dir string) []CLISession) string {
 	slot := session.UUID(m.Dir, m.Name)
 	cached := store.Read(slot)
 	if cached == "" {
-		return "" // まだ一度も起動していないスロット。探索しない。
+		return "" // slot has never launched; do not go looking
 	}
 	all := sessions(m.Dir)
 	for _, s := range all {
 		if s.ID == cached {
-			return cached // CLI は我々が渡した id で書いている＝正常。ここが大多数。
+			return cached // the CLI writes under the id we gave it: healthy, and the common case
 		}
 	}
-	// ここから先はドリフト時のみ。ListMetas を舐めるコストはこの稀な経路にしか乗らない。
+	// Past here only on drift, so the cost of walking ListMetas is confined to this rare path.
 	notBefore := metaCreated(m)
 	claimed := claimedByOtherSlots(store, slot)
 	var found string
@@ -67,10 +73,10 @@ func ResolveImposedSID(store SidStore, m session.Meta, sessions func(dir string)
 			continue
 		}
 		if !notBefore.IsZero() && !s.Created.IsZero() && s.Created.Before(notBefore) {
-			continue // このスロットより前からある会話 — 前任スロットのものかもしれない
+			continue // predates this slot, so it may belong to a previous one
 		}
 		if found != "" {
-			return cached // 候補が複数。当て推量はしない。
+			return cached // more than one candidate; do not guess
 		}
 		found = s.ID
 	}
@@ -100,8 +106,8 @@ func claimedByOtherSlots(store SidStore, slot string) map[string]bool {
 }
 
 // metaCreated parses the slot's creation time. Zero (absent/unparsable) = no fence,
-// degrading to the permissive behavior rather than never resolving — kiro の
-// slotCreatedAt と同じ判断。
+// degrading to the permissive behavior rather than never resolving — the same call as
+// kiro's slotCreatedAt.
 func metaCreated(m session.Meta) time.Time {
 	if m.CreatedAt == "" {
 		return time.Time{}

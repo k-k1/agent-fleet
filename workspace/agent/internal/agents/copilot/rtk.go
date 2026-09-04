@@ -5,25 +5,27 @@ import (
 	"path/filepath"
 )
 
-// rtk (token-saving CLI proxy) — copilot 側の適用 artifact。codex/agy と違い
-// copilot は「決定的な preToolUse フック」を持てる（claude/opencode と同格）:
-// copilot CLI はユーザースコープ $COPILOT_HOME/hooks/*.json の preToolUse フックを
-// 読み、`rtk hook copilot` がツール呼び出しの command を `rtk <command>` へ書き換える
-// （実測: modifiedArgs 出力が適用され `git status` → `rtk git status` になる）。
+// rtk (the token-saving CLI proxy) — the artifact applied on the copilot side. Unlike
+// codex/agy, copilot can have a deterministic preToolUse hook, on a par with
+// claude/opencode: the copilot CLI reads the preToolUse hooks in the user-scope
+// $COPILOT_HOME/hooks/*.json, and `rtk hook copilot` rewrites a tool call's command into
+// `rtk <command>` (measured: the modifiedArgs output is applied and `git status` becomes
+// `rtk git status`).
 //
-// なぜプラグイン(--plugin-dir)ではなくユーザースコープ hooks ファイルなのか:
-// copilot CLI にはプラグイン定義 hooks.json の preToolUse が発火しない既知バグ
-// (github/copilot-cli#2540)があり、確実に発火するのは policy / repo(.github/hooks) /
-// user($COPILOT_HOME/hooks) / settings.json 由来のフック。よって user スコープの
-// 単独ファイルに置く。trust.go が同じ $COPILOT_HOME/config.json を触るのと同居可能
-// （別ファイルなので衝突しない）。
+// Why a user-scope hooks file and not a plugin (--plugin-dir): the copilot CLI has a known
+// bug where preToolUse in a plugin's hooks.json never fires (github/copilot-cli#2540). The
+// hooks that do fire reliably come from policy, the repo (.github/hooks), the user
+// ($COPILOT_HOME/hooks) and settings.json — hence a standalone file in user scope. It
+// coexists with trust.go touching the same $COPILOT_HOME/config.json, since it is a
+// separate file.
 //
-// native 形式（イベント名 camelCase "preToolUse"）を使う: rtk は modifiedArgs だけを
-// 返し permissionDecision を付けないので --allow-all の姿勢を崩さず透過的に書き換わる
-// （PascalCase "PreToolUse" だと Claude 互換出力になり permissionDecision:"ask" が付く）。
-// matcher "bash" で shell ツール(toolName=="bash")のみに絞る。
+// The native form (camelCase event name "preToolUse") is used: rtk returns only
+// modifiedArgs and no permissionDecision, so the rewrite is transparent and the --allow-all
+// posture is left intact. PascalCase "PreToolUse" would produce Claude-compatible output
+// and attach permissionDecision:"ask". matcher "bash" narrows it to the shell tool
+// (toolName=="bash") alone.
 //
-// durable な設定と起動時 reconcile は package main（agent_rtk.go）に残る。
+// The durable setting and the reconcile at startup stay in package main (agent_rtk.go).
 
 // hooksPath is the user-scope hook file. A dedicated filename (not config.json)
 // keeps rtk's toggle independent of trust.go's trustedFolders writes.

@@ -51,9 +51,9 @@ func postTurn(t *testing.T, name, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// start / steer は tui では /input {prompt} と同じ type+submit 経路（codex は
-// bracketed paste）に落ちる — Console が意味論エンドポイントへ移っても入力の
-// 信頼性が変わらないことの回帰ガード。
+// On tui, start and steer both collapse into the same type+submit path as /input {prompt}
+// (bracketed paste for codex) — a regression guard that input reliability does not change
+// when the Console moves to the semantic endpoints.
 func TestHandleSessionTurnStartTypesPrompt(t *testing.T) {
 	logPath := fakeTmux(t)
 	const name = "turn_codex"
@@ -80,8 +80,8 @@ func TestHandleSessionTurnStartTypesPrompt(t *testing.T) {
 	}
 }
 
-// interrupt は tui では Escape に落ちる（チャットの停止ボタンの意味論化）。working は
-// 付けない — Stop hook が発火しないので付けると 進行中 に張り付く。
+// On tui, interrupt collapses into Escape (the semantic form of the chat stop button). It
+// must not mark working: no Stop hook fires, so the session would stick at "working".
 func TestHandleSessionTurnInterruptSendsEscape(t *testing.T) {
 	logPath := fakeTmux(t)
 	const name = "turn_stop"
@@ -104,7 +104,8 @@ func TestHandleSessionTurnInterruptSendsEscape(t *testing.T) {
 	}
 }
 
-// 質問待ち中の start/steer は /input と同じ理由（TUI モーダルの誤答）で 409。
+// start/steer while a question is pending is 409, for the same reason as on /input: it would
+// misanswer the TUI modal.
 func TestHandleSessionTurnQuestionPendingGate(t *testing.T) {
 	fakeTmux(t)
 	const name = "turn_auq"
@@ -118,13 +119,13 @@ func TestHandleSessionTurnQuestionPendingGate(t *testing.T) {
 	}
 }
 
-// driver 未登録の kind（claude）の managed セッションへの /turn・/respond は
-// 正直に 501。opencode/codex は登録済みなので runtime が
-// 使えない環境では 502 runtime_failed に落ちる — 無効化フラグで決定的に再現する。
+// /turn and /respond on a managed session whose kind has no registered driver (claude) fail
+// honestly with 501. opencode/codex are registered, so where the runtime is unavailable they
+// fall to 502 runtime_failed — reproduced deterministically with the disable flag.
 func TestHandleSessionTurnManagedUnavailable(t *testing.T) {
 	fakeTmux(t)
 	const name = "turn_managed"
-	// claude に managed driver は無い（ADR 0015 — 対象外）→ 501。
+	// claude has no managed driver (out of scope per ADR 0015) → 501.
 	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude, Driver: session.DriverManaged})
 
 	rec := postTurn(t, name, `{"op":"start","prompt":"x"}`)
@@ -142,8 +143,8 @@ func TestHandleSessionTurnManagedUnavailable(t *testing.T) {
 	}
 }
 
-// opencode の managed は P2 で解禁済み — /turn は ThreadHandle へ向かい、runtime が
-// 起こせない環境では 502 runtime_failed で正直に落ちる（501 ではない）。
+// managed opencode is enabled, so /turn heads for the ThreadHandle and, where the runtime
+// cannot be started, fails honestly with 502 runtime_failed rather than 501.
 func TestHandleSessionTurnManagedOpencodeNeedsRuntime(t *testing.T) {
 	fakeTmux(t)
 	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "1")
@@ -156,7 +157,7 @@ func TestHandleSessionTurnManagedOpencodeNeedsRuntime(t *testing.T) {
 	}
 }
 
-// tui セッションへの /respond は明示的に unsupported（Console は keys/seq を使う）。
+// /respond on a tui session is explicitly unsupported (the Console uses keys/seq there).
 func TestHandleSessionRespondUnsupportedForTUI(t *testing.T) {
 	fakeTmux(t)
 	const name = "respond_tui"
@@ -172,7 +173,7 @@ func TestHandleSessionRespondUnsupportedForTUI(t *testing.T) {
 	}
 }
 
-// op / decision / id のバリデーション。
+// Validation of op / decision / id.
 func TestHandleSessionTurnValidation(t *testing.T) {
 	fakeTmux(t)
 	const name = "turn_valid"
@@ -189,14 +190,16 @@ func TestHandleSessionTurnValidation(t *testing.T) {
 	}
 }
 
-// 作成 API の driver バリデーション（docs/log/27 P2/P3）: managed は driver 登録済みの
-// kind（opencode/codex）だけ受理し、未登録 kind（claude 等）は副作用より前に明示拒否。
-// 未知値は bad_driver。受理された managed 作成は runtime 不可の環境では 502 で
-// 落ちる（tmux セッションは一切作らない）。
+// Driver validation on the create API (docs/log/27 P2/P3): managed is accepted only for
+// kinds with a registered driver (opencode/codex), and an unregistered kind (claude and the
+// like) is refused explicitly before any side effect. An unknown value is bad_driver. An
+// accepted managed create fails with 502 where the runtime is unavailable, and never creates
+// a tmux session.
 func TestCreateSessionManagedDriverGate(t *testing.T) {
 	logPath := fakeTmux(t)
-	// allocSessionName は tmux の has-session で名前占有を見る — 既定スタブは常に
-	// exit 0（=どの名前も使用中）で無限ループするので、無し（exit 1）に差し替える。
+	// allocSessionName probes name occupancy with tmux has-session. The default stub always
+	// exits 0 (= every name taken) and would loop forever, so swap in one that reports absent
+	// (exit 1).
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
 case "$1" in
@@ -210,7 +213,7 @@ esac
 	}
 	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "1")
 
-	// claude は managed 対象外（ADR 0015）→ 400 driver_unsupported。
+	// claude is out of managed's scope (ADR 0015) → 400 driver_unsupported.
 	req := httptest.NewRequest(http.MethodPost, "/sessions",
 		strings.NewReader(`{"kind":"claude","driver":"managed"}`))
 	rec := httptest.NewRecorder()
@@ -219,7 +222,7 @@ esac
 		t.Fatalf("claude managed: status = %d, body = %s, want 400 driver_unsupported", rec.Code, rec.Body.String())
 	}
 
-	// opencode は解禁済み — バリデーションは通り、runtime が無効なので 502 になる。
+	// opencode is enabled: validation passes and the disabled runtime turns it into a 502.
 	req = httptest.NewRequest(http.MethodPost, "/sessions",
 		strings.NewReader(`{"kind":"opencode","driver":"managed"}`))
 	rec = httptest.NewRecorder()
@@ -227,7 +230,7 @@ esac
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "runtime_failed") {
 		t.Fatalf("opencode managed: status = %d, body = %s, want 502 runtime_failed", rec.Code, rec.Body.String())
 	}
-	// tmux セッションを作っていない（managed は pane を持たない）。
+	// No tmux session was created: managed sessions have no pane.
 	if got, _ := os.ReadFile(logPath); strings.Contains(string(got), "new-session") {
 		t.Fatalf("managed create must not spawn tmux, log = %q", got)
 	}
@@ -241,8 +244,8 @@ esac
 	}
 }
 
-// wireSession はワイヤへ driver を素通しし（"" は omitempty で落ちる）、Console が
-// paneless（managed）描画を session リストだけで判定できるようにする。
+// wireSession passes driver straight through to the wire ("" is dropped by omitempty) so the
+// Console can decide on paneless (managed) rendering from the session list alone.
 func TestWireSessionCarriesDriver(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))

@@ -1,15 +1,17 @@
-// Package cursor は Cursor CLI（`cursor-agent` / Anysphere）種別の縦割りパッケージ
-// （docs/log/40 Track A）。read 層（Agent 実装・Claude Code 互換 JSONL の transcript/
-// 状態読み）を種別内に閉じる。managed driver（`cursor-agent agent acp`、per-session
-// child・ACP JSON-RPC over stdio）は Track A2 で driver.go/serve.go を足す。
+// Package cursor is the vertical slice for the Cursor CLI (`cursor-agent` / Anysphere) kind
+// (docs/log/40 Track A). It keeps the read layer — the Agent implementation and the
+// transcript/state reads over Claude Code-compatible JSONL — inside the kind; the managed
+// driver (`cursor-agent agent acp`: a per-session child speaking ACP JSON-RPC over stdio)
+// lives in driver.go/serve.go.
 //
-// セッション同一性は AF 側で採番した v4 UUID を `--resume <uuid>` で渡す方式
-// （実測: 未知の valid v4 は新規作成、既存は resume）——copilot の --session-id と
-// 同型で、agy の「resume UUID が取れない」問題（docs/log/32 202e439）は構造的に発生
-// しない。read 正本は Claude Code 互換 JSONL 転写（program.go transcriptPath）——
-// 非公開 SQLite（~/.cursor/chats/**/store.db）には依存しない（opencode ストア契約
-// 変更で false-idle を踏んだ教訓 — docs/log/40 決定 3）。認証は専用フロー型で、
-// 資格情報は ~/.config/cursor/auth.json（auth.go）。
+// Session identity is a v4 UUID minted by AF and handed over as `--resume <uuid>`
+// (measured: an unknown valid v4 creates a chat, an existing one resumes it) — the same
+// shape as copilot's --session-id, so agy's "cannot obtain a resume UUID" problem
+// (docs/log/32 202e439) cannot arise here by construction. The authoritative read source is
+// the Claude Code-compatible JSONL transcript (program.go transcriptPath), never the private
+// SQLite store (~/.cursor/chats/**/store.db): a change to opencode's store contract once
+// produced a false idle (docs/log/40 decision 3). Auth has its own flow, with credentials in
+// ~/.config/cursor/auth.json (auth.go).
 package cursor
 
 import (
@@ -22,8 +24,8 @@ import (
 )
 
 // sids maps our deterministic slot sid to the cursor chat UUID. Written at FRESH
-// launch time with an AF-generated v4 UUID —— cursor accepts `--resume <uuid>` to
-// CREATE a chat under that id (実測) and resumes it later, so there is no capture
+// launch time with an AF-generated v4 UUID — cursor accepts `--resume <uuid>` to
+// CREATE a chat under that id (measured) and resumes it later, so there is no capture
 // race to solve.
 var sids = agents.NewSidStore("cursor-sid")
 
@@ -45,9 +47,9 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if !session.DirExists(m.Dir) {
 		return agents.LaunchPlan{}, agents.DirGoneErr(m.Dir)
 	}
-	// 押し付けた id を cursor が使わなくなっていたら、起動前に拾い直す（sid.go）。
-	// ここで直さないと `--resume <使われていない id>` を渡し続け、ユーザーの会話は
-	// どこからも参照されないまま取り残される。
+	// If cursor stopped using the id we pushed on it, pick the current one up before
+	// launching (sid.go). Without that repair we keep passing `--resume <unused id>` and
+	// the user's conversation is left behind with nothing referencing it.
 	chatID := resolveSid(m)
 	if chatID == "" {
 		var err error
@@ -60,13 +62,14 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
-	// cursor の TUI 状態は JSONL 転写末尾から分類する（state.go）——TUI 文字列
-	// 非依存で false-idle 教訓に合致。managed（ACP）ルートは転写を書かないので
-	// driver の runTurn 境界が状態源（Track A2）。
+	// The cursor TUI state is classified from the tail of the JSONL transcript (state.go):
+	// no dependence on TUI strings, which is what the false-idle lesson asks for. The
+	// managed (ACP) route writes no transcript, so there the driver's runTurn boundaries
+	// are the state source.
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
-		// 生存ポーリングがドリフトの検知点（cursor に hook は無い）。resolveSid は
-		// 台帳を直すので、以降の ChatID 読みが新しい会話を指す（sid.go）。
+		// Liveness polling is where drift gets noticed (cursor has no hooks). resolveSid
+		// repairs the ledger, so later ChatID reads point at the new conversation (sid.go).
 		resolveSid(m)
 		if st := LiveState(m); st != "" {
 			li.State = st
@@ -78,19 +81,22 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return li
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。
+// PendingModal hands the modal that is waiting on a human to the carry-over, just before
+// the session is folded (docs/log/75 P5).
 //
-// cursor の人待ちは ACP の `session/request_permission`（plan 起動 / bypass を外した
-// とき）だけで、TUI ルートの許可メニューは JSONL に痕跡を残さない（state.go の
-// 冒頭コメント）ので観測できない — 取れないものは取れないと答える。
+// For cursor the only such wait is ACP's `session/request_permission` (plan launches, or
+// when bypass is turned off). The TUI route's approval menu leaves no trace in the JSONL
+// (see the comment at the top of state.go) and cannot be observed — report what cannot be
+// obtained as absent.
 //
-// Kind は **permission**。Interaction 自体は "question" を名乗るが、それは Console に
-// 選択カードを描かせるための形であって、答えの宛先は ACP の JSON-RPC id である。
-// 子プロセスごと消えた後にその可否を選ばせても届かない（docs/log/75 §75.6.4）ので、
-// 持ち越すのは「何を訊かれていたか」という事実だけにする。
+// Kind is permission. The Interaction itself calls itself a "question", but that is only the
+// shape that makes the Console draw a choice card; the answer's destination is the ACP
+// JSON-RPC id. Once the child process is gone, letting the user pick yes or no delivers
+// nothing (docs/log/75 §75.6.4), so all that is carried over is the fact of what was asked.
 //
-// ★ handle はメモリ上にしか無い。**畳む前に**呼ばれなければ何も残らない（昇格の契機は
-// halt と gracefulShutdown。コンテナごと SIGKILL された場合だけは拾えない）。
+// The handle exists only in memory: unless this is called before the session is folded,
+// nothing survives. Promotion is triggered from halt and gracefulShutdown; only a SIGKILL
+// of the whole container escapes it.
 func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	if m.DriverKind() != session.DriverManaged {
 		return agents.PendingModal{}, false
@@ -112,7 +118,7 @@ func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
 func ChatID(m session.Meta) string { return sids.Read(session.UUID(m.Dir, m.Name)) }
 
 // newChatID generates an RFC4122 v4 UUID. cursor's --resume accepts a self-minted
-// valid v4 to create a fresh chat（実測）; the version/variant bits keep it a
+// valid v4 to create a fresh chat (measured); the version/variant bits keep it a
 // well-formed UUID so the CLI doesn't reject it.
 func newChatID() (string, error) {
 	var b [16]byte

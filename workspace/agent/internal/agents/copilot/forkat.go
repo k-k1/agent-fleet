@@ -1,22 +1,25 @@
 package copilot
 
-// 発言時点からの分岐（docs/log/55 §55.5）。copilot にも公式の分岐口が無いので、claude と同じく
-// 転写を切り詰めて分岐先を作る。違いは単位で、claude は 1 ファイル、copilot は
-// `session-state/<sid>/` ディレクトリ一式（events.jsonl のほか checkpoints・files・
-// research・rewind-file-snapshots・workspace.yaml。1.0.81 までに廃れたが、それ以前に
-// 作られたセッションには session.db も入っている）。
+// Forking from a given message (docs/log/55 §55.5). copilot has no official fork command
+// either, so, as with claude, the branch is made by truncating the transcript. What differs
+// is the unit: claude's is one file, copilot's is the whole `session-state/<sid>/`
+// directory (events.jsonl plus checkpoints, files, research, rewind-file-snapshots and
+// workspace.yaml; sessions created before 1.0.81 also contain a session.db).
 //
-// **復元元が events.jsonl であることは実測済み**（docs/log/55 §55.5）: 両ターン分を持つ
-// SQLite（かつては隣の session.db、現在は COPILOT_HOME 直下の session-store.db）が
-// 残っていても、切り詰めた events.jsonl のほうが文脈を決めた（2026-08-28 に 1.0.81 で
-// 再実測・contract テストで担保）。だから DB は「コピーして触らない」でよい — 我々が
-// 意味を知らないものを書き換えないのが、この手術を安全に保つ線引き。
+// Measured: events.jsonl is what the restore reads from (docs/log/55 §55.5). Even with the
+// SQLite that holds both turns still present (once the session.db beside it, now
+// session-store.db directly under COPILOT_HOME), the truncated events.jsonl decided the
+// context (re-measured on 1.0.81, and held by a contract test). So the DB can simply be
+// copied and left alone — not rewriting what we do not understand is the line that keeps
+// this surgery safe.
 //
-// ⚠️ 中身の置き場所は上流の都合で動く。**個別のファイル名に依存した検査を書かない**こと
-// （session.db の消滅で contract が「コピーが壊れた」と誤報した実例がある）。
+// Where the contents live moves at upstream's convenience, so do not write a check that
+// depends on individual file names: when session.db disappeared, the contract test
+// misreported it as "the copy is broken".
 //
-// 未登録の session-state ディレクトリを resume しても copilot は問題なく読み、root の
-// session-store.db へ自動登録する（実測）。索引を我々が書く必要は無い。
+// copilot reads an unregistered session-state directory on resume without trouble and
+// registers it in the root session-store.db by itself (measured). We never need to write
+// the index.
 
 import (
 	"bytes"
@@ -55,7 +58,8 @@ func cutIndexAt(lines [][]byte, anchor string) (int, error) {
 }
 
 // nextPromptID returns the id of the first user.message after anchor — the cut point for
-// 「この発言の続きから」. "" (no error) when the anchor is the last exchange.
+// "continue from this message" (この発言の続きから). "" (no error) when the anchor is
+// the last exchange.
 func nextPromptID(lines [][]byte, anchor string) (string, error) {
 	at, err := cutIndexAt(lines, anchor)
 	if err != nil {
@@ -173,7 +177,8 @@ func MaterializeForkAt(srcSid, dstSid, anchor string) error {
 	if err := os.WriteFile(filepath.Join(staged, "events.jsonl"), buf.Bytes(), 0o600); err != nil {
 		return fmt.Errorf("分岐先の会話ログを書けません: %w", err)
 	}
-	// workspace.yaml も session id を持つ（実測）。events だけ書き換えると食い違う。
+	// workspace.yaml carries the session id too (measured), so rewriting events alone
+	// would leave the two disagreeing.
 	if err := retargetFile(filepath.Join(staged, "workspace.yaml"), srcSid, dstSid); err != nil {
 		return err
 	}

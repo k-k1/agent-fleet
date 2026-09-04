@@ -1,26 +1,26 @@
 package sessionx
 
-// managed runtime（共有 daemon）の起動失敗を Console へ返すときの分類。
+// Classification of managed-runtime (shared daemon) launch failures on the way back to the
+// Console.
 //
-// もとは失敗が種類を問わず `502 runtime_failed` 1 本で、Console はそれを
-// 「エージェントを起動できませんでした。しばらく待ってから再試行してください。」と訳す。
-// docs/log/27 の共有 daemon が「未認証なら起こさない」ゲート（codex.ErrNotLoggedIn /
-// opencode.ErrNotConnected）を持つようになってから、**待っても直らない恒久的な原因が
-// 「しばらく待って再試行」として出る**ようになった —— 利用者は起動が通るまで何度も
-// 押し続けることになり、原因（ログインしていない）は画面のどこにも出ない。
+// Every failure used to come back as one `502 runtime_failed`, which the Console renders as
+// "could not start the agent, wait a moment and retry". Once the shared daemon of docs/log/27
+// grew a "do not wake it when unauthenticated" gate (codex.ErrNotLoggedIn /
+// opencode.ErrNotConnected), permanent causes started arriving as "wait and retry": the user
+// keeps pressing until the launch succeeds and the real reason (not signed in) appears nowhere.
 //
-// そこでゲート由来の 2 つだけを切り出して、**恒久 = 4xx + 専用コード**、
-// **一時 = 502 runtime_failed**（従来どおり）に分ける。4xx にするのは文言のためだけでは
-// なく、Console の isTransientErr（core/api/client.ts）が 5xx を「再試行してよい失敗」と
-// 判定するため —— 恒久要因を 5xx で返すと、文言を直しても再試行の対象のままになる。
+// So the two gate-derived cases are split out: permanent = 4xx + a dedicated code, transient =
+// 502 runtime_failed as before. The 4xx is not only about wording — the Console's isTransientErr
+// (core/api/client.ts) treats 5xx as "retryable", so a permanent cause returned as 5xx stays
+// retryable no matter how the message reads.
 //
-// 分類に使うのは各 package が export しているセンチネルだけ。メッセージの文字列一致は
-// 使わない（上流の文言が変わった瞬間に黙って一時扱いへ戻るため）。
+// Classification uses only the sentinels each package exports, never a substring match on the
+// message: the moment upstream rewords it, the case would silently fall back to transient.
 //
-// `runtime_failed` の側だけ literal なのは、これが**この 1 箇所からしか出ない**ため
-// （errcodes.go の横断表は「main の 15 ファイルが引く」ものだけを載せている）。恒久側は
-// Console の i18n と対になる新しい綴りなので、他のコードと同じく errcodes.go に置き、
-// deps 経由で受け取る（deps.go の「sessionx 側で定義し直さない」）。
+// Only the `runtime_failed` side is a literal, because it is emitted from this one place
+// (errcodes.go's cross-cutting table lists only the codes the 15 files of main use). The
+// permanent side is a new spelling paired with the Console's i18n, so it lives in errcodes.go
+// like the rest and arrives through deps (see "do not redefine on the sessionx side" in deps.go).
 
 import (
 	"errors"
@@ -31,10 +31,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// writeRuntimeErr は managed runtime の起動失敗を HTTP へ落とす。ゲート由来（未ログイン／
-// 未接続）は 409 + errCodeAgentNotConnected、それ以外は従来どおり 502 + runtime_failed。
-// message は両方とも err.Error() ——「なぜ」は汎用コードでは表せないので、Console 側は
-// errDetail() で併記する。
+// writeRuntimeErr turns a managed-runtime launch failure into an HTTP response. Gate-derived
+// failures (not logged in / not connected) become 409 + errCodeAgentNotConnected, everything
+// else stays 502 + runtime_failed. Both carry err.Error() as the message: a generic code cannot
+// express the "why", so the Console shows it alongside via errDetail().
 func writeRuntimeErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, codex.ErrNotLoggedIn) || errors.Is(err, opencode.ErrNotConnected) {
 		httpx.WriteErr(w, http.StatusConflict, errCodeAgentNotConnected, err.Error())

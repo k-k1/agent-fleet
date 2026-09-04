@@ -8,8 +8,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// docs/log/39 P1 の REST を実ルート表（buildMux）越しに叩く。CP 側の登録漏れは
-// control-plane 側のテストでは拾えないので、こちらは Agent 側の登録と応答形を固定する。
+// Drives the docs/log/39 P1 REST through the real route table (buildMux). A registration
+// missing on the CP side cannot be caught by a control-plane test, so this pins the Agent
+// side's registration and response shapes.
 func memoryAPIHandler(t *testing.T) http.Handler {
 	t.Helper()
 	memoryTestEnv(t)
@@ -17,16 +18,16 @@ func memoryAPIHandler(t *testing.T) http.Handler {
 	return httpx.RequireToken(buildMux())
 }
 
-// ★ TestMemoryRoutesRegistered は package main（memory_routes_test.go）に残してある。
-// **本物の mux でしか確かめられないこと**——memory の 10 本が既存の
-// `/agents/{kind}/models` を食い潰していない——を見ているので、memoryx の自前 mux へ
-// 持ってくると検査が空回りする。memoryx 側の写しの検査は mux_test.go の
-// TestMemoryRoutesMatchAgentRouteTable。
+// TestMemoryRoutesRegistered stays in package main (memory_routes_test.go). It checks
+// something only the real mux can show — that memory's ten routes do not swallow the
+// existing `/agents/{kind}/models` — so moving it onto memoryx's own mux would leave it
+// measuring nothing. The check on memoryx's copy is TestMemoryRoutesMatchAgentRouteTable in
+// mux_test.go.
 
 func TestMemoryAPIRoundTrip(t *testing.T) {
 	h := memoryAPIHandler(t)
 
-	// roots: claude は常時、codex は memories dir がある時だけ現れる。
+	// roots: claude is always present, codex only when a memories dir exists.
 	w := smokeDo(t, h, "GET", "/agents/memory/roots", "smoke-token", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("roots: %d %s", w.Code, w.Body.String())
@@ -50,14 +51,14 @@ func TestMemoryAPIRoundTrip(t *testing.T) {
 	if roots.Roots[1].Kind != "codex" || roots.Roots[1].Scopes || roots.Roots[1].Files != 2 {
 		t.Errorf("codex root = %+v", roots.Roots[1])
 	}
-	// docs/log/39 P4: memories を有効化して codex がワークスペースを作ると、ルートは
-	// inactive から active へ移る。切り戻しの導線が消えないよう、有効なルートにも
-	// トグルの状態を載せる。
+	// docs/log/39 P4: once memories are enabled and codex creates a workspace, the root
+	// moves from inactive to active. The toggle state is carried on active roots too, so the
+	// way back to turning it off does not disappear.
 	if !roots.Roots[1].Toggleable {
 		t.Errorf("the active codex root lost its enable toggle: %+v", roots.Roots[1])
 	}
 
-	// snapshot が 1 件も無いうちは一覧が空、diff は 404。
+	// While there is not a single snapshot, the listing is empty and diff is a 404.
 	if w := smokeDo(t, h, "GET", "/agents/memory/snapshots", "smoke-token", ""); w.Code != http.StatusOK ||
 		w.Body.String() != "{\"snapshots\":[]}\n" {
 		t.Fatalf("empty snapshots: %d %q", w.Code, w.Body.String())
@@ -66,7 +67,8 @@ func TestMemoryAPIRoundTrip(t *testing.T) {
 		t.Fatalf("diff before any snapshot: %d %s", w.Code, w.Body.String())
 	}
 
-	// 手動 snapshot → 一覧に現れる。2 回目は無変更なので committed=false。
+	// A manual snapshot appears in the listing. The second one changed nothing, so
+	// committed=false.
 	var created memorySnapshotResult
 	w = smokeDo(t, h, "POST", "/agents/memory/snapshots", "smoke-token", `{"trigger":"manual"}`)
 	if w.Code != http.StatusOK {
@@ -92,7 +94,7 @@ func TestMemoryAPIRoundTrip(t *testing.T) {
 		t.Fatalf("listed snapshot = %+v", listed.Snapshots[0])
 	}
 
-	// diff: 初回 snapshot の中身が読める。
+	// diff: the contents of the first snapshot can be read.
 	var diff struct {
 		Diff string `json:"diff"`
 	}
@@ -105,7 +107,8 @@ func TestMemoryAPIRoundTrip(t *testing.T) {
 	}
 }
 
-// 外から渡る値の検証: 契機の詐称・不正な rev・宣言済みルート外のパスは弾く。
+// Validation of values that arrive from outside: a forged trigger, an invalid rev, and a
+// path outside the declared roots are all refused.
 func TestMemoryAPIRejectsBadInput(t *testing.T) {
 	h := memoryAPIHandler(t)
 	if w := smokeDo(t, h, "POST", "/agents/memory/snapshots", "smoke-token", `{"trigger":"restore"}`); w.Code != http.StatusBadRequest {
@@ -117,7 +120,7 @@ func TestMemoryAPIRejectsBadInput(t *testing.T) {
 	if w := smokeDo(t, h, "GET", "/agents/memory/snapshots?before=yesterday", "smoke-token", ""); w.Code != http.StatusBadRequest {
 		t.Errorf("non-RFC3339 before: %d %s", w.Code, w.Body.String())
 	}
-	// 以降は snapshot が 1 件ある状態で見る（無い場合は 404 が先に返るため）。
+	// From here on there is one snapshot in place, because without one the 404 comes first.
 	if w := smokeDo(t, h, "POST", "/agents/memory/snapshots", "smoke-token", ""); w.Code != http.StatusOK {
 		t.Fatalf("seed snapshot: %d %s", w.Code, w.Body.String())
 	}

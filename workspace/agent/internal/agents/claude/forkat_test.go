@@ -1,10 +1,11 @@
 package claude
 
-// 発言時点からの分岐（docs/log/55）の claude 側ユニットテスト。
+// Unit tests for the claude side of branching at a message (docs/log/55).
 //
-// claude だけが公式の口を持たず jsonl を自分で切るので、テストの重心は「切ってよい地点か」の
-// 判定にある。切り方を間違えた jsonl は**起動はする** — 壊れるのは次のターンで、ユーザーには
-// 「分岐したらエージェントが動かなくなった」としか見えない。
+// claude alone has no official entry point and cuts the jsonl itself, so the weight of these
+// tests is on deciding whether a point may be cut at. A badly cut jsonl still starts — what
+// breaks is the next turn, and to the user it only looks like "the agent stopped working after
+// I branched".
 
 import (
 	"encoding/json"
@@ -89,8 +90,9 @@ func TestBuildForkLinesKeepsPrefixOnly(t *testing.T) {
 	}
 }
 
-// 公式 fork との差分は sessionId だけ（実測）。uuid/parentUuid を書き換えると、
-// 分岐先で同じ発言をもう一度指せなくなる（アンカーが会話をまたいで安定しなくなる）。
+// The only difference from the official fork is sessionId (measured). Rewriting uuid/parentUuid
+// makes the same message unaddressable in the branch (the anchor stops being stable across
+// conversations).
 func TestBuildForkLinesRewritesOnlySessionID(t *testing.T) {
 	src := convo(t)
 	out, err := buildForkLines(src, "u2", "dst-sid")
@@ -138,7 +140,7 @@ func TestCutIndexRefusesNonPromptAnchors(t *testing.T) {
 			"message": map[string]any{"role": "user", "content": "summary"}}),
 	}
 	for _, tc := range []struct{ name, anchor, want string }{
-		// ここが一番踏みやすい罠: ツール結果も type:"user" で載る。
+		// The easiest trap here: a tool result is carried as type:"user" too.
 		{"tool result", "r1", "ツールの実行結果"},
 		{"assistant", "a2", "エージェントの発言"},
 		{"meta", "meta1", "この行からは"},
@@ -159,7 +161,8 @@ func TestCutIndexRefusesNonPromptAnchors(t *testing.T) {
 	}
 }
 
-// tool_use と tool_result の間で切ると、分岐先は起動できるのに次のターンで API に弾かれる。
+// Cutting between tool_use and tool_result yields a branch that starts but whose next turn the
+// API rejects.
 func TestBuildForkLinesRefusesDanglingToolUse(t *testing.T) {
 	lines := [][]byte{
 		forkUserLine(t, "u1", "ALPHA"),
@@ -168,37 +171,39 @@ func TestBuildForkLinesRefusesDanglingToolUse(t *testing.T) {
 		assistantLine(t, "a2", "done"),
 		forkUserLine(t, "u2", "BETA"),
 		toolCall(t, "a3", "tool_2"),
-		// tool_2 の結果より前に切る地点を作るため、結果の後ろにユーザー発言を置く
+		// tool_2's result stays in the fixture so the check below can cut before it by hand
 		toolResult(t, "r2", "tool_2"),
 	}
-	// u2 の手前で切る = tool_2 のペアは丸ごと落ちるので健全。
+	// Cutting before u2 drops the whole tool_2 pair, so the result is sound.
 	if _, err := buildForkLines(lines, "u2", "dst"); err != nil {
 		t.Fatalf("cutting before a clean boundary failed: %v", err)
 	}
-	// 呼び出しだけが残る切り方は拒否されること（合成: 結果行を落とした prefix を直接検査）。
+	// A cut that leaves the call without its result must be refused (checked directly on a
+	// prefix with the result line dropped).
 	if id := danglingToolUse(lines[:6]); id != "tool_2" {
-		t.Fatalf("danglingToolUse = %q; want tool_2 — 呼び出しに対応する結果が欠けている", id)
+		t.Fatalf("danglingToolUse = %q; want tool_2 — the call has no matching result", id)
 	}
 	if id := danglingToolUse(lines[:4]); id != "" {
 		t.Fatalf("danglingToolUse = %q on a balanced prefix; want none", id)
 	}
 }
 
-// 最初の発言から分岐しても中身が無い。空の会話を resume すると claude が
-// "No conversation found" で落ちるので、作る前に断る。
+// Branching at the first message leaves nothing to carry. Resuming an empty conversation makes
+// claude die with "No conversation found", so refuse before creating it.
 func TestBuildForkLinesRefusesEmptyResult(t *testing.T) {
 	if _, err := buildForkLines(convo(t), "u1", "dst"); err == nil {
 		t.Fatal("branching at the first prompt = nil error; want a refusal (nothing to carry)")
 	}
 }
 
-// 「この発言の続きから」（Include）: 次のユーザープロンプトの手前が新しい切断点になる。
-// ForkAt の意味（この uuid の手前まで残す）は変わらないので、材料化も起動もそのまま通る。
+// "Continue from this message" (Include): the new cut point is just before the next user
+// prompt. ForkAt's meaning (keep everything before this uuid) is unchanged, so materializing and
+// launching still work as they are.
 func TestNextPromptUUID(t *testing.T) {
 	lines := [][]byte{
 		forkUserLine(t, "u1", "ALPHA"),
 		toolCall(t, "a1", "tool_1"),
-		toolResult(t, "r1", "tool_1"), // ツール結果は user 行だが「次のプロンプト」ではない
+		toolResult(t, "r1", "tool_1"), // a tool result is a user line but not "the next prompt"
 		assistantLine(t, "a2", "done"),
 		forkUserLine(t, "u2", "BETA"),
 		assistantLine(t, "a3", "ok"),
@@ -208,13 +213,15 @@ func TestNextPromptUUID(t *testing.T) {
 		t.Fatalf("nextPromptUUID: %v", err)
 	}
 	if got != "u2" {
-		t.Fatalf("nextPromptUUID(u1) = %q; want u2 — ツール結果の user 行を掴んではいけない", got)
+		t.Fatalf("nextPromptUUID(u1) = %q; want u2 — it must not grab a tool-result user line", got)
 	}
-	// 最後のやり取り: 次が無い = 全部残す（"" で会話まるごとの経路に落ちる）。
+	// The last exchange: no next prompt = keep everything ("" falls into the whole-conversation
+	// route).
 	if got, err := nextPromptUUID(lines, "u2"); err != nil || got != "" {
 		t.Fatalf("nextPromptUUID(last) = %q, %v; want \"\", nil", got, err)
 	}
-	// アンカー自体の検査は排他のときと同じ（ツール結果からは「続きから」もできない）。
+	// The anchor itself is validated as in the exclusive case (a tool result cannot be continued
+	// from either).
 	if _, err := nextPromptUUID(lines, "r1"); err == nil {
 		t.Error("nextPromptUUID(tool result) = nil error; the anchor must be validated too")
 	}
@@ -223,8 +230,8 @@ func TestNextPromptUUID(t *testing.T) {
 func TestMaterializeForkAtWritesBranchTranscript(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// jsonl の所在は CLAUDE_CONFIG_DIR が正（HOME だけ差し替えても実フリートの
-	// /var/lib/af/claude を読みにいってしまう — P3-5 段2）。
+	// CLAUDE_CONFIG_DIR is what decides where the jsonl lives: replacing HOME alone still reads
+	// the real fleet's /var/lib/af/claude (P3-5 stage 2).
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	dir := filepath.Join(home, ".claude", "projects", "-tmp-x")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -256,7 +263,7 @@ func TestMaterializeForkAtWritesBranchTranscript(t *testing.T) {
 	if !strings.Contains(string(got), "ALPHA") || !strings.Contains(string(got), dstSid) {
 		t.Error("branch is missing the earlier turn or the retargeted sessionId")
 	}
-	// 元ファイルは読むだけ。
+	// The source file is only read.
 	src, err := os.ReadFile(filepath.Join(dir, srcSid+".jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -264,13 +271,14 @@ func TestMaterializeForkAtWritesBranchTranscript(t *testing.T) {
 	if !strings.Contains(string(src), "BETA") || strings.Contains(string(src), dstSid) {
 		t.Error("the source transcript was modified — the fork must leave it untouched")
 	}
-	// 既にある宛先を上書きしない（生きている会話を潰さない）。
+	// An existing destination is never overwritten (a live conversation must not be destroyed).
 	if err := MaterializeForkAt(srcSid, dstSid, "u2"); err == nil {
 		t.Error("MaterializeForkAt overwrote an existing destination transcript")
 	}
 }
 
-// 転写がメッセージ uuid をアンカーとして載せていること。空だと Console が導線を出さない。
+// The transcript must carry the message uuid as an anchor; without it the Console offers no way
+// in.
 func TestTranscriptCarriesUUIDAnchor(t *testing.T) {
 	lines := convo(t)
 	turns := CollectTurns(lines, 0, len(lines))
@@ -285,7 +293,7 @@ func TestTranscriptCarriesUUIDAnchor(t *testing.T) {
 }
 
 func TestClaudeCapsAdvertiseForkAt(t *testing.T) {
-	// claude は managed driver を持たないので、経路を理由に断ってはいけない。
+	// claude has no managed driver, so it must never refuse on the grounds of the route.
 	m := session.Meta{Dir: t.TempDir(), Name: "n", Kind: session.KindClaude, Driver: session.DriverTUI}
 	if !(agentImpl{}).Caps().CanForkAt {
 		t.Fatal("CanForkAt is false — the mirror would never offer 「ここから分岐」")

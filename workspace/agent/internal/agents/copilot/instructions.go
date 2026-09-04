@@ -1,26 +1,28 @@
 package copilot
 
-// ユーザー指示（docs/log/60）の copilot 側 artifact。
+// The copilot-side artifact of the user instructions layer (docs/log/60).
 //
-// copilot は user スコープの指示を 3 経路で読む（実測 2026-08-13・1.0.79 — 行動
-// カナリアで確認。内容の開示は拒否するので「この語が指示にあるか」は答えない）:
+// copilot reads user-scoped instructions from three places (measured 2026-08-13 on 1.0.79
+// with a behavioural canary; it refuses to disclose their content, so "is this word in your
+// instructions" is never answered):
 //
-//	$COPILOT_HOME/copilot-instructions.md              … 利用者のファイル。AF は所有しない
-//	$COPILOT_HOME/instructions/**/*.instructions.md    … ★ここへ AF 専用の1本を置く
-//	COPILOT_CUSTOM_INSTRUCTIONS_DIRS=<dir>             … env。効くが起動経路ごとの配線が要る
+//	$COPILOT_HOME/copilot-instructions.md              … the user's own file. AF does not own it
+//	$COPILOT_HOME/instructions/**/*.instructions.md    … the one AF-owned file goes here
+//	COPILOT_CUSTOM_INSTRUCTIONS_DIRS=<dir>             … env. Works, but needs wiring per launch path
 //
-// ディレクトリ内の専用ファイルを選ぶ理由: env 版は tmux 起動 / managed ACP ドライバ /
-// 利用者が手で叩く `copilot` の 3 経路すべてに export を配る必要があり、1 つ漏れると
-// 「そのセッションだけ効かない」という見えない穴になる。ファイルなら**どの起動経路でも
-// 同じように読まれる**。$COPILOT_HOME 配下に AF 専用ファイルを持つのは rtk
-// （hooks/rtk.json）で既に踏んでいる前例と同じ形。
+// A dedicated file in the directory is chosen because the env variant needs the export
+// delivered on all three launch paths (the tmux launch, the managed ACP driver, and a
+// `copilot` the user types by hand); miss one and that session alone silently loses its
+// instructions. A file is read the same way whatever the launch path. Keeping an AF-owned
+// file under $COPILOT_HOME is the same shape as rtk (hooks/rtk.json).
 //
-// フリート方針も同じディレクトリへ**別ファイル**で置く（docs/log/60 §60.13 P2）。copilot は
-// これまでワークスペースの運用方針を一切読んでいなかった（system prompt 15.4k トークンに
-// 含まれていないことを実測）。2 ファイルに分けるのは、片方が利用者の切り替え対象
-// （ユーザー指示）で、もう片方がオペレーター所有の固定物（フリート方針）だから。
-// 名前は "guide" < "user" の順で並ぶようにしてある（読み込み順は保証されていないが、
-// 優先順位はユーザー指示側の本文にも明記してあるので、並びに依存しない）。
+// The fleet policy goes in the same directory as a separate file (docs/log/60 §60.13 P2).
+// copilot had been reading no workspace operating policy at all (measured: it is absent from
+// the 15.4k-token system prompt). Two files rather than one because one of them is what the
+// user switches (the user instructions) and the other is an operator-owned fixture (the fleet
+// policy). The names sort "guide" before "user" (load order is not guaranteed, but the
+// precedence is also spelled out in the body of the user instructions, so nothing depends on
+// the ordering).
 
 import (
 	"os"

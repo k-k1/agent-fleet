@@ -17,8 +17,8 @@ import (
 // Background-activity detection. A claude session can launch a run_in_background
 // task (a long build/test, a server, …), finish its turn, and return to "idle" at
 // the prompt while that task keeps running. claude fires no hook when a background
-// task ends, so the recorded state stays idle and the Console shows 入力待ち even
-// though work is ongoing. We surface the truth from the process tree: while idle, if
+// task ends, so the recorded state stays idle and the Console shows "waiting for
+// input" even though work is ongoing. We surface the truth from the process tree: while idle, if
 // a live worker process (state R = running, or D = uninterruptible I/O) runs under
 // the session's tmux pane — and it isn't claude itself or a shell wrapper — the
 // session is still busy in the background. This needs no completion hook and
@@ -297,22 +297,23 @@ func isClaudeProc(pid int) bool {
 // Workflow agent — are invisible to BackgroundBusy: they run INSIDE the main
 // claude(node) process and spawn NO worker under the tmux pane, so the /proc tree
 // shows nothing to flag. claude also fires no hook when one finishes, so the recorded
-// state stays idle and the Console shows a bare 入力待ち while work is ongoing. Their
-// only live signal is transcript freshness: while such an agent runs, claude appends
-// to its per-agent jsonl every few seconds. We flag the session busy when any such
-// log was touched recently, and — like BackgroundBusy — self-clear once they go stale
-// (there is no completion marker to key off).
+// state stays idle and the Console shows a bare "waiting for input" while work is
+// ongoing. Their only live signal is transcript freshness: while such an agent runs,
+// claude appends to its per-agent jsonl every few seconds. We flag the session busy when
+// any such log was touched recently, and — like BackgroundBusy — self-clear once they go
+// stale (there is no completion marker to key off).
 
 // subagentFreshTTL bounds how recently a subagent/Workflow transcript must have been
 // appended to count as "still running". A window shorter than the gap between an
 // agent's writes (a long tool call or think) would flap the badge off mid-run; 90s
 // bridges those gaps while still clearing soon after the agent stops writing.
 //
-// 90s は生成中の無音（実測 215s/342s/396s・bg_agents.go）には全く足りない。それを埋める
-// のは主転写の開閉ペア（BackgroundAgentsRunning）で、こちらは**その形で痕跡を残さない
-// もの**の受け皿として残っている: Workflow の wf_* エージェント、SendMessage で再開され
-// たエージェント（再開は launch 記録を書き直さない）、そして claude が記録の形を変えた
-// 版。窓を広げないのは、こちらが陽性のときは本当に「今書いている」から。
+// 90s is nowhere near enough for the silence during generation (measured: 215s / 342s / 396s,
+// bg_agents.go). That gap is closed by the open/close pairing in the main transcript
+// (BackgroundAgentsRunning); this arm stays as the catch-all for whatever leaves no trace of
+// that shape: Workflow's wf_* agents, an agent resumed through SendMessage (a resume does not
+// rewrite the launch record), and versions where claude changed the shape of the record. The
+// window is not widened because whenever this arm is positive the agent really is writing now.
 const subagentFreshTTL = 90 * time.Second
 
 // SubagentBusy reports whether the session (keyed by its deterministic sid) has an
@@ -377,8 +378,8 @@ func SubagentSnapshot(sid string) map[string]int64 {
 // message while you were working:"). Matched on the prompt's own text, so an agent that
 // merely kept working since the baseline does not read as a misdelivery.
 //
-// これが立ったときに再タイプ（自己修復）へ進むと、同じ割り込みをサブエージェントへ
-// もう一度撃ち込むことになる。撃つ前に見分けるのが目的（2026-07-30 sannme2）。
+// Going on to retype (self-repair) while this holds would fire the same interruption into the
+// subagent a second time; telling them apart before firing is the point (2026-07-30 sannme2).
 func SubagentReceivedSince(sid string, snap map[string]int64, prompt string) bool {
 	needle := jsonNeedle(prompt)
 	if needle == nil {
@@ -407,23 +408,25 @@ func TranscriptBusy(sid string) bool {
 // turn-end marker) does not have to read the file twice.
 func TranscriptFresh(at time.Time) bool { return at.After(time.Now().Add(-subagentFreshTTL)) }
 
-// TranscriptTouched returns WHEN the session's main transcript last grew a REAL turn
-// record. Callers that hold an independent turn-end event（Stop フックが書いたマーカー
-// 等）compare against it instead of using the bare freshness window:
-// 「マーカーより後にも転写が伸びている」なら、そのマーカーはターンの終わりではない。
+// TranscriptTouched returns WHEN the session's main transcript last grew a REAL turn record.
+// Callers that hold an independent turn-end event (the marker the Stop hook wrote, say) compare
+// against it instead of using the bare freshness window: if the transcript grew after that
+// marker, the marker was not the end of the turn.
 //
-// 実レコード = type が user / assistant の行。ファイルの mtime ではなく行の timestamp を
-// 見るのが肝で、これは実測で刺さった穴の恒久対策（2026-07-30 s2bl5pv/sannme2/sp2qemx）:
-// claude はターンと無関係な記帳行（system/away_summary・last-prompt・custom-title・
-// agent-name・mode・permission-mode・file-history-*）を後から追記する。mtime だけを見て
-// いた頃はその追記が「まだ働いている」に化け、報告済みの指示が補償リコンサイラに
-// 「作業を再開した」と誤読されて訂正＋重複報告が飛んでいた（sp2qemx は 09:56:56 の完了
-// 以降 40 分間 user/assistant 行ゼロなのに 10:06 に reopen された）。
+// A real record = a line whose type is user or assistant. Reading the line's timestamp rather
+// than the file's mtime is the crux, and is the permanent fix for a defect that hit us in
+// practice (2026-07-30 s2bl5pv/sannme2/sp2qemx): claude appends bookkeeping lines unrelated to
+// the turn (system/away_summary, last-prompt, custom-title, agent-name, mode, permission-mode,
+// file-history-*) after the fact. While only mtime was read, such an append passed for "still
+// working", and the compensating reconciler misread an already-reported instruction as "work
+// resumed", sending a correction plus a duplicate report (sp2qemx had zero user/assistant lines
+// for the 40 minutes after completing at 09:56:56, yet was reopened at 10:06).
 //
-// 除外ではなく許可リストで受けるのは AbortedTurn と同じ理由 — 記帳レコードの種類は版ごと
-// に増減するので、知らない type が増えても既定で無視される側に倒す。isSidechain は
-// ここでは**含める**（AbortedTurn は終端判定なので除外する）: 旧版の claude はサブ
-// エージェントのターンをメイン転写へ inline で書いており、それは紛れもなく実行中の証拠。
+// Accepting by allowlist rather than by exclusion is for the same reason as AbortedTurn: the
+// kinds of bookkeeping record grow and shrink from version to version, so an unknown type must
+// fall on the ignored side by default. isSidechain is included here, whereas AbortedTurn
+// excludes it because it decides termination: older claude wrote subagent turns inline into the
+// main transcript, and that is unmistakable evidence of a run in progress.
 func TranscriptTouched(sid string) (time.Time, bool) {
 	if sid == "" {
 		return time.Time{}, false

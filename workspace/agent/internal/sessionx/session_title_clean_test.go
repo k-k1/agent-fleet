@@ -1,10 +1,10 @@
 package sessionx
 
-// CleanSuggestedTitle の回帰テスト。
-// 実害: セッション sicoxqh が「会話の内容から、件名をお作りします：」というタイトルで
-// 確定した（旧実装が返信の1行目をそのまま採用していたため、前置き行が件名になった）。
-// ここでは「前置き・ラベル行は捨てて本物の件名を拾う」「拾えないなら空を返す（無意味な
-// タイトルを latch させない）」の2点を固定する。
+// Regression tests for CleanSuggestedTitle.
+// Real damage: session sicoxqh ended up titled "会話の内容から、件名をお作りします：" because the
+// old implementation took the reply's first line verbatim, so the preamble became the title.
+// Two things are pinned here: drop preamble and label lines and pick the real title, and return
+// empty when there is none, so a meaningless title never latches.
 
 import "testing"
 
@@ -14,22 +14,22 @@ func TestCleanSuggestedTitleDropsPreamble(t *testing.T) {
 		reply string
 		want  string
 	}{
-		{"素の1行", "ミラーのスキルピッカー", "ミラーのスキルピッカー"},
-		{"前置き行＋本文", "会話の内容から、件名をお作りします：\n\nミラーのスキルピッカー", "ミラーのスキルピッカー"},
-		{"ラベル同一行", "セッション件名: ミラーのスキルピッカー", "ミラーのスキルピッカー"},
-		{"ラベル行＋次行", "セッション件名:\nミラーのスキルピッカー", "ミラーのスキルピッカー"},
-		{"半角ラベル", "Title: Session title fix", "Session title fix"},
-		{"箇条書き＋強調", "件名は以下の通りです。\n- **ミラーのスキルピッカー**", "ミラーのスキルピッカー"},
-		{"番号付き", "1. ミラーのスキルピッカー", "ミラーのスキルピッカー"},
-		{"引用符", "「ミラーのスキルピッカー」", "ミラーのスキルピッカー"},
-		{"タイトル語を含む正当な件名", "セッションタイトルの自動提案", "セッションタイトルの自動提案"},
-		{"数字始まりの正当な件名", "2段クォータの実装", "2段クォータの実装"},
-		{"コロンを含む正当な件名", "ログイン画面: リダイレクト不具合", "ログイン画面: リダイレクト不具合"},
-		{"前置きだけ（全角コロン）", "会話の内容から、件名をお作りします：", ""},
-		{"前置きだけ（句点）", "以下が件名です。", ""},
-		{"ラベルだけ", "セッション件名:", ""},
-		{"空", "", ""},
-		{"空白のみ", "  \n\n ", ""},
+		{"a bare single line", "ミラーのスキルピッカー", "ミラーのスキルピッカー"},
+		{"preamble line plus body", "会話の内容から、件名をお作りします：\n\nミラーのスキルピッカー", "ミラーのスキルピッカー"},
+		{"label on the same line", "セッション件名: ミラーのスキルピッカー", "ミラーのスキルピッカー"},
+		{"label line plus the next line", "セッション件名:\nミラーのスキルピッカー", "ミラーのスキルピッカー"},
+		{"ascii label", "Title: Session title fix", "Session title fix"},
+		{"bullet plus emphasis", "件名は以下の通りです。\n- **ミラーのスキルピッカー**", "ミラーのスキルピッカー"},
+		{"numbered", "1. ミラーのスキルピッカー", "ミラーのスキルピッカー"},
+		{"quoted", "「ミラーのスキルピッカー」", "ミラーのスキルピッカー"},
+		{"a legitimate title that contains the word title", "セッションタイトルの自動提案", "セッションタイトルの自動提案"},
+		{"a legitimate title starting with a digit", "2段クォータの実装", "2段クォータの実装"},
+		{"a legitimate title containing a colon", "ログイン画面: リダイレクト不具合", "ログイン画面: リダイレクト不具合"},
+		{"preamble only, fullwidth colon", "会話の内容から、件名をお作りします：", ""},
+		{"preamble only, ending in a period", "以下が件名です。", ""},
+		{"label only", "セッション件名:", ""},
+		{"empty", "", ""},
+		{"whitespace only", "  \n\n ", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -40,24 +40,25 @@ func TestCleanSuggestedTitleDropsPreamble(t *testing.T) {
 	}
 }
 
-// 英語返信でも同じ保証が要る。件名 persona は日本語固定だが、会話が全編英語だと
-// モデルは英語の前置きを付けてくることがあり、日本語の語尾リストでは捕まらない。
-// 「コロンで終わる行は前置き」という言語非依存ルールと英語前置き語で塞ぐ。
+// An English reply needs the same guarantee. The title persona is fixed to Japanese, but on an
+// all-English conversation the model sometimes adds an English preamble, which the Japanese
+// sentence-ending list does not catch. The language-independent rule "a line ending in a colon is
+// a preamble", plus English preamble words, closes that.
 func TestCleanSuggestedTitleEnglishPreamble(t *testing.T) {
 	cases := []struct {
 		name  string
 		reply string
 		want  string
 	}{
-		{"英語ラベル同一行", "Title: Session title auto-suggestion", "Session title auto-suggestion"},
-		{"英語ラベル行＋次行", "Title:\nSession title auto-suggestion", "Session title auto-suggestion"},
-		{"英語前置き＋本文", "Here is a concise title:\n\nLogin redirect bugfix", "Login redirect bugfix"},
-		{"ラベル語なしのコロン終わり", "Here is a suitable session name:\nLogin redirect bugfix", "Login redirect bugfix"},
-		{"英語前置きのみ（コロン無し）", "Sure, I can name this session", ""},
-		{"日本語ラベル語なしのコロン終わり", "以下の通りです：\nミラーのスキルピッカー", "ミラーのスキルピッカー"},
-		{"正当な英語件名", "Login redirect bugfix", "Login redirect bugfix"},
-		{"title を含む正当な英語件名", "Session title auto-suggestion", "Session title auto-suggestion"},
-		{"前置きだけで本文なし", "Here is a suitable session name:", ""},
+		{"english label on the same line", "Title: Session title auto-suggestion", "Session title auto-suggestion"},
+		{"english label line plus the next line", "Title:\nSession title auto-suggestion", "Session title auto-suggestion"},
+		{"english preamble plus body", "Here is a concise title:\n\nLogin redirect bugfix", "Login redirect bugfix"},
+		{"ends in a colon with no label word", "Here is a suitable session name:\nLogin redirect bugfix", "Login redirect bugfix"},
+		{"english preamble only, no colon", "Sure, I can name this session", ""},
+		{"japanese, ends in a colon with no label word", "以下の通りです：\nミラーのスキルピッカー", "ミラーのスキルピッカー"},
+		{"a legitimate english title", "Login redirect bugfix", "Login redirect bugfix"},
+		{"a legitimate english title containing title", "Session title auto-suggestion", "Session title auto-suggestion"},
+		{"preamble only, no body", "Here is a suitable session name:", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -68,15 +69,15 @@ func TestCleanSuggestedTitleEnglishPreamble(t *testing.T) {
 	}
 }
 
-// 長さキャップは表示桁（全角2桁）基準。日本語は従来どおり24文字で、英語は24文字で
-// 途中切れせず48桁まで入ることを見る。
+// The length cap counts display columns (a fullwidth character is two). Japanese still gets 24
+// characters, and English is not cut off at 24 but fits up to 48 columns.
 func TestCleanSuggestedTitleCaps(t *testing.T) {
 	ja := CleanSuggestedTitle("あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほ")
 	if n := len([]rune(ja)); n != 24 {
-		t.Fatalf("日本語: len=%d want 24 (%q)", n, ja)
+		t.Fatalf("japanese: len=%d want 24 (%q)", n, ja)
 	}
 	en := CleanSuggestedTitle("Session title auto-suggestion for the left pane list")
 	if want := "Session title auto-suggestion for the left pane"; en != want {
-		t.Fatalf("英語: got %q want %q", en, want)
+		t.Fatalf("english: got %q want %q", en, want)
 	}
 }

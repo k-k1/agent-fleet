@@ -1,24 +1,26 @@
 package kiro
 
-// transcriptBuf は managed（ACP）セッションの転写をメモリ上で組み立てるアキュムレータ
-// （docs/log/43 Track A2）。cursor の mirror.go と同型で、live turn と `session/load`
-// リプレイの両方を同じ状態機械で扱う:
+// transcriptBuf accumulates a managed (ACP) session's transcript in memory
+// (docs/log/43 Track A2). Same shape as cursor's mirror.go: one state machine handles both
+// a live turn and a `session/load` replay.
 //
-//   - live turn: driver が runTurn 冒頭で addUserTurn(prompt) を呼び、以後の
-//     agent_message_chunk / agent_thought_chunk / tool_call を開いた assistant ターンへ
-//     積む。turn 終端（session/prompt 応答）で flushAsst。kiro の ACP は live で
-//     user_message_chunk を出さない（cursor 同型・実測）。
-//   - replay: setLoading(true) 中は user_message_chunk が新しい user ターンを開き、続く
-//     agent_* が assistant ターンを作る。setLoading(false) で最後を flush。**kiro の
-//     session/load は履歴を user_message_chunk＋agent_message_chunk として再生する
-//     ことを実測確認**（クロスプロセス resume・codeword 再答 PASS）。
+//   - live turn: the driver calls addUserTurn(prompt) at the top of runTurn, and every
+//     following agent_message_chunk / agent_thought_chunk / tool_call piles onto the open
+//     assistant turn. flushAsst at the end of the turn (the session/prompt response).
+//     kiro's ACP emits no user_message_chunk while live (same as cursor, measured).
+//   - replay: while setLoading(true), a user_message_chunk opens a new user turn and the
+//     agent_* events that follow build an assistant turn. setLoading(false) flushes the
+//     last one. Measured: kiro's session/load replays history as user_message_chunk plus
+//     agent_message_chunk (cross-process resume, codeword re-answer PASS).
 //
-// kiro は cursor と違い ACP 転写を v2 JSONL にも persist する（~/.kiro/sessions/cli/
-// <sid>.jsonl）。停止して handle が無いときはそちらを読む（driver.go managedTranscript の
-// フォールバック）ので、この buf は「生きた handle の live/replay 転写」を担う。
+// Unlike cursor, kiro also persists the ACP transcript as v2 JSONL
+// (~/.kiro/sessions/cli/<sid>.jsonl), which is what driver.go's managedTranscript falls
+// back to once the session is stopped and there is no handle. So this buffer covers the
+// live/replay transcript of a LIVE handle.
 //
-// Turn.Idx は単調増加（Console の pendingEcho/MirrorView は idx 単調前提 — agy 7354916 の
-// 教訓）。tool_call_update の rawOutput はツール Part の Output に載せる。
+// Turn.Idx increases monotonically: the Console's pendingEcho/MirrorView assume it does
+// (the lesson of agy 7354916). A tool_call_update's rawOutput goes into the tool Part's
+// Output.
 
 import (
 	"sync"

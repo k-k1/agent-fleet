@@ -1,22 +1,22 @@
 //go:build drift
 
-// agy TUI ペインのドリフト検知（Tier 1）— codex_pane_drift_test.go の兄弟。
-// build tag `drift` で通常の `go test ./...` から除外される（実 agy バイナリ＋
-// 実 tmux が要る）。
+// Drift detection for the agy TUI pane (Tier 1), sibling of codex_pane_drift_test.go.
+// The `drift` build tag keeps it out of a plain `go test ./...` because it needs a real agy
+// binary and a real tmux.
 //
-// ここが埋めるのは paneMode の agy 分岐 = composer フッタの固定文字列
-// （左 "? for shortcuts"/"esc to cancel"、右 "<model>" ないし "plan · <model>"）
-// への依存。フッタはチャットミラーの launch-seed readiness ゲートそのもので、
-// 仕様が変わると Console は agy の composer 描画を検知できなくなり、初回プロン
-// プトが再び「Signing in...」ブート画面に食われる退行になる。
+// What it covers is paneMode's agy branch, which depends on the composer footer's fixed
+// strings ("? for shortcuts" / "esc to cancel" on the left, "<model>" or "plan · <model>"
+// on the right). That footer IS the chat mirror's launch-seed readiness gate: if it
+// changes, the Console can no longer detect that agy has drawn its composer, and first
+// prompts get eaten by the "Signing in..." boot screen again.
 //
-// codex と違いダミー auth では composer に到達できない（agy は起動時に実
-// "Signing in..." が走り、未認証だとログイン選択画面で止まる）ため、実サイン
-// イン済みの agy が前提 — 無ければ skip。HOME は実ホーム（agy は ~/.gemini
-// 固定）。作業 dir は毎回同じ固定パスにして、BuildLaunch の事前 trust が実
-// settings.json の trustedWorkspaces を run 毎に増殖させないようにする。
-// tmux は dev/04 §4.11 どおり専用ソケットに隔離する: 直接叩く側は `-L`、
-// paneMode（tmuxx 経由の製品コード）には AF_TMUX_SOCKET を通す。
+// Unlike codex, a dummy credential cannot reach the composer: agy runs a real
+// "Signing in..." at startup and stops on the login chooser when unauthenticated. So a
+// really signed-in agy is a precondition, and the test skips without one. HOME stays the
+// real home (agy is hard-wired to ~/.gemini). The working dir is the same fixed path every
+// run, so BuildLaunch's pre-trust does not grow trustedWorkspaces in the real settings.json
+// once per run. tmux is isolated onto a dedicated socket as dev/04 §4.11 requires: `-L` for
+// the calls this test makes itself, AF_TMUX_SOCKET for paneMode (product code, via tmuxx).
 package main
 
 import (
@@ -36,7 +36,7 @@ import (
 // TestDriftAgyPaneMode drives the REAL production launch plan (agy.BuildLaunch —
 // same flags, same pre-trust path) in a real tmux pane for both launch modes and
 // asserts paneMode reads the composer footer: "Default" on a plain launch,
-// "Plan" with mode=plan ("plan · <model>" footer, v1.1.4 実測).
+// "Plan" with mode=plan ("plan · <model>" footer, measured on v1.1.4).
 func TestDriftAgyPaneMode(t *testing.T) {
 	needBin(t, "agy")
 	needBin(t, "tmux")

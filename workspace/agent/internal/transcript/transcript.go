@@ -1,5 +1,5 @@
-// Package transcript は claude/codex/opencode の3パーサが共有する出力語彙
-// (docs/log/23 P1-W5)。JSONタグは Console の型と対 — 変更禁止。
+// Package transcript is the output vocabulary the claude/codex/opencode parsers share
+// (docs/log/23 P1-W5). The JSON tags pair with the Console's types; never change them.
 package transcript
 
 // Part is one ordered piece of a turn: rendered text, a faint tool trace, a
@@ -35,7 +35,7 @@ type Part struct {
 	// Only a parser that KNOWS says so — codex reads it out of the patch header, and its
 	// delete branch carries no Edits at all. Everyone else omits it and EditVerb derives
 	// add/edit from the before/after, because "no Edits" must not be read as a deletion
-	// (a kind that simply carries no diff bodies would have every file labelled 削除).
+	// (a kind that simply carries no diff bodies would have every file labelled "deleted").
 	Verb    string   `json:"verb,omitempty"`
 	Files   []string `json:"files,omitempty"`   // kind=userfile: SendUserFile paths, browse-root-relative (openable in a pane)
 	Caption string   `json:"caption,omitempty"` // kind=userfile: optional caption the agent attached
@@ -60,10 +60,10 @@ type Edit struct {
 // Question mirrors one AskUserQuestion entry (header + prompt + options).
 type Question struct {
 	// ID identifies the runtime-side Interaction this pending question belongs to
-	// (docs/log/27 §5) — managed driver のセッションだけが埋め、Console は id 付きの質問を
-	// POST /respond の構造化回答で返す。TUI 由来（hooks/probe/rollout）の質問は空の
-	// まま＝従来どおり keys/seq で TUI モーダルを駆動する。省略可の追加フィールド
-	// なので既存ワイヤと互換（タグ変更ではない）。
+	// (docs/log/27 §5). Only managed-driver sessions fill it, and the Console answers a
+	// question that carries an id with a structured POST /respond. A question coming from a
+	// TUI (hooks/probe/rollout) leaves it empty and keeps driving the TUI modal through
+	// keys/seq. An optional added field, so the existing wire stays compatible.
 	ID          string   `json:"id,omitempty"`
 	Header      string   `json:"header,omitempty"`
 	Question    string   `json:"question"`
@@ -105,10 +105,10 @@ type Turn struct {
 	// because a parser sets it straight off the transcript line (see PeerFrom).
 	Source string `json:"source,omitempty"`
 	// PeerFrom names the SESSION that sent a Source=="peer" turn, when the parser could
-	// read it off the line. 空でよい — AF 自身の peer 送信は本文の封筒
-	// （`[agent-fleet:peer from=…]`）に名前を載せるので Console はそちらから読める。これが
-	// 要るのは**封筒を持たない着信**、つまり claude 自前の cross-session チャネル
-	// （docs/log/58 §58.16）で、そこでは名前の出どころが `origin.name` しか無い。
+	// read it off the line. May be empty: AF's own peer sends put the name in the body's
+	// envelope (`[agent-fleet:peer from=…]`), which the Console can read instead. This field
+	// is for a delivery that has NO envelope, i.e. claude's own cross-session channel
+	// (docs/log/58 §58.16), where `origin.name` is the only place the name comes from.
 	PeerFrom  string `json:"peerFrom,omitempty"`
 	Model     string `json:"model,omitempty"`     // assistant only: the model that answered
 	Effort    string `json:"effort,omitempty"`    // assistant only: reasoning effort/variant (codex reasoning_effort, opencode variant); "" when the agent records none (claude)
@@ -143,15 +143,16 @@ type Turn struct {
 	// "" = unknown; the Console falls back to TS.
 	EndTS string `json:"endTs,omitempty"`
 	// Compact: this "turn" is claude's auto-compaction summary (jsonl isCompactSummary),
-	// written as a user message. The Console shows it as a collapsible "圧縮されました"
+	// written as a user message. The Console shows it as a collapsible "context compacted"
 	// block instead of a normal user prompt.
 	Compact bool `json:"compact,omitempty"`
 }
 
-// Context is a session-level context-fill reading reported by the agent itself
-// (agy の /context スクレイプ)。ターン毎の usage（InTok/CacheRead/CacheCreate）が
-// 取れる agent ではそちらが正で、これは転写に token 情報を一切持たない agent の
-// 縮退ソース — Console の ContextBar は内訳なしの合計/window だけを描く。
+// Context is a session-level context-fill reading reported by the agent itself (agy's
+// /context scrape). Where per-turn usage (InTok/CacheRead/CacheCreate) is available that
+// is authoritative; this is the degraded source for an agent whose transcript carries no
+// token information at all, and the Console's ContextBar then draws only the total against
+// the window, with no breakdown.
 type Context struct {
 	Tokens int    `json:"tokens"`       // current context fill (agent-reported estimate)
 	Window int    `json:"window"`       // context-window size the fill is against

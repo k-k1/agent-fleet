@@ -1,15 +1,16 @@
 package memoryx
 
-// エージェントメモリの版管理（docs/log/39 ⑤ / ADR 0022 決定 5）— export。
+// Export side of agent-memory version management (docs/log/39 ⑤ / ADR 0022 decision 5).
 //
-// 既定は **git bundle（全履歴・全 ref）**。1 ファイルで履歴ごと運べ、受け側は
-// `git bundle verify` で完全性を検証できる。「最新だけ軽く持ち出す」用に tar.gz
-// （HEAD ツリーのみ）も併設する。
+// The default is a git bundle (all history, all refs): one file carries the history along
+// with it and the receiving side can verify integrity with `git bundle verify`. A tar.gz
+// (HEAD tree only) sits alongside it for taking just the latest state out lightly.
 //
-// 生成前に必ず secret スキャンを通す（★4・docs/log/39 決着 #2）。検出時は既定でブロックし、
-// 本人が内容を確認したうえで ack=1 を付け直したときだけ通す。UI 側の確認だけに頼らず
-// API 単体でも止まる形にしてあるのは、export が「個人情報を環境の外へ出す」唯一の
-// 経路だから。
+// Everything goes through a secret scan before it is generated (docs/log/39 ★4,
+// resolution #2). A detection blocks by default and only passes once the owner has looked at
+// the contents and re-issued the request with ack=1. It stops at the API alone rather than
+// relying on the UI's confirmation because export is the only route that takes personal data
+// out of the environment.
 
 import (
 	"archive/tar"
@@ -32,12 +33,13 @@ const (
 	memoryFormatTar    = "tar"
 )
 
-// memoryWorkDir は export の一時ファイルと import の受領物を置く場所。repo と同じ
-// マウントに置く（EFS 越しのクロスデバイス移動を避ける・$TMPDIR の寿命に依存しない）。
+// memoryWorkDir is where export temporaries and import uploads live. It sits on the same
+// mount as the repo, to avoid cross-device moves over EFS and not to depend on $TMPDIR's
+// lifetime.
 func memoryWorkDir() string { return filepath.Join(claude.ConfigDir(), "af-memory.work") }
 
-// memoryExportManifest は tar.gz の先頭に入れる自己記述。import 側は無くても動くが、
-// 「どの環境のいつの状態か」を人が見て判断できるようにしておく。
+// memoryExportManifest is the self-description placed at the head of the tar.gz. Import works
+// without it, but it lets a person see which environment the archive came from and when.
 type memoryExportManifest struct {
 	Format      string   `json:"format"` // "af-memory-tar"
 	Version     int      `json:"version"`
@@ -47,7 +49,7 @@ type memoryExportManifest struct {
 	Files       int      `json:"files"`
 }
 
-// memoryExportName は DL ファイル名（受け取り側で中身が分かる名前にする）。
+// memoryExportName is the download filename, chosen so the recipient can tell what is inside.
 func memoryExportName(format string, now time.Time) string {
 	ts := now.UTC().Format("20060102T150405Z")
 	if format == memoryFormatTar {
@@ -56,8 +58,9 @@ func memoryExportName(format string, now time.Time) string {
 	return "af-memory-" + ts + ".bundle"
 }
 
-// memoryExportScan は export しようとしている中身を走査する。bundle は全履歴を運ぶので
-// 到達可能な全 blob、tar は HEAD ツリーだけ — 運ぶ範囲と走査範囲を一致させる。
+// memoryExportScan scans what is about to be exported. A bundle carries all history, so
+// every reachable blob; a tar only the HEAD tree. The scanned range has to match the
+// exported one.
 func memoryExportScan(format string) ([]memorySecretFinding, error) {
 	if format == memoryFormatTar {
 		return memoryScanRevTree(memoryBranch)
@@ -65,8 +68,9 @@ func memoryExportScan(format string) ([]memorySecretFinding, error) {
 	return memoryScanAllReachable()
 }
 
-// memoryExportBundle は `git bundle create --all` で全履歴・全 ref を 1 ファイルにする。
-// 生成先は memoryWorkDir 配下の一時ファイルで、呼び出し側が送出後に消す。
+// memoryExportBundle packs all history and all refs into one file with
+// `git bundle create --all`. The output is a temporary under memoryWorkDir that the caller
+// removes once it has been served.
 func memoryExportBundle() (string, error) {
 	if err := os.MkdirAll(memoryWorkDir(), 0o700); err != nil {
 		return "", err
@@ -77,7 +81,8 @@ func memoryExportBundle() (string, error) {
 	}
 	path := f.Name()
 	_ = f.Close()
-	// git は出力先を自分で作る。空ファイルが残っていると「既にある」で困らないよう先に消す。
+	// git creates the output itself; remove the empty placeholder first so it does not trip
+	// over the file already existing.
 	_ = os.Remove(path)
 	if _, err := memoryGitRun("bundle", "create", path, "--all"); err != nil {
 		_ = os.Remove(path)
@@ -86,7 +91,7 @@ func memoryExportBundle() (string, error) {
 	return path, nil
 }
 
-// memoryExportTar は HEAD ツリーだけを tar.gz にする（履歴なし・最新のみ）。
+// memoryExportTar tars up the HEAD tree alone: latest state only, no history.
 func memoryExportTar(now time.Time) (string, error) {
 	if err := os.MkdirAll(memoryWorkDir(), 0o700); err != nil {
 		return "", err
@@ -167,7 +172,7 @@ func memoryExportTar(now time.Time) (string, error) {
 	return path, nil
 }
 
-// memoryTarAdd は 1 エントリを書く（cleanup_archive.go の tarAdd と同じ流儀）。
+// memoryTarAdd writes one entry, in the same style as cleanup_archive.go's tarAdd.
 func memoryTarAdd(tw *tar.Writer, name string, b []byte, now time.Time) error {
 	if err := tw.WriteHeader(&tar.Header{
 		Name: name, Mode: 0o600, Size: int64(len(b)), ModTime: now, Typeflag: tar.TypeReg,
@@ -178,10 +183,11 @@ func memoryTarAdd(tw *tar.Writer, name string, b []byte, now time.Time) error {
 	return err
 }
 
-// HandleMemoryExport は bundle / tar.gz を生成して DL させる（?format=&ack=）。
+// HandleMemoryExport generates a bundle / tar.gz and serves it for download (?format=&ack=).
 //
-// secret 検出時は 409 + findings を返し、Console はそれを見せてから ack=1 で叩き直す。
-// findings に生の秘密は入らない（memory_secrets.go）。
+// On a secret detection it answers 409 with the findings; the Console shows them and then
+// re-issues the request with ack=1. The findings never carry the raw secret
+// (memory_secrets.go).
 func HandleMemoryExport(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	format := strings.TrimSpace(q.Get("format"))
@@ -229,7 +235,7 @@ func HandleMemoryExport(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMemoryExportFailed, err.Error())
 		return
 	}
-	defer os.Remove(path) // 一時ファイルは送出後に必ず消す（平文の持ち出し物を置き残さない）
+	defer os.Remove(path) // always drop the temporary: no plaintext export may be left behind
 
 	f, err := os.Open(path)
 	if err != nil {
@@ -245,7 +251,8 @@ func HandleMemoryExport(w http.ResponseWriter, r *http.Request) {
 	name := memoryExportName(format, now)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
-	// 検出を押し切って持ち出したことは、応答ヘッダにも残しておく（監査の傍証）。
+	// Record in the response header that the export went ahead over a detection, as
+	// corroborating evidence for an audit.
 	if len(findings) > 0 {
 		w.Header().Set("X-AF-Memory-Secrets", strconv.Itoa(len(findings)))
 	}

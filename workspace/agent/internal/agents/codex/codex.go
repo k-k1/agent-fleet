@@ -1,7 +1,9 @@
-// Package codex は codex CLI 種別の縦割りパッケージ（docs/log/23 残① Wave E）。
-// Agent 実装・起動コマンド組み立て・rollout JSONL transcript 読み出し・auth/usage
-// の Connections ハンドラ・rtk ブロック適用を package main から移設した。
-// 挙動・ワイヤ・ディスクは main 時代とバイト同一を維持すること。
+// Package codex is the vertical slice for the codex CLI kind (docs/log/23 remaining item 1,
+// Wave E): the Agent implementation, launch command assembly, rollout JSONL transcript
+// reading, the auth/usage Connections handlers and rtk block application.
+//
+// Behaviour, wire format and on-disk state must stay byte-identical to what package main
+// produced.
 package codex
 
 import (
@@ -56,7 +58,7 @@ func RememberSid(slotSid, codexID string) { sids.Write(slotSid, codexID) }
 // New returns the codex Agent implementation for the kind registry.
 func New() agents.Agent { return agentImpl{} }
 
-// agentImpl — codex 種別の Agent 実装（docs/log/23 P1残: CLI 縦割りファイル分割）
+// agentImpl is the Agent implementation for the codex kind.
 type agentImpl struct{}
 
 func (agentImpl) Kind() string { return session.KindCodex }
@@ -96,7 +98,7 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 	if anchor == "" {
 		return "", errors.New("分岐点が指定されていません")
 	}
-	// 分岐点を渡せる口は app-server 側にしかない（`codex fork <id>` には無い）。
+	// Only the app-server takes a fork point; `codex fork <id>` has no such argument.
 	if m.DriverKind() != session.DriverManaged {
 		return "", fmt.Errorf("%w: codex の発言時点からの分岐は managed のセッションでのみ利用できます",
 			agents.ErrForkAtRoute)
@@ -115,8 +117,8 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 		if tid != anchor {
 			continue
 		}
-		// 「この発言の続きから」は codex では素直: lastTurnId が包含なので、そのターン自身を
-		// 渡せば「そのやり取りまで残す」になる。ずらしが要るのは排他側（1 つ前）だけ。
+		// The inclusive case is straightforward here: lastTurnId is inclusive, so passing the
+		// turn itself keeps that exchange. Only the exclusive side needs the shift back by one.
 		if at.Include {
 			return tid, nil
 		}
@@ -132,16 +134,17 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	return readTranscript(m)
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。
+// PendingModal hands the modal that is waiting on a human to the carry-over, just before
+// the session is folded (docs/log/75 P5).
 //
-// codex の人待ちは `request_user_input`（質問）**だけ**である。ツール承認は
-// managed では app-server の `item/permissions/requestApproval` を appclient.go が
-// 自動応答し、TUI ルートは bypass 起動なので許可プロンプトそのものが出ない。
-// よって permission は返さない（docs/log/75 §75.7 P5 に判断を明記）。
+// For codex the only such wait is `request_user_input` (a question). Tool approval never
+// reaches a human: under managed, appclient.go auto-answers the app-server's
+// `item/permissions/requestApproval`, and the TUI route launches in bypass mode so no
+// approval prompt appears at all. So permission is never returned (docs/log/75 §75.7 P5).
 //
-// 保留の在処は TUI（rollout 末尾の未応答 function_call）と managed（handle の
-// Interaction）で違うが、readTranscript が managedEnrich で両方を Pending に畳んで
-// くれるので、ここはその 1 本を読むだけでよい。
+// Where the pending state lives differs between TUI (an unanswered function_call at the
+// tail of the rollout) and managed (the handle's Interaction), but readTranscript folds
+// both into Pending via managedEnrich, so reading that one field is enough.
 func (a agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	td, _ := a.Transcript(m)
 	if len(td.Pending) == 0 {
@@ -158,10 +161,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// Pre-accept codex's per-dir trust gate so a freshly cloned repo doesn't stall at
 	// the "Do you trust this directory?" prompt (the bypass flags don't cover it).
 	ensureFolderTrusted(m.Dir)
-	// 共有 app-server は需要で上がる（起動時常駐をやめた）。TUI ルートもその需要の
-	// ひとつ: ここで起こしておかないと buildProgram が印（env）を見つけられず、
-	// --remote 無しの直接起動になって圧縮検知・ライブ rate limit・reroute 観測
-	// （docs/log/27 P1）が丸ごと落ちる。失敗は致命ではない — 直接起動へ縮退する。
+	// The shared app-server starts on demand, and the TUI route is one of those demands:
+	// without waking it here buildProgram finds no marker (env), launches directly without
+	// --remote, and compaction detection, live rate limits and reroute observation
+	// (docs/log/27 P1) all disappear. Failure is not fatal — fall back to a direct launch.
 	if _, _, err := Serve().Ensure(); err != nil {
 		log.Printf("codex app-server unavailable; using direct TUI: %v", err)
 	}
@@ -190,8 +193,9 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// State comes from codex's -c-injected status hooks keyed by our sid (the status
 	// store; no idle-heal, no background-busy). Resumable unless the working dir is gone.
-	// managed（docs/log/27 P3）はhooks不在の代わりに driver が同じ status ストアへ turn
-	// 境界（turn/started・turn/completed 通知）を書く — 読み側はほぼ共通で済む。
+	// Under managed (docs/log/27 P3) there are no hooks; instead the driver writes the turn
+	// boundaries (turn/started, turn/completed notifications) to the same status store, so
+	// the reading side is almost entirely shared.
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
 		sid := session.UUID(m.Dir, m.Name)
@@ -200,10 +204,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		if hasStatus {
 			li.State = st.State
 		}
-		// A missed Stop hook otherwise leaves Codex on 進行中 forever even after its
+		// A missed Stop hook otherwise leaves Codex "working" forever even after its
 		// TUI has returned to the composer. Heal it from the rollout's independent
 		// task_complete event, but only when it belongs to this working interval.
-		// （managed はイベント駆動なので原則不要だが、無害な保険として共用する。）
+		// (Managed is event-driven and should not need this, but shares it as a
+		// harmless safety net.)
 		if li.State == "working" {
 			workingSince, _ := time.Parse(time.RFC3339, st.TS)
 			if rolloutCompletedAfter(m, workingSince) {
@@ -214,23 +219,25 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 			li.State = "compacting"
 		}
 		if m.DriverKind() == session.DriverManaged {
-			// managed の質問は handle の Interaction が正（server request の再配送で
-			// 回復する、§12.3）— rollout tail probe より正確で安い。
+			// Under managed the handle's Interaction is authoritative for questions (it
+			// recovers through redelivery of the server request, §12.3) — more accurate
+			// and cheaper than probing the rollout tail.
 			if h := handleFor(m.Name); h != nil && h.hasQuestion() {
 				li.State = "question"
 			}
-			// 利用上限で turn が失敗した managed セッションは「入力待ち」に見えるが、
-			// 再送しても同じ結果なので 制限解除待ち を表示する。blocked（＝人がペインで
-			// 選ぶまで動かない claude の上限メニュー）ではなく StateLimited なのは、
-			// codex には消すべきメニューが無く、待てば窓が開くから — 促す次の一手が違う。
-			// turnError は次の turn 開始時にクリアされるので永遠に貼り付かない。
+			// A managed session whose turn failed on a usage limit looks like it is waiting
+			// for input, but resending gets the same result, so show "limited" instead.
+			// StateLimited rather than blocked (claude's limit menu, which stalls until a
+			// human picks in the pane) because codex has no menu to dismiss and the window
+			// simply reopens with time — the next action to suggest differs. turnError is
+			// cleared when the next turn starts, so this never sticks forever.
 			if li.State == "idle" && IsRateLimited(m.Name) {
 				li.State = agents.StateLimited
 			}
 		} else if li.State == "working" && HasPendingQuestion(m) {
 			// The hooks report only working/idle — a request_user_input dialog keeps
 			// the turn "working" forever. Probe the rollout tail so the sessions list
-			// shows 質問あり (and notifies) like claude; only while working, to keep
+			// shows a pending question (and notifies) like claude; only while working, to keep
 			// the probe off the common idle path.
 			li.State = "question"
 		}

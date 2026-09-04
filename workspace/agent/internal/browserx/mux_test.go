@@ -10,36 +10,36 @@ import (
 	"testing"
 )
 
-// buildMux は、この家系の HTTP 契約テストが使う mux。
+// buildMux is the mux this family's HTTP contract tests run against.
 //
-// 移送前、これらのテストは package main の buildMux()（routes.go・247 本の全ルート）を
-// 組んでいた。browserx から routes.go は見えない（逆向きの import になる）ので、browser
-// 系の 15 本だけを同じパターン文字列で登録する mux をここに置く。パターン文字列が要る
-// のはハンドラが r.PathValue("id") を読むからで、ハンドラを直接呼ぶ形では {id} が空になり
-// テストが本物のリクエストを再現しなくなる。
+// routes.go is not visible from browserx (that would be an import the wrong way round), so this
+// registers only the 15 browser routes, under the same pattern strings. The pattern strings
+// matter because the handlers read r.PathValue("id"): calling a handler directly leaves {id}
+// empty and the test stops reproducing a real request.
 //
-// ★ 表そのものは browserx が 1 つだけ持つ（mux.go の Routes）。回収（ADR 0067 決定 2）
-// までは routes.go とここに同じ 15 本が別々に書かれており、**写しは黙って腐る**状態
-// だった。いまはここも routes.go も同じ Routes() を登録する。
+// The table itself lives in exactly one place, browserx (Routes in mux.go); routes.go registers
+// the same Routes(), so there is no copy left to rot.
 //
-// なお `/healthz` まで要る W5 の live サーバ（TestBrowserLiveServerHelper）は、CP の
-// browser_live_e2e_test.go が `go test -c .` で **root パッケージ**をビルドして起動する
-// ため、package main（workspace/agent/browser_live_helper_test.go）に残してある。
+// The W5 live server (TestBrowserLiveServerHelper), which also needs `/healthz`, stays in
+// package main (workspace/agent/browser_live_helper_test.go): the CP's browser_live_e2e_test.go
+// starts it by building the root package with `go test -c .`.
 func buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux)
 	return mux
 }
 
-// agentRouteGoldenPath: Phase 0（ADR 0067 決定 6）が撮った Agent の全ルート表。
+// agentRouteGoldenPath holds the Agent's full route table, captured by phase 0 (ADR 0067
+// decision 6).
 const agentRouteGoldenPath = "../../testdata/routes.golden"
 
-// TestBrowserRoutesMatchAgentRouteTable: browserx が持つ表（mux.go の Routes）が、実際に
-// 組み上がる Agent のルート表（routes.golden）の browser 節と完全に一致すること。
+// TestBrowserRoutesMatchAgentRouteTable checks that the table browserx owns (Routes in mux.go)
+// matches the browser section of the Agent's assembled route table (routes.golden) exactly.
 //
-// 写しは消えたが、**登録の呼び忘れ**は残る失敗の形である: routes.go の
-// browserx.RegisterRoutes(mux) が消えても、Routes() 自体は正しいままなのでこのパッケージの
-// テストは全部緑になる。golden は本物の mux から取られているので、そこだけが気付ける。
+// The copy is gone, but a forgotten registration is still a possible failure: drop
+// browserx.RegisterRoutes(mux) from routes.go and every test in this package stays green,
+// because Routes() itself is still correct. The golden is taken from the real mux, so it is the
+// only thing that notices.
 func TestBrowserRoutesMatchAgentRouteTable(t *testing.T) {
 	f, err := os.Open(filepath.Clean(agentRouteGoldenPath))
 	if err != nil {
@@ -61,9 +61,10 @@ func TestBrowserRoutesMatchAgentRouteTable(t *testing.T) {
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	// 0 件のゴールデンほど危険なものはない（routes_golden_test.go と同じ理由）。
+	// Nothing is more dangerous than a golden that matched nothing (same reason as
+	// routes_golden_test.go).
 	if len(want) == 0 {
-		t.Fatalf("%s に browser のルートが 1 本も無い——golden の形式が変わったか、パスが変わった", agentRouteGoldenPath)
+		t.Fatalf("%s contains no browser route at all - the golden format changed, or the paths did", agentRouteGoldenPath)
 	}
 
 	var got []string
@@ -73,12 +74,12 @@ func TestBrowserRoutesMatchAgentRouteTable(t *testing.T) {
 	sort.Strings(got)
 	sort.Strings(want)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("browserx の mux が Agent のルート表とずれている\n--- browserx (%d)\n%s\n--- routes.golden (%d)\n%s",
+		t.Fatalf("browserx's mux has drifted from the Agent route table\n--- browserx (%d)\n%s\n--- routes.golden (%d)\n%s",
 			len(got), strings.Join(got, "\n"), len(want), strings.Join(want, "\n"))
 	}
 }
 
-// isBrowserRoutePath は routes.go の browser 節が持つパス空間そのもの。
+// isBrowserRoutePath is exactly the path space the browser section of routes.go owns.
 func isBrowserRoutePath(path string) bool {
 	return strings.HasPrefix(path, "/browser/") ||
 		path == "/ws/browser" ||

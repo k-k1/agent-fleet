@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// stubProvider は chatProvider の記録付きスタブ。
+// stubProvider is a recording stub of chatProvider.
 type stubProvider struct {
 	reply   string
 	err     error
@@ -85,7 +85,7 @@ func TestInjectHandoff(t *testing.T) {
 	if !strings.HasPrefix(p, HandoffPreambleFor("ja")) || !strings.Contains(p, "前回の要約") || !strings.HasSuffix(p, "こんにちは") {
 		t.Fatalf("prompt shape wrong: %q", p)
 	}
-	// クリアは呼び出し側の成功時責務（失敗ターンで再注入させるため）。
+	// Clearing it is the caller's job on success, so a failed turn re-injects it.
 	if c.PendingHandoff == "" {
 		t.Fatal("injectHandoff itself must not clear PendingHandoff")
 	}
@@ -96,14 +96,15 @@ func TestHandleChatCompactGuards(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /chat/conversations/{id}/compact", HandleChatCompact)
 
-	// 存在しない会話 → 404。
+	// Unknown conversation -> 404.
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, httptest.NewRequest("POST", "/chat/conversations/"+RandUUID()+"/compact", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("unknown conv: code = %d", rr.Code)
 	}
 
-	// プロバイダセッションが無い会話 → 400 chat_nothing_to_compact（プロバイダ解決前に返る）。
+	// Conversation with no provider session -> 400 chat_nothing_to_compact, returned
+	// before the provider is even resolved.
 	c := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
 	if err := SaveConv(c); err != nil {
 		t.Fatal(err)
@@ -125,14 +126,15 @@ func TestMaybeAutoCompact(t *testing.T) {
 		}
 	}
 
-	// 閾値未満 → no-op（プロバイダ未呼び出し）。
+	// Below the threshold -> no-op, the provider is never called.
 	c := base(50)
 	prov := &stubProvider{reply: "要約"}
 	if MaybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
 		t.Fatal("compacted below the threshold")
 	}
 
-	// 閾値以上 → 圧縮（reason=auto の notice・ハンドルクリア・PendingHandoff）。
+	// At or above the threshold -> compaction: a reason=auto notice, the handles cleared,
+	// and PendingHandoff set.
 	c = base(95)
 	prov = &stubProvider{reply: "自動要約"}
 	if !MaybeAutoCompact(context.Background(), c, prov) {
@@ -146,7 +148,7 @@ func TestMaybeAutoCompact(t *testing.T) {
 		t.Fatalf("auto reason missing from notice: %+v", last)
 	}
 
-	// PendingHandoff が未配信のまま → 二重圧縮しない。
+	// PendingHandoff still undelivered -> do not compact twice.
 	c = base(95)
 	c.PendingHandoff = "前回の要約"
 	prov = &stubProvider{reply: "要約"}
@@ -154,21 +156,22 @@ func TestMaybeAutoCompact(t *testing.T) {
 		t.Fatal("compacted despite an undelivered handoff")
 	}
 
-	// プロバイダセッションが無い → no-op。
+	// No provider session -> no-op.
 	c = base(95)
 	c.ClaudeSessionID = ""
 	if MaybeAutoCompact(context.Background(), c, &stubProvider{reply: "要約"}) {
 		t.Fatal("compacted with no provider session")
 	}
 
-	// Context 未捕捉 → no-op。
+	// No context snapshot captured -> no-op.
 	c = base(95)
 	c.Context = nil
 	if MaybeAutoCompact(context.Background(), c, &stubProvider{reply: "要約"}) {
 		t.Fatal("compacted with no context snapshot")
 	}
 
-	// 圧縮失敗 → false・状態不変（ターン自体は続行される想定）。
+	// Compaction failed -> false and the state unchanged; the turn itself is expected to
+	// carry on.
 	c = base(95)
 	if MaybeAutoCompact(context.Background(), c, &stubProvider{err: errors.New("boom")}) {
 		t.Fatal("reported success though the summary turn failed")
@@ -199,9 +202,9 @@ func TestMaybeAutoCompactDisabledBySetting(t *testing.T) {
 
 func TestMaybeAutoCompactAbsoluteTokenThreshold(t *testing.T) {
 	withTempHome(t)
-	// 1M ウィンドウで使用率 20% — 相対閾値(90%)には遠いが、絶対量が 150k を超えて
-	// いるので圧縮する（費用防衛の閾値。実測でこの帯のターンは cache 書き直しだけで
-	// $1 級になる）。
+	// 20% of a 1M window: far from the relative threshold (90%), but the absolute amount
+	// is over 150k, so it compacts. This is the cost-defence threshold — measured, a turn
+	// in that band costs on the order of $1 in cache rewrites alone.
 	c := &ChatConversation{
 		ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
 		Context:  &usagex.ContextUsage{Tokens: 200000, Window: 1000000, Pct: 20},
@@ -215,7 +218,7 @@ func TestMaybeAutoCompactAbsoluteTokenThreshold(t *testing.T) {
 		t.Fatalf("compaction not applied: %+v", c)
 	}
 
-	// 絶対閾値未満・相対閾値未満 → no-op。
+	// Below both the absolute and the relative threshold -> no-op.
 	c = &ChatConversation{
 		ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
 		Context: &usagex.ContextUsage{Tokens: 120000, Window: 1000000, Pct: 12},
@@ -225,7 +228,7 @@ func TestMaybeAutoCompactAbsoluteTokenThreshold(t *testing.T) {
 		t.Fatal("compacted below both thresholds")
 	}
 
-	// 環境変数で絶対閾値を引き上げれば同じ 200k でも発火しない。
+	// With the absolute threshold raised by env, the same 200k no longer fires.
 	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "500000")
 	c = &ChatConversation{
 		ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
@@ -237,7 +240,7 @@ func TestMaybeAutoCompactAbsoluteTokenThreshold(t *testing.T) {
 }
 
 func TestChatAutoCompactTokenThresholdEnvOverride(t *testing.T) {
-	writeUIPrefs(t, `{}`) // HOME を隔離（設定が env より優先のため）
+	writeUIPrefs(t, `{}`) // isolate HOME, since the pref beats env
 	if got := ChatAutoCompactTokenThreshold(); got != ChatCtxAutoCompactTokens {
 		t.Fatalf("default token threshold = %v", got)
 	}

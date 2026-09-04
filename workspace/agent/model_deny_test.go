@@ -12,35 +12,36 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 )
 
-// 除外判定の境界。claude は --model に別名でも完全 id でも渡せるので別名の除外は
-// 完全 id にも効かなければならず、逆に opencode の課金経路違い（opencode/… と
-// opencode-go/…）を巻き添えにしてはいけない。
+// The boundaries of the deny match. claude accepts either an alias or the full id on --model,
+// so denying an alias must deny the full id too; conversely opencode's two billing routes
+// (opencode/… and opencode-go/…) must not be taken out together.
 func TestModelMatchesHiddenTokenBoundary(t *testing.T) {
 	tests := []struct {
 		requested, hidden string
 		want              bool
 	}{
 		{"fable", "fable", true},
-		{"Fable", "fable", true},          // 大小無視
-		{"claude-fable-5", "fable", true}, // 別名の除外は完全 id にも効く
+		{"Fable", "fable", true},          // case-insensitive
+		{"claude-fable-5", "fable", true}, // denying an alias denies the full id too
 		{"claude-fable-5-20260101", "fable", true},
 		{"opus", "fable", false},
 		{"claude-opus-5", "fable", false},
-		{"fablet", "fable", false}, // トークン境界（部分文字列では当てない）
+		{"fablet", "fable", false}, // token boundary (never a substring match)
 		{"unfable", "fable", false},
-		{"", "fable", false}, // 未指定＝CLI 既定に委ねる
+		{"", "fable", false}, // unset = defer to the CLI's default
 		{"fable", "", false},
-		// 具体 id（複数トークン）を隠しても、それを接頭辞に持つ別モデルは巻き添えに
-		// しない。GPT-5.4 を隠したら mini まで消えた不具合の回帰。
+		// Hiding a concrete id (several tokens) must not take out another model that merely has
+		// it as a prefix. Regression for the bug where hiding GPT-5.4 removed mini as well.
 		{"gpt-5.4-mini", "gpt-5.4", false},
 		{"gpt-5.4", "gpt-5.4", true},
 		{"gpt-5.4-mini", "gpt-5.4-mini", true},
-		{"claude-fable-5-20260101", "claude-fable-5", false}, // 同上（別名でなく具体 id）
-		// opencode: Zen を除外しても Go サブスクの同名は残る
+		{"claude-fable-5-20260101", "claude-fable-5", false}, // as above (a concrete id, not an alias)
+		// opencode: denying Zen leaves the Go subscription's twin of the same name
 		{"opencode-go/glm-5.2", "opencode/glm-5.2", false},
 		{"opencode/glm-5.2", "opencode/glm-5.2", true},
-		// 素の名前（glm-5.2）も複数トークンなので、もう族一致はしない。両経路を隠したい
-		// なら両方の id を除外する（UI はどちらも一覧に出す）。取り過ぎない側に倒した。
+		// The bare name (glm-5.2) is several tokens too, so it no longer matches as a family.
+		// Hiding both routes means denying both ids (the UI lists both). Erring towards taking
+		// out too little.
 		{"opencode/glm-5.2", "glm-5.2", false},
 	}
 	for _, tt := range tests {
@@ -55,15 +56,15 @@ func TestHiddenModelsForIgnoresJunkAndAllHiddenClaude(t *testing.T) {
 	if got := sessionx.HiddenModelsFor("claude"); len(got) != 1 || got[0] != "fable" {
 		t.Fatalf("hiddenModelsFor(claude) = %v, want [fable]", got)
 	}
-	if got := sessionx.HiddenModelsFor("codex"); got != nil { // 型違いは「除外なし」
+	if got := sessionx.HiddenModelsFor("codex"); got != nil { // a wrong type means "nothing hidden"
 		t.Fatalf("hiddenModelsFor(codex) = %v, want nil", got)
 	}
-	if got := sessionx.HiddenModelsFor("opencode"); got != nil { // 未設定
+	if got := sessionx.HiddenModelsFor("opencode"); got != nil { // unset
 		t.Fatalf("hiddenModelsFor(opencode) = %v, want nil", got)
 	}
 
-	// claude を全ティア除外した設定は無視する（固定4ティアしか無く「既定」の選択肢も
-	// 無いので、全部隠すと起動できるモデルが消える）。
+	// A setting that denies every claude tier is ignored: there are only the four fixed tiers and
+	// no "default" choice, so hiding them all leaves nothing to launch with.
 	writeUIPrefs(t, `{"hiddenModels":{"claude":["fable","opus","sonnet","haiku"]}}`)
 	if got := sessionx.HiddenModelsFor("claude"); got != nil {
 		t.Fatalf("all-hidden claude = %v, want nil (fail-safe)", got)
@@ -73,7 +74,8 @@ func TestHiddenModelsForIgnoresJunkAndAllHiddenClaude(t *testing.T) {
 	}
 }
 
-// カタログ側（Console のピッカーと MCP list_models の合流点）から実際に消えること。
+// It must actually disappear from the catalog — where the Console picker and MCP list_models
+// meet.
 func TestAgentModelsHidesExcludedClaudeTier(t *testing.T) {
 	writeUIPrefs(t, `{"hiddenModels":{"claude":["fable"]}}`)
 	req := httptest.NewRequest(http.MethodGet, "/agents/claude/models", nil)
@@ -100,12 +102,13 @@ func TestAgentModelsHidesExcludedClaudeTier(t *testing.T) {
 	}
 }
 
-// 一覧から消すだけでは明示指定が素通りするので、起動ガードが本体（定時実行の
-// モデル欄・MCP create_session・ユーザー定義アシスタントの自由入力が全部ここを通る）。
+// Dropping it from the list alone lets an explicit id straight through, so the launch guard is
+// the real mechanism: a scheduled run's model field, MCP create_session and a user-defined
+// assistant's free-text input all pass here.
 func TestCreateSessionRejectsHiddenModel(t *testing.T) {
 	writeUIPrefs(t, `{"hiddenModels":{"claude":["fable"]}}`)
-	// ガードは副作用（clone / worktree / 起動）より前に立っているので、この呼び出しは
-	// 何も生成しない。
+	// The guard stands before any side effect (clone / worktree / launch), so these calls create
+	// nothing.
 	for _, model := range []string{"fable", "Fable", "claude-fable-5"} {
 		req := httptest.NewRequest(http.MethodPost, "/sessions",
 			strings.NewReader(`{"kind":"claude","model":"`+model+`"}`))
@@ -115,14 +118,14 @@ func TestCreateSessionRejectsHiddenModel(t *testing.T) {
 			t.Fatalf("model %q: status = %d, body = %s, want 400 model_hidden", model, rec.Code, rec.Body.String())
 		}
 	}
-	// 除外していないティアはこのガードで落ちない。
+	// A tier that is not denied must not be caught by this guard.
 	if sessionx.ModelHidden("claude", "sonnet") {
 		t.Fatal("modelHidden(claude, sonnet) = true, want false")
 	}
 }
 
-// アシスタントの設定に除外モデルが残っていても採用しない（未設定扱いに落として
-// 推奨／CLI 既定へ退避する）。
+// A denied model left in the assistant's settings is not adopted: it falls back to "unset" and
+// from there to the recommendation or the CLI's default.
 func TestAssistantModelPrefDropsHidden(t *testing.T) {
 	writeUIPrefs(t, `{"hiddenModels":{"claude":["fable"]},"assistantModels":{"claude":"fable"},"assistantAutoTurnModel":"fable"}`)
 	if v, ok := assistantChatModelPref("claude"); ok {
@@ -131,7 +134,7 @@ func TestAssistantModelPrefDropsHidden(t *testing.T) {
 	if v := chatAutoTurnModel(); v != "" {
 		t.Fatalf("chatAutoTurnModel = %q, want \"\"", v)
 	}
-	// 「推奨」番兵は実モデル id ではないので残る。
+	// The "recommended" sentinel is not a real model id, so it survives.
 	writeUIPrefs(t, `{"hiddenModels":{"claude":["fable"]},"assistantModels":{"claude":"recommended"}}`)
 	if v, ok := assistantChatModelPref("claude"); !ok || v != chatx.AssistantRecommendedModel {
 		t.Fatalf("assistantChatModelPref = %q, %v; want recommended", v, ok)

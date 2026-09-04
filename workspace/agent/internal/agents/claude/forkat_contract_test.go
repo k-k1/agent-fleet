@@ -1,24 +1,25 @@
 //go:build clicontract
 
-// claude 契約テスト（**実ターンを消費する**）: 発言時点からの分岐（docs/log/55）の唯一の
-// ドリフト検知。
+// A claude contract test that CONSUMES REAL TURNS: the only drift detection for branching
+// at a past message (docs/log/55).
 //
-// なぜ必要か: claude だけは公式の分岐点 API を使えない（`--resume-session-at` は print
-// モード限定で、AF の claude は TUI 起動しかない）。代わりに転写 jsonl を自分で切り詰めて
-// いるので、**claude の転写スキーマや resume の解釈が動いた瞬間に静かに壊れる**。しかも
-// 壊れ方は「起動はするが会話が変」なので、合成テストでは絶対に気づけない。ADR 0039 の
-// 決定9はこの一本を CLI ピン更新のたびに回すことを求めている。
+// Why it is needed: claude alone cannot use the official fork-point API, because
+// `--resume-session-at` exists only in print mode and AF launches claude as a TUI. Instead
+// AF truncates the transcript jsonl itself, which breaks silently the moment claude's
+// transcript schema or its interpretation of resume moves. The breakage takes the form of
+// "it launches but the conversation is wrong", which a synthetic test can never notice.
+// ADR 0039 decision 9 requires running this one test at every CLI pin update.
 //
-// ここで固定する契約は 2 つだけ:
-//  1. 手で切り詰めた jsonl を claude が resume できる（起動が拒否されない）
-//  2. 切り詰めた後の履歴だけを見ている（切り落とした発言を覚えていない）
+// Only two contracts are pinned here:
+//  1. claude can resume a jsonl truncated by hand (the launch is not refused)
+//  2. it works from the truncated history alone (it does not remember the cut-away turns)
 //
-// 実クレデンシャルとサブスク枠を使うので opt-in:
+// Opt-in, because it uses a real credential and subscription quota:
 //
 //	CLAUDE_CONTRACT_LIVE=1 go test -tags clicontract -run TestContractLiveClaudeForkAt ./internal/agents/claude/
 //
-// コスト: haiku で 3 ターン（各 1 行の応答）。作業用の会話は scratch なプロジェクト
-// ディレクトリに作り、後片付けで転写ごと消す。
+// Cost: three haiku turns, each a one-line reply. The working conversation is created in a
+// scratch project directory and removed, transcript and all, during cleanup.
 package claude
 
 import (
@@ -93,7 +94,7 @@ func TestContractLiveClaudeForkAt(t *testing.T) {
 	}
 	projectDir := filepath.Dir(paths[0])
 	t.Cleanup(func() {
-		// 後片付け: この scratch 会話の転写を消す（実 config dir を汚したままにしない）。
+		// Remove this scratch conversation's transcript so the real config dir is not left dirty.
 		_ = os.RemoveAll(projectDir)
 	})
 
@@ -107,7 +108,7 @@ func TestContractLiveClaudeForkAt(t *testing.T) {
 	}
 	if len(anchors) < 2 {
 		t.Fatalf("found %d anchored user turns in a real transcript, want >= 2 — claude's uuid "+
-			"field or the user-line shape moved, so 「ここから分岐」 has nothing to point at", len(anchors))
+			"field or the user-line shape moved, so \"branch from here\" has nothing to point at", len(anchors))
 	}
 
 	// Branch before the SECOND prompt: the branch must remember ALPHA and not BETA.
@@ -119,7 +120,7 @@ func TestContractLiveClaudeForkAt(t *testing.T) {
 	up := strings.ToUpper(out)
 	switch {
 	case strings.Contains(up, "ALPHA"):
-		// 契約どおり: 切り詰め後の履歴だけを見ている。
+		// As contracted: it works from the truncated history alone.
 	case strings.Contains(up, "BETA"):
 		t.Fatalf("the branch remembered the turn we cut away (answered %q) — claude no longer "+
 			"reconstructs the conversation from the file we wrote, so every point fork silently "+

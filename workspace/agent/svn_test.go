@@ -72,9 +72,10 @@ func TestSvnLocked(t *testing.T) {
 		"svn: E155004: Working copy '/x' locked",
 		"svn: run 'svn cleanup' to remove locks",
 		"is already locked",
-		// ★ 中断された取り込みの後に svn 1.14 が実際に出す文言（実測）。`svn cleanup` ではなく
-		// `cleanup` と書くので、E155004 系の文字列だけを見ていた頃はここが素通りし、自動修復が
-		// 一度も走らなかった（利用者は毎回手で ロックを解除 するしかなかった）。
+		// What svn 1.14 actually prints after an interrupted import (measured). It writes
+		// `cleanup`, not `svn cleanup`, so while only the E155004 wording was matched this
+		// slipped straight through and the automatic repair never ran once - users had to
+		// unlock by hand every time.
 		"svn: E155037: Previous operation has not finished; run 'cleanup' if it was interrupted",
 	}
 	for _, s := range locked {
@@ -187,11 +188,12 @@ func TestSvnCheckoutFileRepo(t *testing.T) {
 	}
 }
 
-// TestSvnCheckoutIsAsync は POST /repos/svn の非同期化（docs/log/78）を実 svn で確かめる。
-// 検証したいのは 3 点: ①ハンドラは checkout の完了を待たない（202 とジョブを返す）、
-// ②取り込み中のフォルダは GET /repos に出ない、③ジョブが done になって初めて作業コピー
-// として現れる。同期だった頃はここが「応答が返る＝完了」ではなく「プロキシが諦めた＝完了」
-// になっていて、走行中の作業コピーが取り込み済みとして並んでいた。
+// TestSvnCheckoutIsAsync checks the asynchronous POST /repos/svn (docs/log/78) against a real
+// svn. Three things: (1) the handler does not wait for the checkout to finish, it returns 202
+// and a job, (2) a folder still being imported does not appear in GET /repos, and (3) it shows
+// up as a working copy only once the job reaches done. While this was synchronous, "a response
+// came back" meant "the proxy gave up" rather than "it finished", and a checkout still running
+// was listed as already imported.
 func TestSvnCheckoutIsAsync(t *testing.T) {
 	if !svnAvailable() {
 		t.Skip("svn not installed")
@@ -248,10 +250,11 @@ func TestSvnCheckoutIsAsync(t *testing.T) {
 	}
 }
 
-// TestSvnCheckoutFailureKeepsResumableCopy は「失敗しても再開できる作業コピーは消さない」
-// （docs/log/78）。30 分の上限で殺したうえで RemoveAll していた頃、数十分ダウンロードした
-// 作業コピーが黙って消えた — svn は cleanup + update で続きから取れるのだから、消してよいのは
-// 作業コピーになっていないときだけ。
+// TestSvnCheckoutFailureKeepsResumableCopy holds that a resumable working copy survives a
+// failure (docs/log/78). Back when the run was killed at the 30-minute cap and then RemoveAll'd,
+// a working copy that had downloaded for tens of minutes vanished silently - svn can pick up
+// where it left off with cleanup + update, so deleting is only allowed when nothing became a
+// working copy.
 func TestSvnCheckoutFailureKeepsResumableCopy(t *testing.T) {
 	if !svnAvailable() {
 		t.Skip("svn not installed")
@@ -260,7 +263,8 @@ func TestSvnCheckoutFailureKeepsResumableCopy(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// 存在しないリポジトリ URL: checkout は作業コピーを作らずに失敗する → 掃除される。
+	// A repository URL that does not exist: the checkout fails without creating a working copy,
+	// so the leftovers are cleaned up.
 	body := strings.NewReader(`{"url":"file:///nonexistent-svn-repo","name":"ghost"}`)
 	rec := httptest.NewRecorder()
 	handleSvnCheckout(rec, httptest.NewRequest("POST", "/repos/svn", body))
@@ -278,20 +282,21 @@ func TestSvnCheckoutFailureKeepsResumableCopy(t *testing.T) {
 		t.Fatalf("state = %q, want %q", done.State, repoJobFailed)
 	}
 	if done.Error == "" {
-		t.Error("失敗の本文が空: svn の言い分が消えると現地調査の手がかりが無くなる")
+		t.Error("failure body is empty: with svn's own words gone there is nothing left to investigate with")
 	}
 	if done.Kept {
-		t.Error("Kept = true だが作業コピーは出来ていない")
+		t.Error("Kept = true although no working copy was ever created")
 	}
 	if _, err := os.Stat(filepath.Join(gitx.ReposRoot(), "ghost")); !os.IsNotExist(err) {
-		t.Error("作業コピーになっていない残骸は掃除されるべき")
+		t.Error("leftovers that never became a working copy should be cleaned up")
 	}
 }
 
-// ★ 一覧の dirty 判定は作業コピー全体を走査する。11.4GB の作業コピー（実例）では
-// これが GET /repos を握ったままになりうるので、同じフォルダへの同時要求は 1 本の走査に
-// 相乗りさせる —— さもないと画面の操作のたびに全走査が重なる（走行中の checkout と
-// wc.db を奪い合ったのと同じ形を、今度は自分で作ることになる）。docs/log/78。
+// The dirty verdict in the list walks the whole working copy. On an 11.4 GB working copy (a
+// real one) that can hold GET /repos, so concurrent requests for the same folder ride on a
+// single walk - otherwise every interaction with the screen piles up another full walk,
+// recreating by ourselves the same fight over wc.db that a running checkout caused.
+// docs/log/78.
 func TestSvnDirtySharesOneScan(t *testing.T) {
 	if !svnAvailable() {
 		t.Skip("svn not installed")
@@ -334,11 +339,12 @@ func TestSvnDirtySharesOneScan(t *testing.T) {
 			t.Fatalf("caller %d saw dirty on a fresh checkout", i)
 		}
 	}
-	// キャッシュではないので、変更は次の呼び出しで見える（手動の 更新 が効かなくなっては困る）。
+	// This is not a cache, so a change is visible on the next call: a manual refresh must keep
+	// working.
 	if err := os.WriteFile(filepath.Join(wc, "a.txt"), []byte("changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if !svnDirty(wc) {
-		t.Error("変更が次の判定に出ていない（TTL キャッシュを入れると手動更新が古い答えを返す）")
+		t.Error("the change did not show up in the next verdict (a TTL cache would make a manual refresh return a stale answer)")
 	}
 }

@@ -13,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// Bitbucket pull requests as work items (docs/log/80 §80.19 / ADR 0061 決定 17〜19).
+// Bitbucket pull requests as work items (docs/log/80 §80.19 / ADR 0061 decisions 17-19).
 //
 // The third fetch adapter, and the first one that could NOT keep "one saved query = one
 // provider search" for free: Bitbucket Cloud has no account-wide issue/PR search the way
@@ -26,9 +26,9 @@ import (
 // in the query string itself rather than in a new column: a GitHub query already carries
 // `repo:owner/name` and a JQL one `project = X`, so "the query field holds that
 // provider's own way of saying where to look" is the existing rule, not a new one — and
-// it costs no DTO or schema change (ADR 0061 決定 17).
+// it costs no DTO or schema change (ADR 0061 decision 17).
 //
-// ⚠️ No Bitbucket account exists in this workspace or in CI. What IS pinned here is
+// No Bitbucket account exists in this workspace or in CI. What IS pinned here is
 // measured against the real api.bitbucket.org through its PUBLIC repositories
 // (docs/log/80 §80.19.2): the response shape, `q` overriding the implicit state=OPEN default,
 // `sort=-updated_on`, `fields=` projection, and the 400 body for a bad filter. The
@@ -77,7 +77,7 @@ func parseBitbucketWorkItemQuery(q string) (bitbucketWorkItemQuery, error) {
 
 // bitbucketSearchWorkItems resolves one saved query into rail rows.
 //
-// ⚠️ 401 is refreshed-and-retried exactly once through the shared OAuth path
+// 401 is refreshed-and-retried exactly once through the shared OAuth path
 // (refreshBitbucketAndRetry): the access token lives ~2h and a rail that fetches every 5
 // minutes crosses that boundary several times a day, so "re-connect Bitbucket" would be
 // the normal message rather than the exceptional one.
@@ -104,9 +104,9 @@ func bitbucketSearchWorkItems(s *secrets.Data, queryID, query string) ([]workIte
 
 // bitbucketFetchPullRequests performs the one HTTP call the saved query maps to.
 //
-// ★ One call, not N. Walking the member's repositories to fake a cross-workspace search
+// One call, not N. Walking the member's repositories to fake a cross-workspace search
 // would turn a saved query into an unbounded fan-out and quietly break the budget
-// workItemFetchQueries × workItemFetchPerQuery exists to bound (ADR 0061 決定 17).
+// workItemFetchQueries × workItemFetchPerQuery exists to bound (ADR 0061 decision 17).
 func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID string) ([]workItemOut, error) {
 	filter := q.Filter
 	endpoint := bitbucketAPIBase + "/2.0/repositories/" + url.PathEscape(q.Workspace) + "/" + url.PathEscape(q.Repo) + "/pullrequests"
@@ -120,15 +120,15 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 			endpoint = bitbucketAPIBase + "/2.0/workspaces/" + url.PathEscape(q.Workspace) + "/pullrequests/" + url.PathEscape(uuid)
 		}
 	}
-	// ★ fields= is not only a size cut. A pull request object carries its full
+	// fields= is not only a size cut. A pull request object carries its full
 	// description, and this process must not carry a body it has promised not to hand to
-	// the Control Plane (ADR 0061 決定 2) — asking for the columns the rail draws is that
+	// the Control Plane (ADR 0061 decision 2) — asking for the columns the rail draws is that
 	// promise written into the request. If Bitbucket ever ignored the projection the
 	// mapping below would still read the same named fields, so the downside is bytes.
 	params := url.Values{
 		"pagelen": {fmt.Sprint(workItemFetchPerQuery)},
-		// 取得は 50 件で切るので、どの 50 件かを provider に委ねない（ADR 0061 決定 15 が
-		// JQL に ORDER BY を足したのと同じ理由）。
+		// The fetch is capped at 50 items, so do not leave the choice of WHICH 50 to the provider
+		// (the same reason ADR 0061 decision 15 added ORDER BY to the JQL).
 		"sort": {"-updated_on"},
 		"fields": {"values.id,values.title,values.state,values.draft,values.updated_on," +
 			"values.links.html.href,values.author.display_name,values.author.nickname," +
@@ -150,7 +150,7 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 // bitbucketWorkItemError turns a refused fetch into the sentence the member reads on that
 // query's row.
 //
-// ★ 403 is the one that has to be said precisely. Reading pull requests needs Bitbucket's
+// 403 is the one that has to be said precisely. Reading pull requests needs Bitbucket's
 // `pullrequest` scope (`read:pullrequest:bitbucket` on the API-token path), and a
 // connection made for cloning does not have it — the member's own credential is fine and
 // re-pasting it changes nothing. So the message names the missing permission and who can
@@ -172,8 +172,8 @@ func bitbucketWorkItemError(status int, body []byte, q bitbucketWorkItemQuery) e
 		}
 		return fmt.Errorf("bitbucket has no %s visible to this connection", target)
 	case http.StatusBadRequest:
-		// フィルタ式の文法エラーはここ。Bitbucket の説明文をそのまま出すのが一番親切
-		// （Jira の JQL 400 と同じ扱い）。
+		// A syntax error in the filter expression lands here, and passing Bitbucket's own wording
+		// through is the most helpful thing to do (same treatment as Jira's JQL 400).
 		return fmt.Errorf("bitbucket could not parse the filter: %s", text)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("bitbucket rate limit reached")
@@ -222,13 +222,13 @@ func parseBitbucketPullRequests(body []byte, queryID string) ([]workItemOut, err
 			QueryID: queryID, Provider: "bitbucket", Kind: "pr", Key: key,
 			Title: pr.Title, State: normalizeBitbucketPRState(pr.State, pr.Draft),
 			URL: pr.Links.HTML.Href,
-			// ★ 担当者の欄には作者を入れる。Bitbucket の PR に担当者は無く、レビュー待ちの
-			// 一覧で「誰の PR か」は行ごとに違う唯一の情報だからである。自分の PR だけを
-			// 並べたクエリでは全行同じ値になるので、uniformMeta が自動的に落とす
-			// （docs/log/80 §80.18.2）。
+			// The assignee column carries the author: a Bitbucket PR has no assignee, and in a
+			// review queue "whose PR is this" is the only thing that differs per row. A query listing
+			// only your own PRs makes every row identical, and uniformMeta drops it automatically
+			// (docs/log/80 §80.18.2).
 			Assignee: firstNonEmpty(pr.Author.DisplayName, pr.Author.Nickname),
-			// Bitbucket の PR にラベルは無い。⚠️ nil スライスは JSON の null になり、
-			// Console が配列として扱えず真っ白になる（docs/log/80 §80.17.5）。
+			// A Bitbucket PR has no labels. A nil slice would marshal to JSON null, which the Console
+			// cannot treat as an array and renders as a blank screen (docs/log/80 §80.17.5).
 			Labels: []string{},
 			Repo:   repo, UpdatedAt: bitbucketTimeToRFC3339(pr.UpdatedOn),
 		})
@@ -259,7 +259,7 @@ func normalizeBitbucketPRState(state string, draft bool) string {
 // bitbucketTimeToRFC3339 converts Bitbucket's "2026-08-24T07:10:55.049604+00:00" to UTC
 // RFC3339.
 //
-// ⚠️ Not cosmetic. sortWorkItems compares updatedAt as a STRING across providers, so an
+// Not cosmetic. sortWorkItems compares updatedAt as a STRING across providers, so an
 // offset-bearing stamp sorts wrong the moment a Bitbucket row meets a GitHub one — and
 // the rail's whole claim is "newest first". A value that will not parse is passed through
 // rather than dropped (a row with an odd stamp still beats no row), same as Jira's.
@@ -289,7 +289,7 @@ var bbSelfCache struct {
 func bitbucketSelfUUID(auth string) (string, error) {
 	bbSelfCache.mu.Lock()
 	defer bbSelfCache.mu.Unlock()
-	// ★ Keyed on the header, and only the last one is kept: an OAuth access token is
+	// Keyed on the header, and only the last one is kept: an OAuth access token is
 	// replaced every couple of hours, so a map keyed by token would grow forever, and a
 	// cache that ignored the token would answer for a connection that has been replaced
 	// by another account's.

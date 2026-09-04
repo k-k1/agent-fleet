@@ -1,16 +1,17 @@
 package main
 
-// アシスタント層のうち **main にしか置けない 3 つ**がここに残る（実体は internal/assistants を
-// 直接呼ぶ。ウェーブ B の別名 alias_assistants.go は RECLAIM-B で回収済み）:
+// The three parts of the assistant layer that can only live in main (the substance is in
+// internal/assistants, called directly):
 //
-//   - //go:embed の組み込みナレッジ。embed のパスは相対で `..` を書けず、
-//     `workspace/agent/knowledge/af-usage.md` は .dockerignore（`**/*.md` を落として
-//     `agent/knowledge/*.md` だけ戻している）と scripts/docs-check.py が直接見ているので、
-//     ディレクトリごと動かすと Docker ビルドと docs ワークフローが壊れる。
-//   - HTTP ハンドラ。errcodes.go の errCodeAssistant* と chat 家系（chatProviders /
-//     nowMs / randUUID / appendUniqueStr）に依存していて、どちらも所有外。
-//   - `assistantDeps()`（末尾）。internal/assistants へ渡す Deps を組む唯一の入口で、
-//     別名ではなく DI の構築点。
+//   - The //go:embed builtin knowledge. An embed path is relative and cannot say `..`, and
+//     `workspace/agent/knowledge/af-usage.md` is read directly by .dockerignore (which drops
+//     `**/*.md` and adds `agent/knowledge/*.md` back) and by scripts/docs-check.py, so
+//     moving the directory breaks the Docker build and the docs workflow.
+//   - The HTTP handlers. They depend on errcodes.go's errCodeAssistant* and on the chat
+//     family (chatProviders / nowMs / randUUID / appendUniqueStr), neither of them owned
+//     here.
+//   - `assistantDeps()` (at the bottom), the one place the Deps handed to
+//     internal/assistants is assembled — a DI construction point, not an alias.
 
 import (
 	"embed"
@@ -183,17 +184,19 @@ func handleAssistantDelete(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// assistantDeps は main にしか置けない 2 つ（//go:embed のナレッジと chat 家系の
-// 既定エージェント）を internal/assistants へ**引数で**渡す唯一の場所。
+// assistantDeps is the only place the two main-only things (the //go:embed knowledge and the
+// chat family's default agent) are passed to internal/assistants, and they are passed as
+// arguments.
 //
-// 🔥 最初はパッケージ変数のフックに init で代入していたが、レビューの変異試験で
-// **その 2 行を消しても main のテストが全部緑**になった（develop ではコンパイラが強制していた
-// 依存が、移送で「無言で外せる実行時代入」に化けていた）。公開フィールドの struct でも同じで、
-// **片方を書き落としてコンパイルが通る**。引数 2 つの NewDeps にして初めて、渡し忘れが
-// コンパイルエラーになる。**この関数を経由しない assistants 呼び出しを増やさないこと。**
+// Assignment to package-variable hooks in init was tried first: mutation testing during
+// review deleted those two lines and every test in main stayed green, because a dependency
+// the compiler used to enforce had become a runtime assignment that can be removed silently.
+// A struct with exported fields has the same hole — leave one field out and it still
+// compiles. Only a two-argument NewDeps turns a forgotten dependency into a compile error.
+// Do not add assistants calls that bypass this function.
 func assistantDeps() assistants.Deps {
 	return assistants.NewDeps(
-		ensureBuiltinKnowledge,       // //go:embed が main に残るため
-		chatx.PreferredHeadlessAgent, // chat 家系にあるため
+		ensureBuiltinKnowledge,       // //go:embed stays in main
+		chatx.PreferredHeadlessAgent, // lives in the chat family
 	)
 }

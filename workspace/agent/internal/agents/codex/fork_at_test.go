@@ -1,11 +1,12 @@
 package codex
 
-// 発言時点からの分岐（docs/log/55）の codex 側ユニットテスト。
+// Unit tests for the codex side of forking at a message (docs/log/55).
 //
-// codex はアンカーを**そのままは送らない**唯一の kind。Console の意味は排他（この発言の
-// 手前まで）で、`thread/fork` の lastTurnId は包含（この turn まで残す）なので、答えは
-// 1 つ前の turn になる。ここを取り違えると、打ち直したかった発言ごと引き継いだ会話が
-// できあがり、しかもミラー上は「分岐できた」に見える。
+// codex is the only kind that does not send the anchor as is. The Console's meaning is
+// exclusive (up to just before this message) while `thread/fork`'s lastTurnId is inclusive
+// (keep through this turn), so the answer is the previous turn. Get that backwards and the
+// new conversation carries the very message the user wanted to redo — and the mirror still
+// looks like the fork worked.
 
 import (
 	"encoding/json"
@@ -52,14 +53,16 @@ func rollout3Turns(t *testing.T) (session.Meta, []string) {
 	if err := os.WriteFile(p, []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// 分岐点を渡せるのは app-server 経由＝managed だけ（ResolveForkAt が経路も見る）。
+	// A fork point can only be passed through app-server, i.e. managed; ResolveForkAt
+	// checks the route too.
 	m := session.Meta{Dir: dir, Name: "cx", Kind: session.KindCodex, Driver: session.DriverManaged}
 	sids.Write(session.UUID(dir, "cx"), cxid)
 	return m, ids
 }
 
-// CLI(TUI) ルートは分岐点を渡す口が無い。「アンカーが悪い」ではなく「この経路ではできない」
-// なので、ハンドラが区別できるよう ErrForkAtRoute で答える。
+// The CLI (TUI) route has no way to pass a fork point. The reason is "not possible on this
+// route", not "bad anchor", so it answers with ErrForkAtRoute and the handler can tell the
+// two apart.
 func TestResolveForkAtRefusesCLIRoute(t *testing.T) {
 	m, ids := rollout3Turns(t)
 	m.Driver = session.DriverTUI
@@ -72,8 +75,9 @@ func TestResolveForkAtRefusesCLIRoute(t *testing.T) {
 	}
 }
 
-// 転写の各ターンが、自分が属する rollout の turn id をアンカーとして持つこと。
-// Console はこれを掴んで送り返すので、空だと導線が出ない。
+// Every transcript turn carries the turn id of the rollout it belongs to as its anchor. The
+// Console picks that up and sends it back, so an empty one means the entry point never
+// appears.
 func TestTranscriptCarriesTurnAnchor(t *testing.T) {
 	m, ids := rollout3Turns(t)
 	td, _ := readTranscript(m)
@@ -96,7 +100,8 @@ func TestTranscriptCarriesTurnAnchor(t *testing.T) {
 	}
 }
 
-// 本丸: アンカーは 1 つ前の turn id に変換される（lastTurnId は包含）。
+// The main point: the anchor is converted to the previous turn id, because lastTurnId is
+// inclusive.
 func TestResolveForkAtReturnsPreviousTurn(t *testing.T) {
 	m, ids := rollout3Turns(t)
 	got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: ids[2]})
@@ -104,15 +109,15 @@ func TestResolveForkAtReturnsPreviousTurn(t *testing.T) {
 		t.Fatalf("ResolveForkAt: %v", err)
 	}
 	if got != ids[1] {
-		t.Fatalf("ResolveForkAt(turn3) = %q; want turn2 (%q) — lastTurnId は inclusive", got, ids[1])
+		t.Fatalf("ResolveForkAt(turn3) = %q; want turn2 (%q) — lastTurnId is inclusive", got, ids[1])
 	}
 	if got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: ids[1]}); err != nil || got != ids[0] {
 		t.Fatalf("ResolveForkAt(turn2) = %q, %v; want turn1 (%q)", got, err, ids[0])
 	}
 }
 
-// 「この発言の続きから」（Include）: codex は lastTurnId が包含なので、そのターン自身を
-// 渡せばよい。ずらしが要るのは排他側だけ。
+// "continue from this message" (Include): lastTurnId is inclusive in codex, so the turn
+// itself is what gets passed. Only the exclusive side needs the shift.
 func TestResolveForkAtIncludeKeepsAnchorTurn(t *testing.T) {
 	m, ids := rollout3Turns(t)
 	for i, id := range ids {
@@ -124,19 +129,20 @@ func TestResolveForkAtIncludeKeepsAnchorTurn(t *testing.T) {
 			t.Errorf("ResolveForkAt(turn%d, include) = %q; want the turn itself (%q)", i+1, got, id)
 		}
 	}
-	// 最初のやり取りも「続きから」なら成立する（排他のときだけ表現できない）。
+	// The first exchange works too when it is "continue from"; only the exclusive form
+	// cannot be expressed there.
 	if _, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: ids[0], Include: true}); err != nil {
 		t.Errorf("include on the first turn should be representable: %v", err)
 	}
 }
 
-// 最初のやり取りから分岐すると lastTurnId が空になり、codex には「会話まるごと」を
-// 意味してしまう（正反対）。送らずに断る。
+// Forking at the first exchange leaves lastTurnId empty, which to codex means the WHOLE
+// conversation — the exact opposite. Refuse rather than send it.
 func TestResolveForkAtRefusesFirstTurn(t *testing.T) {
 	m, ids := rollout3Turns(t)
 	got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: ids[0]})
 	if err == nil {
-		t.Fatalf("ResolveForkAt(first turn) = %q, nil; want a refusal (empty lastTurnId = 会話まるごと)", got)
+		t.Fatalf("ResolveForkAt(first turn) = %q, nil; want a refusal (empty lastTurnId = the whole conversation)", got)
 	}
 	if got != "" {
 		t.Fatalf("ResolveForkAt(first turn) returned %q alongside the error", got)
@@ -152,8 +158,8 @@ func TestResolveForkAtRejectsUnknownAnchor(t *testing.T) {
 	}
 }
 
-// thread/fork の params に lastTurnId が載ること／分岐点なしでは載らないこと。
-// 空文字で送ると codex には「会話まるごと」を意味するので、キーごと落ちている必要がある。
+// lastTurnId is present in thread/fork's params, and absent when there is no fork point.
+// Sending it empty means the whole conversation to codex, so the key itself must be gone.
 func TestThreadForkSendsLastTurnID(t *testing.T) {
 	m, cl := newMockCodexServer(t)
 

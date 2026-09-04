@@ -1,27 +1,28 @@
 //go:build drift
 
-// codex app-server の MCP 設定リロード契約（docs/log/48 P3）。**実 codex バイナリに当てる**
-// テストで、`go test ./...` からは build tag `drift` で除外される。
+// The MCP configuration reload contract of codex app-server (docs/log/48 P3). This test runs
+// against the real codex binary and is excluded from `go test ./...` by the `drift` build tag.
 //
-// なぜ要るか: MCP レジストリのセッション materialize は `$CODEX_HOME/config.toml` を
-// 書き換える方式で、tui セッションは毎回 codex を起動し直すので必ず読み直される。
-// ところが **managed セッションは共有 `codex app-server` に相乗りする**（docs/log/27）。
-// この daemon が config を「プロセス起動時に 1 度だけ」読むのなら、登録した MCP は
-// app-server を再起動するまで managed セッションに現れない — レジストリの UI は
-// 「新規セッションから有効」と言っているのに、実際は効かないことになる。
+// Why it is needed: session materialize in the MCP registry works by rewriting
+// `$CODEX_HOME/config.toml`, and a tui session relaunches codex every time, so the file is
+// always re-read. A managed session, however, rides on the shared `codex app-server`
+// (docs/log/27). If that daemon read its config only once at process start, a newly registered
+// MCP would not reach managed sessions until app-server restarts - the registry UI would say
+// "effective from the next session" while in reality nothing happened.
 //
-// 実測（codex-cli 0.145.0）では **thread/start ごとに読み直す**。materialize →
-// thread/start だけで足り、Supervisor.Restart（workspace 内の codex 全セッションを
-// drain する重い操作）は要らない。この前提が崩れたらここが赤くなる。
+// Measured (codex-cli 0.145.0): it re-reads on every thread/start. materialize followed by
+// thread/start is enough, and Supervisor.Restart (a heavy operation that drains every codex
+// session in the workspace) is not needed. This goes red if that premise breaks.
 //
-// 認証不要: MCP サーバーの spawn は thread/start の内部で起き、モデル呼び出しの前に
-// 完結する（thread/start 自体が認証エラーで返っても spawn は観測できる）。
+// No authentication needed: the MCP server spawn happens inside thread/start and completes
+// before the model is called, so the spawn is observable even when thread/start itself returns
+// an authentication error.
 //
-// 補足（docs/log/27 §9.3.1）: managed セッションは thread 単位 config で af のエントリ
-// **だけ**を上書きし、他は config.toml から継承する。つまりこのリロード契約は managed
-// でも依然として効いており、レジストリに登録した MCP が新規 thread に現れるかどうかは
-// ここが守っている。slot 空（`threadStart(cl, home, "", "")`）で呼ぶのは、af の上書きを
-// 挟まない素の継承経路を測るため。
+// Note (docs/log/27 §9.3.1): a managed session overrides only the af entries through a
+// per-thread config and inherits the rest from config.toml. So this reload contract still holds
+// for managed, and whether an MCP registered in the registry shows up in a new thread is what
+// this test guards. It is called with an empty slot (`threadStart(cl, home, "", "")`) to measure
+// the bare inheritance path, with af's override out of the way.
 
 package codex
 
@@ -91,7 +92,7 @@ func TestDriftCodexAppServerRereadsMCPConfig(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("app-server に接続できませんでした: %v", err)
+			t.Fatalf("could not connect to app-server: %v", err)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -99,20 +100,20 @@ func TestDriftCodexAppServerRereadsMCPConfig(t *testing.T) {
 
 	// 1st thread: the server present when the daemon started.
 	if _, err := threadStart(cl, home, "", ""); err != nil {
-		t.Logf("thread/start 1 (認証なしの想定内エラー): %v", err)
+		t.Logf("thread/start 1 (expected error without authentication): %v", err)
 	}
 	if !waitFile(marker("first-spawned"), 15*time.Second) {
-		t.Fatal("起動時 config の MCP サーバーが spawn されなかった（このテストの前提が壊れている）")
+		t.Fatal("the MCP server from the startup config was never spawned - the premise of this test is broken")
 	}
 
 	// Now do what materialize does to a LIVE daemon: add a server to config.toml.
 	writeConfig(serverBlock("first", marker("first-spawned")) + serverBlock("second", marker("second-spawned")))
 	if _, err := threadStart(cl, home, "", ""); err != nil {
-		t.Logf("thread/start 2 (認証なしの想定内エラー): %v", err)
+		t.Logf("thread/start 2 (expected error without authentication): %v", err)
 	}
 	if !waitFile(marker("second-spawned"), 15*time.Second) {
-		t.Fatal("稼働中の app-server が config.toml を読み直さなくなった: " +
-			"managed codex セッションは materialize した MCP を見なくなる。" +
-			"docs/log/48 §8.3 を更新し、レジストリ変更時に Supervisor.Restart を呼ぶ配線が要る")
+		t.Fatal("a running app-server no longer re-reads config.toml: " +
+			"managed codex sessions stop seeing materialized MCP servers. " +
+			"Update docs/log/48 §8.3 and wire Supervisor.Restart to registry changes")
 	}
 }

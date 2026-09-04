@@ -1,11 +1,11 @@
 package kiro
 
-// kiro の認証は Builder ID / device-flow 型（docs/log/43 §2.2）。資格情報は
-// `~/.local/share/kiro-cli/data.sqlite3`（600・auth_kv テーブル）。ここでは Status() を
-// 出す: `kiro-cli whoami -f json` はクリーンな構造化 JSON を返し（`{accountType,email,
-// region,startUrl}`）、未認証は exit 1。対話ログイン（device flow start→poll・stdout
-// スクレイプ）と切断ルートは Track C（CP ルート）で足す（cursor の Track A も Status()
-// のみで、login フロー配線は Track C だった）。
+// kiro authenticates through a Builder ID / device flow (docs/log/43 §2.2). The
+// credentials live in `~/.local/share/kiro-cli/data.sqlite3` (mode 600, auth_kv table).
+// What this file exposes is Status(): `kiro-cli whoami -f json` returns clean structured
+// JSON (`{accountType,email,region,startUrl}`) and exits 1 when not authenticated. The
+// interactive login (device flow start→poll, scraping stdout) and the disconnect route are
+// added in Track C, the CP route.
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// whoamiOut is the shape of `kiro-cli whoami -f json`（実測 2.14.1）。
+// whoamiOut is the shape of `kiro-cli whoami -f json` (measured on 2.14.1).
 type whoamiOut struct {
 	AccountType string `json:"accountType"` // "BuilderId" | …
 	Email       string `json:"email"`
@@ -35,9 +35,10 @@ type statusResult struct {
 }
 
 // Status is the `kiro` field of GET /connections. supported=false hides the kind in
-// the Console（registry の available ゲート — cursor/copilot と同じ配線）: バイナリ
-// 無し = 未導入（オンデマンド導入前）。connected は実ログイン状態（whoami exit 0）。
-// probe は ~30s キャッシュして connections poll ごとの子プロセス起動を避ける。
+// the Console (the registry's available gate, wired the same way as cursor/copilot): no
+// binary means not installed, i.e. before on-demand installation. connected is the real
+// login state (whoami exit 0). The probe is cached for ~30s so a connections poll does not
+// spawn a child process every time.
 func Status() map[string]any {
 	if _, err := exec.LookPath(bin()); err != nil {
 		return map[string]any{"connected": false, "supported": false, "reason": "not_installed"}
@@ -107,22 +108,22 @@ func invalidateStatus() {
 // `kiro-cli login --license free --use-device-flow` prints a verification URL
 // (with the user_code pre-embedded) and a short code, then self-polls the AWS SSO
 // token endpoint until the user approves in a browser and finally writes the
-// credentials to ~/.local/share/kiro-cli/data.sqlite3（実測 docs/log/43 §2.2）. We hold
+// credentials to ~/.local/share/kiro-cli/data.sqlite3 (measured, docs/log/43 §2.2). We hold
 // the process on a PTY (shared agents.Flow plumbing) so we can scrape the URL/code
 // and keep the poller alive; the Console shows them and polls
 // /connections/kiro/poll until `whoami` reports authenticated. Like codex/cursor
 // this is start→poll (no pasted code — the code is only shown for the user to
-// confirm it matches in the browser). v1 is login-only（Builder ID / free）; the
-// API-key path (KIRO_API_KEY・Pro 以上) is deferred to Track D — injecting the key
-// into the TUI pane program would leak it into `ps`（docs/log/43 §2.2 / 決定 4）.
+// confirm it matches in the browser). v1 is login-only (Builder ID / free); the
+// API-key path (KIRO_API_KEY, Pro and above) is deferred to Track D — injecting the key
+// into the TUI pane program would leak it into `ps` (docs/log/43 §2.2, decision 4).
 
-// loginURLRe matches the device verification URL kiro prints（実測 §2.2）:
+// loginURLRe matches the device verification URL kiro prints (measured, §2.2):
 // https://view.awsapps.com/start/#/device?user_code=… — and the alternate
 // device.sso.<region>.amazonaws.com/… host; both carry "device".
 var loginURLRe = regexp.MustCompile(`https://\S*device\S*`)
 
-// loginCodeRe matches the short confirmation code（"XXXX-XXXX"）kiro prints so the
-// Console can show it beside the URL（device flow のコード確認 UX）。
+// loginCodeRe matches the short confirmation code ("XXXX-XXXX") kiro prints so the
+// Console can show it beside the URL, the device flow's code-confirmation UX.
 var loginCodeRe = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4}\b`)
 
 // The device-approval window is short; don't keep orphan login PTYs around.
@@ -188,7 +189,7 @@ func HandlePoll(w http.ResponseWriter, r *http.Request) {
 // HandleDisconnect signs kiro out (clears ~/.local/share/kiro-cli auth) via the
 // CLI. DELETE /connections/kiro.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
-	// logout はネットワークを叩き得る — タイムアウト無しだとハンドラが無期限に塞がる。
+	// logout can reach the network, so without a timeout this handler blocks indefinitely.
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	_ = exec.CommandContext(ctx, bin(), "logout").Run()

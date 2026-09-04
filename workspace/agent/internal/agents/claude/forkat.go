@@ -1,18 +1,21 @@
 package claude
 
-// 発言時点からの分岐（docs/log/55 §55.5）— claude だけが公式の口を持たないので、転写 jsonl を
-// 自前で切り詰めて分岐先の会話を作る。
+// Branching from a chosen message (docs/log/55 §55.5) — claude is the only kind without an
+// official entry point for it, so the transcript jsonl is truncated here by hand to build the
+// branch's conversation.
 //
-// なぜ手術が許されるか（ADR 0039）: claude 自身の `--fork-session` が書く jsonl と元ファイル
-// の差分は **sessionId だけ**（uuid/parentUuid/cwd/version は元のまま）と実測できている。
-// つまりここでやるのは「行の取捨」と「sessionId の書き換え」だけで、スキーマを自作しない。
-// 公式フラグ `--resume-session-at` は print モード専用（TUI では黙って無視される・実測）で、
-// AF の claude は TUI 起動しか無いため使えない。
+// Why that surgery is allowed (ADR 0039): measured, the jsonl claude's own `--fork-session`
+// writes differs from the original file in the sessionId alone (uuid/parentUuid/cwd/version
+// stay as they were). So all that happens here is choosing which lines to keep and rewriting
+// the sessionId; no schema is invented. The official flag `--resume-session-at` is print-mode
+// only (measured: the TUI ignores it silently), and AF's claude only ever launches the TUI,
+// so it cannot be used.
 //
-// なぜ切断点の検査が重いか: 切り方を間違えた jsonl は**起動はする**。壊れるのは次のターンで、
-// tool_use に対応する tool_result が無いと API が丸ごと弾く。ユーザーから見ると「分岐したら
-// エージェントが動かなくなった」で、原因が分岐にあるとは分からない。だから疑わしい切断点は
-// 作らずに断る。
+// Why the cut point is checked so heavily: a badly cut jsonl still launches. It breaks on the
+// next turn, where a tool_use with no matching tool_result makes the API reject the request
+// outright. To the user that reads as "the agent stopped working after I branched", with
+// nothing pointing at the branch as the cause. So a doubtful cut point is refused rather than
+// created.
 
 import (
 	"bytes"
@@ -59,11 +62,13 @@ func cutIndex(lines [][]byte, anchor string) (int, error) {
 			// point that only exists inside the sidechain.
 			return 0, errors.New("サブエージェントの発言からは分岐できません")
 		case fl.IsCompactSummary:
-			// 圧縮サマリはユーザーの発言として記録されるが、会話の内容ではなくその要約。
+			// A compaction summary is recorded as a user message, but it is a summary of the
+			// conversation rather than part of it.
 			return 0, errors.New("圧縮の要約からは分岐できません")
 		case !isUserPrompt(fl.Message.Content):
-			// **ここが一番踏みやすい罠**: ツール結果も type:"user" で載る。素朴に
-			// type=="user" で拾うと、ツール呼び出しと結果の間で切って会話を壊す。
+			// The easiest trap to fall into: a tool result is recorded as type:"user" too.
+			// Selecting naively on type=="user" cuts between a tool call and its result and
+			// breaks the conversation.
 			return 0, errors.New("ツールの実行結果からは分岐できません")
 		}
 		return i, nil
@@ -75,8 +80,8 @@ func cutIndex(lines [][]byte, anchor string) (int, error) {
 // point for "branch from just after this exchange". "" (no error) when the anchor is the
 // last exchange, i.e. the branch keeps everything.
 //
-// The anchor itself is validated the same way as a normal cut, so「続きから」can't be used
-// to sneak a branch off a tool result or a subagent line.
+// The anchor itself is validated the same way as a normal cut, so "from just after this
+// exchange" can't be used to sneak a branch off a tool result or a subagent line.
 func nextPromptUUID(lines [][]byte, anchor string) (string, error) {
 	at, err := cutIndex(lines, anchor)
 	if err != nil {
@@ -180,7 +185,7 @@ func blockIDs(content json.RawMessage, kind, idField string) []string {
 // prefix up to (not including) the anchored prompt, with sessionId retargeted to dstSid.
 //
 // Only sessionId changes. uuid/parentUuid/cwd/version travel as-is — that is exactly what
-// claude's own fork does (実測), and keeping the uuids is what makes an anchor still valid
+// claude's own fork does (measured), and keeping the uuids is what makes an anchor still valid
 // inside the branch (so a branch can be branched again at the same point).
 func buildForkLines(lines [][]byte, anchor, dstSid string) ([][]byte, error) {
 	cut, err := cutIndex(lines, anchor)
@@ -201,8 +206,9 @@ func buildForkLines(lines [][]byte, anchor, dstSid string) ([][]byte, error) {
 	for _, ln := range kept {
 		var obj map[string]json.RawMessage
 		if json.Unmarshal(ln, &obj) != nil {
-			// 解釈できない行は素通しする。落とすと uuid チェーンが切れうるし、そもそも
-			// 読めない行を「読めた」ことにするより原文のまま運ぶほうが安全。
+			// A line that cannot be parsed passes through untouched: dropping it could break the
+			// uuid chain, and carrying the original bytes is safer than treating an unreadable
+			// line as if it had been read.
 			out = append(out, append([]byte(nil), ln...))
 			continue
 		}

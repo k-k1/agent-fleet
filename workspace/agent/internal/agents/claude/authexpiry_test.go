@@ -1,10 +1,10 @@
 package claude
 
-// 資格情報の期限判定（docs/log/47 §4-8）。分類そのもの（2 つの epoch → 生きている/切れた）
-// と、ファイルから読む配線の両方を押さえる。
+// Credential expiry classification (docs/log/47 §4-8). Both the classification itself (two
+// epochs → alive/expired) and the wiring that reads it out of the file are pinned here.
 //
-// 誤検知の実害が非対称なので、境界は「切れていないと言う側」に寄せてある: 切れて
-// いないのに切れたと言えば、動いているセッションの送信を全部断ってしまう。
+// The damage from a false positive is asymmetric, so the boundary leans towards saying "not
+// expired": calling a live login expired refuses every send on a working session.
 
 import (
 	"fmt"
@@ -39,40 +39,41 @@ func TestExpiryClassification(t *testing.T) {
 		wantDaysLeft int
 	}{
 		{
-			name: "通常（残り25日）", access: now.Add(8 * time.Hour), refresh: now.Add(25 * day),
+			name: "normal (25 days left)", access: now.Add(8 * time.Hour), refresh: now.Add(25 * day),
 			wantKnown: true, wantDaysLeft: 25,
 		},
 		{
-			// CLI が起動時ヒントを出す条件そのもの（残り 1 日以下）。Console は 3 日前から出す。
-			name: "残り1日", access: now.Add(2 * time.Hour), refresh: now.Add(20 * time.Hour),
+			// Exactly the condition for the CLI's startup hint (a day or less). The Console
+			// starts showing it three days out.
+			name: "1 day left", access: now.Add(2 * time.Hour), refresh: now.Add(20 * time.Hour),
 			wantKnown: true, wantSoon: true, wantDaysLeft: 1,
 		},
 		{
-			name: "残り3日ちょうど", access: now.Add(time.Hour), refresh: now.Add(3 * day),
+			name: "exactly 3 days left", access: now.Add(time.Hour), refresh: now.Add(3 * day),
 			wantKnown: true, wantSoon: true, wantDaysLeft: 3,
 		},
 		{
-			// refresh は切れたがアクセストークンはまだ生きている: 更新はもうできないが、
-			// このトークンが切れるまでターンは走る。まだ dead と名乗ってはいけない（送信を
-			// 断ると、まだ動くセッションを止めることになる）。ただし猶予は数時間なので、
-			// カードの予告としては「まもなく」— Soon は立てる。
-			name: "refresh 切れ・access 生存", access: now.Add(3 * time.Hour), refresh: now.Add(-time.Hour),
+			// The refresh has expired but the access token is still alive: nothing can renew
+			// it any more, yet turns keep running until this token expires. It must not call
+			// itself dead (refusing sends would stop a session that still works). The grace is
+			// only hours, though, so the card warns "soon" — Soon is set.
+			name: "refresh expired, access alive", access: now.Add(3 * time.Hour), refresh: now.Add(-time.Hour),
 			wantKnown: true, wantSoon: true, wantDaysLeft: 0,
 		},
 		{
-			// 実際に起きる形: 最後に発行されたアクセストークン（refresh 期限の直前に
-			// 取れたもの）も切れている。
-			name: "両方切れ", access: now.Add(-8*day + 8*time.Hour), refresh: now.Add(-8 * day),
+			// The shape that actually happens: the last access token issued (taken just before
+			// the refresh deadline) has expired too.
+			name: "both expired", access: now.Add(-8*day + 8*time.Hour), refresh: now.Add(-8 * day),
 			wantKnown: true, wantDead: true,
 		},
 		{
-			// 環境変数のトークンで走っているときは、この資格情報ファイルは使われない。
-			name: "env トークン運転", access: now.Add(-8*day + 8*time.Hour), refresh: now.Add(-8 * day),
+			// While running on a token from the environment, this credentials file is not used.
+			name: "running on an env token", access: now.Add(-8*day + 8*time.Hour), refresh: now.Add(-8 * day),
 			envToken: true,
 		},
 		{
-			// claude 自身が判断を降りる形（access が refresh + 3d より先）。
-			name: "サブスク OAuth の形ではない", access: now.Add(30 * day), refresh: now.Add(2 * day),
+			// The shape where claude itself declines to judge (access beyond refresh + 3d).
+			name: "not the subscription OAuth shape", access: now.Add(30 * day), refresh: now.Add(2 * day),
 		},
 	}
 	for _, c := range cases {
@@ -96,18 +97,18 @@ func TestExpiryClassification(t *testing.T) {
 	}
 }
 
-// refreshTokenExpiresAt を持たないレコード（claude 自身も同じ条件で判断を降りる）は
-// 「切れていない」ではなく「分からない」— 判定に使わせない。
+// A record without refreshTokenExpiresAt (claude itself declines to judge on the same
+// condition) is "unknown", not "not expired" — it must not be used to decide.
 func TestExpiryNoRefreshDeadline(t *testing.T) {
 	var c credsFile
 	c.ClaudeAiOauth.AccessToken = "x"
 	c.ClaudeAiOauth.ExpiresAt = ms(time.Now().Add(-time.Hour))
 	if e := expiryOf(c, false); e.Known || e.Dead(time.Now()) {
-		t.Fatalf("Known=%v Dead=%v — 材料が無いのに判断している", e.Known, e.Dead(time.Now()))
+		t.Fatalf("Known=%v Dead=%v — judging with nothing to judge on", e.Known, e.Dead(time.Now()))
 	}
 }
 
-// writeCredsExpiry は隔離した CLAUDE_CONFIG_DIR に資格情報ファイルを置く。
+// writeCredsExpiry puts a credentials file into an isolated CLAUDE_CONFIG_DIR.
 func writeCredsExpiry(t *testing.T, dir string, access, refresh time.Time) {
 	t.Helper()
 	body := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"tok","refreshToken":"rt","expiresAt":%d,`+
@@ -118,8 +119,8 @@ func writeCredsExpiry(t *testing.T, dir string, access, refresh time.Time) {
 	resetCredCache()
 }
 
-// isolateClaudeConfig points ConfigDir() at a temp dir. 実フリートの資格情報を読まない
-// ため（テストが実 CLI の設定を触る事故はこのリポジトリで一度起きている）。
+// isolateClaudeConfig points ConfigDir() at a temp dir so the real fleet's credentials are never
+// read (a test touching the real CLI's config has happened once in this repository).
 func isolateClaudeConfig(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -134,26 +135,27 @@ func isolateClaudeConfig(t *testing.T) string {
 func TestCredentialExpiryFromFile(t *testing.T) {
 	dir := isolateClaudeConfig(t)
 
-	// ファイルが無い＝未接続。判断材料が無いので Known=false（＝送信を断らない）。
+	// No file = not connected. With nothing to judge on, Known=false (= sends are not refused).
 	if e := CredentialExpiry(); e.Known {
-		t.Fatalf("資格情報が無いのに Known=true: %+v", e)
+		t.Fatalf("Known=true with no credentials: %+v", e)
 	}
 	if AuthExpired() {
-		t.Fatal("資格情報が無いだけで認証切れを名乗っている")
+		t.Fatal("claiming expired auth merely because there are no credentials")
 	}
 
 	now := time.Now()
 	writeCredsExpiry(t, dir, now.Add(-10*24*time.Hour+8*time.Hour), now.Add(-10*24*time.Hour))
 	if !AuthExpired() {
-		t.Fatal("両方切れた資格情報を生きていると判定している")
+		t.Fatal("credentials with both deadlines past are judged alive")
 	}
 
-	// 再認証で書き戻された資格情報がすぐ効くこと（stat キャッシュが張り付かない）。
+	// Credentials written back by a re-login must take effect at once (the stat cache must not
+	// stick).
 	writeCredsExpiry(t, dir, now.Add(8*time.Hour), now.Add(30*24*time.Hour))
 	if AuthExpired() {
-		t.Fatal("再認証後も認証切れのまま — キャッシュが古い判定を保持している")
+		t.Fatal("still expired after a re-login — the cache is holding the stale verdict")
 	}
 	if got := oauthToken(); got != "tok" {
-		t.Errorf("oauthToken = %q, want %q（同じ読みを共有していること）", got, "tok")
+		t.Errorf("oauthToken = %q, want %q (the same read must be shared)", got, "tok")
 	}
 }

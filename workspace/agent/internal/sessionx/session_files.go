@@ -1,13 +1,14 @@
 package sessionx
 
-// 「このセッションが直したファイル」の集計（docs/log/68 / decisions/0049）。
+// Aggregation of "the files this session changed" (docs/log/68 / decisions/0049).
 //
-// 母集合は転写側の編集ツール呼び出しで、git の作業ツリー状態は Console が
-// `(repo, rel)` を鍵に GET /fs/changes と突き合わせる。ここが返すのは前者だけ。
+// The population is the edit tool calls in the transcript; the git working-tree state is
+// joined in by the Console against GET /fs/changes, keyed by `(repo, rel)`. Only the former
+// is produced here.
 //
-// 置き場は ToDo（CollectTasks → resp["tasks"]）と同じ——**窓ではなく全転写**を畳んで
-// /messages の同じレスポンスに同梱する。専用エンドポイントも 2 本目のポーリングも
-// 作らない（決定 3）。
+// It rides along where the todos do (CollectTasks → resp["tasks"]): the whole transcript, not
+// a window, is folded and included in the same /messages response. No dedicated endpoint and
+// no second poll (decision 3).
 
 import (
 	"net/http"
@@ -215,17 +216,17 @@ func fileAggHead(b []byte) string {
 	return string(b)
 }
 
-// ── コミット済みの判定（docs/log/68 P2）────────────────────────────────────────────
+// ── Deciding what is committed (docs/log/68 P2) ──────────────────────────────────
 //
-// 帯の行は「エージェントが編集した」ものだが、作業ツリーに差分が残っていない行が出る。
-// P0 ではそれを「差分なし」の一語で出していた——コミットされたのか、取り消されたのかを
-// 区別できなかったからである。
+// A row in the strip means "the agent edited this", yet some rows have no diff left in the
+// working tree. P0 showed all of those as the single word "no changes", because committed and
+// reverted could not be told apart.
 //
-// ⚠️ ここで足すのは **「コミット済み」だけ**。「取り消された」は言わない。
-// 差分が無くコミットにも出てこない理由は他にもある（このセッションの開始より前の
-// コミットに入っていた・別の作業コピーで起きた・ファイルが移動した）。**肯定できるのは
-// 「コミットに現れた」という事実だけ**で、残りを「取り消し」と断ずるのは、根拠のない
-// 断定を UI に書くことになる。残りは「差分なし」のままにする。
+// What is added here is only "committed"; "reverted" is never claimed. There are other reasons
+// for having no diff and not appearing in a commit (it was already in a commit from before the
+// session started, it happened in another working copy, the file was moved). The only fact
+// that can be asserted is "it appeared in a commit"; calling the rest "reverted" would write an
+// unfounded claim into the UI. Those rows stay "no changes".
 
 // maxCommitScan bounds the log walk. A session that produced more commits than this is
 // well past the point where a per-file badge is the interesting information.
@@ -234,10 +235,10 @@ const maxCommitScan = 200
 // HandleSessionCommittedFiles reports the repo-relative paths that appeared in a commit
 // in this session's working copy SINCE the session was created.
 //
-// ⚠️ 時刻が根拠なので、同じ作業コピーで並行していた別セッションのコミットも入る。
-// それでも実害が小さいのは、突き合わせる相手が**このセッションが編集したファイル**に
-// 限られているからで、「自分が触ったファイルが、その後コミットされた」という表示は
-// 誰がコミットしたかに関わらず正しい。
+// The evidence is a timestamp, so commits made in parallel by another session in the same
+// working copy are included too. That does little harm because the result is only joined
+// against the files THIS session edited, and "a file you touched was committed afterwards" is
+// true regardless of who committed it.
 func HandleSessionCommittedFiles(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -257,7 +258,7 @@ func HandleSessionCommittedFiles(w http.ResponseWriter, r *http.Request) {
 
 // committedSince lists the paths touched by commits in dir since `since` (RFC3339).
 // Any failure — not a git working copy, no such directory, an unparsable timestamp —
-// returns an empty list: the badge simply stays 差分なし, which is the honest degradation.
+// returns an empty list: the badge simply stays "no changes", which is the honest degradation.
 func committedSince(dir, since string) []string {
 	if dir == "" || since == "" {
 		return []string{}

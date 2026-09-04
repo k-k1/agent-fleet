@@ -1,14 +1,15 @@
 package cursor
 
-// 実バイナリ契約テスト（opt-in）: AF_CURSOR_LIVE=1 のときだけ実 `cursor-agent acp` を
-// 子プロセスとして起動し、docs/log/40 の managed 契約が実 CLI で成立することを検証する —
-// spawn→initialize→session/new→prompt(completed)→転写がメモリ構築される→（別プロセスで）
-// session/load resume→文脈保持＋転写がリプレイから再構築される。認証は環境の Cursor
-// ログイン（~/.config/cursor/auth.json の ambient 認証）前提。
-// 実行例: AF_CURSOR_LIVE=1 go test -run TestLive -v ./internal/agents/cursor/
+// Real-binary contract test (opt-in): only with AF_CURSOR_LIVE=1 does it start a real
+// `cursor-agent acp` as a child process and check that the managed contract of docs/log/40 holds
+// against the real CLI - spawn -> initialize -> session/new -> prompt(completed) -> transcript
+// built in memory -> (in a separate process) session/load resume -> context kept and the
+// transcript rebuilt from the replay. Authentication assumes the environment's Cursor login
+// (ambient auth in ~/.config/cursor/auth.json).
+// Run with: AF_CURSOR_LIVE=1 go test -run TestLive -v ./internal/agents/cursor/
 //
-// 週次リリースの CLI なので、これがドリフト検知の一次防衛線（ACP の sessionUpdate 判別子・
-// session/load リプレイ形状・stopReason が変わればここで落ちる）。
+// The CLI ships weekly, so this is the first line of drift detection: it fails here if the ACP
+// sessionUpdate discriminator, the session/load replay shape or stopReason changes.
 
 import (
 	"os"
@@ -23,7 +24,7 @@ import (
 func liveGate(t *testing.T) {
 	t.Helper()
 	if os.Getenv("AF_CURSOR_LIVE") != "1" {
-		t.Skip("AF_CURSOR_LIVE=1 で実 CLI 契約テストを有効化")
+		t.Skip("set AF_CURSOR_LIVE=1 to enable the real-CLI contract test")
 	}
 }
 
@@ -79,14 +80,14 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 	if err := h.Send(agents.TurnInput{Prompt: "Reply with exactly: LIVE-OK", ClientMessageID: "lm1"}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	waitState(t, h, agents.TurnRunning) // spawn の初期 Completed を追い越さないよう turn 開始を待つ
+	waitState(t, h, agents.TurnRunning) // wait for the turn to start so we do not race past spawn's initial Completed
 	waitCompleted(t, h)
 
 	sid := h.sid
 	if sid == "" || sids.Read("live-slot-1") != sid {
 		t.Fatalf("sid not captured: %q store=%q", sid, sids.Read("live-slot-1"))
 	}
-	// 転写がメモリ構築されている（ACP はローカルファイルを書かない）。
+	// The transcript is built in memory (ACP writes no local file).
 	turns := h.buf.snapshot()
 	found := false
 	for _, tn := range turns {
@@ -98,8 +99,8 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 		t.Fatalf("assistant turn missing from in-memory transcript: %+v", turns)
 	}
 
-	// 別プロセスでの resume（session/load）: 子を落として spawn し直し、文脈と転写が
-	// 残っていることを実プロンプトで確認する。
+	// Resume in a separate process (session/load): kill the child, spawn again, and confirm with a
+	// real prompt that the context and the transcript survived.
 	h.mu.Lock()
 	oldCmd := h.cmd
 	h.alive = false
@@ -112,7 +113,7 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 	if h.sid != sid {
 		t.Fatalf("resume changed sid: %q → %q", sid, h.sid)
 	}
-	// session/load リプレイで転写が再構築されている（前ターンが残る）。
+	// The session/load replay rebuilt the transcript (the previous turn is still there).
 	replayed := h.buf.snapshot()
 	if len(replayed) == 0 {
 		t.Fatalf("transcript not rebuilt from session/load replay")

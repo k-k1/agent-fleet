@@ -1,23 +1,24 @@
 package main
 
-// tmux の隔離ヘルパ 3 本（`paneShowing` / `isolatedTmuxSocket` / `isolateAgentState`・計 60 行）は
-// **package main と internal/sessionx に同じ中身で 2 本立っている。**
+// The three tmux isolation helpers (`paneShowing` / `isolatedTmuxSocket` / `isolateAgentState`,
+// 60 lines in total) exist twice with identical contents: in package main and in
+// internal/sessionx.
 //
-// 🔴 **1 本化はできない。** Go はテストヘルパ（`_test.go` の中身）をパッケージ跨ぎで共有できず、
-// 共有するには「テスト専用のものを製品パッケージへ公開する」しかない——それは移送で
-// internal を切った意味を消す。**写しが 2 本あること自体は正しい設計。**
+// They cannot be merged. Go cannot share test helpers (the contents of `_test.go`) across
+// packages, and the only way to share them would be to export test-only code from a production
+// package - which undoes the point of splitting internal out. Two copies is the correct design.
 //
-// 危ないのは**写しが割れること**のほうで、割れても**両方ともコンパイルが通り全テストが緑**になる。
-// そのとき何が起きるかは実測されている: `isolateAgentState` は本物の `~/.claude` などへ
-// materialize してしまう事故を防ぐための隔離で、**片方だけ古くなると、そちら側のテストが
-// 開発者の実設定を読み書きする**（#335 で 7 行を両方へ入れたのはこの理由）。
+// The danger is the copies drifting apart, and when they do, both still compile and the whole
+// suite stays green. What happens then has been measured: `isolateAgentState` is the isolation
+// that keeps a test from materializing into the real `~/.claude` and friends, so when one copy
+// falls behind, the tests on that side read and write the developer's real configuration.
 //
-// なのでこの検査の役目は 1 つだけ: **割れたら赤くする。** 直し方は「両方に同じ変更を入れる」で、
-// どちらが原本かは問わない（byte 一致だけを要求する）。
+// So this check has exactly one job: go red when they drift. The fix is to make the same change
+// in both copies; which one is the original does not matter, only byte equality is required.
 //
-// 📌 相対パスは**この検査が置かれた位置から**解決する（package main の test は
-// workspace/agent が cwd なので `internal/sessionx/…` で届く）。README §4 の
-// 「パターンではなく解決結果で判定する」に従い、**読めなかったら Skip ではなく Fatal**。
+// Relative paths resolve from where this check lives (a package main test runs with
+// workspace/agent as cwd, so `internal/sessionx/...` reaches). Following README §4, "judge by
+// the resolved result, not by the pattern": an unreadable file is a Fatal, not a Skip.
 
 import (
 	"go/ast"
@@ -27,13 +28,13 @@ import (
 	"testing"
 )
 
-// 写しを持っている 2 ファイル。どちらが原本でもよい。
+// The two files holding the copies. Either one may serve as the original.
 const (
 	tmuxHelpersMain     = "session_rate_limit_state_test.go"
 	tmuxHelpersSessionx = "internal/sessionx/testhelp_test.go"
 )
 
-// 両側に同じ中身で在るべきヘルパ。
+// The helpers that must be identical on both sides.
 var tmuxSharedHelpers = []string{"paneShowing", "isolatedTmuxSocket", "isolateAgentState"}
 
 // funcSource returns the exact source bytes of a top-level func, comments excluded
@@ -42,9 +43,9 @@ func funcSource(t *testing.T, path, name string) string {
 	t.Helper()
 	src, err := os.ReadFile(path)
 	if err != nil {
-		// 🔥 Skip にしない。移送でパスが変われば「読めないので何も検査しない」形になり、
-		// この検査は無言のまま消える。
-		t.Fatalf("%s を読めない（移送でパスが変わったならこの検査の定数も直すこと）: %v", path, err)
+		// Not a Skip: if a move changes the path, the check degrades into "unreadable, so
+		// nothing is checked" and disappears without a word.
+		t.Fatalf("cannot read %s (if a move changed the path, fix the constants in this check too): %v", path, err)
 	}
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, src, 0)
@@ -58,13 +59,13 @@ func funcSource(t *testing.T, path, name string) string {
 		}
 		return string(src[fset.Position(fd.Pos()).Offset:fset.Position(fd.End()).Offset])
 	}
-	t.Fatalf("%s に %s が無い（改名したなら tmuxSharedHelpers も直すこと）", path, name)
+	t.Fatalf("%s has no %s (if it was renamed, fix tmuxSharedHelpers too)", path, name)
 	return ""
 }
 
 func TestTmuxTestHelpersStayInSync(t *testing.T) {
 	if len(tmuxSharedHelpers) == 0 {
-		t.Fatal("比べるヘルパが 0 本＝この検査が無言化している")
+		t.Fatal("zero helpers to compare - this check has gone silent")
 	}
 	for _, name := range tmuxSharedHelpers {
 		a := funcSource(t, tmuxHelpersMain, name)
@@ -72,9 +73,9 @@ func TestTmuxTestHelpersStayInSync(t *testing.T) {
 		if a == b {
 			continue
 		}
-		t.Errorf("%s の写しが割れている: %s と %s で中身が違う。\n"+
-			"1 本化はできない（Go はテストヘルパをパッケージ跨ぎで共有できない）ので、"+
-			"**両方に同じ変更を入れて揃えること**。\n--- %s ---\n%s\n--- %s ---\n%s",
+		t.Errorf("the copies of %s have drifted: the contents differ between %s and %s.\n"+
+			"They cannot be merged into one (Go cannot share test helpers across packages), so "+
+			"make the same change in both and bring them back in sync.\n--- %s ---\n%s\n--- %s ---\n%s",
 			name, tmuxHelpersMain, tmuxHelpersSessionx, tmuxHelpersMain, a, tmuxHelpersSessionx, b)
 	}
 }

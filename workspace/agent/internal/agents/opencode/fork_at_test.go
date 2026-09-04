@@ -1,11 +1,12 @@
 package opencode
 
-// 発言時点からの分岐（docs/log/55）の opencode 側ユニットテスト。
+// Unit tests for the opencode side of forking at a message (docs/log/55).
 //
-// 守りたい契約は 2 つ。① ResolveForkAt が「この会話のメッセージ」以外を通さないこと
-// （通ると、ユーザーが指したのと無関係な地点で分岐した会話が、それらしい見た目で生える）。
-// ② serveForkSession が分岐点を messageID として送ること — ここが空のまま通ると会話まるごと
-// 分岐に黙って化ける。
+// Two contracts are protected. (1) ResolveForkAt admits nothing but a message of THIS
+// conversation; let anything else through and a conversation forked at a point unrelated to
+// what the user picked appears, looking perfectly plausible. (2) serveForkSession sends the
+// fork point as messageID; if that goes through empty it silently turns into a fork of the
+// whole conversation.
 
 import (
 	"encoding/json"
@@ -44,7 +45,8 @@ func forkAtStore(t *testing.T) session.Meta {
 			t.Fatal(err)
 		}
 	}
-	// 分岐点を渡せるのは serve API 経由＝managed だけ（ResolveForkAt が経路も見る）。
+	// A fork point can only be passed through the serve API, i.e. managed (ResolveForkAt
+	// checks the route too).
 	return session.Meta{Dir: dir, Name: "n", Kind: session.KindOpencode, Driver: session.DriverManaged}
 }
 
@@ -54,15 +56,17 @@ func TestResolveForkAtPassesAnchorThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveForkAt(msg_1) error: %v", err)
 	}
-	// opencode の messageID は排他（指定メッセージの手前で打ち切る）なので、Console が
-	// 指したアンカーをそのまま渡すのが正しい — ここで 1 つずらすと分岐点が 1 往復ずれる。
+	// opencode's messageID is exclusive (it cuts just before the named message), so passing
+	// the anchor the Console picked through unchanged is correct; shifting it by one here
+	// moves the fork point by a whole exchange.
 	if got != "msg_1" {
 		t.Fatalf("ResolveForkAt(msg_1) = %q; want msg_1", got)
 	}
 }
 
-// 「この発言の続きから」（Include）: 次のユーザー発言の手前まで＝間の回答は全部引き継ぐ。
-// 次が無ければ会話まるごと（""）が正解 — 最後まで残すとはそういうこと。
+// "continue from this message" (Include): cut just before the NEXT user message, so every
+// reply in between is carried over. With no next message the whole conversation ("") is the
+// right answer - that is what keeping everything to the end means.
 func TestResolveForkAtInclude(t *testing.T) {
 	db := newOpencodeLiveStore(t)
 	dir := "/home/dev/repos/y"
@@ -107,8 +111,8 @@ func TestResolveForkAtRejectsUnusableAnchors(t *testing.T) {
 	for _, tc := range []struct{ name, anchor string }{
 		{"empty", ""},
 		{"unknown", "msg_nope"},
-		// 子（サブエージェント）会話のメッセージ: 親の id 並びに属さないので、これで
-		// 親を分岐すると無関係な地点で切れる。
+		// A message of the child (subagent) conversation: it is not part of the parent's
+		// id sequence, so forking the parent on it cuts at an unrelated point.
 		{"sidechain", "msg_9"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,8 +124,9 @@ func TestResolveForkAtRejectsUnusableAnchors(t *testing.T) {
 	}
 }
 
-// CLI(TUI) ルートは分岐点を渡す口が無い。これは「アンカーが悪い」ではなく「この経路では
-// できない」なので、ハンドラが fork_at_unsupported を返せるよう ErrForkAtRoute で答える。
+// The CLI (TUI) route has no way to pass a fork point. That is not "a bad anchor" but "this
+// route cannot do it", so the answer wraps ErrForkAtRoute and the handler can return
+// fork_at_unsupported.
 func TestResolveForkAtRefusesCLIRoute(t *testing.T) {
 	m := forkAtStore(t)
 	m.Driver = session.DriverTUI
@@ -131,7 +136,7 @@ func TestResolveForkAtRefusesCLIRoute(t *testing.T) {
 	}
 	if !errors.Is(err, agents.ErrForkAtRoute) {
 		t.Fatalf("error = %v; want it to wrap ErrForkAtRoute so the handler can say "+
-			"「この経路ではできない」 instead of 「この分岐点は使えない」", err)
+			"\"this route cannot do it\" instead of \"this fork point is unusable\"", err)
 	}
 }
 
@@ -146,7 +151,7 @@ func TestServeForkSessionBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// 分岐点あり: messageID を載せる。
+	// With a fork point: messageID is included.
 	id, err := serveForkSession(srv.URL, "ses_src", "/dir", "msg_7")
 	if err != nil {
 		t.Fatalf("serveForkSession error: %v", err)
@@ -165,8 +170,9 @@ func TestServeForkSessionBody(t *testing.T) {
 		t.Fatalf("body = %v; want messageID=msg_7", body)
 	}
 
-	// 分岐点なし: 会話まるごと分岐（従来どおり空オブジェクト）。messageID を空文字で
-	// 送ると opencode 側の ^msg パターンに弾かれるので、キーごと落ちていること。
+	// Without a fork point: fork the whole conversation (an empty object, as before). Sending
+	// messageID as an empty string is rejected by opencode's ^msg pattern, so the key itself
+	// must be absent.
 	if _, err := serveForkSession(srv.URL, "ses_src", "/dir", ""); err != nil {
 		t.Fatalf("serveForkSession (whole) error: %v", err)
 	}
@@ -184,15 +190,18 @@ func TestServeForkSessionRejectedAnchorSurfaces(t *testing.T) {
 	if err == nil {
 		t.Fatal("serveForkSession(400) = nil error; want one")
 	}
-	// 「応答を解釈できません」だと daemon の不調に見える。分岐点が拒否されたと分かる文言に。
+	// "could not parse the answer" would read as a sick daemon; the wording has to say the
+	// fork point was rejected. The needle stays Japanese because the message it matches is
+	// product text (serveForkSession).
 	if !strings.Contains(err.Error(), "分岐点") {
 		t.Fatalf("error = %v; want it to name the anchor", err)
 	}
 }
 
 func TestBuildLaunchRefusesForkAtOnCLIRoute(t *testing.T) {
-	// CLI ルートの `--session <src> --fork` には分岐点を渡す引数が無い。ここで黙って
-	// 落とすと「地点を指したのに会話まるごと分岐」になるので、起動を拒否する。
+	// The CLI route's `--session <src> --fork` has no argument for a fork point. Dropping it
+	// silently would mean "you picked a point but got the whole conversation", so the launch
+	// is refused instead.
 	m := session.Meta{Dir: t.TempDir(), Name: "n", Kind: session.KindOpencode, ForkFrom: "ses_src", ForkAt: "msg_1"}
 	if _, err := (agentImpl{}).BuildLaunch(m, agents.LaunchOpts{}); err == nil {
 		t.Fatal("BuildLaunch with ForkAt on the CLI route = nil error; want a refusal")

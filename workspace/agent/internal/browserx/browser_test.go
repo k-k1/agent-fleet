@@ -279,15 +279,16 @@ func TestBrowserInputConversionAndLatestFrame(t *testing.T) {
 	}
 }
 
-// TestBrowserScreencastFrameArrivingBeforeStartReturns: Page.startScreencast の
-// 応答より**先**に届いたフレームを取りこぼさない。
+// TestBrowserScreencastFrameArrivingBeforeStartReturns: a frame that arrives BEFORE
+// Page.startScreencast's response must not be dropped.
 //
-// Chromium は startScreencast を処理した時点で最初のフレームを出し、CDP の読み取り
-// ループはその event を、call から戻るのを待たずにマネージャへ渡す。世代を call の
-// **後**に publish していると、このフレームは gen==0 として ACK なしで捨てられる。
-// 捨てた 1 枚は戻ってこない: Chromium は未 ACK のフレームが溜まると撮影を止め、描画
-// が済んだページは自分では次のフレームを作らないので、cast はそのまま死ぬ（実測:
-// 世代の publish を 3 秒遅らせると実 Chromium 相手に 3 枚落ちて 60 秒フレーム無し）。
+// Chromium emits the first frame the moment it processes startScreencast, and the CDP read
+// loop hands that event to the manager without waiting for the call to return. Publishing
+// the generation AFTER the call means this frame is seen as gen==0 and discarded without an
+// ACK. A discarded frame never comes back: Chromium stops capturing once unACKed frames pile
+// up, and a page that has finished rendering produces no further frame on its own, so the
+// cast simply dies. Measured: delaying the generation publish by 3 seconds against a real
+// Chromium dropped 3 frames and left 60 seconds with no frame at all.
 func TestBrowserScreencastFrameArrivingBeforeStartReturns(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := fakeBrowserManager(cdp)
@@ -808,11 +809,12 @@ func TestBrowserChromiumIntegration(t *testing.T) {
 		if len(frame) < 2 || frame[0] != 0xff || frame[1] != 0xd8 {
 			t.Fatalf("screencast frame is not JPEG: %x", frame[:min(len(frame), 8)])
 		}
-	// 10s は上の readiness 待ちと同じ値、つまり「ハングの backstop」であって測定では
-	// ない。armed な cast の 1 枚目は idle な手元で 42〜58ms で届き、届かないときは
-	// 5s でも 60s でも届かない（TestBrowserScreencastFrameArrivingBeforeStartReturns
-	// の未 ACK 取りこぼしがその形）。混んだランナーのマージンをここで買うより、
-	// 隣の待ちと値を揃えて読みやすくしておく。
+	// 10s is the same value as the readiness wait above, i.e. a backstop against a hang, not
+	// a measurement. On an idle machine an armed cast's first frame arrives in 42-58ms, and
+	// when it does not arrive it does not arrive at 5s or at 60s either (the unACKed drop of
+	// TestBrowserScreencastFrameArrivingBeforeStartReturns has that shape). Rather than buy
+	// margin for a busy runner here, keep the value equal to the neighbouring wait so it
+	// reads clearly.
 	case <-time.After(10 * time.Second):
 		t.Fatal("Chromium did not emit a screencast frame")
 	}

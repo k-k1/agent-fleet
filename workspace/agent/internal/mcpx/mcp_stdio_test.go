@@ -97,7 +97,8 @@ func TestMCPGetSessionOutputRequestsTailClip(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	t.Setenv("AGENT_ADDR", u.Host)
 
-	// tail は常時付く（オペレーターのコンテキスト防衛 — 上書き口なし）。since は併存。
+	// tail is always attached to defend the operator's context, with no way to override
+	// it. since coexists with it.
 	args, _ := json.Marshal(map[string]any{"name": "slot01", "since": 7})
 	params, _ := json.Marshal(map[string]any{"name": "get_session_output", "arguments": json.RawMessage(args)})
 	resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
@@ -108,7 +109,7 @@ func TestMCPGetSessionOutputRequestsTailClip(t *testing.T) {
 		t.Fatalf("MCP response should pass the body through: %s", resp)
 	}
 
-	// since 無しでも tail は付く（会話ID無し = カーソル記憶は効かない）。
+	// tail is attached even without since (no conversation id means no cursor memory).
 	args, _ = json.Marshal(map[string]any{"name": "slot01"})
 	params, _ = json.Marshal(map[string]any{"name": "get_session_output", "arguments": json.RawMessage(args)})
 	_ = mcpStdioCall(mcpReq{ID: json.RawMessage(`2`), Params: params})
@@ -117,9 +118,10 @@ func TestMCPGetSessionOutputRequestsTailClip(t *testing.T) {
 	}
 }
 
-// TestMCPGetSessionOutputCursorMemory pins the since 既定化: 会話別に前回 cursor を
-// 記憶し、省略時はその続きから読む。明示 since（0 含む）が最優先。続き読みで新規
-// 出力ゼロのときは、その意味を本文で伝える。
+// TestMCPGetSessionOutputCursorMemory pins how since defaults: the previous cursor is
+// remembered per conversation and, when since is omitted, reading continues from there.
+// An explicit since (including 0) wins over the memory. When a continued read finds no
+// new output, the body says what that means.
 func TestMCPGetSessionOutputCursorMemory(t *testing.T) {
 	withTempHome(t)
 	var got string
@@ -142,13 +144,14 @@ func TestMCPGetSessionOutputCursorMemory(t *testing.T) {
 		return string(mcpStdioCall(mcpReq{ID: json.RawMessage(id), Params: params}))
 	}
 
-	// 1回目: 記憶なし → since は付かない。返却 cursor=5 が記憶される。
+	// First call: nothing remembered, so no since. The returned cursor=5 is remembered.
 	call(`1`, map[string]any{"name": "slot01"})
 	if want := "/sessions/slot01/output?tail=32768"; got != want {
 		t.Fatalf("first call path = %q, want %q", got, want)
 	}
 
-	// 2回目: since 省略 → 記憶した 5 の続きから。新規出力ゼロは説明文に差し替わる。
+	// Second call: since omitted, so it continues from the remembered 5. No new output is
+	// replaced by an explanation.
 	next = `{"output":"","cursor":5,"clipped":false}`
 	resp := call(`2`, map[string]any{"name": "slot01"})
 	if want := "/sessions/slot01/output?tail=32768&since=5"; got != want {
@@ -158,7 +161,7 @@ func TestMCPGetSessionOutputCursorMemory(t *testing.T) {
 		t.Fatalf("empty-diff response should explain itself: %s", resp)
 	}
 
-	// 3回目: since=0 の明示は記憶より優先（先頭から読み直し）。
+	// Third call: an explicit since=0 wins over the memory and re-reads from the start.
 	next = `{"output":"全文","cursor":6,"clipped":false}`
 	resp = call(`3`, map[string]any{"name": "slot01", "since": 0})
 	if want := "/sessions/slot01/output?tail=32768&since=0"; got != want {
@@ -168,7 +171,8 @@ func TestMCPGetSessionOutputCursorMemory(t *testing.T) {
 		t.Fatalf("explicit since must not be rewritten: %s", resp)
 	}
 
-	// 4回目: 3回目の cursor=6 が新しい既定になっている。別セッション名は独立。
+	// Fourth call: the third call's cursor=6 is the new default. A different session name
+	// is tracked independently.
 	next = `{"output":"x","cursor":9,"clipped":false}`
 	call(`4`, map[string]any{"name": "slot01"})
 	if want := "/sessions/slot01/output?tail=32768&since=6"; got != want {
@@ -459,7 +463,7 @@ func TestMCPStopResumeSessionRelay(t *testing.T) {
 	}
 }
 
-// mcpMemoryStub は Agent REST を差し替え、叩かれたパスを記録する。
+// mcpMemoryStub replaces the Agent REST endpoint and records the paths that were called.
 func mcpMemoryStub(t *testing.T, body func(path string) string) *[]string {
 	t.Helper()
 	var paths []string
@@ -496,9 +500,10 @@ func mcpIsError(t *testing.T, resp string) bool {
 	return parsed.Result.IsError
 }
 
-// docs/log/39 P4: メモリの持ち出し／取り込みは MCP に出さない。P3 で export に
-// secret スキャン＋本人の明示 ack を課したのに、モデルが ack できる経路を作ると
-// 防御を迂回する二つ目の出口になる。広告ツール集合がゲートなので、ここで固定する。
+// docs/log/39 P4: memory export and import are not exposed over MCP. P3 put a secret
+// scan plus the user's explicit ack in front of export, and a path where the model can
+// give that ack would be a second exit that walks around the defence. The advertised tool
+// set is the gate, so it is pinned here.
 func TestMCPMemoryToolsExposeNoExportOrImport(t *testing.T) {
 	withWriteEnabled(t, true)
 	names := map[string]bool{}
@@ -515,7 +520,7 @@ func TestMCPMemoryToolsExposeNoExportOrImport(t *testing.T) {
 			t.Errorf("tool %q exposes the memory transfer path to the model", name)
 		}
 	}
-	// 読み取り専用の会話には restore を一切広告しない。
+	// A read-only conversation is never offered restore at all.
 	withWriteEnabled(t, false)
 	for _, tool := range mcpStdioToolList() {
 		if tool["name"] == "restore_memory_snapshot" {
@@ -524,8 +529,8 @@ func TestMCPMemoryToolsExposeNoExportOrImport(t *testing.T) {
 	}
 }
 
-// 範囲の省略は「全体」ではなく拒否。モデルがフィールドを落としただけでメモリ全体が
-// 巻き戻ると、利用者が承認した範囲を超えた操作になる。
+// An omitted scope is a rejection, not "everything". If the model merely dropping a field
+// rolled the whole memory back, the operation would go beyond what the user approved.
 func TestMCPRestoreMemoryRequiresExplicitScope(t *testing.T) {
 	paths := mcpMemoryStub(t, func(string) string { return `{"committed":true}` })
 	withWriteEnabled(t, true)
@@ -560,8 +565,9 @@ func TestMCPRestoreMemoryDeniedWithoutWrite(t *testing.T) {
 	}
 }
 
-// get_memory_snapshot は tree（その時点の中身）と diff（その snapshot の変更）を
-// 1 回で返す。restore の範囲は tree からしか作れない（docs/log/39 ③）。
+// get_memory_snapshot returns both the tree (the contents at that point) and the diff
+// (what that snapshot changed) in one call. A restore scope can only be built from the
+// tree (docs/log/39 item 3).
 func TestMCPGetMemorySnapshotJoinsTreeAndDiff(t *testing.T) {
 	paths := mcpMemoryStub(t, func(p string) string {
 		if strings.HasSuffix(p, "/tree") {
@@ -569,7 +575,7 @@ func TestMCPGetMemorySnapshotJoinsTreeAndDiff(t *testing.T) {
 		}
 		return `{"diff":"--- a\n+++ b\n"}`
 	})
-	withWriteEnabled(t, false) // 読み取りツールなので af_read でも使える
+	withWriteEnabled(t, false) // a read tool, so af_read may use it too
 
 	if resp := mcpCall(t, "get_memory_snapshot", map[string]any{}); !mcpIsError(t, resp) {
 		t.Fatalf("a snapshot lookup without rev/at was accepted: %s", resp)
@@ -588,11 +594,12 @@ func TestMCPGetMemorySnapshotJoinsTreeAndDiff(t *testing.T) {
 	}
 }
 
-// --- 作業計画（docs/log/33 第5段 案D）---------------------------------------------
+// --- Work plan (docs/log/33 stage 5, option D) ------------------------------------
 
-// set_chat_plan は会話 id を引数に取らず、常に自分の会話（mcpConvID）へ書く。
-// notice:true を必ず立てる — 利用者が見ていない間に計画が動く唯一の経路なので、
-// 会話にカードが残らないと誤上書きに誰も気づけない。
+// set_chat_plan takes no conversation id and always writes to its own conversation
+// (mcpConvID). It must set notice:true — this is the only path by which the plan moves
+// while the user is not looking, and without a card left in the conversation nobody would
+// notice a mistaken overwrite.
 func TestMCPSetChatPlanWritesOwnConversationWithNotice(t *testing.T) {
 	var gotPath, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -612,13 +619,15 @@ func TestMCPSetChatPlanWritesOwnConversationWithNotice(t *testing.T) {
 	if !strings.Contains(gotBody, `"notice":true`) || !strings.Contains(gotBody, "Lane A") {
 		t.Fatalf("body = %s", gotBody)
 	}
-	// 会話まるごとを返さない（返すと計画を書くたびに会話全文がモデルへ戻る）。
+	// The whole conversation must not come back, or every plan write would hand the model
+	// the full conversation again.
 	if strings.Contains(resp, "role") {
 		t.Fatalf("conversation leaked into the tool result: %s", resp)
 	}
 }
 
-// 空の全文置換で計画を消させない（破棄は利用者の判断）。Agent も叩かない。
+// An empty full replacement must not erase the plan; discarding it is the user's call.
+// The Agent is not called either.
 func TestMCPSetChatPlanRefusesEmpty(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -641,7 +650,8 @@ func TestMCPSetChatPlanRefusesEmpty(t *testing.T) {
 	}
 }
 
-// 広告集合がスコープの境界（docs/log/19 Q2 と同じ作法）: read/write とも --write 下でのみ。
+// The advertised set is the scope boundary (the same practice as docs/log/19 Q2): both
+// the read and the write tool exist only under --write.
 func TestMCPChatPlanToolsDeniedWithoutWrite(t *testing.T) {
 	withMCPWriteConv(t, "conv-1")
 	withWriteEnabled(t, false)
@@ -652,7 +662,7 @@ func TestMCPChatPlanToolsDeniedWithoutWrite(t *testing.T) {
 	}
 }
 
-// 会話に結び付いていない経路（--conv なし）では扱えない。
+// A path not bound to a conversation (no --conv) cannot handle the plan.
 func TestMCPChatPlanToolsRequireConv(t *testing.T) {
 	withMCPWriteConv(t, "")
 	if !mcpIsError(t, mcpCall(t, "get_chat_plan", map[string]any{})) {
@@ -676,7 +686,8 @@ func TestMCPGetChatPlanReturnsPlanOnly(t *testing.T) {
 	}
 }
 
-// 計画ツールは write 集合にだけ広告する（read 専用アシスタントのツール表を太らせない）。
+// The plan tools are advertised only in the write set, so a read-only assistant's tool
+// table does not grow.
 func TestMCPChatPlanToolsAdvertisedOnlyUnderWrite(t *testing.T) {
 	has := func(tools []map[string]any, name string) bool {
 		for _, tl := range tools {

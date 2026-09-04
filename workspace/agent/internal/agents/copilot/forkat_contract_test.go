@@ -1,17 +1,18 @@
 //go:build clicontract
 
-// copilot 契約テスト（**実ターンを消費する**）: 発言時点からの分岐（docs/log/55）のドリフト検知。
+// copilot contract test (it SPENDS REAL TURNS): drift detection for forking at a message
+// (docs/log/55).
 //
-// copilot にも公式の分岐口が無く、session-state ディレクトリをコピーして events.jsonl を
-// 切り詰めている。この手術が成立するのは **復元元が events.jsonl だから**で、それは実測で
-// しか分からない（session.db が隣にあり、そちらが正なら「ミラーでは切れているのに
-// エージェントは全部覚えている」になる）。合成テストはどちらでも緑のままなので、ここが
-// 唯一の警報になる。
+// copilot has no official fork entry point either, so the session-state directory is copied
+// and events.jsonl truncated. The surgery works only because events.jsonl is what a restore
+// reads from, and that can only be established by measurement: session.db sits next to it,
+// and if that one won, the mirror would show the history cut while the agent still
+// remembered all of it. A synthetic test stays green either way, so this is the only alarm.
 //
 //	COPILOT_CONTRACT_LIVE=1 go test -tags clicontract -run TestContractLiveCopilotForkAt ./internal/agents/copilot/
 //
-// コスト: 実ターン 3 回（各 1 行の応答）。COPILOT_HOME を隔離するので実 ~/.copilot は
-// 一切触らない（認証は環境の GitHub トークン / 保存済み資格情報を使う）。
+// Cost: 3 real turns (one-line replies). COPILOT_HOME is isolated, so the real ~/.copilot is
+// never touched (authentication uses the environment's GitHub token / saved credential).
 package copilot
 
 import (
@@ -73,17 +74,18 @@ func copilotPrompt(t *testing.T, home, dir, sid, prompt string) string {
 func TestContractLiveCopilotForkAt(t *testing.T) {
 	requireCopilotLive(t)
 
-	home := t.TempDir() // 隔離: 実 ~/.copilot には触れない
+	home := t.TempDir() // isolation: the real ~/.copilot is never touched
 	work := t.TempDir()
 	t.Setenv("COPILOT_HOME", home)
-	// HOME は差し替えない — copilot の認証がそこから来るため（差し替えると exit 1）。
-	// 代わりに sids へ書いた 1 件だけを後始末する。
+	// HOME is NOT replaced — copilot's authentication comes from there (replacing it exits
+	// 1). The single sids entry written below is cleaned up instead.
 
 	src := copilotUUID(t)
 	copilotPrompt(t, home, work, src, "Remember the codeword ALPHA. Reply exactly: OK")
 	copilotPrompt(t, home, work, src, "Forget that. The codeword is now BETA. Reply exactly: OK")
 
-	// アンカーは production の転写経路から取る（イベントの id 形が変わればここで落ちる）。
+	// Anchors come from the production transcript path, so a change in the event id shape
+	// fails right here.
 	m := session.Meta{Dir: work, Name: "cp-contract", Kind: session.KindCopilot}
 	slot := session.UUID(work, "cp-contract")
 	sids.Write(slot, src)
@@ -97,7 +99,7 @@ func TestContractLiveCopilotForkAt(t *testing.T) {
 	}
 	if len(anchors) < 2 {
 		t.Fatalf("found %d anchored user turns in a real transcript, want >= 2 — events.jsonl's "+
-			"id field or the user.message shape moved, so 「ここから分岐」 has nothing to point at", len(anchors))
+			"id field or the user.message shape moved, so \"fork from here\" has nothing to point at", len(anchors))
 	}
 
 	resolved, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: anchors[1]})
@@ -108,15 +110,16 @@ func TestContractLiveCopilotForkAt(t *testing.T) {
 	if err := MaterializeForkAt(src, dst, resolved); err != nil {
 		t.Fatalf("MaterializeForkAt against a REAL session failed: %v", err)
 	}
-	// 分岐元にあった要素が全部運ばれている＝コピーが完全。**個別のファイル名で判定
-	// しない**: copilot は per-session の `session.db` を 1.0.81 までに廃し、状態を
-	// COPILOT_HOME 直下の `session-store.db`（グローバル）へ移した（実測 2026-08-28。
-	// それ以前に作られたセッションには session.db がある）。名前で書くと、この手の
-	// 置き場所の移動のたびに「コピーが壊れた」と誤報する。運んだ物の中身が両ターン分
-	// でも、切り詰めた events.jsonl のほうが勝つ、というのがこのテストの主張。
+	// Everything the source had was carried over, i.e. the copy is complete. Never assert
+	// on individual file names: by 1.0.81 copilot had dropped the per-session `session.db`
+	// and moved the state to a global `session-store.db` directly under COPILOT_HOME
+	// (measured 2026-08-28; sessions created before that still have session.db). Names
+	// here would misreport "the copy broke" on every such relocation. The claim of this
+	// test is that even when the carried state contains both turns, the truncated
+	// events.jsonl wins.
 	srcEntries, err := os.ReadDir(filepath.Join(home, "session-state", src))
 	if err != nil {
-		t.Fatalf("分岐元の session-state を読めません: %v", err)
+		t.Fatalf("cannot read the source session-state: %v", err)
 	}
 	for _, e := range srcEntries {
 		if _, err := os.Stat(filepath.Join(home, "session-state", dst, e.Name())); err != nil {
@@ -128,7 +131,7 @@ func TestContractLiveCopilotForkAt(t *testing.T) {
 	up := strings.ToUpper(out)
 	switch {
 	case strings.Contains(up, "ALPHA"):
-		// 契約どおり: events.jsonl が復元元。
+		// As contracted: events.jsonl is what the restore reads from.
 	case strings.Contains(up, "BETA"):
 		t.Fatalf("the branch remembered the turn we cut away — copilot no longer restores from "+
 			"events.jsonl (session.db, which we copy verbatim, now wins). Every point fork would "+

@@ -60,10 +60,10 @@ func TestAssistantAgentOrderPref(t *testing.T) {
 	}
 }
 
-// TestAssistantTokenSavingPrefs pins the token-saving knobs (設定 > アシスタント):
-// 既定値・設定値・クランプ・「設定が env より優先」。
+// TestAssistantTokenSavingPrefs pins the token-saving knobs (Settings > Assistant):
+// defaults, set values, clamping, and "the pref beats env".
 func TestAssistantTokenSavingPrefs(t *testing.T) {
-	// 未設定 → 既定。
+	// Unset → default.
 	writeUIPrefs(t, `{}`)
 	if got := chatAutoTurnModel(); got != "" {
 		t.Fatalf("auto-turn model default = %q", got)
@@ -81,7 +81,7 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 		t.Fatalf("output tail default = %d", got)
 	}
 
-	// 設定値が効く（モデルは trim される）。
+	// The configured values take effect (the model is trimmed).
 	writeUIPrefs(t, `{"assistantAutoTurnModel":" haiku ","assistantQuietCompletion":true,
 		"assistantAutoCompactTokens":80000,"assistantAutoTurnDelay":120,"assistantOutputTailKiB":64}`)
 	if got := chatAutoTurnModel(); got != "haiku" {
@@ -100,7 +100,7 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 		t.Fatalf("output tail = %d", got)
 	}
 
-	// 設定は env（デプロイ/E2E 用）より優先。
+	// The pref beats env (which is there for deployments / E2E).
 	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "999999")
 	t.Setenv("AF_CHAT_AUTOTURN_DELAY", "1")
 	if got := chatx.ChatAutoCompactTokenThreshold(); got != 80000 {
@@ -110,7 +110,8 @@ func TestAssistantTokenSavingPrefs(t *testing.T) {
 		t.Fatalf("pref should beat env: %v", got)
 	}
 
-	// クランプ: 圧縮閾値の下限・束ね時間の上限・出力上限の上下限。
+	// Clamping: floor on the compaction threshold, cap on the batching delay, floor
+	// and cap on the output tail.
 	writeUIPrefs(t, `{"assistantAutoCompactTokens":5000,"assistantAutoTurnDelay":100000,"assistantOutputTailKiB":100000}`)
 	if got := chatx.ChatAutoCompactTokenThreshold(); got != chatx.ChatCtxAutoCompactTokensMin {
 		t.Fatalf("compact tokens floor = %d", got)
@@ -145,15 +146,18 @@ func TestAssistantModelPrefs(t *testing.T) {
 	if got, ok := aiProseModelPref("claude"); !ok || got != "sonnet" {
 		t.Fatalf("prose model = %q, %v", got, ok)
 	}
-	// 用途が別なら別の値。片方の設定がもう片方へ漏れないことがこの分割の全て。
+	// Different purpose, different value. That neither setting leaks into the other is
+	// the whole point of the split.
 	if got, _ := aiShortModelPref("claude"); got != "haiku" {
 		t.Fatalf("short model = %q", got)
 	}
 }
 
-// 旧 assistantUtilityModels しか持たない prefs は、短文・文章の**両方**が引き継ぐ。
-// 旧キーは（名前に反して）実際に両方へ効いていたので、これが分割時点の挙動をそのまま
-// 持ち越す初期値になる。分けた意味は、この先それぞれ独立に変えられること。
+// TestAiModelPrefsInheritLegacyForBothTiers: prefs holding only the legacy
+// assistantUtilityModels are inherited by BOTH tiers, short and prose. Despite its name
+// the legacy key really did drive both, so this is the starting value that carries the
+// behaviour at the moment of the split over unchanged. The point of splitting them is
+// that they can diverge from here on.
 func TestAiModelPrefsInheritLegacyForBothTiers(t *testing.T) {
 	writeUIPrefs(t, `{"assistantUtilityModels":{"claude":"haiku"}}`)
 	for _, tc := range []struct {
@@ -164,7 +168,7 @@ func TestAiModelPrefsInheritLegacyForBothTiers(t *testing.T) {
 			t.Fatalf("%s must inherit the legacy key: %q, %v", tc.name, got, ok)
 		}
 	}
-	// 新キーを書いた側は、もう旧キーに引きずられない。
+	// The tier that has the new key written is no longer dragged along by the legacy one.
 	writeUIPrefs(t, `{"assistantUtilityModels":{"claude":"haiku"},"aiProseModels":{"claude":"sonnet"}}`)
 	if got, _ := aiProseModelPref("claude"); got != "sonnet" {
 		t.Fatalf("explicit prose model must win: %q", got)
@@ -174,8 +178,9 @@ func TestAiModelPrefsInheritLegacyForBothTiers(t *testing.T) {
 	}
 }
 
-// 補助生成の優先順位は、専用キーが無ければチャットの並びを引き継ぐ（分離に気づかない
-// まま挙動が変わらない）。専用キーがあればそちらが勝つ。
+// TestAiAssistOrderPref: with no dedicated key, the assist-generation priority inherits
+// the chat order, so nothing changes for someone who never notices the split. With a
+// dedicated key, that key wins.
 func TestAiAssistOrderPref(t *testing.T) {
 	writeUIPrefs(t, `{"assistantAgentOrder":["codex","claude"]}`)
 	if got := aiAssistOrderPref(); got[0] != "codex" {
@@ -193,7 +198,8 @@ func TestAiAssistOrderPref(t *testing.T) {
 func TestPutUIPrefsBacksUpAShrinkingWrite(t *testing.T) {
 	writeUIPrefs(t, `{"quickReplies":{"ok":{"text":"OK","count":9,"at":1}},"iconSet":"seti"}`)
 
-	// 学習を失った既定値一式の PUT（事故の形）。書き込み自体は通る。
+	// A PUT of a whole set of defaults that has lost the learned data — the shape of the
+	// accident. The write itself goes through.
 	rec := httptest.NewRecorder()
 	handlePutUIPrefs(rec, httptest.NewRequest("PUT", "/env/ui-prefs", strings.NewReader(`{"quickReplies":{},"iconSet":"vscode"}`)))
 	if rec.Code != http.StatusOK {
@@ -202,7 +208,7 @@ func TestPutUIPrefsBacksUpAShrinkingWrite(t *testing.T) {
 	if got := uiprefs.Read()["iconSet"]; got != "vscode" {
 		t.Fatalf("write must not be refused: iconSet = %v", got)
 	}
-	// 直前の版が残っていること＝復旧の手がかりがある。
+	// The version from just before survives, i.e. there is something to recover from.
 	b, err := os.ReadFile(uiprefs.BackupPath())
 	if err != nil {
 		t.Fatalf("no backup kept: %v", err)
@@ -216,7 +222,8 @@ func TestPutUIPrefsBacksUpAShrinkingWrite(t *testing.T) {
 		t.Fatalf("backup lost the learned replies: %v", prev)
 	}
 
-	// 痩せない書き込みは退避を上書きしない（事故の直前の版を最新の平穏な版で流さない）。
+	// A write that does not shrink must not overwrite the backup, so a later benign
+	// version cannot flush away the one from just before the accident.
 	rec = httptest.NewRecorder()
 	handlePutUIPrefs(rec, httptest.NewRequest("PUT", "/env/ui-prefs", strings.NewReader(`{"quickReplies":{},"iconSet":"material"}`)))
 	if rec.Code != http.StatusOK {

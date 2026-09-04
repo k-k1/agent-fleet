@@ -1,13 +1,7 @@
 package usagex
 
-// 使用量まわりの**下位層**（ADR 0067 ウェーブ B / AG-LOWER フェーズ1）。
-//
-// ここには「main の何にも依存しない型と context の運搬」だけを置く。台帳への記録
-// （recordUsageCall）と、それが要る定数（usageFeature* / usageMeasured* / usageModel*）は
-// usage_ledger.go 側にあり、そちらは PREP が編集中のためフェーズ2で移す。
-// usageTokens / usageModelRow / usageCall も、メソッド名を公開するとメソッド呼び出しが
-// 所有外のファイル（chat_providers.go・usage_provider_test.go・usage_ledger_test.go）で
-// 壊れるため、usage_ledger.go と同じフェーズ2でまとめて動かす。
+// Lower layer of usage accounting (ADR 0067 wave B). Only the types that depend on nothing
+// in main, plus the context plumbing that carries a call's tag, belong here.
 
 import (
 	"context"
@@ -15,28 +9,27 @@ import (
 	"strings"
 )
 
-// Tag は「この呼び出しは何のためか」。プロバイダ層は内容を解釈せず、そのまま台帳へ
-// 転記する（新しい feature を足しても provider 側は無変更）。
+// Tag says what a call was FOR. The provider layer never interprets it and copies it into
+// the ledger as-is, so adding a feature needs no provider change.
 type Tag struct {
 	Feature string // usageFeature*
 	Trigger string // usageTrigger*
-	Ref     string // セッション名 or アシスタント会話 id
-	Verb    string // assistant.chat のサブ次元（translate|summarize）
+	Ref     string // session name, or assistant conversation id
+	Verb    string // sub-dimension of assistant.chat (translate|summarize)
 }
 
 type tagKeyT struct{}
 
 var tagKey tagKeyT
 
-// WithTag は呼び出し側13箇所が打つ唯一の1行。
+// WithTag is the single line every call site has to write.
 func WithTag(ctx context.Context, t Tag) context.Context {
 	return context.WithValue(ctx, tagKey, t)
 }
 
-// TagOf はタグを取り出す。ok=false は「タグが無い（または Feature が空）」で、
-// その場合に何を既定にするかは呼び出し側が決める（main の usageTagOf が
-// feature=unknown を入れる — タグの付け忘れで消費が見えなくなる方が、unknown が
-// 混ざるより悪い）。
+// TagOf pulls the tag out. ok=false means there is no tag (or Feature is empty); the caller
+// decides the default, and TagOrUnknown fills in feature=unknown — consumption disappearing
+// because someone forgot a tag is worse than unknown rows mixed in.
 func TagOf(ctx context.Context) (Tag, bool) {
 	if ctx != nil {
 		if t, ok := ctx.Value(tagKey).(Tag); ok && t.Feature != "" {
@@ -63,17 +56,17 @@ type ContextUsage struct {
 	Model        string  `json:"model,omitempty"`
 }
 
-// smallWindowClaudeRe は「200k 側」の Claude だけを列挙する。Claude は Opus 4.6 /
-// Sonnet 4.6 以降 1M ネイティブで、今後出るモデルも 1M 前提なので、大きい方を
-// 列挙して新モデルのたびに追記する（＝漏れたら 200k に誤認される）運用をやめ、
-// 既定 1M・小さいものだけ例外、に反転してある。
-//   - haiku 系（4.5 まで 200k）
-//   - Claude 3.x 以前（claude-2 / claude-3-*）
-//   - Opus 4.0/4.1/4.5・Sonnet 4.0/4.5。日付入りIDは opus-4-20250514 の形なので
-//     「4-2」も旧世代側に含める（1M 側の 4-6/4-7/4-8 とは重ならない）。
+// smallWindowClaudeRe enumerates only the 200k-side Claude models. Claude is natively 1M
+// from Opus 4.6 / Sonnet 4.6 on and every future model is assumed to be too, so listing the
+// large side (and appending to it per new model, where a miss means the model is mistaken
+// for 200k) is inverted here: 1M is the default and only the small ones are exceptions.
+//   - the haiku line (200k up to 4.5)
+//   - Claude 3.x and earlier (claude-2 / claude-3-*)
+//   - Opus 4.0/4.1/4.5 and Sonnet 4.0/4.5. Dated ids have the form opus-4-20250514, so
+//     "4-2" counts as an old generation too (it cannot collide with the 1M-side 4-6/4-7/4-8).
 var smallWindowClaudeRe = regexp.MustCompile(`haiku|claude-[123]|opus-4-[0125]|sonnet-4-[025]`)
 
-// WindowGuess (旧 contextWindowGuess) mirrors the Console's contextWindow() (ContextBar.tsx — keep
+// WindowGuess mirrors the Console's contextWindow() (ContextBar.tsx — keep
 // the two in sync). Order: 272k for GPT-5.x (codex normally records its real
 // window, so this is the fallback — e.g. the assistant chat's `codex exec`, whose
 // events don't carry it) → 200k for the legacy Claude generations above → 1M for

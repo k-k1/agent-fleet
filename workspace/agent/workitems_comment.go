@@ -14,10 +14,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// Posting a comment back to the ticket (docs/log/80 §80.10 / ADR 0061 決定 6).
+// Posting a comment back to the ticket (docs/log/80 §80.10 / ADR 0061 decision 6).
 //
-// ★ This is the ONLY write af performs against a tracker, and it is reachable only from
-// a human clicking 投稿 on a draft they have just read. There is deliberately:
+// This is the ONLY write af performs against a tracker, and it is reachable only from a human
+// clicking Post on a draft they have just read. There is deliberately:
 //   - no MCP tool for it (an agent cannot reach this path),
 //   - no automatic trigger (no "session finished → comment"),
 //   - no state transition, no close, no assignee change.
@@ -64,10 +64,10 @@ func handleWorkItemsComment(w http.ResponseWriter, r *http.Request) {
 		}
 		url, err = jiraPostIssueComment(s.Jira, key, body)
 	case "bitbucket":
-		// ★ 読み取りだけを足した（docs/log/80 §80.19）。投稿には `pullrequest:write` が要り、
-		// それはテナント管理者がアプリの権限を広げ、全員が再認可する変更である —— 一覧を
-		// 出すために払う値段ではない。Console 側は bitbucket の行に報告ボタンを出さないので、
-		// ここに来るのは古い Console だけ。
+		// Read access only (docs/log/80 §80.19). Posting needs `pullrequest:write`, which means the
+		// tenant admin widening the app's permissions and everyone re-authorising - not a price worth
+		// paying just to list items. The Console draws no report button on bitbucket rows, so only an
+		// old Console reaches here.
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_provider",
 			"posting a comment to Bitbucket is not supported yet (the connection is read-only)")
 		return
@@ -76,7 +76,8 @@ func handleWorkItemsComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		// 502: 相手側の拒否（権限不足・存在しない課題）。af の側の不備と区別できる形にする。
+		// 502: the other side refused (missing permission, no such issue). Keep it distinguishable
+		// from a fault on af's side.
 		httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 		return
 	}
@@ -120,8 +121,8 @@ func githubPostIssueComment(token, key, body string) (string, error) {
 	if resp.StatusCode != http.StatusCreated {
 		switch resp.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:
-			// ⚠️ 読み取りは通るのに投稿だけ 403 になることがある（トークンの scope、
-			// または閉じられた/ロックされた課題）。「再接続」と言い切らない。
+			// Reads can succeed while only the post gets a 403 (token scope, or a closed/locked
+			// issue), so do not flatly tell the user to reconnect.
 			return "", fmt.Errorf("github refused the comment (%d) — the token may lack write access, or the issue is locked", resp.StatusCode)
 		case http.StatusNotFound:
 			return "", fmt.Errorf("github has no %s", key)
@@ -156,8 +157,8 @@ func jiraPostIssueComment(c *secrets.JiraCreds, key, body string) (string, error
 	if status != http.StatusCreated && status != http.StatusOK {
 		switch status {
 		case http.StatusUnauthorized, http.StatusForbidden:
-			// ⚠️ OAuth では「スコープに write:jira-work が無い」もここに来る。読み取りは
-			// 通るのに投稿だけ 403 という形になるので、権限の話だと分かる言い方にする。
+			// With OAuth, a missing write:jira-work scope also lands here. It shows up as reads
+			// working while only the post gets a 403, so word it as a permission problem.
 			return "", fmt.Errorf("jira refused the comment (%d) — the account or the OAuth app may lack write access", status)
 		case http.StatusNotFound:
 			return "", fmt.Errorf("jira has no %s", key)
@@ -177,7 +178,7 @@ func jiraPostIssueComment(c *secrets.JiraCreds, key, body string) (string, error
 
 // jiraADF wraps plain text in the Atlassian Document Format Jira's REST v3 requires.
 //
-// ⚠️ v3 does NOT take a plain string for a comment body — posting one is a 400, which is
+// v3 does NOT take a plain string for a comment body — posting one is a 400, which is
 // the single most likely way this call breaks. Blank lines separate paragraphs; the line
 // breaks inside a paragraph become hardBreak nodes, so a pasted list stays a list
 // instead of collapsing into one run-on line.
@@ -201,8 +202,8 @@ func jiraADF(text string) map[string]any {
 		content = append(content, map[string]any{"type": "paragraph", "content": nodes})
 	}
 	if len(content) == 0 {
-		// 空の doc は 400 になる。呼び出し側で本文の空は弾いているが、全部が空行
-		// だった場合の保険（段落 1 つに空テキストは置けないので、1 文字だけ残す）。
+		// An empty doc is a 400. The caller already rejects an empty body; this covers a body that
+		// is nothing but blank lines (a paragraph cannot hold empty text, so keep one character).
 		content = append(content, map[string]any{"type": "paragraph",
 			"content": []any{map[string]any{"type": "text", "text": "-"}}})
 	}

@@ -1,13 +1,15 @@
 package main
 
-// エージェント出力言語（docs/log/28 P6）の成功オラクル。
+// The success oracle for the agent output language (docs/log/28 P6).
 //
-// 「利用者が読む生成物を作らせる prompt」は表示言語でロケール分岐する。英語側にひとかけらでも
-// 日本語が混ざると、モデルへの言語シグナルが割れて回答が日本語に倒れる（P6 の出発点そのもの）。
-// そこで**英語側の全 prompt に日本語の文字が 1 つも無いこと**を、prompt 関数ごとにここで固定する。
+// Every prompt that makes the model produce something a user reads branches on the display
+// locale. A single Japanese character on the English side splits the language signal and the
+// answer tips back into Japanese - which is where P6 started. So the rule pinned here, one
+// prompt function at a time, is that no English prompt contains a single Japanese character.
 //
-// 逆向き（日本語側が従来どおりであること）は各機能のテストが本文一致で見ているので、ここでは
-// 「日本語側は日本語である」ことだけを軽く確認する（英語版を両方に配ってしまう取り違えの検出）。
+// The other direction (the Japanese side still says what it used to) is covered by each
+// feature's own tests matching the body, so this file only checks lightly that the Japanese
+// side IS Japanese - enough to catch the English version being handed to both.
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -19,8 +21,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// japaneseRanges: ひらがな・カタカナ（＋長音/中点）・CJK 統合漢字・CJK 記号（。、「」）・
-// 全角英数記号（（）：　）。英語 prompt にこれらが現れたら混入。
+// japaneseRanges covers hiragana and katakana (plus the prolonged-sound and middle-dot marks),
+// CJK unified ideographs, CJK symbols and punctuation, and fullwidth alphanumerics and symbols.
+// Any of these in an English prompt is contamination.
 var japaneseRanges = []*unicode.RangeTable{
 	{R16: []unicode.Range16{
 		{Lo: 0x3000, Hi: 0x303F, Stride: 1}, // CJK symbols and punctuation
@@ -42,14 +45,14 @@ func firstJapaneseRune(s string) rune {
 
 func hasJapanese(s string) bool { return firstJapaneseRune(s) != 0 }
 
-// langPrompt は「lang を受け取って prompt を返す」関数 1 本ぶん。
+// langPrompt is one "takes a lang, returns a prompt" function.
 type langPrompt struct {
 	name string
 	fn   func(lang string) string
 }
 
-// enPrompts collects every prompt P6 branched. 追加した prompt をここに足すのを忘れると、
-// 英語 Console にだけ日本語が残る — 新しい prompt を分岐したら必ず 1 行足すこと。
+// enPrompts collects every prompt P6 branched. Forget to add a new one here and the Japanese
+// survives on the English Console alone - every newly branched prompt owes a line.
 func enPrompts() []langPrompt {
 	turns := []transcript.Turn{
 		{Role: "user", Text: "使用量のグラフを作りたい"},
@@ -65,7 +68,8 @@ func enPrompts() []langPrompt {
 			return sessionx.ReplySuggestInstructions(l, sessionx.ReplyCounterpartChat)
 		}},
 		{"replySuggestLogHeader", sessionx.ReplySuggestLogHeader},
-		// prompt 全体は会話ログ本文（原文＝日本語のことが多い）を含むので、枠だけを見る。
+		// The whole prompt embeds the conversation log body (usually Japanese, as written), so
+		// only the frame is checked.
 		{"replySuggestPrompt/frame", func(l string) string {
 			return promptFrame(sessionx.ReplySuggestPrompt(turns, l), sessionx.ReplySuggestLogHeader(l))
 		}},
@@ -79,8 +83,8 @@ func enPrompts() []langPrompt {
 		{"planPreambleFor", chatx.PlanPreambleFor},
 		{"planTruncatedNote", chatx.PlanTruncatedNote},
 		{"planRefreshPersonaFor", chatx.PlanRefreshPersonaFor},
-		{"planRefreshInstructions/新規", func(l string) string { return chatx.PlanRefreshInstructions("", l) }},
-		{"planRefreshInstructions/差分更新", func(l string) string { return chatx.PlanRefreshInstructions("plan body", l) }},
+		{"planRefreshInstructions/new", func(l string) string { return chatx.PlanRefreshInstructions("", l) }},
+		{"planRefreshInstructions/update", func(l string) string { return chatx.PlanRefreshInstructions("plan body", l) }},
 		{"planContextHeader", chatx.PlanContextHeader},
 		{"chatPersonaFor", chatx.ChatPersonaFor},
 		{"verbPersona/translate", func(l string) string { return chatx.VerbPersona("translate", l) }},
@@ -93,9 +97,9 @@ func enPrompts() []langPrompt {
 	}
 }
 
-// reportBodyForTest はセッション報告 1 通の**プロンプト本文**（見出し＋事実＋指示＋付記）を、
-// 実際の配送（recordSessionReport）と同じ材料の組み方で作る。日本語側の文言を見る既存の
-// テストが使う。
+// reportBodyForTest builds the prompt body of one session report (heading + facts +
+// instructions + notes) from the same materials the real delivery path (recordSessionReport)
+// assembles. Used by the existing tests that match the Japanese wording.
 func reportBodyForTest(display, name, kind, reason string) string {
 	args := chatx.ReportArgs(display, name, kind, reason, 0)
 	return chatx.ReportPromptFor(chatx.ChatMessage{
@@ -112,27 +116,27 @@ func promptFrame(prompt, header string) string {
 	return prompt
 }
 
-// 分岐した prompt が実際に ui-prefs の locale で選ばれること（関数を英語化しても呼び出し側が
-// 日本語固定のままなら意味がない — P6 で実際に起きうる取りこぼし）。
+// The branched prompt is actually chosen by the ui-prefs locale: translating a function is
+// pointless if its caller stays pinned to Japanese - the miss P6 can realistically leave behind.
 func TestCarryoverPromptsFollowUILocale(t *testing.T) {
 	writeUIPrefs(t, `{"locale":"en"}`)
 	c := &chatx.ChatConversation{Plan: "## What comes next\n- lane A", PendingHandoff: "previous summary"}
 
 	if got := chatx.CompactPrompt(c); hasJapanese(promptFrame(got, "## What comes next")) {
-		t.Fatalf("英語ロケールの圧縮プロンプトに日本語が混ざる:\n%s", got)
+		t.Fatalf("Japanese mixed into the compaction prompt under the English locale:\n%s", got)
 	}
 	p, _ := chatx.InjectPlan(c, "claude", "go on")
 	if hasJapanese(p) {
-		t.Fatalf("英語ロケールの計画前置きに日本語が混ざる:\n%s", p)
+		t.Fatalf("Japanese mixed into the plan preamble under the English locale:\n%s", p)
 	}
 	h, _ := chatx.InjectHandoff(c, "go on")
 	if hasJapanese(h) {
-		t.Fatalf("英語ロケールの引き継ぎ前置きに日本語が混ざる:\n%s", h)
+		t.Fatalf("Japanese mixed into the handoff preamble under the English locale:\n%s", h)
 	}
 
 	writeUIPrefs(t, `{"locale":"ja"}`)
 	if got := chatx.CompactPrompt(c); !strings.Contains(got, "引き継ぎの作成") {
-		t.Fatalf("日本語ロケールで従来の圧縮プロンプトが出ない:\n%s", got)
+		t.Fatalf("the usual compaction prompt is missing under the Japanese locale:\n%s", got)
 	}
 }
 
@@ -141,16 +145,16 @@ func TestEnglishPromptsHaveNoJapanese(t *testing.T) {
 		t.Run(p.name, func(t *testing.T) {
 			en := p.fn("en")
 			if en == "" {
-				t.Fatalf("%s(\"en\") が空", p.name)
+				t.Fatalf("%s(\"en\") is empty", p.name)
 			}
 			if r := firstJapaneseRune(en); r != 0 {
-				t.Fatalf("英語 prompt に日本語 %q が混入している:\n%s", string(r), en)
+				t.Fatalf("Japanese %q contaminates the English prompt:\n%s", string(r), en)
 			}
 			if ja := p.fn("ja"); !hasJapanese(ja) {
-				t.Fatalf("日本語 prompt が日本語でない（英語版を両方に配っていないか）:\n%s", ja)
+				t.Fatalf("the Japanese prompt is not Japanese (is the English version handed to both?):\n%s", ja)
 			}
 			if en == p.fn("ja") {
-				t.Fatalf("%s: ja と en が同一文字列", p.name)
+				t.Fatalf("%s: ja and en are the same string", p.name)
 			}
 		})
 	}

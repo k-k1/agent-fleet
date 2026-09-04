@@ -1,11 +1,12 @@
 package copilot
 
-// events.jsonl → transcript.Turn 正規化（read 正本、docs/log/36）。イベント形は
-// v1.0.73 実測（docs/log/36 実測記録）: user.message / assistant.turn_start /
-// assistant.message / tool.execution_start|complete / assistant.turn_end が
-// 描画対象で、deltas・reasoning などの ephemeral イベントはファイルに書かれない。
-// Turn.Idx は行番号由来の単調増加（Console の pendingEcho/MirrorView は idx
-// 単調前提 — agy 7354916 の教訓）。
+// Normalizes events.jsonl into transcript.Turn; this is the authoritative read path
+// (docs/log/36). The event shapes are measured on v1.0.73 (docs/log/36 measurement record):
+// user.message, assistant.turn_start, assistant.message,
+// tool.execution_start|complete and assistant.turn_end are what gets rendered, and
+// ephemeral events such as deltas and reasoning are never written to the file.
+// Turn.Idx increases monotonically because it comes from the line number: the Console's
+// pendingEcho/MirrorView require a monotonic idx (the lesson of agy 7354916).
 
 import (
 	"bufio"
@@ -20,7 +21,7 @@ import (
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	sid := SessionID(m)
 	if sid == "" {
-		return agents.TranscriptData{}, true // まだ会話なし（起動前）— 空ミラー
+		return agents.TranscriptData{}, true // no conversation yet (pre-launch): an empty mirror
 	}
 	td := agents.TranscriptData{Path: EventsPath(sid)}
 	td.Turns = parseEvents(td.Path)
@@ -32,7 +33,7 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 type event struct {
 	Type string `json:"type"`
 	TS   string `json:"timestamp"`
-	// ID/ParentID: every events.jsonl line carries them (実測) — a uuid chain like
+	// ID/ParentID: every events.jsonl line carries them (measured) — a uuid chain like
 	// claude's. The user.message id is the fork anchor (docs/log/55 §55.5).
 	ID       string          `json:"id"`
 	ParentID string          `json:"parentId"`
@@ -62,7 +63,7 @@ func parseEvents(path string) []transcript.Turn {
 
 	var turns []transcript.Turn
 	var cur *transcript.Turn
-	toolIdx := map[string]int{} // toolCallId → cur.Parts index
+	toolIdx := map[string]int{} // toolCallId -> cur.Parts index
 
 	flush := func() {
 		if cur == nil {
@@ -224,14 +225,16 @@ func toolLabel(args json.RawMessage) string {
 // toolEdits extracts the edit-family payload of a copilot tool call, so a session's
 // changed-files list (docs/log/68) has a coordinate to list and a before/after to count.
 //
-// 実測（~/.copilot/session-state/*/events.jsonl, 2026-08）: 観測できた tool は
-// `view` / `bash` / `edit` / `grep` の 4 つで、編集は **`edit`** ——
-// {"path","old_str","new_str"}。`create` / `write` は同じ引数語彙を持つ兄弟として
-// 受けておく（存在しなければ一致しないだけ）。ファイルの削除は `bash` の rm で行われる
-// ので、ここでは表現できない（git 側の D が拾う）。
+// Measured (~/.copilot/session-state/*/events.jsonl, 2026-08): the tools observed were
+// `view`, `bash`, `edit` and `grep`, and editing is `edit`, with
+// {"path","old_str","new_str"}. `create` and `write` are accepted as siblings that share
+// the same argument vocabulary; if they do not exist they simply never match. A file
+// deletion goes through `bash` and rm, so it cannot be expressed here (git's own D picks
+// it up).
 //
-// ⚠️ 名前は allowlist。逆にすると名前が変わった版で **`view` しただけのファイルが
-// 「変更ファイル」に並ぶ**。取りこぼしは「行が出ない」で済む。
+// The names are an allowlist, never a denylist. Inverted, a version that renamed a tool
+// would list files that were merely `view`ed as changed files. Missing one only costs a
+// row that does not appear.
 func toolEdits(name string, args json.RawMessage) (file, verb string, edits []transcript.Edit) {
 	switch name {
 	case "edit", "create", "write", "str_replace":

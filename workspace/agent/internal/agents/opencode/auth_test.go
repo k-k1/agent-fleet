@@ -8,10 +8,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// 鍵は起動時に env 注入されるので、保存/削除しただけでは動いている daemon に効かない。
-// 実測: Console からキーを消しても daemon は自分の環境に持ったままで、connections[] に
-// env 接続を出し続け、そのキーで課金され得るモデルも一覧に残る（Agent を再起動しても
-// Ensure が生きた daemon を adopt するので直らない）。反映パスは Supervisor.Restart。
+// Keys are injected into the environment at startup, so saving or deleting one has no effect
+// on a running daemon. Measured: deleting a key in the Console leaves the daemon holding it
+// in its own environment, still reporting the env connection in connections[] and still
+// listing models that could be billed against that key (restarting the Agent does not help,
+// because Ensure adopts the live daemon). Supervisor.Restart is the path that applies it.
 func TestApplyKeyChangeRestartsServeAndDropsCatalog(t *testing.T) {
 	modelsMu.Lock()
 	modelsList, modelsAt = []string{"opencode/stale"}, time.Now()
@@ -27,22 +28,22 @@ func TestApplyKeyChangeRestartsServeAndDropsCatalog(t *testing.T) {
 	select {
 	case reason := <-got:
 		if reason == "" {
-			t.Error("再起動の理由が空")
+			t.Error("the restart reason is empty")
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("鍵の変更で serve を再起動していない — 消したキーが daemon に残り続ける")
+		t.Fatal("a key change did not restart serve — a deleted key stays in the daemon")
 	}
 	modelsMu.Lock()
 	stale := !modelsAt.IsZero()
 	modelsMu.Unlock()
 	if stale {
-		t.Error("鍵の変更後もモデルキャッシュが有効なまま")
+		t.Error("the model cache is still valid after a key change")
 	}
 }
 
-// 無料枠では opencode.ai の鍵を注入しない — 「無料枠で使う」と決めたワークスペースが、
-// 鍵が保存されたままというだけで課金経路に乗ってしまわないように。他プロバイダの鍵は
-// 利用者自身の課金なので、どの枠でも触らない。
+// On the free tier the opencode.ai key is not injected, so that a workspace which chose the
+// free tier does not end up on a billed path merely because a key is still stored. Other
+// providers' keys are billed to the user themselves and are left alone on every tier.
 func TestEnvDropsOpencodeKeyOnlyForFreeUsage(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	s, err := secrets.Load()
@@ -59,16 +60,16 @@ func TestEnvDropsOpencodeKeyOnlyForFreeUsage(t *testing.T) {
 
 	UsagePref = func() string { return UsageZen }
 	if got := env(); len(got) != 2 {
-		t.Errorf("zen で鍵が落ちた: %v", redactEnv(got))
+		t.Errorf("a key was dropped on zen: %v", redactEnv(got))
 	}
 	UsagePref = func() string { return UsageGo }
 	if got := env(); len(got) != 2 {
-		t.Errorf("go で鍵が落ちた: %v", redactEnv(got))
+		t.Errorf("a key was dropped on go: %v", redactEnv(got))
 	}
 	UsagePref = func() string { return UsageFree }
 	got := env()
 	if len(got) != 1 || !strings.HasPrefix(got[0], "ANTHROPIC_API_KEY=") {
-		t.Errorf("free = %v, want ANTHROPIC_API_KEY だけ", redactEnv(got))
+		t.Errorf("free = %v, want ANTHROPIC_API_KEY only", redactEnv(got))
 	}
 }
 
@@ -99,12 +100,12 @@ func TestConnectedDefaultsOffWithoutCredentials(t *testing.T) {
 
 	UsagePref = func() string { return UsageZen }
 	if Connected() {
-		t.Fatal("鍵もOAuthも無料枠opt-inも無いのに connected=true — 既定は無料枠OFFのはず")
+		t.Fatal("connected=true with no key, no OAuth and no free-tier opt-in — the default must be free tier OFF")
 	}
 
 	UsagePref = func() string { return UsageFree }
 	if !Connected() {
-		t.Fatal("無料枠へ明示的にopt-inしたのに connected=false")
+		t.Fatal("connected=false after an explicit opt-in to the free tier")
 	}
 	UsagePref = func() string { return UsageZen }
 
@@ -117,7 +118,7 @@ func TestConnectedDefaultsOffWithoutCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !Connected() {
-		t.Fatal("プロバイダ鍵を保存したのに connected=false")
+		t.Fatal("connected=false although a provider key is stored")
 	}
 }
 
@@ -142,13 +143,13 @@ func TestUsageOffOverridesStoredCredentials(t *testing.T) {
 	UsagePref = func() string { return UsageOff }
 
 	if Connected() {
-		t.Fatal("off なのに connected=true — 鍵があっても off は override するはず")
+		t.Fatal("connected=true on off — off must override even when a key is present")
 	}
 	if got := env(); len(got) != 0 {
-		t.Errorf("off なのに env が鍵を返した: %v", redactEnv(got))
+		t.Errorf("env returned keys on off: %v", redactEnv(got))
 	}
 	if got := Catalog([]string{"opencode/nemotron-3-ultra-free", "anthropic/claude-x"}, UsageOff); len(got) != 0 {
-		t.Errorf("off なのに Catalog が空でない: %v", got)
+		t.Errorf("Catalog is not empty on off: %v", got)
 	}
 }
 

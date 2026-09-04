@@ -1,8 +1,8 @@
 package main
 
-// エディタ AI 変更提案（docs/log/44 Phase 4）のユニットテスト。LLM は editSuggestLLM の
-// シームで差し替え、入力検証・JSON 抽出・整形（summary clamp / CR 拒否）・handler の
-// エラー分類を実プロセス無しで固定する。
+// Unit tests for the editor's AI edit suggestion (docs/log/44 Phase 4). The LLM is swapped out at
+// the editSuggestLLM seam, pinning input validation, JSON extraction, cleanup (summary clamp, CR
+// rejection) and the handler's error classification without a real process.
 
 import (
 	"context"
@@ -51,7 +51,7 @@ func TestEditSuggestValidate(t *testing.T) {
 			t.Errorf("%s: want error, got nil", tc.name)
 		}
 	}
-	// 空の selection（挿入）と空の文脈は許可。
+	// An empty selection (an insertion) and empty context are allowed.
 	req := validSuggestReq()
 	req.Selection, req.Before, req.After = "", "", ""
 	if err := req.validate(); err != nil {
@@ -86,23 +86,25 @@ func TestExtractEditSuggestJSON(t *testing.T) {
 func strPtr(s string) *string { return &s }
 
 func TestCleanEditSuggestion(t *testing.T) {
-	// replacement は空文字列（削除提案）も CR/NUL 以外は無変換で通す。
+	// An empty replacement (a deletion suggestion) passes through unchanged, as does anything
+	// without CR/NUL.
 	sum, rep, err := cleanEditSuggestion(editSuggestResult{Summary: " 見出し\nを直す ", Replacement: strPtr("")}, "instr")
 	if err != nil || rep != "" || sum != "見出し を直す" {
 		t.Fatalf("got %q %q %v", sum, rep, err)
 	}
-	// summary 空 → 指示文フォールバック。
+	// An empty summary falls back to the instruction text.
 	sum, _, err = cleanEditSuggestion(editSuggestResult{Replacement: strPtr("x")}, "  直して  ")
 	if err != nil || sum != "直して" {
 		t.Fatalf("fallback summary: %q %v", sum, err)
 	}
-	// 240 bytes 超は rune 境界で切り詰め。
+	// Anything over 240 bytes is truncated on a rune boundary.
 	long := strings.Repeat("あ", 100) // 300 bytes
 	sum, _, err = cleanEditSuggestion(editSuggestResult{Summary: long, Replacement: strPtr("x")}, "i")
 	if err != nil || len(sum) > editSuggestMaxSummary || !strings.HasPrefix(long, sum) {
 		t.Fatalf("clamp: len=%d err=%v", len(sum), err)
 	}
-	// CR / NUL 入り replacement は変換せず拒否（docs/log/44 §4.2: 自動変換しない）。
+	// A replacement containing CR or NUL is rejected, not converted (docs/log/44 §4.2: never
+	// convert silently).
 	for _, bad := range []string{"a\r\nb", "a\x00b"} {
 		if _, _, err := cleanEditSuggestion(editSuggestResult{Summary: "s", Replacement: strPtr(bad)}, "i"); err == nil {
 			t.Fatalf("replacement %q: want error", bad)
@@ -124,7 +126,8 @@ func TestHandleFSSuggestEdit(t *testing.T) {
 	orig := editSuggestLLM
 	t.Cleanup(func() { editSuggestLLM = orig })
 
-	// 成功: LLM 応答から summary/replacement を返す。プロンプトに選択と指示が載ることも固定。
+	// Success: summary/replacement come back from the LLM response. Also pins that the prompt
+	// carries the selection and the instruction.
 	var gotPrompt string
 	editSuggestLLM = func(_ context.Context, req *editSuggestRequest) (string, error) {
 		gotPrompt = editSuggestPrompt(req)
@@ -142,7 +145,7 @@ func TestHandleFSSuggestEdit(t *testing.T) {
 		t.Fatalf("prompt missing pieces: %q", gotPrompt)
 	}
 
-	// 入力不正は LLM に到達せず 400 bad_request。
+	// Invalid input never reaches the LLM and is a 400 bad_request.
 	editSuggestLLM = func(context.Context, *editSuggestRequest) (string, error) {
 		t.Fatal("LLM must not run for invalid input")
 		return "", nil
@@ -159,7 +162,7 @@ func TestHandleFSSuggestEdit(t *testing.T) {
 		}
 	}
 
-	// 生成失敗・不正応答は 500 generation_failed。
+	// A generation failure or a malformed response is a 500 generation_failed.
 	for _, llm := range []func(context.Context, *editSuggestRequest) (string, error){
 		func(context.Context, *editSuggestRequest) (string, error) { return "", errors.New("boom") },
 		func(context.Context, *editSuggestRequest) (string, error) { return "no json here", nil },
@@ -183,8 +186,8 @@ func TestFSSuggestEditRouteRegistered(t *testing.T) {
 	}
 }
 
-// opencode one-shot の read-only 姿勢（docs/log/44 §1.3）: 生成される OPENCODE_CONFIG が
-// chat と同じ deny ポリシーを載せることを固定する。
+// The read-only stance of the opencode one-shot (docs/log/44 §1.3): pins that the generated
+// OPENCODE_CONFIG carries the same deny policy as chat.
 func TestOpencodeOneShotConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	p := chatx.OpencodeOneShotConfig()

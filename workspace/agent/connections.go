@@ -56,9 +56,9 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"cursor":    cursor.Status(),
 		"kiro":      kiro.Status(),
 		"agy":       agy.Status(),
-		// copilot は GitHub 連携相乗り（docs/log/36 契約）: 専用フロー無し。
+		// copilot rides on the GitHub connection (docs/log/36 contract): no flow of its own.
 		"copilot":    copilot.Status(ghConnected),
-		"jira":       jiraStatus(s), // 作業項目の取得元（docs/log/80 P1）
+		"jira":       jiraStatus(s), // where work items are fetched from (docs/log/80 P1)
 		"pagerduty":  pagerdutyStatus(s),
 		"grafana":    grafanaStatus(s),
 		"cloudwatch": cloudwatchStatus(s),
@@ -78,7 +78,7 @@ func discordStatus(s *secrets.Data) map[string]any {
 		return map[string]any{"connected": false}
 	}
 	m := map[string]any{"connected": true}
-	m["notify"] = !d.NotifyOff // master mute state (default on) for the 通知 toggle
+	m["notify"] = !d.NotifyOff // master mute state (default on) for the notification toggle
 	if d.BotName != "" {
 		m["botName"] = d.BotName
 	}
@@ -104,8 +104,8 @@ func discordStatus(s *secrets.Data) map[string]any {
 	if d.FullText {
 		m["fullText"] = true
 	}
-	// docs/log/37 P3先取り: signal that the standing fleet-operator thread is provisioned so
-	// the card can show an "operator" pill (present only once 起票 succeeded).
+	// docs/log/37 P3, taken early: signal that the standing fleet-operator thread is provisioned so
+	// the card can show an "operator" pill (present only once the thread was actually opened).
 	if ref, ok := bridge.OperatorState(); ok && ref.Thread != "" {
 		m["operator"] = true
 	}
@@ -206,13 +206,13 @@ type discordConnReq struct {
 	MentionUserID string   `json:"mentionUserId"` // @mentioned per notification (channel mode)
 	Lang          string   `json:"lang"`          // Console locale at connect time ("ja"/"en")
 	Receive       bool     `json:"receive"`       // inbound: route thread replies back (docs/log/37 P2a)
-	FullText      bool     `json:"fullText"`      // post the answer-ready turn body (docs/log/37 全文ブリッジ)
+	FullText      bool     `json:"fullText"`      // post the answer-ready turn body (docs/log/37 full-text bridge)
 	// MirrorInput echoes Console-typed prompts into the session thread (docs/log/37 Fix ②).
 	// A pointer so an omitted field means "default" (on) rather than false — the card
 	// always sends it, but an older/edit request that leaves it out keeps the default.
 	MirrorInput *bool `json:"mirrorInput"`
-	// NotifyOff is the master mute (個人設定 › 通知 / the card). A pointer so an omitted
-	// field preserves the stored value on an edit; the toggle sends it explicitly.
+	// NotifyOff is the master mute (personal settings > notifications, and the card). A pointer so
+	// an omitted field preserves the stored value on an edit; the toggle sends it explicitly.
 	NotifyOff *bool `json:"notifyOff"`
 }
 
@@ -221,9 +221,9 @@ type discordConnReq struct {
 var discordSnowflakeRe = regexp.MustCompile(`^[0-9]{5,25}$`)
 
 // handlePutDiscordConn stores the user's Discord bot token + destination in the
-// encrypted store (docs/log/37 P1; PagerDuty カードと同じ三点セット). Exactly one
+// encrypted store (docs/log/37 P1; the same three pieces as the PagerDuty card). Exactly one
 // destination: a guild channel id, or the user's own Discord user id for DMs
-// (the identity binding of docs/log/37 契約5). The token is validated against the
+// (the identity binding of docs/log/37 contract 5). The token is validated against the
 // Discord API when reachable — a network failure saves anyway (outbound may be
 // restricted; sends will surface in the daemon log), but a 401/403 rejects.
 //
@@ -304,7 +304,7 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 	if req.MirrorInput != nil {
 		mirrorOff = !*req.MirrorInput
 	}
-	// Master mute (通知 ON/OFF). Preserve the stored value on an edit that omits it.
+	// Master mute (notifications on/off). Preserve the stored value on an edit that omits it.
 	notifyOff := editing && s.Discord != nil && s.Discord.NotifyOff
 	if req.NotifyOff != nil {
 		notifyOff = *req.NotifyOff
@@ -315,7 +315,7 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 		// Receive (P2a inbound) rides thread mode — replies arrive in session threads.
 		Threads: channelID != "" && req.Threads, MentionUserID: mention,
 		Receive: channelID != "" && req.Receive,
-		// Full-text mode (docs/log/37 全文ブリッジ) works in either destination mode —
+		// Full-text mode (docs/log/37 full-text bridge) works in either destination mode —
 		// the body posts to the channel/thread or the DM alike.
 		FullText:  req.FullText,
 		NotifyOff: notifyOff,
@@ -358,7 +358,7 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	// docs/log/37 P3先取り: with receive + channel mode, stand up (or reuse) the dedicated
+	// docs/log/37 P3, taken early: with receive + channel mode, stand up (or reuse) the dedicated
 	// fleet-operator thread + conversation so @mentions route to the operator assistant.
 	// Async + best-effort — it does its own Discord round-trips, so it must not slow the
 	// PUT or fail the connect (reuse across reconnects avoids duplicate threads).
@@ -575,7 +575,7 @@ var awsProfileRe = regexp.MustCompile(`[^A-Za-z0-9._@-]+`)
 // handlePutCloudWatchConn stores the AWS profile the CloudWatch MCP should use
 // (docs/log/25). No secret is stored: auth is the AWS credential chain (the user's
 // `aws sso login`, same as ssm sessions). Two shapes:
-//   - SSO meta present (startUrl 等 — Console の SSM プロファイルピッカー経由):
+//   - SSO meta present (startUrl and friends, via the Console's SSM profile picker):
 //     a durable ops aws config is generated from the meta (SSM profiles live in
 //     per-session isolated configs, invisible to a bare AWS_PROFILE), here at
 //     connect time and again at every mcp-run spawn.

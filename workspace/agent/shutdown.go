@@ -20,7 +20,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// Graceful workspace stop (docs/log/p3-7-aws-adapter.md §20b.7.8 停止改訂).
+// Graceful workspace stop (docs/log/p3-7-aws-adapter.md §20b.7.8 stop revision).
 // The runtime stops a workspace by delivering SIGTERM to the container — `docker
 // stop -t` locally, ECS task stop with stopTimeout on AWS — and SIGKILLs whatever
 // survives the grace. Before this handler existed the agent died with Go's
@@ -83,19 +83,22 @@ func gracefulShutdown(budget time.Duration) {
 	// Attachments own neither Page nor Chromium. Closing them detaches AF's target
 	// sessions and WebSockets only; the external owner remains responsible for exit.
 	browserx.WorkspaceBrowserAttachmentManager.Close()
-	// ★保留中の対話を持ち越す（docs/log/75 §75.6.3 の契機 2）。**abort と kill より前**に
-	// 置くのが要点で、ここが claude 以外にとっては最後の機会になる: claude の保留は
-	// pending-* としてホームに残るので後の契機（一覧・boot フック）が拾えるが、kiro の
-	// 承認パネルはペインの文字列、ACP 3 種の許可要求は runtime handle のメモリにしか
-	// 無く、下の AbortManaged / kill-session を通った時点で消える。
+	// Carry pending interactions over (docs/log/75 §75.6.3, trigger 2). It must run
+	// BEFORE the aborts and the kills, because for everything but claude this is the
+	// last chance: claude's pending state stays in the home volume as pending-*, so a
+	// later trigger (the listing, the boot hook) can still pick it up, but kiro's
+	// approval panel is text in a pane and the three ACP kinds' permission requests
+	// live only in the runtime handle's memory, so both are gone the moment
+	// AbortManaged / kill-session below runs.
 	//
-	// tier2（Workspace 停止）はここを通る唯一の正常系なので、これが無いと「費用のために
-	// 止めたら、止めたことで人の判断が消えた」になる（ADR 0055 決定 2）。
+	// Tier 2 (workspace stop) is the only healthy path through here, so without this
+	// "stopping to save money" would also throw away a decision a person was in the
+	// middle of making (ADR 0055 decision 2).
 	promoteCarriedOnShutdown()
 	owned := ownedLiveSessions()
-	// managed セッション（docs/log/27 §10.2-8）: pane の C-c に相当する abort を配る。
-	// turn goroutine が cancelled を刻み status ストアが idle へ戻るので、下の
-	// anySessionWorking 待ちが tui と同じ条件で解ける。
+	// Managed sessions (docs/log/27 §10.2-8): deliver the abort that corresponds to a
+	// pane's C-c. The turn goroutine records cancelled and the status store returns to
+	// idle, so the anySessionWorking wait below clears on the same condition as tui.
 	opencode.AbortManaged()
 	codex.AbortManaged()
 	copilot.AbortManaged()
@@ -129,7 +132,8 @@ func gracefulShutdown(budget time.Duration) {
 	// Short settle for panes without status hooks (shells, builds) so their
 	// foreground processes can run SIGINT handlers before their session goes away.
 	time.Sleep(time.Second)
-	// 共有 daemon は abort が済んだ後なので drain は即座に抜ける（SIGTERM で終了）。
+	// The aborts are done by now, so the shared daemons' drain returns immediately
+	// (they exit on SIGTERM).
 	opencode.Serve().Shutdown()
 	codex.Serve().Shutdown()
 	copilot.Shutdown()
@@ -143,10 +147,11 @@ func gracefulShutdown(budget time.Duration) {
 // promoteCarriedOnShutdown snapshots every LIVE session's pending modal into the
 // carried store before the shutdown tears the panes and runtime handles down.
 //
-// 生きているものだけを見る: 停止中のセッションには覗く先が無く、覗こうとすると
-// managed では Resume が走って**畳もうとしている thread を立ち上げてしまう**
-// （promoteCarriedOther はそれをしないが、生存判定をここでも先に置いて意図を明示する）。
-// 昇格は冪等・非上書きなので、halt で既に昇格済みのものはそのまま残る。
+// Only live sessions are inspected: a stopped one has nothing to look into, and
+// looking anyway would make a managed session Resume — starting the very thread we
+// are trying to fold away. (promoteCarriedOther does not do that, but the liveness
+// test is repeated here to state the intent.) Promotion is idempotent and never
+// overwrites, so anything halt already promoted stays as it is.
 func promoteCarriedOnShutdown() {
 	for _, m := range session.ListMetas() {
 		if m.Archived || !sessionx.SessionAlive(m) {

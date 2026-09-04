@@ -1,11 +1,12 @@
 package chatx
 
-// deps.go で受け取った main 側の実体を、**家系のコードが元の綴りのまま呼べる形**に開く。
-// ここを挟むことで、移送は「package 行を変える」以上の書き換えを家系側へ持ち込まない。
-// （internal/mcpx/deps.go の下半分と同じ形。）
+// Exposes the main-side implementations received through deps.go in a shape the family's
+// code can call under their original spellings, so moving the code in needs no edit beyond
+// changing the package line. (Same shape as the lower half of internal/mcpx/deps.go.)
 //
-// 値（const 由来）は Configure が埋める package 変数にしてある——関数にすると呼び出し側に
-// `()` を足して回ることになり、純粋移送の主張が弱くなるため。**書き込みは Configure の 1 回だけ。**
+// Values that came from consts are package variables Configure fills, not functions:
+// functions would mean adding `()` at every call site, weakening the claim that this was a
+// pure move. Written exactly once, by Configure.
 
 import (
 	"os"
@@ -20,13 +21,14 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// --- main を介さずに解けるもの（Deps に入れない）-----------------------------
+// --- Resolvable without going through main (deliberately not in Deps) --------
 
 func homeDir() string { return paths.HomeDir() }
 
-// envOr は環境変数の既定値つき読み出し。main.go / internal/agents/copilot にも同じ 3 行があり、
-// 「写した純関数」の債務として回収ウェーブが 1 本化する対象（RECLAIM-B で CP 側は internal/envx へ
-// 畳んだ。agent 側は main.go が無所有なので今回は触らない）。
+// envOr reads an environment variable with a default. The same three lines exist in
+// main.go and internal/agents/copilot; as copied-pure-function debt they are what a
+// reclaim wave is meant to unify. RECLAIM-B folded the CP side into internal/envx; the
+// agent side is left alone here because main.go has no owner.
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -34,10 +36,11 @@ func envOr(key, def string) string {
 	return def
 }
 
-// titleLang は件名提案の言語（表示言語に従う・ADR 0016）。
+// titleLang is the language a suggested subject line is generated in; it follows the
+// display language (ADR 0016).
 func titleLang() string { return uiprefs.Locale() }
 
-// --- Configure が埋める値（元は main の const）-------------------------------
+// --- Values Configure fills (consts in main originally) ----------------------
 
 var (
 	errCodeChatAgentUnsupported   string
@@ -73,7 +76,7 @@ func bindValues(d Deps) {
 	titleSuggestTimeout = d.TitleSuggestTimeout
 }
 
-// --- Configure が受け取った関数への継ぎ目 ------------------------------------
+// --- Seams onto the functions Configure received -----------------------------
 
 func assistantAgentOrderPref() []string { return deps.AssistantAgentOrderPref() }
 func aiAssistOrderPref() []string       { return deps.AiAssistOrderPref() }
@@ -122,8 +125,8 @@ func safeBrowsePath(p string) (full, rel string, ok bool) {
 }
 func maybePushOperatorReply(conv, reply string) { deps.MaybePushOperatorReply(conv, reply) }
 
-// chatTurnUsageTag は会話 1 ターン分のタグ。chatConversation はこちら側の型なので、
-// 継ぎ目は**素の値だけ**を渡す（main のタグ組み立てはそのまま）。
+// chatTurnUsageTag is the usage tag for one conversation turn. ChatConversation is a type
+// on this side, so the seam passes plain values only and main's tag assembly stays put.
 func chatTurnUsageTag(c *ChatConversation, trigger string) usagex.Tag {
 	return deps.ChatTurnUsageTag(c.ID, c.SeedVerb, trigger)
 }

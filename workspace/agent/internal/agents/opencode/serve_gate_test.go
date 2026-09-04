@@ -12,27 +12,26 @@ import (
 // splitServeAddr, which is the very next step — so a test that gets PAST the gate
 // still cannot start a real daemon.
 //
-// 「使われていないポート」では不十分だった: このコンテナは
-// ip_unprivileged_port_start=0 なので :1 にも本当に bind でき、ゲートを通した
-// テストが 310 MB の serve を起動しっぱなしにした（実害あり）。
-// パッケージ共有の Serve() は使わない: 同じパッケージの別テストが daemon を up の
-// まま置いていくと、こちらの ensure が近道に入ってゲートを素通りし、検査したつもりで
-// 何も見ていないことになる（codex 側で実際にそうなった）。
+// "A port nobody uses" was not enough: this container has ip_unprivileged_port_start=0, so even
+// :1 can really be bound, and a test that got past the gate left a 310 MB serve running (real
+// damage). The package-shared Serve() is avoided too: if another test in this package leaves the
+// daemon up, ensure takes the shortcut past the gate and the check measures nothing while
+// looking green (which is what happened on the codex side).
 func unspawnableAddr(t *testing.T) *Supervisor {
 	t.Helper()
 	t.Setenv(serveAddrEnv, "tcp://127.0.0.1:7799")
-	// HOME も隔離する。ensure は接続ゲートで secrets.Load() を通り、隔離しないと
-	// **利用者の実 ~/.config/agent-fleet の資格情報ストア**を読んで（そして
-	// `secrets.enc.lock` を作って）判定する —— opencode に接続済みの開発機では
-	// 「未接続なら起こさない」の検査が成立しなくなる。実測: このヘルパを使う
-	// テストだけが実 HOME に lock ファイルを残していた。
+	// HOME is isolated too. ensure goes through secrets.Load() at the connection gate, and
+	// without isolation it decides against the user's real credential store under
+	// ~/.config/agent-fleet (creating `secrets.enc.lock` there) — on a dev machine already
+	// connected to opencode, the "do not spawn while disconnected" check then proves nothing.
+	// Measured: only the tests using this helper left a lock file in the real HOME.
 	t.Setenv("HOME", t.TempDir())
 	s := &Supervisor{}
 	t.Cleanup(s.Shutdown)
 	return s
 }
 
-// stubUsagePref forces the 使う枠 setting for the duration of a test.
+// stubUsagePref forces the usage-route setting for the duration of a test.
 func stubUsagePref(t *testing.T, v string) {
 	t.Helper()
 	prev := UsagePref
@@ -40,8 +39,8 @@ func stubUsagePref(t *testing.T, v string) {
 	t.Cleanup(func() { UsagePref = prev })
 }
 
-// 未接続（既定の UsageOff）のワークスペースで serve を起こさないこと。serve は認証を
-// 見ずに listen できてしまい、実測 RSS 約 305 MB がまるごと無駄になる。
+// serve must not be spawned in a disconnected workspace (the default, UsageOff). serve can
+// listen without looking at auth at all, and a measured ~305 MB RSS would be wasted outright.
 func TestEnsureRefusesToSpawnWhenNotConnected(t *testing.T) {
 	s := unspawnableAddr(t)
 	stubUsagePref(t, UsageOff)
@@ -51,22 +50,22 @@ func TestEnsureRefusesToSpawnWhenNotConnected(t *testing.T) {
 	}
 }
 
-// OAuth device フローだけは未接続でも起こせること。この API 群こそが「未接続を接続に
-// 変える」経路なので、未接続を理由に断ると永久にログインできない（鶏と卵）。
-// ゲートを通り越したことだけを見る（アドレスは spawn に届かない形にしてある）。
+// The OAuth device flow alone may spawn while disconnected: this is the very API set that turns
+// "disconnected" into "connected", so refusing on those grounds means never being able to log in
+// (chicken and egg). Only getting past the gate is checked (the address can never reach spawn).
 func TestEnsureAllowsUnauthedForTheOAuthFlow(t *testing.T) {
 	s := unspawnableAddr(t)
 	stubUsagePref(t, UsageOff)
 	_, _, err := s.ensure(true)
 	if errors.Is(err, ErrNotConnected) {
-		t.Fatal("OAuth フローが未接続ゲートで止められた — これでは一生ログインできない")
+		t.Fatal("the OAuth flow was stopped by the disconnected gate — nobody could ever log in")
 	}
 	if err == nil || !strings.Contains(err.Error(), "unsupported") {
-		t.Fatalf("ensure error = %v, want the address parse error (ゲートの先まで進んだ証拠)", err)
+		t.Fatalf("ensure error = %v, want the address parse error (proof it got past the gate)", err)
 	}
 }
 
-// 無効化が最優先: 接続判定より前に落ちること。
+// Disabling wins outright: it must fail before the connection check.
 func TestEnsureDisabledBeatsTheConnectionGate(t *testing.T) {
 	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "1")
 	stubUsagePref(t, UsageFree)
@@ -75,8 +74,8 @@ func TestEnsureDisabledBeatsTheConnectionGate(t *testing.T) {
 	}
 }
 
-// device フローの最中は需要として数えること。数えないと、利用者がブラウザで承認して
-// いる最中に足元の daemon を畳んでしまう。
+// A device flow in progress must count as demand. Without it the daemon is folded up under the
+// user while they are still approving in the browser.
 func TestDependentsHoldsDuringTheOAuthFlow(t *testing.T) {
 	prevAt := oauthTouchAt
 	t.Cleanup(func() {
@@ -97,7 +96,8 @@ func TestDependentsHoldsDuringTheOAuthFlow(t *testing.T) {
 		t.Fatalf("dependents = %d, want 1 while an OAuth flow is in progress", got)
 	}
 
-	// 窓を過ぎたら需要は消える（放置されたフローが daemon を永久に生かさない）。
+	// Past the window the demand is gone (an abandoned flow must not keep the daemon alive
+	// forever).
 	oauthTouchMu.Lock()
 	oauthTouchAt = time.Now().Add(-oauthHoldTTL - time.Second)
 	oauthTouchMu.Unlock()
@@ -106,7 +106,8 @@ func TestDependentsHoldsDuringTheOAuthFlow(t *testing.T) {
 	}
 }
 
-// 需要が在る間は畳まないこと（監視ループの判定と停止の間の競合を潰す再確認）。
+// Do not fold up while demand exists (the re-check that closes the race between the watch
+// loop's decision and the stop).
 func TestStopIfIdleRefusesWhileNeeded(t *testing.T) {
 	oauthTouch()
 	t.Cleanup(func() {
@@ -116,9 +117,9 @@ func TestStopIfIdleRefusesWhileNeeded(t *testing.T) {
 	})
 	s := &Supervisor{up: true, watching: true}
 	if s.stopIfIdle() {
-		t.Fatal("需要が在るのに停止した")
+		t.Fatal("stopped while demand still existed")
 	}
 	if !s.up {
-		t.Fatal("停止を見送ったのに up を落とした")
+		t.Fatal("up was cleared even though the stop was skipped")
 	}
 }

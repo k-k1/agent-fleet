@@ -1,9 +1,9 @@
 package sessionx
 
-// POST /sessions/{name}/fork の分岐点まわり（docs/log/55）。ここで守りたいのは
-// **「地点を指したのに会話まるごと分岐された」が起きないこと** で、そのために
-// 解決できない分岐点はすべて 4xx で止める。逆に、分岐点なしの旧クライアントは
-// これまでどおり通す（後方互換）。
+// The fork-point handling of POST /sessions/{name}/fork (docs/log/55). What must never
+// happen here is "a point was named, but the whole conversation was forked", so every
+// fork point that cannot be resolved stops with a 4xx. An older client that names no fork
+// point still goes through as before (backward compatibility).
 
 import (
 	"net/http"
@@ -28,7 +28,7 @@ func forkReq(t *testing.T, name, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// 分岐そのものに対応しない kind は、at の有無より先に断る。
+// A kind that does not support forking at all is refused before `at` is even considered.
 func TestForkUnsupportedKind(t *testing.T) {
 	withTempHome(t)
 	session.WriteMeta(session.Meta{Name: "cur1", Dir: t.TempDir(), Kind: session.KindCursor})
@@ -41,9 +41,10 @@ func TestForkUnsupportedKind(t *testing.T) {
 	}
 }
 
-// 対応 kind でも CLI(TUI) ルートには分岐点を渡す口が無い（opencode/codex）。導線側でも
-// 隠しているが、直叩きされたときにここで止まること。**「会話がまだ無い」より先に**この
-// 理由が出ることも込みで押さえる: 経路が違うセッションに「会話を増やせ」と言っても直らない。
+// Even on a supported kind, the CLI (TUI) route has no way to pass a fork point
+// (opencode/codex). The UI hides it too, but a direct call must stop here. This also pins
+// that the reason is reported BEFORE "there is no conversation yet": telling a session on
+// the wrong route to "add more conversation" would not fix anything.
 func TestForkAtRefusedOnCLIRoute(t *testing.T) {
 	withTempHome(t)
 	session.WriteMeta(session.Meta{
@@ -58,9 +59,10 @@ func TestForkAtRefusedOnCLIRoute(t *testing.T) {
 	}
 }
 
-// claude は managed driver を持たない。一律に managed を要求していた頃はここで永久に
-// 弾かれていたので、TUI の claude が経路を理由に断られないことを固定する
-// （会話が無いので別の理由では落ちる — それが fork_at_unsupported でないことを見る）。
+// claude has no managed driver. While managed was required across the board, claude was
+// rejected here forever, so pin that a TUI claude is not refused on account of its route
+// (it still fails for another reason, since there is no conversation — what is checked is
+// that the reason is not fork_at_unsupported).
 func TestForkAtClaudeTUINotRefusedByRoute(t *testing.T) {
 	withTempHome(t)
 	session.WriteMeta(session.Meta{
@@ -68,11 +70,12 @@ func TestForkAtClaudeTUINotRefusedByRoute(t *testing.T) {
 	})
 	rec := forkReq(t, "cl1", `{"at":"some-uuid"}`)
 	if strings.Contains(rec.Body.String(), "fork_at_unsupported") {
-		t.Fatalf("body = %s; claude は TUI しか無いので経路を理由に断ってはいけない", rec.Body.String())
+		t.Fatalf("body = %s; claude only has TUI, so it must not be refused on account of its route", rec.Body.String())
 	}
 }
 
-// 壊れたボディを黙って無視すると、地点指定のつもりの要求が会話まるごと分岐になる。
+// Silently ignoring a malformed body would turn a request that meant to name a point into
+// a fork of the whole conversation.
 func TestForkRejectsMalformedBody(t *testing.T) {
 	withTempHome(t)
 	session.WriteMeta(session.Meta{Name: "oc2", Dir: t.TempDir(), Kind: session.KindOpencode})
@@ -85,9 +88,10 @@ func TestForkRejectsMalformedBody(t *testing.T) {
 	}
 }
 
-// 後方互換: ボディ無し（docs/log/55 以前のクライアント）は分岐点の検査に入らない。
-// 会話がまだ無いので not_resumable で止まるが、fork_at_* ではないこと＝
-// 分岐点まわりの新しいゲートを一切踏んでいないことを確かめる。
+// Backward compatibility: with no body (a client older than docs/log/55) the fork-point
+// checks are never entered. It stops at not_resumable because there is no conversation
+// yet, and that the code is not fork_at_* is what shows none of the new fork-point gates
+// were touched.
 func TestForkWithoutBodyKeepsWholeConversationPath(t *testing.T) {
 	withTempHome(t)
 	session.WriteMeta(session.Meta{Name: "oc3", Dir: t.TempDir(), Kind: session.KindOpencode})

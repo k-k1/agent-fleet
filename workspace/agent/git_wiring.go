@@ -1,16 +1,15 @@
 package main
 
-// git_wiring.go — `internal/gitx` の外向き依存（gitx → main）を 1 箇所で配線する。
+// git_wiring.go — wires `internal/gitx`'s outward dependencies (gitx → main) in one place.
 //
-// 逆向き（main → gitx）は**別名として alias_git.go にあったが、RECLAIM-C で回収して
-// 直参照になった**。**2 枚に分けてあったのが効いた**: エイリアスはウェーブ境界で丸ごと
-// 剥がして消えるが、配線は残る（gitx が main の各家系を呼ぶ関係そのものは移送で消えない）。
-// 同じファイルに置いていたら、回収のときに「消す行」と「残す行」が混ざっていた。
-// mcpx が alias_mcp.go → mcp_wiring.go で辿った道と同じ形。
+// The wiring lives apart from the aliases of the opposite direction (main → gitx) on
+// purpose: aliases are peeled off wholesale at a wave boundary, while the wiring stays
+// (gitx calling main's families is a relationship a move does not remove). In one file the
+// two would have been mixed up at reclaim time.
 //
-// 🔥 **配線に既定値を置かない。** 未配線は `gitx.Configure` が panic で落とす。
-// ここで零値を許すと、たとえば `RepoLocked` が「常に false」になり、
-// **ロックしたはずの作業コピーが削除で消える**。静かに動くより落ちる方を選ぶ。
+// Never give the wiring defaults. `gitx.Configure` panics on anything left unwired; a zero
+// value accepted here would make e.g. `RepoLocked` answer "always false" and a working copy
+// the user locked would be deleted. Crashing beats running quietly.
 
 import (
 	"context"
@@ -21,8 +20,9 @@ import (
 
 func init() { gitx.Configure(gitDeps()) }
 
-// gitDeps は本番の配線一式。**gitx 側の網羅検査（internal/gitx/deps_test.go）は
-// 作り物を使う**ので、ここが唯一「本物の値」を書く場所である。
+// gitDeps is the production wiring. gitx's own exhaustiveness check
+// (internal/gitx/deps_test.go) uses fakes, so this is the only place the real values
+// are written.
 func gitDeps() gitx.Deps {
 	return gitx.Deps{
 		AbsPath:        sessionx.AbsPath,
@@ -62,21 +62,22 @@ func gitDeps() gitx.Deps {
 	}
 }
 
-// gitRepoJobSink は `*repoJobSink` を gitx.RepoJobSink に見せる薄い adapter。
+// gitRepoJobSink is a thin adapter presenting `*repoJobSink` as gitx.RepoJobSink.
 //
-// 🔥 必要な理由は 1 つだけ: 末尾を取り出すメソッドが `tailString()` で**未公開**だから
-// である。未公開メソッドは宣言したパッケージに紐づくので、gitx 側が同じ綴りの
-// interface を書いても `*repoJobSink` はそれを満たさない。repo_jobs.go は AG-GIT の
-// 所有外なので、あちらに `TailString()` を足すのではなくこちらで被せる。
+// It exists for one reason: the method that reads the tail is `tailString()`, which is
+// unexported. An unexported method is bound to the package that declares it, so
+// `*repoJobSink` would not satisfy an identically spelled interface written in gitx.
+// repo_jobs.go is outside AG-GIT's ownership, so the wrapper goes here rather than a
+// `TailString()` added there.
 type gitRepoJobSink struct{ *repoJobSink }
 
 func (s gitRepoJobSink) Tail() string { return s.repoJobSink.tailString() }
 
-// startGitRepoJob は startRepoJob の sink だけを詰め替えたもの。
+// startGitRepoJob is startRepoJob with only the sink repackaged.
 //
-// 🔥 **nil を包まない。** `gitRepoJobSink{nil}` は「中身が nil の非 nil インターフェース」
-// になり、gitx 側の `if sink != nil` を**真**にしてしまう（clone が `--progress` 付きで
-// 走り、`Stream` が nil の Writer へ書いて落ちる）。nil はそのまま nil で渡す。
+// Never wrap a nil: `gitRepoJobSink{nil}` is a non-nil interface holding nil, which makes
+// gitx's `if sink != nil` true (clone then runs with `--progress` and `Stream` writes to a
+// nil Writer and crashes). A nil is passed through as a nil.
 func startGitRepoJob(kind, name, dir, url string, run func(ctx context.Context, sink gitx.RepoJobSink) error) any {
 	return startRepoJob(kind, name, dir, url, func(ctx context.Context, sink *repoJobSink) error {
 		if sink == nil {

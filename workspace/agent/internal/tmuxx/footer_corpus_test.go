@@ -16,7 +16,7 @@ type verdict struct {
 	busy      bool
 	idle      bool
 	agents    bool // the pane's input box is bound to a background agent, not the session
-	rateLimit bool // parked on the 利用上限メニュー (/rate-limit-options)
+	rateLimit bool // parked on the usage-limit menu (/rate-limit-options)
 }
 
 var (
@@ -51,19 +51,21 @@ var corpus = map[string]verdict{
 	"idle_post_turn_summary.txt":     idleV,
 	"modal_plan_approval.txt":        modalV,
 	"modal_folder_trust.txt":         modalV,
-	// バックグラウンド・エージェント関連（2026-07-30 の誤配達事故を制御プローブで再現）。
-	// main が選択されているか否かだけが違い、footer も入力欄も同じに見える点が事故の本体。
-	// レール操作中はモード表示フッタごと差し替わり、agents ホームは入力欄の意味が
-	// 「新しいセッションを作る」に変わる — どれも本体の会話には届かない。
+	// Background-agent frames. What made the misdelivery possible is that only the
+	// selection differs: footer and input box look identical whether main or an agent is
+	// selected. While the rail is being operated the mode footer is replaced entirely, and
+	// on the agents home the input box means "create a new session" — none of these reach
+	// the main conversation.
 	"agents_rail_main_selected.txt":    idleV,
 	"agents_rail_agent_selected.txt":   {busy: true, agents: true},
 	"agents_rail_navigating_main.txt":  {},
 	"agents_rail_navigating_agent.txt": {busy: true, agents: true},
 	"agents_home_screen.txt":           {agents: true},
-	// 利用上限でターンが切れたあとの /rate-limit-options メニュー。idle でも busy でも
-	// ないのは modal_* と同じだが、その「どちらでもない」が永久に続くのがこの状態の
-	// 特徴 — 上限モーダルは自分では消えず、AtIdlePrompt が恒久的に false を返すので
-	// 自己修復が効かず 進行中 に貼り付く（2026-07-31 実測・約16時間）。
+	// The /rate-limit-options menu after a turn was cut off by the usage limit. It is
+	// neither idle nor busy, like modal_*, but here that "neither" lasts forever: the
+	// limit modal never dismisses itself, AtIdlePrompt stays false permanently, the
+	// self-heal cannot fire and the session sticks at "running" (measured 2026-07-31,
+	// about 16 hours).
 	"modal_rate_limit.txt": {rateLimit: true},
 }
 
@@ -82,15 +84,15 @@ func TestFooterCorpus(t *testing.T) {
 			if got := atIdlePrompt(s); got != want.idle {
 				t.Errorf("AtIdlePrompt(%s) = %v, want %v\nfooter line: %s", name, got, want.idle, footerLine(s))
 			}
-			// 誤検知は「送れるはずの注入を弾く」方向なので、レールの無いフレームが
-			// false であることも含めて全フレームで固定する。
+			// A false positive rejects an injection that should have gone through, so
+			// every frame is pinned, including that a frame without the rail is false.
 			if got := agentsViewActive(s); got != want.agents {
 				t.Errorf("AgentsViewActive(%s) = %v, want %v", name, got, want.agents)
 			}
-			// 上限メニュー判定も全フレームで固定する。false 側が大事: 誤検知すると
-			// 走っているターンを「上限で停止」と読んで HealIdle を呼びに行くので、
-			// スピナー中のフレームやプラン承認ダイアログが引っかからないことを
-			// コーパス全体で押さえておく。
+			// The limit-menu verdict is pinned on every frame too, and the false side
+			// is the important one: a false positive reads a running turn as stopped
+			// at the limit and goes on to call HealIdle, so the whole corpus holds
+			// down that spinner frames and the plan-approval dialog do not match.
 			if got := atRateLimitModal(s); got != want.rateLimit {
 				t.Errorf("AtRateLimitModal(%s) = %v, want %v", name, got, want.rateLimit)
 			}
@@ -152,8 +154,8 @@ func findLine(s string, match func(string) bool) string {
 // banner ("You've hit your session limit …") is transcript text and stays on screen after
 // the menu is answered, and claude echoes the chosen option into the transcript too — so
 // keying on either alone would report a menu that is long gone, and the session would be
-// badged 上限で停止 forever instead of returning to 入力待ち. Only the confirm footer
-// disappears with the menu.
+// badged as stopped at the usage limit forever instead of returning to waiting for input.
+// Only the confirm footer disappears with the menu.
 func TestRateLimitModalDismissed(t *testing.T) {
 	frame := readFrame(t, "modal_rate_limit.txt")
 	if !atRateLimitModal(frame) {
@@ -178,14 +180,15 @@ func TestRateLimitDefaultSelected(t *testing.T) {
 	if !rateLimitDefaultRe.MatchString(frame) {
 		t.Fatal("the recorded menu stands on option 1 — the guard must recognise it, or the dismissal never fires")
 	}
-	// 人がカーソルを 2 へ動かした形（❯ が 2 行目に移り、1 行目からは消える）。
+	// The shape after a human moved the cursor to 2 (❯ moves to the second line and is
+	// gone from the first).
 	moved := strings.Replace(frame, "❯ 1. Stop and wait", "  1. Stop and wait", 1)
 	moved = strings.Replace(moved, "  2. Ask your admin", "❯ 2. Ask your admin", 1)
 	if rateLimitDefaultRe.MatchString(moved) {
-		t.Error("選択が 2 に動いたフレームで既定ガードが真 — 自動解除が管理者への増枠依頼を選んでしまう")
+		t.Error("the default guard is true on a frame whose selection moved to 2 — the automatic dismissal would ask the admin for more usage")
 	}
 	if !atRateLimitModal(moved) {
-		t.Error("カーソルを動かしてもメニューはメニューのまま（検出が外れると blocked ですらなくなる）")
+		t.Error("a menu stays a menu after the cursor moves (lose the detection and the session is not even reported as blocked)")
 	}
 }
 

@@ -8,26 +8,28 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// cursor は「押し付け型」— 我々が採番した v4 UUID を `--resume` で渡して新規チャットを
-// 作らせ、以後それが使われている前提で転写も状態も引く。CLI がその id を使わなくなると
-// ミラーは静かに空のまま固まる。cursor には status hook が無いので名乗りを聞く口も無い
-// （internal/agents/imposedsid.go に経緯）。手掛かりはディスクだけ。
+// cursor is an "imposed id" kind: we mint a v4 UUID, pass it with `--resume` to make a new chat,
+// and read both transcript and state assuming it is still in use. If the CLI stops using that id
+// the mirror silently stays empty, and cursor has no status hook to ask the id back from (see
+// internal/agents/imposedsid.go). Disk is the only clue left.
 //
-// resolveSid は「押し付けた id の転写が無い」ときにだけ、この cwd の会話を拾い直して
-// 台帳を差し替える。読みの hot path（Transcript/LiveState が呼ぶ ChatID）には入れない。
+// resolveSid only kicks in when the imposed id has no transcript: it re-picks the conversation
+// for this cwd and replaces the ledger entry. Keep it out of the read hot path (ChatID, called by
+// Transcript/LiveState).
 func resolveSid(m session.Meta) string {
 	return agents.ResolveImposedSID(sids, m, cliSessions)
 }
 
 // cliSessions enumerates cursor's own chats launched in dir.
 //
-// cursor は転写を projects/<cwdSlug(dir)>/agent-transcripts/<chatID>/<chatID>.jsonl に
-// 置く — **cwd がパスに入っている**ので、帰属はディレクトリを読むだけで足りる。
+// cursor stores transcripts at projects/<cwdSlug(dir)>/agent-transcripts/<chatID>/<chatID>.jsonl;
+// the cwd is part of the path, so attribution needs nothing but a directory read.
 //
-// 作成時刻は転写ディレクトリの mtime を代理に使う。cursor は created_at を残さないが、
-// このディレクトリは中の .jsonl を作った時に一度だけ更新され、以後の追記では動かない
-// （実測: 手元 10 チャットで dir mtime ≤ file mtime、活動のあるものほど乖離する）。
-// つまり mtime ≒ チャット作成時刻で、スロット作成時刻との突き合わせに使える。
+// The transcript directory's mtime stands in for the creation time. cursor records no created_at,
+// but this directory is touched once when the .jsonl inside it is created and never again on
+// append (measured: over 10 local chats, dir mtime <= file mtime, and the busier the chat the
+// wider the gap). So mtime is approximately the chat creation time and can be matched against the
+// slot creation time.
 func cliSessions(dir string) []agents.CLISession {
 	root := filepath.Join(projectsDir(), cwdSlug(dir), "agent-transcripts")
 	ents, err := os.ReadDir(root)
@@ -40,7 +42,7 @@ func cliSessions(dir string) []agents.CLISession {
 			continue
 		}
 		id := e.Name()
-		// 転写ファイルがまだ無いディレクトリは会話として数えない（起動直後の器）。
+		// A directory with no transcript file yet is not a conversation, just a shell made at startup.
 		if _, err := os.Stat(filepath.Join(root, id, id+".jsonl")); err != nil {
 			continue
 		}

@@ -1,20 +1,25 @@
 package chatx
 
-// コンテキスト超過エラーの検知・自己修復・通知（docs/log/33 第3段）。
+// Detection, self-healing and notification for context-overflow errors (docs/log/33 stage 3).
 //
-// resume 駆動のチャットはコンテキストが積み上がり、いずれプロバイダのウィンドウを
-// 超えて 1 ターンが 400 で失敗する。従来これは:
-//   - 対話ターン: プロバイダエラーとして利用者に返るだけ（次も同じく失敗して詰む）
-//   - 自動ターン（docs/log/30 オペレーター）: log に書くだけの black hole
-// だった。第3段はこれを塞ぐ:
-//   1. 超過エラーを判別（isContextOverflowErr）
-//   2. 対話/自動ターンとも、その場で自前コンパクション（第2段 compactConversation）を
-//      試し、成功したら新セッションで 1 回だけリトライ（recoverForRetry）
-//   3. リトライも不能なら notice＋通知で必ず可視化（noteContextOverflow）
+// A resume-driven chat accumulates context until it passes the provider's window and one turn
+// fails with a 400. That used to mean:
+//   - interactive turn: the provider error is handed to the user and the next turn fails the
+//     same way, so the conversation is stuck
+//   - automatic turn (docs/log/30 operator): a black hole with only a log line
 //
-// 実測（2026-07）: claude -p は is_error+"Prompt is too long …"（terminal_reason
-// "prompt_too_long"）、codex exec は "Input exceeds the maximum length …"
-// / input_too_large。文言ドリフトに強くするため小文字部分一致を複数持つ。
+// Stage 3 closes both:
+//  1. recognise the overflow (IsContextOverflowErr)
+//  2. for interactive and automatic turns alike, try the app-level compaction (stage 2,
+//     compactConversation) on the spot and, on success, retry exactly once on the new session
+//     (RecoverForRetry)
+//  3. when a retry is impossible, surface it with a notice plus a notification
+//     (NoteContextOverflow)
+//
+// Measured (2026-07): claude -p returns is_error + "Prompt is too long …" (terminal_reason
+// "prompt_too_long"), codex exec returns "Input exceeds the maximum length …" /
+// input_too_large. Several lowercase substrings are kept so wording drift does not defeat the
+// match.
 
 import (
 	"context"
@@ -23,14 +28,14 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 )
 
-// contextOverflowNeedles はコンテキスト/入力過大エラーの判別語（小文字）。プロバイダの
-// 文言が変わっても取りこぼしを減らすよう寛容に持つ。取りこぼしても notice が出ない
-// だけで（通常のプロバイダエラーとして返る）、誤検知しても余分な要約 1 ターンを試す
-// だけ（安全側）。
+// contextOverflowNeedles are the lowercase markers of a context/input-too-large error. They
+// are deliberately generous so a reworded provider message still matches: a miss only costs
+// the notice (the plain provider error is returned instead) and a false positive only costs
+// one extra summarisation turn, so erring wide is the safe side.
 var contextOverflowNeedles = []string{
 	"prompt is too long",  // claude
 	"too many tokens",     //
-	"context length",      // 一般的な OpenAI 系
+	"context length",      // common in the OpenAI family
 	"context_length",      //
 	"maximum context",     //
 	"context window",      //
@@ -43,7 +48,7 @@ var contextOverflowNeedles = []string{
 	"too large for",       //
 }
 
-// isContextOverflowErr reports whether err looks like a context-window / input-size
+// IsContextOverflowErr reports whether err looks like a context-window / input-size
 // overflow (vs a transient network or auth failure).
 func IsContextOverflowErr(err error) bool {
 	if err == nil {
@@ -59,7 +64,7 @@ func IsContextOverflowErr(err error) bool {
 }
 
 // recoverForRetry attempts self-healing when origErr is a context overflow: it runs
-// the app-level compaction (第2段) on the CURRENT session and, on success, leaves a
+// the app-level compaction (stage 2) on the CURRENT session and, on success, leaves a
 // PendingHandoff so the caller can rebuild the prompt (its own injectPendingReports /
 // injectHandoff) and retry on the fresh session. Returns true only when a retry is
 // worth attempting. The caller holds the conversation lock.
@@ -89,8 +94,9 @@ func NoteContextOverflow(c *ChatConversation) {
 	_ = notice.Put(ev)
 }
 
-// contextOverflowContent は超過 notice の正本言語（ja）フォールバック本文。表示は
-// noticeKeyCtxOverflow のカタログ訳が担う（chat_notice.go / ADR 0033）。
+// contextOverflowContent is the source-language (ja) fallback body of the overflow notice.
+// What is displayed comes from the catalogue translation of noticeKeyCtxOverflow
+// (chat_notice.go / ADR 0033).
 func contextOverflowContent() string {
 	return "コンテキストが上限を超えたため、応答を生成できませんでした。" +
 		"この会話はこのままでは続行が難しい状態です。ヘッダのコンテキストバー右にある「圧縮」で" +

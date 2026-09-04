@@ -1,8 +1,8 @@
 package codex
 
-// managed codex driver のユニットテスト。app-server は WebSocket JSON-RPC の
-// 最小モックで置き換え、実 turn を消費せずに状態機械・native steer・interrupt・
-// server→client 質問と ClientMessageID 台帳を検証する。
+// Unit tests for the managed codex driver. The app-server is replaced by a minimal WebSocket
+// JSON-RPC mock, so the state machine, native steer, interrupt, server-to-client questions and
+// the ClientMessageID ledger are checked without spending a real turn.
 
 import (
 	"encoding/json"
@@ -351,7 +351,7 @@ func TestPersistentLedgerDedupesResend(t *testing.T) {
 		}
 	}
 	waitCodexState(t, h, agents.TurnCompleted)
-	// handle を作り直してもファイル台帳が同じ id を止める（Agent 再起動相当）。
+	// Even with a fresh handle the on-disk ledger still stops the same id (as after an Agent restart).
 	h2 := newCodexTestHandleWithoutLedgerReset(t, cl, h.name)
 	if err := h2.Send(agents.TurnInput{Prompt: "once", ClientMessageID: "af_dup"}); err != nil {
 		t.Fatal(err)
@@ -414,7 +414,7 @@ func TestResumedActiveTurnQueuesUntilCompletion(t *testing.T) {
 	h := newCodexTestHandle(t, cl, "codex-resumed-active")
 	registerCodexTestHandle(t, h)
 	h.mu.Lock()
-	h.running = true // Agent 再起動後に Resume snapshot から引き継いだ turn
+	h.running = true // a turn carried over from the Resume snapshot after an Agent restart
 	h.turnID = "turn_external"
 	h.state = agents.TurnRunning
 	h.mu.Unlock()
@@ -583,11 +583,12 @@ func TestManagedEnrich(t *testing.T) {
 	}
 }
 
-// managed セッションの完了が状態通知 seam（agents.SetStateNotifier → package main の
-// recordSessionNotification）へ届くことの回帰テスト。docs/log/30 の報告は hook 経路にしか
-// 配線されておらず、managed driver は status を直接書いて誰にも知らせなかったため、
-// 完了しても【セッション報告】が構造的に飛ばなかった。ここでは実 turn をモック
-// app-server で走らせ、driver が seam を通ることを端から確かめる。
+// Regression test that the completion of a managed session reaches the state-notification seam
+// (agents.SetStateNotifier -> recordSessionNotification in package main). The docs/log/30 report
+// was wired only into the hook route, and the managed driver wrote status directly without
+// telling anyone, so a session report could structurally never be sent on completion. This runs a
+// real turn against the mock app-server and checks end to end that the driver goes through the
+// seam.
 func TestManagedTurnNotifiesCompletion(t *testing.T) {
 	m, cl := newMockCodexServer(t)
 	m.autoComplete = true
@@ -611,11 +612,12 @@ func TestManagedTurnNotifiesCompletion(t *testing.T) {
 			t.Fatalf("transition = %v, want %s …→idle", tr, h.slotSid)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("turn completed without notifying the state seam — 報告が飛ばない")
+		t.Fatal("turn completed without notifying the state seam — no report would be sent")
 	}
 }
 
-// TestManagedTurnFailedSurfacesReason pins the fix for the codex-specific 反映待ち bug:
+// TestManagedTurnFailedSurfacesReason pins the fix for the codex-specific bug where the failure
+// reason never surfaced:
 // a turn/completed(status:"failed") carries turn.error (TurnError{message,
 // codexErrorInfo}), which the driver used to discard entirely — MarkTurnEnd (no reason)
 // meant the operator report/chat bridge got a bare "failed" with nothing to explain it,
@@ -744,7 +746,7 @@ func TestManagedEnrichAppendsErrorTurn(t *testing.T) {
 
 // TestManagedUsageLimitBlockedBadge verifies that WireLive reports StateLimited
 // when the last managed turn failed with usageLimitExceeded, so the Console shows
-// 制限解除待ち instead of an indistinguishable 入力待ち.
+// "Waiting for limit reset" instead of an indistinguishable "Ready".
 func TestManagedUsageLimitBlockedBadge(t *testing.T) {
 	m, cl := newMockCodexServer(t)
 	h := newCodexTestHandle(t, cl, "codex-limit-badge")
@@ -776,7 +778,7 @@ func TestManagedUsageLimitBlockedBadge(t *testing.T) {
 		t.Fatalf("WireLive state = %q, want %q", li.State, agents.StateLimited)
 	}
 
-	// A non-usage-limit error must NOT become 制限解除待ち.
+	// A non-usage-limit error must NOT become "Waiting for limit reset".
 	h2 := newCodexTestHandle(t, cl, "codex-auth-badge")
 	registerCodexTestHandle(t, h2)
 	h2.setLastError(codexError{message: "auth failed", label: "authError"})

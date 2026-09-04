@@ -9,9 +9,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// isolateSlot points ConfigDir()（jsonl の所在）と AgentConfigDir()（claude-sid 台帳）
-// と MetaDir() を temp に向ける。実フリートの claude 設定・セッションを触らないため
-// （テストが実 .claude.json を書いた事故が過去にある）。
+// isolateSlot points ConfigDir() (where the jsonl lives), AgentConfigDir() (the claude-sid
+// ledger) and MetaDir() at temp dirs, so the real fleet's claude config and sessions are
+// never touched — a test has written into the real .claude.json before.
 func isolateSlot(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -43,7 +43,7 @@ const (
 	testLiveSID = "47000000-0000-4000-8000-00000000live"
 )
 
-// 台帳が無ければ slot をそのまま使う — 普段の（ドリフトしていない）セッション。
+// With no ledger the slot sid is used as is — the ordinary, undrifted session.
 func TestLiveSIDWithoutLedgerIsSlot(t *testing.T) {
 	isolateSlot(t)
 	if got := LiveSID(testSlotSID); got != testSlotSID {
@@ -51,8 +51,8 @@ func TestLiveSIDWithoutLedgerIsSlot(t *testing.T) {
 	}
 }
 
-// ドリフト後: 決定論 sid の jsonl は永久に現れないので、台帳の指す実ログを見に行く。
-// これが無いとミラーは「まだ会話はありません」のまま固まる。
+// After a drift the deterministic sid's jsonl never appears, so the real log the ledger
+// points at is read instead. Without this the mirror stays stuck on "no conversation yet".
 func TestJSONLPathsFollowsDriftedSID(t *testing.T) {
 	cfg := isolateSlot(t)
 	want := writeSlotJSONL(t, cfg, "-tmp-repo", testLiveSID)
@@ -66,26 +66,26 @@ func TestJSONLPathsFollowsDriftedSID(t *testing.T) {
 		t.Fatalf("jsonlPaths = %v, want [%s]", got, want)
 	}
 	if !SessionJSONLExists(testSlotSID) {
-		t.Fatal("SessionJSONLExists = false — 実ログがあるのに新規セッション扱いになる")
+		t.Fatal("SessionJSONLExists = false — a real log exists but the session is treated as new")
 	}
 }
 
-// 台帳の指す先が消えていたら黙って slot に戻る。古い記載が残っていても、それが
-// 「会話が無い」判定を狂わせてはいけない。
+// When what the ledger points at is gone, fall back to the slot silently. A stale entry must
+// not distort the "there is no conversation" verdict.
 func TestLiveSIDIgnoresStaleLedger(t *testing.T) {
 	isolateSlot(t)
-	sids.Write(testSlotSID, testLiveSID) // 対応する jsonl は書かない
+	sids.Write(testSlotSID, testLiveSID) // no matching jsonl is written
 
 	if got := LiveSID(testSlotSID); got != testSlotSID {
 		t.Fatalf("LiveSID = %q, want the slot sid %q when the ledger dangles", got, testSlotSID)
 	}
 	if SessionJSONLExists(testSlotSID) {
-		t.Fatal("SessionJSONLExists = true — 実体の無い台帳を会話ありと誤認している")
+		t.Fatal("SessionJSONLExists = true — a dangling ledger entry is being read as a conversation")
 	}
 }
 
-// 再起動は「claude が実際に書いている id」を resume しなければならない。slot sid を
-// 渡すと "No conversation found" で落ち、毎回の再起動で会話が黙って消える。
+// A restart must resume the id claude is actually writing. Passing the slot sid fails with
+// "No conversation found", and the conversation silently disappears on every restart.
 func TestBuildProgramResumesDriftedSID(t *testing.T) {
 	cfg := isolateSlot(t)
 	writeSlotJSONL(t, cfg, "-tmp-repo", testLiveSID)
@@ -100,8 +100,9 @@ func TestBuildProgramResumesDriftedSID(t *testing.T) {
 	}
 }
 
-// hook が名乗った id が我々のものと違えば、slot に引き戻したうえで対応を記録する。
-// 記録が無いと、次のポーリングも再起動も決定論 sid を見続けて何も見つけられない。
+// When the id a hook reports differs from ours, it is mapped back to the slot and the
+// correspondence recorded. Without the record, the next poll and the next restart both keep
+// looking at the deterministic sid and find nothing.
 func TestNormalizeHookSIDRecordsDrift(t *testing.T) {
 	isolateSlot(t)
 	m := session.Meta{Name: "s56ynzz", Dir: "/tmp/repo", Kind: session.KindClaude}
@@ -117,8 +118,8 @@ func TestNormalizeHookSIDRecordsDrift(t *testing.T) {
 	}
 }
 
-// ドリフトが解消したら（--session-id が効いた状態で起動し直された）台帳を畳む。
-// 残したままだと、消えた古い会話を resume しようとする。
+// Once the drift is healed (relaunched with --session-id taking effect), the ledger entry is
+// folded away. Left in place, it would try to resume a conversation that is gone.
 func TestNormalizeHookSIDClearsHealedDrift(t *testing.T) {
 	isolateSlot(t)
 	m := session.Meta{Name: "s56ynzz", Dir: "/tmp/repo", Kind: session.KindClaude}
@@ -135,8 +136,8 @@ func TestNormalizeHookSIDClearsHealedDrift(t *testing.T) {
 	}
 }
 
-// AF 管理外の claude（ユーザーが自分で起動したもの）の hook は素通りさせる。
-// cwd 一致のような当て推量で他人のセッションに結びつけない。
+// Hooks from a claude outside AF's management (one the user started themselves) pass
+// through. Never tie them to someone else's session on a guess such as a matching cwd.
 func TestNormalizeHookSIDPassesThroughUnmanaged(t *testing.T) {
 	isolateSlot(t)
 	if got := NormalizeHookSID(testLiveSID); got != testLiveSID {

@@ -13,14 +13,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// 新しい worktree を切ったとき、起点が「親のローカル base」ではなく「origin/<base> の
-// 先端」になること。ローカルブランチを動かすものはこの製品に一つも無い（自動 fetch は
-// origin/* しか更新しない）ので、これが無いと古いクローンから切ったセッションが静かに
-// 何週間も前の基点で始まる。
+// A new worktree must start at origin/<base>'s tip, not at the parent's local base. Nothing in
+// this product moves a local branch (auto-fetch only refreshes origin/*), so without this a
+// session cut from an old clone silently starts weeks behind.
 //
-// 直し方の要は「親を触らない」こと: 親を pull --ff-only すると、親で作業中のセッションの
-// 足元でファイルが入れ替わる（無関係なファイルが dirty でも FF は成功してしまう）。
-// なのでこの関数は**新しい worktree の中だけ**を進める。
+// The heart of the fix is not touching the parent: a pull --ff-only there swaps files out from
+// under a session working in the parent (a FF succeeds even when unrelated files are dirty). So
+// this function advances the new worktree only.
 func TestFastForwardNewWorktreeToOrigin(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -28,7 +27,7 @@ func TestFastForwardNewWorktreeToOrigin(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// origin（bare）+ それを push した上流の作業コピー + 親クローン。
+	// origin (bare) + the upstream working copy that pushed to it + the parent clone.
 	origin := filepath.Join(home, "origin.git")
 	runIntegrationGit(t, home, "init", "--quiet", "--bare", "-b", "main", origin)
 	up := filepath.Join(home, "up")
@@ -42,7 +41,7 @@ func TestFastForwardNewWorktreeToOrigin(t *testing.T) {
 	}
 	runIntegrationGit(t, home, "clone", "--quiet", origin, parent)
 
-	// クローンしたあとに origin が進む（＝親のローカル main は古いまま）。
+	// origin advances after the clone (= the parent's local main stays stale).
 	commitIntegrationFile(t, up, "newer")
 	runIntegrationGit(t, up, "push", "--quiet", "origin", "main")
 	tip := gitRev(t, up, "HEAD")
@@ -64,24 +63,25 @@ func TestFastForwardNewWorktreeToOrigin(t *testing.T) {
 	if got := gitRev(t, wt, "HEAD"); got != tip {
 		t.Errorf("worktree HEAD = %s, want origin's tip %s", got, tip)
 	}
-	// ★ 親は動かないこと。ここが「親を FF する」案との違いで、親で走っている
-	// セッションの作業コピーを勝手に進めないための一線。
+	// The parent must not move. That is the difference from the "fast-forward the parent"
+	// alternative, and the line that keeps a session running in the parent from being advanced
+	// underneath it.
 	if got := gitRev(t, parent, "main"); got != stale {
 		t.Errorf("the parent's local main moved to %s; it must stay at %s", got, stale)
 	}
 	if got := gitRev(t, parent, "HEAD"); got != stale {
 		t.Errorf("the parent's HEAD moved to %s; it must stay at %s", got, stale)
 	}
-	// 新しいブランチに upstream が付いていないこと（explicit refspec の pull は
-	// 追跡を設定しない）。付くと ↑↓ バッジの意味が変わり、以後の pull が base を
-	// 作業ブランチへ流し込む。
+	// The new branch must gain no upstream (a pull with an explicit refspec sets no tracking).
+	// With one, the ↑↓ badge changes meaning and every later pull pours the base into the
+	// working branch.
 	if out, err := gitx.Run(wt, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); err == nil {
 		t.Errorf("temp/fresh gained an upstream (%s); it must stay untracked", out)
 	}
 }
 
-// ローカル base に未 push のコミットがある（＝分岐している）ときは、そのローカルの
-// 仕事こそが利用者の意図した起点なので、黙って origin へ倒さない。
+// When the local base has unpushed commits (= it has diverged), that local work is the base the
+// user meant, so it must not be silently replaced with origin's.
 func TestFastForwardNewWorktreeKeepsDivergedLocalBase(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -104,7 +104,7 @@ func TestFastForwardNewWorktreeKeepsDivergedLocalBase(t *testing.T) {
 
 	commitIntegrationFile(t, up, "remote-side")
 	runIntegrationGit(t, up, "push", "--quiet", "origin", "main")
-	commitIntegrationFile(t, parent, "local-only") // 親のローカルにだけある仕事
+	commitIntegrationFile(t, parent, "local-only") // work that exists only in the parent's local branch
 	local := gitRev(t, parent, "main")
 
 	wt, err := gitx.EnsureWorktree(parent, "main", "temp/diverged", "wip-diverged")
@@ -118,8 +118,8 @@ func TestFastForwardNewWorktreeKeepsDivergedLocalBase(t *testing.T) {
 	}
 }
 
-// origin にそのブランチが無い（ローカル専用）／リモートそのものが無いときは、
-// 何も起きず起動も壊れないこと。
+// When origin has no such branch (local-only), or there is no remote at all, nothing must
+// happen and the launch must still work.
 func TestFastForwardNewWorktreeWithoutOrigin(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -127,15 +127,15 @@ func TestFastForwardNewWorktreeWithoutOrigin(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	parent := filepath.Join(home, "repos", "app")
-	gitInit(t, parent) // remote 無し
+	gitInit(t, parent) // no remote
 	wt, err := gitx.EnsureWorktree(parent, "main", "temp/local", "wip-local")
 	if err != nil {
 		t.Fatalf("gitx.EnsureWorktree: %v", err)
 	}
 	before := gitRev(t, wt, "HEAD")
 	gitx.FastForwardNewWorktreeToOrigin(wt, "main")
-	gitx.FastForwardNewWorktreeToOrigin(wt, "")                // base 不明
-	gitx.FastForwardNewWorktreeToOrigin(wt, "--upload-pack=x") // 引数に化ける名前
+	gitx.FastForwardNewWorktreeToOrigin(wt, "")                // unknown base
+	gitx.FastForwardNewWorktreeToOrigin(wt, "--upload-pack=x") // a name that would turn into an argument
 	if got := gitRev(t, wt, "HEAD"); got != before {
 		t.Errorf("HEAD moved to %s without an origin; want %s", got, before)
 	}
@@ -150,9 +150,9 @@ func gitRev(t *testing.T, dir, ref string) string {
 	return out
 }
 
-// 配線まで通しての確認: POST /sessions の worktree-then-start が、実際に origin の
-// 先端で始まること。ヘルパ単体が正しくても呼ばれていなければ意味がないので、
-// base 未指定（＝親の現在ブランチを起点にする経路）でここを踏む。
+// Checked through the wiring: POST /sessions' worktree-then-start really does begin at origin's
+// tip. A correct helper means nothing if it is never called, so this goes through the path with
+// no base given (= start from the parent's current branch).
 func TestCreateSessionWorktreeStartsAtOriginTip(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -189,7 +189,7 @@ func TestCreateSessionWorktreeStartsAtOriginTip(t *testing.T) {
 
 	var created session.Session
 	do(t, srv, "POST", "/sessions", map[string]any{
-		// branch を送らない＝「既定の基点」。親の現在ブランチ(main)が起点になる。
+		// no branch sent = "the default base"; the parent's current branch (main) is the start.
 		"worktree": true, "dir": parent, "new_branch": "feat-fresh", "kind": "shell",
 	}, http.StatusCreated, &created)
 	defer exec.Command("tmux", "kill-session", "-t", session.TmuxName(created.Name)).Run()

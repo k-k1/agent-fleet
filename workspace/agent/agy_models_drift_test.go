@@ -1,18 +1,18 @@
 //go:build drift
 
-// agy のモデルカタログのドリフト検知（Tier 1）— agy_pane_drift_test.go の兄弟。
-// build tag `drift` で通常の `go test ./...` から除外される（実 agy バイナリと
-// 実サインインが要る。`agy models` は認証付き API を叩く）。
+// Drift detection for agy's model catalog (Tier 1), the sibling of agy_pane_drift_test.go.
+// The `drift` build tag keeps it out of a normal `go test ./...`: it needs the real agy
+// binary and a real sign-in, because `agy models` calls an authenticated API.
 //
-// ここが埋めるのは **`agy models` の出力形式への依存**。1.1.19 でこれが
-// 「表示名だけ」から「id<TAB>表示名」へ変わり、行を丸ごと `--model` に渡して
-// いた製品コードは CLI に既定へフォールバックされていた（docs/log/70 §70.14.8）。
+// What it covers is the dependency on the OUTPUT FORMAT of `agy models`. In 1.1.19 that went
+// from "display name only" to "id<TAB>display name", and product code that passed the whole
+// line to `--model` was silently fallen back to the default by the CLI (docs/log/70
+// §70.14.8).
 //
-// ⚠️ 気づけなかった理由がそのままこのテストの存在理由である: **セッションは
-// 起動し、動き、黙って別のモデルだった**。エラーは TUI の警告 1 行だけで、
-// Console にも API にも何も出ない。cli-release-watch が新版を見つけて
-// agy-contract.yml を回す仕組みは既にあったが、検査していたのは TUI ペインの
-// フッタだけで、カタログは誰も見ていなかった。
+// Why that went unnoticed is the reason this test exists: the session started, ran, and was
+// quietly on a different model. The only sign was one warning line in the TUI; nothing
+// reached the Console or the API. cli-release-watch already ran agy-contract.yml on a new
+// release, but it only checked the TUI pane footer — nobody looked at the catalog.
 package main
 
 import (
@@ -43,7 +43,7 @@ func TestDriftAgyModelsCatalog(t *testing.T) {
 	}
 	list := agy.Models()
 	if len(list) == 0 {
-		t.Fatal("the catalog is empty — the picker would offer 既定 only")
+		t.Fatal("the catalog is empty — the picker would offer the default only")
 	}
 
 	twoColumn := bytes.Contains(raw, []byte("\t"))
@@ -53,20 +53,22 @@ func TestDriftAgyModelsCatalog(t *testing.T) {
 		if m.ID == "" || m.Label == "" {
 			t.Fatalf("empty id or label: %+v", m)
 		}
-		// バナーや注意書きが stdout に現れ始めたら拾ってしまう。いまは
-		// "Fetching available models..." は stderr なので .Output() には来ない。
+		// A banner or a note appearing on stdout would be picked up as a model. Today
+		// "Fetching available models..." goes to stderr, so .Output() never sees it.
 		if strings.HasSuffix(m.ID, "...") || strings.Contains(m.ID, "  ") {
 			t.Fatalf("this does not look like a model, it looks like prose: %q", m.ID)
 		}
 		if !twoColumn {
-			// 旧形式（表示名がそのまま --model に通る）。id == label が契約。
+			// Old format (the display name goes straight into --model). id == label
+			// is the contract.
 			if m.ID != m.Label {
 				t.Fatalf("single-column output but id != label: %+v", m)
 			}
 			continue
 		}
-		// ⚠️ 本命。2 カラム形式で id に空白が混じっているなら、それは行を
-		// 丸ごと渡しているということで、CLI は黙って既定へ落とす。
+		// The one that matters: whitespace in an id under the two-column format
+		// means the whole line is being passed, and the CLI silently falls back to
+		// the default.
 		if strings.ContainsAny(m.ID, " \t") {
 			t.Fatalf("id contains whitespace — the whole line is being passed as --model: %q", m.ID)
 		}
@@ -75,8 +77,8 @@ func TestDriftAgyModelsCatalog(t *testing.T) {
 		}
 	}
 
-	// 列が 3 つ目を生やしたら、いまの Cut は 2 列目に残りを全部詰め込む。
-	// 落とすほどではないが、黙って通してよいものでもない。
+	// If a third column appears, today's Cut stuffs everything left into the second one.
+	// Not worth failing the run over, but not something to pass silently either.
 	for _, ln := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
 		if n := strings.Count(ln, "\t"); n > 1 {
 			t.Errorf("a line has %d tabs — the catalog grew a column: %q", n+1, ln)

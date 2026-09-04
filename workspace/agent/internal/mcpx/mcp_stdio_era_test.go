@@ -1,8 +1,8 @@
 package mcpx
 
-// ローカル stdio MCP の版契約（docs/log/49 + ADR0032）。CP の /mcp と同じく両 era を
-// 同時に serve するが、stdio には HTTP ステータスもヘッダも無いので、判別材料は
-// `_meta` と server/discover の応答だけになる。
+// The version contract of the local stdio MCP (docs/log/49 + ADR0032). Like the CP's /mcp it
+// serves both eras at once, but stdio has neither an HTTP status nor headers, so the only
+// evidence available is `_meta` and the server/discover response.
 
 import (
 	"encoding/json"
@@ -33,7 +33,7 @@ func stdioErr(t *testing.T, m map[string]any) map[string]any {
 	t.Helper()
 	e, ok := m["error"].(map[string]any)
 	if !ok {
-		t.Fatalf("error が無い: %+v", m)
+		t.Fatalf("no error in the answer: %+v", m)
 	}
 	return e
 }
@@ -42,7 +42,7 @@ func TestStdioDiscoverAdvertisesBothEras(t *testing.T) {
 	m := stdioDispatch(t, `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{`+stdioMeta(mcpStdioProtocol)+`}}`)
 	res, ok := m["result"].(map[string]any)
 	if !ok {
-		t.Fatalf("result が無い: %+v", m)
+		t.Fatalf("no result in the answer: %+v", m)
 	}
 	if res["resultType"] != "complete" {
 		t.Fatalf("resultType = %v", res["resultType"])
@@ -58,32 +58,32 @@ func TestStdioDiscoverAdvertisesBothEras(t *testing.T) {
 		}
 	}
 	if !sawLegacy {
-		t.Fatalf("旧版が広告から消えている: %v", vers)
+		t.Fatalf("the old version has disappeared from the advertisement: %v", vers)
 	}
 	if _, ok := res["serverInfo"]; !ok {
-		t.Fatal("serverInfo が top-level に無い（SEP-2575 の形）")
+		t.Fatal("no top-level serverInfo (the SEP-2575 shape)")
 	}
 	meta, _ := res["_meta"].(map[string]any)
 	if _, ok := meta[mcpMetaServerInfo]; !ok {
-		t.Fatal("serverInfo が _meta に無い（draft ドキュメントの形）")
+		t.Fatal("no serverInfo in _meta (the draft document's shape)")
 	}
 }
 
-// 旧クライアント（_meta 無し）は従来どおり initialize で通る。
+// An old client (no _meta) still gets through with initialize as before.
 func TestStdioLegacyInitializeStillWorks(t *testing.T) {
 	m := stdioDispatch(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`)
 	res, ok := m["result"].(map[string]any)
 	if !ok {
-		t.Fatalf("result が無い: %+v", m)
+		t.Fatalf("no result in the answer: %+v", m)
 	}
 	if res["protocolVersion"] != "2025-06-18" {
 		t.Fatalf("protocolVersion = %v, want echo", res["protocolVersion"])
 	}
 }
 
-// tools/list は両 era で通り、新版クライアント向けに resultType を持つ。ttlMs/cacheScope
-// は 2026-07-28 の list 系結果の必須フィールドで、欠くと新 era クライアント（opencode
-// 1.18.8 実測）が検証で弾いてサーバーごと切断する。
+// tools/list works in both eras and carries resultType for new-era clients. ttlMs and
+// cacheScope are required fields of a 2026-07-28 list result: without them a new-era client
+// (measured with opencode 1.18.8) fails validation and disconnects the whole server.
 func TestStdioToolsListBothEras(t *testing.T) {
 	for _, body := range []string{
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
@@ -92,7 +92,7 @@ func TestStdioToolsListBothEras(t *testing.T) {
 		m := stdioDispatch(t, body)
 		res, ok := m["result"].(map[string]any)
 		if !ok {
-			t.Fatalf("%s → result が無い: %+v", body, m)
+			t.Fatalf("%s → no result in the answer: %+v", body, m)
 		}
 		if res["resultType"] != "complete" {
 			t.Fatalf("%s → resultType = %v", body, res["resultType"])
@@ -104,7 +104,7 @@ func TestStdioToolsListBothEras(t *testing.T) {
 			t.Fatalf("%s → cacheScope = %v", body, res["cacheScope"])
 		}
 		if tools, _ := res["tools"].([]any); len(tools) == 0 {
-			t.Fatalf("%s → tools が空", body)
+			t.Fatalf("%s → tools is empty", body)
 		}
 	}
 }
@@ -120,7 +120,7 @@ func TestStdioUnsupportedVersionCarriesSupportedList(t *testing.T) {
 		t.Fatalf("requested = %v", data["requested"])
 	}
 	if sup, _ := data["supported"].([]any); len(sup) == 0 {
-		t.Fatal("supported 一覧が無いとクライアントは再交渉できない")
+		t.Fatal("without the supported list a client cannot renegotiate")
 	}
 }
 
@@ -133,8 +133,8 @@ func TestStdioMissingRequiredMetaIsInvalidParams(t *testing.T) {
 	}
 }
 
-// 未知メソッドは -32601。これが両対応クライアントの「旧版サーバーだ」という判別材料で、
-// 黙殺すると相手は era 判定のタイムアウトを待つことになる。
+// An unknown method is -32601. That is how a dual-era client concludes "this is an old-version
+// server"; swallowing it makes the client wait out its era-detection timeout instead.
 func TestStdioUnknownMethodIsMethodNotFound(t *testing.T) {
 	e := stdioErr(t, stdioDispatch(t, `{"jsonrpc":"2.0","id":1,"method":"does/notexist"}`))
 	if int(e["code"].(float64)) != mcpErrMethodNotFound {
@@ -142,7 +142,7 @@ func TestStdioUnknownMethodIsMethodNotFound(t *testing.T) {
 	}
 }
 
-// 通知（id 無し）は何があっても応答しない — 版検証で弾く場合も含めて。
+// A notification (no id) is never answered, not even when version validation rejects it.
 func TestStdioNotificationsGetNoAnswer(t *testing.T) {
 	for _, body := range []string{
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
@@ -150,7 +150,7 @@ func TestStdioNotificationsGetNoAnswer(t *testing.T) {
 		`{"jsonrpc":"2.0","method":"tools/list","params":{` + stdioMeta("1999-01-01") + `}}`,
 	} {
 		if out := dispatchMCPStdio([]byte(body)); out != nil {
-			t.Fatalf("%s に応答してしまった: %s", body, out)
+			t.Fatalf("answered the notification %s: %s", body, out)
 		}
 	}
 }

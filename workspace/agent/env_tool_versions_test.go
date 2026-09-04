@@ -8,7 +8,8 @@ import (
 	"testing"
 )
 
-// 実ツールの --version 出力（実測）から版番号が抜けることを固定する。
+// extractVer pulls the version number out of the real --version output of each tool
+// (measured samples).
 func TestExtractVer(t *testing.T) {
 	cases := []struct{ raw, want string }{
 		{"2.1.207 (Claude Code)", "2.1.207"},
@@ -19,9 +20,9 @@ func TestExtractVer(t *testing.T) {
 		{"go version go1.26.4 linux/amd64", "1.26.4"},
 		{"v22.17.0", "22.17.0"},
 		{"Python 3.11.2", "3.11.2"},
-		{"2026.07.20-8cc9c0b", "2026.07.20"}, // cursor: 日付版数（sha 接尾辞は落ちる）
+		{"2026.07.20-8cc9c0b", "2026.07.20"}, // cursor: date-based version (the sha suffix is dropped)
 
-		{"(timeout)", "(timeout)"}, // 番号なし → raw をそのまま返す
+		{"(timeout)", "(timeout)"}, // no number: the raw string is returned unchanged
 	}
 	for _, c := range cases {
 		if got := extractVer(c.raw); got != c.want {
@@ -30,21 +31,22 @@ func TestExtractVer(t *testing.T) {
 	}
 }
 
-// probeVersion: 存在しないパスは nil（UI は「—」表示）。
+// probeVersion returns nil for a path that does not exist, and the UI renders a dash.
 func TestProbeVersionMissing(t *testing.T) {
 	if got := probeVersion(context.Background(), "/no/such/binary", nil); got != nil {
 		t.Errorf("probeVersion(missing) = %+v, want nil", got)
 	}
 }
 
-// toolProbe は同じ実体を二度起動しない。acrt（0.14.0）で出た「実効列だけ (timeout)、
-// ~/.local 列は版が取れている」は、lean variant で 3 列とも同じ ~/.local/bin/<cmd> を
-// 指しているのに列ごとに起動していたのが原因なので、ここを緩めると再発する。
-// symlink 越しでも実体が同じなら 1 回（Path は列ごとに要求されたパスのまま）。
+// toolProbe never launches the same real binary twice. The symptom of "(timeout) in the
+// effective column while the ~/.local column has a version" came from launching once per
+// column even though, in the lean variant, all three columns point at the same
+// ~/.local/bin/<cmd>; relaxing this brings it back. One launch even across a symlink, while
+// Path stays the path each column asked for.
 func TestToolProbeDedupesByRealPath(t *testing.T) {
 	dir := t.TempDir()
 	real := filepath.Join(dir, "tool-real")
-	// 起動のたびに追記するので、実行回数がファイルの行数で数えられる。
+	// Appends on every launch, so the number of runs is countable as lines in the file.
 	counter := filepath.Join(dir, "runs")
 	script := "#!/bin/sh\necho run >> " + counter + "\necho 'tool 1.2.3'\n"
 	if err := os.WriteFile(real, []byte(script), 0o755); err != nil {
@@ -61,37 +63,38 @@ func TestToolProbeDedupesByRealPath(t *testing.T) {
 		t.Fatalf("versions = %+v / %+v, want 1.2.3 both", a, b)
 	}
 	if a.Path != link || b.Path != real {
-		t.Errorf("paths = %q / %q, want %q / %q（列ごとの実体を tooltip に残す）", a.Path, b.Path, link, real)
+		t.Errorf("paths = %q / %q, want %q / %q (each column keeps its own path for the tooltip)", a.Path, b.Path, link, real)
 	}
 	runs, err := os.ReadFile(counter)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Count(string(runs), "run"); got != 1 {
-		t.Errorf("起動回数 = %d, want 1（同じ実体は使い回す）", got)
+		t.Errorf("launches = %d, want 1 (the same real binary is reused)", got)
 	}
-	// 実体が無い列は nil のまま（「—」表示）で、こちらも憶えて再試行しない。
+	// A column with no binary stays nil (rendered as a dash), and that is remembered too
+	// rather than retried.
 	if got := tp.at(filepath.Join(dir, "nope")); got != nil {
 		t.Errorf("at(missing) = %+v, want nil", got)
 	}
 }
 
-// uvToolVersion: `uv tool install` した Python MCP サーバーの版を **exec せずに**
-// dist-info 名から読む（cloudwatch MCP は --version でサーバーが起動してしまい、
-// AWS MCP プロキシは --version 自体を持たない — toolSpec.PyDist のコメント参照）。
-// 焼き込み（/usr/local 側）とユーザー導入（home 側）で venv の root が違うので、
-// home 配下かどうかで root を選び分けているところまで見る。
+// uvToolVersion reads the version of a `uv tool install`ed Python MCP server from the
+// dist-info name WITHOUT exec'ing it: --version starts the server for the cloudwatch MCP,
+// and the AWS MCP proxy has no --version at all (see the comment on toolSpec.PyDist). The
+// venv root differs between a baked install (/usr/local) and a user install (home), so this
+// also covers picking the root by whether the binary lives under home.
 func TestUVToolVersion(t *testing.T) {
 	home := t.TempDir()
-	// 焼き込み root は temp へ逃がす。実パス（/usr/local/share/uv/tools）のままだと、
-	// 「焼き込み側には無いはず」を確かめる下のケースが *このコンテナの実際の焼き込み*
-	// （mcp_proxy_for_aws-1.6.4.dist-info）を拾って落ちる — 焼き込みの無い CI ランナー
-	// でだけ通る、実環境に弱いテストになっていた。
+	// Redirect the baked root into a temp dir. Left at the real path
+	// (/usr/local/share/uv/tools), the case below that asserts "not present on the baked
+	// side" picks up this container's actual baked install (mcp_proxy_for_aws-1.6.4.dist-info)
+	// and fails: a test that passes only on a CI runner with nothing baked.
 	baked := t.TempDir()
 	prevBaked := bakedUVToolRoot
 	bakedUVToolRoot = baked
 	t.Cleanup(func() { bakedUVToolRoot = prevBaked })
-	// ユーザー導入の uv tool を模す: <home>/.local/share/uv/tools/<tool>/…
+	// Imitate a user-installed uv tool: <home>/.local/share/uv/tools/<tool>/...
 	tool := filepath.Join(home, ".local", "share", "uv", "tools", "mcp-proxy-for-aws")
 	sp := filepath.Join(tool, "lib", "python3.11", "site-packages")
 	if err := os.MkdirAll(filepath.Join(sp, "mcp_proxy_for_aws-1.6.4.dist-info"), 0o755); err != nil {
@@ -109,17 +112,19 @@ func TestUVToolVersion(t *testing.T) {
 	if got == nil || got.Version != "1.6.4" {
 		t.Fatalf("uvToolVersion = %+v, want 1.6.4", got)
 	}
-	// 実体が無ければ nil（UI は「—」＝未導入）。
+	// No binary means nil (the UI shows a dash, i.e. not installed).
 	if got := uvToolVersion(filepath.Join(home, ".local", "bin", "nope"), "mcp-proxy-for-aws", home); got != nil {
 		t.Errorf("uvToolVersion(missing) = %+v, want nil", got)
 	}
-	// 実体はあるのに venv が別 root（= 焼き込み側を見に行く）→「未導入」に化けさせず
-	// 版不明として実体を見せる。home="" で home 判定を外すと焼き込み側を引く。
+	// The binary exists but its venv is under a different root (so the baked side gets
+	// consulted): do not turn that into "not installed" — show the binary with an unknown
+	// version. Passing home="" defeats the home check and hits the baked side.
 	if got := uvToolVersion(exe, "mcp-proxy-for-aws", ""); got == nil || got.Version != "" {
-		t.Errorf("uvToolVersion(root 不一致) = %+v, want 版不明", got)
+		t.Errorf("uvToolVersion(root mismatch) = %+v, want an unknown version", got)
 	}
-	// 逆向き: home 配下に無い実体は焼き込み root の venv から版を読む。home 側と別の版を
-	// 置いてあるので、root の選び分けが逆になれば 1.6.4 が返って落ちる。
+	// The other direction: a binary outside home reads its version from the baked root's
+	// venv. A different version is planted there, so if the root choice is inverted 1.6.4
+	// comes back and the test fails.
 	bakedSP := filepath.Join(baked, "mcp-proxy-for-aws", "lib", "python3.11", "site-packages")
 	if err := os.MkdirAll(filepath.Join(bakedSP, "mcp_proxy_for_aws-1.5.0.dist-info"), 0o755); err != nil {
 		t.Fatal(err)
@@ -129,13 +134,13 @@ func TestUVToolVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := uvToolVersion(bakedExe, "mcp-proxy-for-aws", home); got == nil || got.Version != "1.5.0" {
-		t.Errorf("uvToolVersion(焼き込み) = %+v, want 1.5.0", got)
+		t.Errorf("uvToolVersion(baked) = %+v, want 1.5.0", got)
 	}
 }
 
-// collectToolVersions は環境にツールが無くても panic せず全ツール分の行を返す
-// （CI ランナーには claude 等が無い — bins は nil で埋まるだけ）。Workspace
-// コンテナ内で走らせれば実プローブの生値が -v ログで見える。
+// collectToolVersions returns a row per tool without panicking even when none of them are
+// installed (a CI runner has no claude and the like — the bins are simply nil). Run inside a
+// Workspace container, the -v log shows the raw values of the real probes.
 func TestCollectToolVersions(t *testing.T) {
 	out := collectToolVersions()
 	if len(out) != len(toolSpecs) {

@@ -144,28 +144,31 @@ func orDash(s string) string {
 }
 
 // startCodexAppServer wires the shared local server (owned by the codex
-// RuntimeSupervisor since P3 — daemon 起動・generation・exit recording は
-// codex.Serve() 側、docs/log/27 §10.2-2) into package main and starts the AF
+// RuntimeSupervisor: daemon startup, generation and exit recording live in
+// codex.Serve(), docs/log/27 §10.2-2) into package main and starts the AF
 // read-only observer.
 //
-// 起動時に daemon を上げるのはやめた: 未ログインでも、codex を一度も使わなくても
-// 約 110 MB（native 62 MB＋node シム 48 MB、実測）が常駐していた。冷起動は 217 ms
-// （実測）なので、需要——managed の Resume と TUI の BuildLaunch——で起こすほうが
-// 素直。ここでやるのは (1) 台帳を持たない codex package へ「TUI ルートで生きている
-// セッション数」を渡す継ぎ目の登録、(2) 前の Agent プロセスが残した daemon の
-// 引き取り、(3) daemon の生涯をまたぐオブザーバの常設、の 3 つだけ。
+// The daemon is no longer started at boot: even when nobody was signed in and
+// codex was never used, about 110 MB stayed resident (measured: 62 MB native +
+// 48 MB node shim). A cold start costs 217 ms (measured), so waking it on demand
+// — managed Resume and the TUI's BuildLaunch — is the honest trade. This does
+// only three things: (1) register the seam that hands the ledger-less codex
+// package the number of sessions alive on the TUI route, (2) adopt a daemon left
+// behind by a previous Agent process, (3) keep an observer running across the
+// daemon's whole life.
 //
-// オブザーバは writer とは SEPARATE な read-only ソケット: thread スコープの通知は
-// 接続ごと（docs/log/27 §12.1-1）で、writer は自分が start/resume した thread しか
-// 見ない — TUI（CLI ルート）の thread を覆うのはオブザーバの仕事。
+// The observer is a read-only socket SEPARATE from the writer: thread-scoped
+// notifications are per connection (docs/log/27 §12.1-1) and the writer only sees
+// the threads it started or resumed itself, so covering the TUI (CLI route)
+// threads is the observer's job.
 func startCodexAppServer() {
 	if codex.Serve().Disabled() {
 		_ = os.Unsetenv(codexAppServerEnv)
 		return
 	}
-	// 継ぎ目は AdoptIfRunning より先に張ること: Ensure が需要ゼロ監視を張る際に
-	// TUIDependents を読むので、後から差し替えると「TUI セッションが 0 に見える窓」が
-	// できて、生きている TUI の backend を畳みかねない。
+	// The seams must be installed before AdoptIfRunning: Ensure reads TUIDependents when
+	// it arms the zero-demand watch, so swapping them in later opens a window where TUI
+	// sessions look like 0 and a live TUI's backend can be torn down under it.
 	codex.TUIDependents = liveCodexTUISessions
 	codex.DaemonUp = wakeCodexObserver
 	codex.Serve().AdoptIfRunning()
@@ -175,7 +178,7 @@ func startCodexAppServer() {
 // liveCodexTUISessions counts the codex sessions running on the CLI route whose
 // backend is the shared app-server (`codex --remote`). They are dependents of the
 // daemon exactly like managed handles: kill it under them and the TUI's
-// conversation stops dead. tmux は 1 発（list-sessions）で数える。
+// conversation stops dead. tmux is queried once (list-sessions) for the count.
 func liveCodexTUISessions() int { return countCodexTUISessions(tmuxx.LiveSessionNames()) }
 
 // countCodexTUISessions is the pure half, so the filter can be tested without
@@ -183,9 +186,10 @@ func liveCodexTUISessions() int { return countCodexTUISessions(tmuxx.LiveSession
 // reports names carrying session.TmuxPrefix, so a test would have to plant a
 // `claude_*` session that the Console would then show as an orphan).
 //
-// live のキーは **接頭辞を剥いだセッション名**（tmuxx.LiveSessionNames）。実 tmux で
-// 確認済み: `claude_skggere` → `skggere`。ここを取り違えると常に 0 になり、
-// 生きている TUI セッションの backend を需要ゼロ判定が引き抜く。
+// live is keyed by the session name with the prefix stripped (tmuxx.LiveSessionNames)
+// — verified against a real tmux: `claude_skggere` → `skggere`. Get that wrong and the
+// count is always 0, so the zero-demand check pulls the backend out from under live TUI
+// sessions.
 func countCodexTUISessions(live map[string]bool) int {
 	if len(live) == 0 {
 		return 0
@@ -399,9 +403,10 @@ func (o *codexObserver) observeThreadLifecycle(msg codexAppServerMessage) {
 		}
 		// Never attach on notLoaded: resuming would make the observer LOAD the
 		// thread from disk, keeping it in server memory for no reader. Also forget
-		// it — アンロードは thread/closed を伴わない（TUI 切断・アイドル退避）ため、
-		// requested を残すと再ロード時に attach が早期 return し続け、そのスレッドの
-		// 観測（圧縮検知等）が観測ソケットの再接続まで復活しない。
+		// it: an unload carries no thread/closed (TUI disconnect, idle eviction), so
+		// leaving it in requested makes attach return early on the next load and that
+		// thread's observations (compaction detection and the rest) stay dead until
+		// the observer socket reconnects.
 		if p.Status.Type == "notLoaded" {
 			o.forget(p.ThreadID)
 			return
@@ -432,7 +437,7 @@ func wakeCodexObserver() {
 // superviseCodexObserver keeps ONE read-only observer alive across the daemon's
 // whole life, including the stretches where there IS no daemon: the shared
 // app-server is now started on demand and stopped again once nothing needs it
-// (docs/log/27 §7 補遺), so "not listening" is a normal resting state, not a
+// (docs/log/27 §7 addendum), so "not listening" is a normal resting state, not a
 // failure. While it is down we wait — woken immediately by DaemonUp when a
 // session brings it back, and otherwise polling on a capped backoff so an
 // adopted/externally-started daemon is still picked up.

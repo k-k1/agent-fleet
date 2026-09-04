@@ -1,11 +1,12 @@
 package copilot
 
-// 発言時点からの分岐（docs/log/55）の copilot 側ユニットテスト。
+// copilot-side unit tests for branching from a given message (docs/log/55).
 //
-// copilot の分岐は「session-state ディレクトリごとコピーして events.jsonl だけ切り詰める」。
-// **session.db は無改変で運ぶ**のが肝で（復元元は events.jsonl だと実測済み）、テストも
-// そこを固定する — 我々が意味を知らないファイルを書き換え始めた瞬間に、この手術は
-// 「読めるものを同じ形で書き直す」から「別プロダクトの内部状態を owns する」に変わる。
+// copilot branches by copying the whole session-state directory and truncating only events.jsonl.
+// The point is that session.db is carried over unmodified (events.jsonl is the restore source,
+// measured), and these tests pin that: the moment we start rewriting a file whose meaning we do
+// not know, this operation stops being "rewrite what we can read in the same shape" and becomes
+// "own another product's internal state".
 
 import (
 	"encoding/json"
@@ -74,7 +75,8 @@ func TestForkEventLinesKeepsPrefixOnly(t *testing.T) {
 }
 
 func TestForkEventLinesWholeConversation(t *testing.T) {
-	// アンカー無し = 会話まるごと（copilot はこれもネイティブ口が無いので同じ経路）。
+	// No anchor = the whole conversation (copilot has no native affordance for this either, so it
+	// takes the same route).
 	out, err := forkEventLines(copilotEvents(t), "", "SRC", "DST")
 	if err != nil {
 		t.Fatalf("forkEventLines(whole): %v", err)
@@ -105,7 +107,7 @@ func TestCutIndexAtRefusesNonPrompts(t *testing.T) {
 }
 
 func TestForkEventLinesRefusesEmptyPrefix(t *testing.T) {
-	// 最初の発言から分岐しても中身が無い。
+	// Branching at the very first message leaves nothing behind.
 	if _, err := forkEventLines(copilotEvents(t), "u1", "SRC", "DST"); err == nil {
 		t.Fatal("branching at the first prompt = nil error; want a refusal")
 	}
@@ -122,8 +124,8 @@ func TestNextPromptID(t *testing.T) {
 	}
 }
 
-// copyTree が session.db 等を**無改変で**運ぶこと。ここが崩れると、我々が意味を知らない
-// ファイルを書き換えていることになる。
+// copyTree must carry session.db and friends over unmodified. If that breaks, we are rewriting a
+// file whose meaning we do not know.
 func TestMaterializeForkAtCopiesStateUntouched(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("COPILOT_HOME", home)
@@ -163,7 +165,7 @@ func TestMaterializeForkAtCopiesStateUntouched(t *testing.T) {
 	}
 	if db := read("session.db"); db != "BINARY-DB-WITH-BETA" {
 		t.Errorf("session.db = %q; it must be copied VERBATIM — events.jsonl is the restore "+
-			"source (実測), so we never rewrite a file whose format we don't own", db)
+			"source (measured), so we never rewrite a file whose format we don't own", db)
 	}
 	if w := read("workspace.yaml"); !strings.Contains(w, dstSid) || strings.Contains(w, srcSid) {
 		t.Error("workspace.yaml still points at the source session")
@@ -171,11 +173,11 @@ func TestMaterializeForkAtCopiesStateUntouched(t *testing.T) {
 	if read(filepath.Join("checkpoints", "c1.json")) != "{}" {
 		t.Error("nested state was not copied")
 	}
-	// 元は読むだけ。
+	// The source is only ever read.
 	if b, _ := os.ReadFile(filepath.Join(src, "events.jsonl")); !strings.Contains(string(b), "BETA") {
 		t.Error("the source session was modified")
 	}
-	// 既存の宛先は上書きしない。
+	// An existing destination is never overwritten.
 	if err := MaterializeForkAt(srcSid, dstSid, "u2"); err == nil {
 		t.Error("MaterializeForkAt overwrote an existing branch")
 	}
@@ -183,7 +185,7 @@ func TestMaterializeForkAtCopiesStateUntouched(t *testing.T) {
 
 func TestCopilotResolveForkAt(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home) // sids ストア（$HOME/.config/agent-fleet）
+	t.Setenv("HOME", home) // the sids store ($HOME/.config/agent-fleet)
 	t.Setenv("COPILOT_HOME", filepath.Join(home, ".copilot"))
 	dir := filepath.Join(home, "repo")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -209,7 +211,7 @@ func TestCopilotResolveForkAt(t *testing.T) {
 	if err != nil || got != "u2" {
 		t.Fatalf("ResolveForkAt(u2) = %q, %v; want u2 (copilot passes the anchor through)", got, err)
 	}
-	// 「続きから」: 最後のやり取りなら会話まるごと（""）。
+	// "Continue from here": on the last exchange that means the whole conversation ("").
 	if got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: "u2", Include: true}); err != nil || got != "" {
 		t.Fatalf("ResolveForkAt(u2, include) = %q, %v; want \"\"", got, err)
 	}

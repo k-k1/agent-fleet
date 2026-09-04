@@ -1,14 +1,14 @@
 package memoryx
 
-// memoryx 単体のテストは package main を持たないので、外向きの依存を自前で配線する
-// （internal/gitx/deps_test.go と同じ形）。
+// The memoryx tests have no package main of their own, so they wire the outward
+// dependencies themselves (the same shape as internal/gitx/deps_test.go).
 //
-// この家系の外向き依存は**安定エラーコード 13 本だけ**で、どれも errcodes.go の定数
-// である。**本物の値を書き写さない** —— 書き写した瞬間に、それ自体が二つ目の出所に
-// なる（本物は main の memory_wiring.go が配線する）。
-// 移送前後で「捕まえられるバグの集合」は変わらない: memoryx のテストが見ているのは
-// 「ハンドラが**どのコードを選んだか**」であって文字列そのものではないので、
-// 応答の code とここの値を突き合わせる形は移送前（本物の定数と突き合わせる形）と等価。
+// This family's only outward dependency is 13 stable error codes, all of them constants in
+// errcodes.go. Do not copy the real values here: a copy becomes a second source of truth
+// (the real one is wired by main's memory_wiring.go). The set of bugs this can catch is the
+// same either way — the memoryx tests observe which code a handler picked, not the string
+// itself, so matching a response's code against the value here is equivalent to matching it
+// against the real constant.
 
 import (
 	"fmt"
@@ -37,23 +37,24 @@ func testDeps() Deps {
 	}
 }
 
-// 🔥 Deps の**どのフィールドを 1 つ落としても** Configure が落ちること。
+// TestConfigureRejectsEveryUnwiredField pins that Configure panics when any single field of
+// Deps is left unwired.
 //
-// 網羅の検査そのものを reflect で回すので、**フィールドが増えたら自動で対象になる**。
-// この構造体は**全部が値型（文字列）**なので、未配線が nil 参照で落ちてくれることが
-// 無い —— 空のまま静かに走り、Console には `""` というコードが届いて i18n が解決
-// できず、生の developer メッセージが露出する。
+// The exhaustiveness check itself runs through reflect, so a field added later is covered
+// automatically. Every field is a value type (a string), so an unwired one never fails with
+// a nil dereference — it runs on silently, the Console receives the code "" which i18n
+// cannot resolve, and the raw developer message is exposed.
 func TestConfigureRejectsEveryUnwiredField(t *testing.T) {
 	good := testDeps()
 	v := reflect.ValueOf(good)
 	typ := v.Type()
 	if typ.NumField() != 13 {
-		t.Fatalf("Deps のフィールドが %d 個（errcodes.go の memory 節は 13 本。構造体を取り違えているか、片側だけ増えた）", typ.NumField())
+		t.Fatalf("Deps has %d fields (the memory section of errcodes.go has 13: either the wrong struct is being read, or only one side grew)", typ.NumField())
 	}
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
 		t.Run(f.Name, func(t *testing.T) {
-			// 正しい配線へ必ず戻す（deps はパッケージ全体で共有する）。
+			// Always restore the correct wiring (deps is shared by the whole package).
 			defer Configure(good)
 			broken := reflect.New(typ).Elem()
 			broken.Set(v)
@@ -61,10 +62,10 @@ func TestConfigureRejectsEveryUnwiredField(t *testing.T) {
 			defer func() {
 				r := recover()
 				if r == nil {
-					t.Fatalf("%s を未配線にしても Configure が通った（配線漏れが静かに素通りする）", f.Name)
+					t.Fatalf("Configure accepted %s left unwired (a missing wiring slips through silently)", f.Name)
 				}
 				if !strings.Contains(fmt.Sprint(r), f.Name) {
-					t.Fatalf("panic に %s の名前が出ていない: %v", f.Name, r)
+					t.Fatalf("the panic does not name %s: %v", f.Name, r)
 				}
 			}()
 			Configure(broken.Interface().(Deps))

@@ -1,21 +1,22 @@
 package opencode
 
-// 指示ファイル（docs/log/60）の opencode 側 artifact。**フリート方針とユーザー指示で
-// 置き場が違う**ので、その理由をここに書いておく。
+// The opencode-side artifact of the instruction files (docs/log/60). Fleet policy and user
+// instructions live in different places, and this is why.
 //
-//   フリート方針 … ~/.config/opencode/AGENTS.md にマーカー合成。
-//                   opencode の global 指示はこのファイル（実測 1.18.18）。
-//   ユーザー指示 … AF 専用ファイルを 1 本置き、opencode.json[c] の `instructions`
-//                   配列にそのパスを足す（実測: 配列のファイルは実際に読まれる）。
-//                   AGENTS.md を触らずに済む＝ docs/log/60 §60.5-6 の原則どおり。
+//   fleet policy      … composed with markers into ~/.config/opencode/AGENTS.md, which is
+//                       opencode's global instruction file (measured on 1.18.18).
+//   user instructions … a single AF-owned file whose path is appended to the `instructions`
+//                       array in opencode.json[c] (measured: files in that array really are
+//                       read). This leaves AGENTS.md untouched, as docs/log/60 §60.5-6 requires.
 //
-// ⚠️ 実測メモ: バンドルには global 指示として `<home>/.claude/CLAUDE.md` も読む経路が
-// あるが、本環境では読まれなかった（docs/log/60 §60.4-A）。そちらには**依存しない**。
+// Measured note: the bundle also has a path that reads `<home>/.claude/CLAUDE.md` as a global
+// instruction file, but it was not read in this environment (docs/log/60 §60.4-A). Do not depend
+// on it.
 //
-// opencode は opencode.jsonc と opencode.json の**両方**を読んでマージするので、
-// af はどちらか一方だけを編集する（.jsonc 優先 — mcpreg と同じ規約）。JSON として
-// 読めないファイル（.jsonc のコメント等）は**触らない**: 読めない設定を整形し直して
-// 利用者の記述を壊すより、配れないことを REST で申告する方がよい。
+// opencode reads and merges both opencode.jsonc and opencode.json, so af edits only one of them
+// (.jsonc wins, the same convention as mcpreg). A file that cannot be parsed as JSON (comments in
+// a .jsonc, say) is left alone: reporting over REST that we cannot deliver beats reformatting
+// unreadable config and destroying what the user wrote.
 
 import (
 	"encoding/json"

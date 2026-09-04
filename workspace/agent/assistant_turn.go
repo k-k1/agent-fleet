@@ -1,18 +1,19 @@
 package main
 
-// スケジュール発のアシスタント発火（docs/log/38 session_mode=assistant）の受け口。
+// The entry point for a scheduled assistant firing (docs/log/38 session_mode=assistant).
 //
-// CP スケジューラが発火時に POST /assistant-turns {conv, prompt} を叩き、指定会話
-// （UUID または "a…" slug）にプロンプトを user ターンとして投入して 1 ターン走らせる。
-// ターン機構は再発明しない — runOperatorTurn（Discord @メンション経路と同一・
-// handleChatSend の非 HTTP 双子）に委譲するので、ロック・自動圧縮・overflow 自己修復・
-// AutoTurns リセット・無人承認ゲート（破壊的ツールはブリッジ承認が必要＝ブリッジ未接続
-// なら fail-closed）まで全部同じ挙動になる。
+// At fire time the CP scheduler calls POST /assistant-turns {conv, prompt}, which injects the
+// prompt as a user turn into the named conversation (a UUID or an "a…" slug) and runs one turn.
+// The turn machinery is not reinvented: it delegates to runOperatorTurn (the same path as the
+// Discord @mention route, the non-HTTP twin of handleChatSend), so locking, auto-compaction,
+// overflow self-repair, the AutoTurns reset and the unattended approval gate (a destructive tool
+// needs bridge approval, so no bridge means fail-closed) all behave identically.
 //
-// 実行中の会話への発火は 409 turn_in_progress を返し、CP 側が skipped_overlap として
-// 記録する（reuse セッションの overlap=skip と同じ無人非配送サーフェス）。配達検証
-// （/input の confirm）に相当する追加機構は不要 — このターンは同期実行で、返答が
-// 返る＝実行された、エラー＝実行されなかった、が呼び出しの意味論そのもの。
+// Firing at a conversation with a turn in flight returns 409 turn_in_progress, which the CP
+// records as skipped_overlap (the same unattended non-delivery surface as overlap=skip on a
+// reused session). Nothing like the delivery confirmation of /input is needed: this turn runs
+// synchronously, so "a reply came back" means it ran and "an error" means it did not - that is
+// the call's semantics.
 
 import (
 	"net/http"
@@ -46,8 +47,9 @@ func handleAssistantTurn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "turn_in_progress", "an assistant turn is already running for this conversation")
 		return
 	}
-	// 使用量台帳（ADR 0029 §3）: 機構はブリッジと同じでも、消費の意味は「定時実行が
-	// 無人で回したチャット1ターン」— feature=assistant.chat / trigger=schedule で数える。
+	// Usage ledger (ADR 0029 §3): the machinery is the bridge's, but what is being consumed is one
+	// chat turn run unattended by the scheduler, so count it as
+	// feature=assistant.chat / trigger=schedule.
 	reply, err := runOperatorTurnAs(id, req.Prompt, usagex.Tag{
 		Feature: usagex.FeatureAssistantChat, Trigger: usagex.TriggerSchedule, Ref: id,
 	})
