@@ -1,5 +1,5 @@
-// キーボードの文字サイズ操作が「どの設定を動かすか」。ここを間違えると、押しても何も
-// 変わらない（別の面の設定を動かしている）という、いちばん気づきにくい壊れ方をする。
+// Which setting the keyboard font-size commands move. Getting this wrong moves another
+// surface's setting, so the key appears to do nothing at all - the hardest breakage to spot.
 import { describe, it, expect } from "vitest";
 import type { PaneContent } from "../layout/types.ts";
 import { fontSettingFor, stepFontSize, FONT_MIN, FONT_MAX } from "./viewFont.ts";
@@ -33,13 +33,13 @@ describe("fontSettingFor", () => {
   });
 
   it("claims nothing where there is no text to resize (key falls through to the terminal)", () => {
-    expect(fontSettingFor({ kind: "file", filePath: "shot.png" })).toBeNull(); // 画像
+    expect(fontSettingFor({ kind: "file", filePath: "shot.png" })).toBeNull(); // image
     expect(fontSettingFor({ kind: "browser", port: 5173, path: "/" })).toBeNull();
     expect(fontSettingFor({ kind: "browserAttach", attachmentId: "a1" })).toBeNull();
-    expect(fontSettingFor(null)).toBeNull(); // 空セル
+    expect(fontSettingFor(null)).toBeNull(); // empty cell
   });
 
-  it("keeps drawio (図 ⇄ ソースを行き来する) on viewerSize", () => {
+  it("keeps drawio (it toggles between diagram and source) on viewerSize", () => {
     expect(fontSettingFor({ kind: "file", filePath: "arch.drawio" })).toBe("viewerSize");
   });
 });

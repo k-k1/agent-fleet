@@ -1,23 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 import type { RefObject } from "react";
 
-// 横1行の列（返信サジェストのチップ行など）を掴んで左右にスクロールできるようにする。
-// タッチのスワイプは overflow-x:auto のネイティブ挙動（慣性つき）に任せるので、ここで面倒を
-// 見るのはマウスのドラッグと縦ホイールだけ。ドラッグ直後の click は握りつぶす — チップを掴んで
-// 流しただけで候補が差し込まれる/送信されるのを防ぐため。
+// Makes a single-line horizontal row (the reply-suggestion chip row, say) draggable sideways.
+// Touch swipes are left to the native overflow-x:auto behaviour, with its inertia, so only mouse
+// drags and the vertical wheel are handled here. The click that follows a drag is swallowed, so
+// that grabbing a chip and flicking the row cannot insert or send a suggestion.
 
-const DRAG_THRESHOLD = 4; // これ以上動いたら「ドラッグ」とみなす（px）。以下ならただのクリック。
-const LINE_PX = 16; // deltaMode=line の 1 行を px 換算（ホイール1ノッチ＝3行相当）
+const DRAG_THRESHOLD = 4; // move more than this (px) and it counts as a drag, below it is a click
+const LINE_PX = 16; // one deltaMode=line row in px (one wheel notch is about three rows)
 
 type WheelLike = Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode" | "ctrlKey">;
 type ScrollBox = Pick<HTMLElement, "scrollLeft" | "scrollWidth" | "clientWidth">;
 
-// 縦ホイールを横スクロール量（px）に翻訳する。0 を返したら「この列では扱わない」＝
-// preventDefault せずに親（会話ログ/ペイン）へ流す、の意。
-//   - あふれていない行は掴むものが無いので素通し
-//   - 横方向が優勢（トラックパッドの横スワイプ）はネイティブの慣性に任せる
-//   - Ctrl+ホイールはブラウザのピンチズーム
-//   - 端に着いていて動かせない向きは奪わない（overscroll-behavior だけでは止まって見えるため）
+// Translates the vertical wheel into a horizontal scroll amount (px). Returning 0 means "this row
+// does not handle it": do not preventDefault, let it reach the parent (conversation log / pane).
+//   - a row that does not overflow has nothing to grab, so it passes through
+//   - a horizontally dominant delta (trackpad side swipe) is left to the native inertia
+//   - Ctrl+wheel is the browser's pinch zoom
+//   - at an edge, a direction that cannot move is not taken (overscroll-behavior alone makes it
+//     look stuck)
 export function wheelScrollDelta(e: WheelLike, el: ScrollBox): number {
   const max = el.scrollWidth - el.clientWidth;
   if (max <= 0) return 0;
@@ -29,15 +30,15 @@ export function wheelScrollDelta(e: WheelLike, el: ScrollBox): number {
   return Math.abs(clamped) < 1 ? 0 : clamped;
 }
 
-// 返す関数を対象要素の `ref` に渡す（`<div ref={useDragScroll(rowRef)}>`）。
+// Pass the returned function as the target element's `ref` (`<div ref={useDragScroll(rowRef)}>`).
 //
-// ★ref オブジェクトを見るだけの effect にしてはいけない。この行は条件付きレンダーで、
-// ストリーミング中（チャット）や AUQ/plan のロック中（ミラー）は DOM から消えてまた戻る。
-// ref への代入は再レンダーも effect も起こさないので、effect は「最初に見えた要素」に
-// リスナーを付けたきりになり、初回にその要素が無ければ二度と付かず、戻ってきた新しい
-// 要素にも付かない（＝ホイール横スクロールが黙って死ぬ）。要素を state で持ち、
-// コールバック ref で出入りを検知して付け替える。
-// 呼び出し側が同じ要素を querySelector 等で使えるよう、渡された ref にも実体を書く。
+// This must not be an effect that only reads a ref object. The row is conditionally rendered and
+// leaves and re-enters the DOM while streaming (chat) or while AUQ/plan hold a lock (mirror).
+// Assigning to a ref triggers neither a re-render nor an effect, so such an effect would bind its
+// listeners to the first element it saw: absent on the first pass it would never bind at all, and
+// it would never follow the new element that comes back, silently killing wheel scrolling. The
+// element is therefore kept in state and rebound through a callback ref that sees it come and go.
+// The passed ref is also written, so callers can still reach the element (querySelector etc.).
 export function useDragScroll<T extends HTMLElement>(ref?: RefObject<T | null>): (el: T | null) => void {
   const [node, setNode] = useState<T | null>(null);
   const attach = useCallback(
@@ -57,32 +58,34 @@ export function useDragScroll<T extends HTMLElement>(ref?: RefObject<T | null>):
     let moved = false;
 
     const onDown = (e: PointerEvent) => {
-      if (e.pointerType !== "mouse" || e.button !== 0) return; // タッチ/ペンはネイティブに任せる
+      if (e.pointerType !== "mouse" || e.button !== 0) return; // touch/pen is left to the native behaviour
       dragging = true;
-      moved = false; // 新しい操作の始まり（前回のドラッグ痕を残さない）
+      moved = false; // a new gesture starts, carrying no trace of the previous drag
       startX = e.clientX;
       startLeft = el.scrollLeft;
     };
     const onMove = (e: PointerEvent) => {
       if (!dragging) return;
       const dx = e.clientX - startX;
-      if (!moved && Math.abs(dx) < DRAG_THRESHOLD) return; // 微動はクリックとして通す
+      if (!moved && Math.abs(dx) < DRAG_THRESHOLD) return; // a tiny movement passes through as a click
       moved = true;
-      el.setPointerCapture?.(e.pointerId); // 子ボタンの上を通っても追従させる
+      el.setPointerCapture?.(e.pointerId); // keep following even when crossing a child button
       el.scrollLeft = startLeft - dx;
-      e.preventDefault(); // ドラッグ中のテキスト選択を止める
+      e.preventDefault(); // stop text selection while dragging
     };
     const onUp = () => {
       dragging = false;
     };
-    // 縦ホイールで左右に流す（狭いペインではチップ行があふれるのが普通なので、掴まずに送れる手段を出す）。
+    // The vertical wheel scrolls sideways: in a narrow pane the chip row normally overflows, so
+    // there has to be a way to move it without grabbing it.
     const onWheel = (e: WheelEvent) => {
       const dx = wheelScrollDelta(e, el);
-      if (!dx) return; // 扱わない分は親のスクロールに任せる
+      if (!dx) return; // what is not handled here is left to the parent's scrolling
       el.scrollLeft += dx;
       e.preventDefault();
     };
-    // ドラッグ後に届く click（＝チップの差し込み）を子へ渡す前に捨てる。capture で先に受ける。
+    // Drop the click that arrives after a drag (which would insert the chip) before it reaches a
+    // child; capture gets it first.
     const onClick = (e: MouseEvent) => {
       if (!moved) return;
       moved = false;
@@ -95,7 +98,7 @@ export function useDragScroll<T extends HTMLElement>(ref?: RefObject<T | null>):
     el.addEventListener("pointerup", onUp);
     el.addEventListener("pointercancel", onUp);
     el.addEventListener("click", onClick, true);
-    el.addEventListener("wheel", onWheel, { passive: false }); // preventDefault するので passive 不可
+    el.addEventListener("wheel", onWheel, { passive: false }); // preventDefault, so not passive
     return () => {
       el.removeEventListener("pointerdown", onDown);
       el.removeEventListener("pointermove", onMove);

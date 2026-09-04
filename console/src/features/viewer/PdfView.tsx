@@ -1,14 +1,13 @@
-// PdfView — PDF をペインの中で読む面（docs/log/82）。
+// PdfView — reads a PDF inside a pane (docs/log/82).
 //
-// codeleaf の `PdfViewer`（Android の PdfRenderer・同時 1 ページ・Mutex で直列化・
-// −/＋ で 1〜3 倍）を Web に写したもの。描くのは pdf.js、直列化は下の描画キュー、
-// 倍率は「幅に合わせる」を 1 とする段階ズーム。違いは 1 点だけで、こちらは 1 ページ
-// ずつではなく縦に連続スクロールする（ペインは細長く、ページ送りボタンより
-// スクロールの方が速い）。画面から遠いページの canvas は捨てて面積を戻す。
+// Rendering is pdf.js, serialisation is the render queue below, and zoom is stepped with
+// "fit width" as 1. Pages scroll continuously rather than one at a time: the pane is tall and
+// narrow, so scrolling beats page buttons. Canvases of pages far from the viewport are dropped
+// to give their area back.
 //
-// バイト列は download エンドポイントから pdf.js 自身に取りに行かせる（url 指定）。
-// Range が通る経路なので、大きな PDF でも全体を JS のメモリに載せずに読み始められる
-// （Agent は http.ServeContent、CP のプロキシはヘッダをそのまま中継する）。
+// The bytes are fetched by pdf.js itself from the download endpoint (via `url`). That path
+// supports Range, so a large PDF starts rendering without loading the whole file into JS memory
+// (the Agent serves with http.ServeContent and the CP proxy relays the headers unchanged).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { Icon } from "../../ui/Icon.tsx";
@@ -29,21 +28,21 @@ import {
 } from "./pdfPages.ts";
 import type { ScrollMemoryRef } from "./parts/useScrollMemory.ts";
 
-/** ページの左右に置く余白（.pdfview-doc の padding と一致させる）。 */
+/** Horizontal padding around a page; must match the padding of `.pdfview-doc`. */
 const PAGE_PAD = 12;
-/** 画面から遠いページは canvas を捨てる。ここは「何ページ分残すか」。 */
+/** Pages far from the viewport drop their canvas; this is how many pages to keep either side. */
 const KEEP = 2;
 
 interface PdfViewProps {
-  /** 生バイトの URL（download エンドポイント）。 */
+  /** URL of the raw bytes (the download endpoint). */
   src: string;
-  /** 開けたときにページ数を親へ（情報バーの表示用）。 */
+  /** Reports the page count to the parent once opened, for the info bar. */
   onMeta?: (meta: { pages: number }) => void;
-  /** 表示位置の記憶（parts/useScrollMemory）。タブから戻ったときに同じページへ返す。 */
+  /** Scroll memory (parts/useScrollMemory); returns to the same page after a tab switch. */
   scrollMemory?: ScrollMemoryRef;
 }
 
-/** 表示に出す失敗の種類。pdf.js の例外名から引く。 */
+/** Kind of failure to surface, derived from the pdf.js exception name. */
 type Failure = "" | "password" | "broken" | "load";
 
 function failureOf(e: unknown): Failure {
@@ -57,7 +56,7 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   const tr = useT();
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasesRef = useRef(new Map<number, HTMLCanvasElement>());
-  // 何ページ目をどの倍率で描き終えたか。倍率が変われば全ページが描き直し対象になる。
+  // Which page was rendered at which scale. A scale change makes every page due for a redraw.
   const renderedRef = useRef(new Map<number, number>());
   const docRef = useRef<PDFDocumentProxy | null>(null);
   const jobRef = useRef<{ cancelled: boolean; task: RenderTask | null } | null>(null);
@@ -65,11 +64,11 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   const onMetaRef = useRef(onMeta);
   onMetaRef.current = onMeta;
 
-  // canvas の登録。**この関数は毎レンダー作り直してはいけない**: ref コールバックの
-  // 同一性が変わると、React は毎回「前のを外して新しいのを付け直す」ため、外した側の
-  // 後始末（描画済み記録の破棄）が全ページぶん毎スクロール走る。実測では、描き終えた
-  // ページが即座に「未描画」に戻り、スクロールのたび全ページを描き直していた
-  // （scripts/pdf/check.mjs の「画面外のページは canvas を解放する」で発覚）。
+  // Canvas registration. Never rebuild this function per render: when a ref callback's identity
+  // changes, React detaches the old one and attaches a new one every time, so the detach cleanup
+  // (discarding the rendered record) runs for every page on every scroll. Measured: a finished
+  // page immediately reverted to "not rendered" and every page was redrawn on each scroll
+  // (caught by the scripts/pdf/check.mjs check "off-screen pages release their canvas").
   const attachCanvas = useCallback((el: HTMLCanvasElement) => {
     const i = Number(el.dataset.page);
     canvasesRef.current.set(i, el);
@@ -79,7 +78,7 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     };
   }, []);
 
-  // 内側の ref と外から来た表示位置の記憶を 1 本に束ねる（CodeView と同じ形）。
+  // Bundles the inner ref and the scroll memory passed in into one (same shape as CodeView).
   const attachScroll = useCallback(
     (el: HTMLDivElement) => {
       scrollRef.current = el;
@@ -97,15 +96,15 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   const [zoom, setZoom] = useState(1);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [scrollTop, setScrollTop] = useState(0);
-  // 文書が入れ替わったことを描画側に伝えるための版番号（PDFDocumentProxy 自体は
-  // state に置かない: 中身が変わらないオブジェクトなので再描画の依存にならない）。
+  // Version counter telling the render side that the document was swapped. The
+  // PDFDocumentProxy itself is not state: it never changes, so it cannot be a redraw dependency.
   const [docEpoch, setDocEpoch] = useState(0);
 
-  // --- 読み込み --------------------------------------------------------------
+  // --- Loading ---------------------------------------------------------------
   useEffect(() => {
     let alive = true;
-    // 後始末は「読み込みタスク」に対して行う。pdf.js 6 で PDFDocumentProxy から
-    // destroy() が無くなり、ワーカーと通信を畳めるのはタスク側だけになった。
+    // Clean up the loading task, not the document: pdf.js 6 removed destroy() from
+    // PDFDocumentProxy, and only the task can shut the worker and its channel down.
     let opened: PDFDocumentLoadingTask | null = null;
     setPageSizes([]);
     setFailure("");
@@ -124,8 +123,8 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
         void task.destroy();
         return;
       }
-      // 各ページの素の大きさを先に集める。これが無いとスクロール高さが決まらず、
-      // 読み込み中にスクロールバーが伸び縮みして読み位置が飛ぶ。
+      // Collect every page's intrinsic size up front. Without it the scroll height is unknown,
+      // the scrollbar grows and shrinks while loading and the reading position jumps.
       const sizes: PageSize[] = [];
       for (let n = 1; n <= doc.numPages; n++) {
         const page = await doc.getPage(n);
@@ -150,7 +149,7 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     };
   }, [src]);
 
-  // --- 容器の寸法とスクロール位置 --------------------------------------------
+  // --- Container size and scroll position -------------------------------------
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -185,10 +184,10 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   const range = useMemo(() => visibleRange(layout, scrollTop, box.h), [layout, scrollTop, box.h]);
   const pageNo = currentPage(layout, scrollTop, box.h);
 
-  // --- 倍率変更のときだけ読み位置を保つ --------------------------------------
-  // 倍率を変えると全ページの高さが変わるので、スクロール位置をそのまま残すと
-  // まったく別のページに飛ぶ。変更前に「ページ＋そのページ内の割合」で覚えておき、
-  // 新しいレイアウトが確定した直後（ペイント前）に戻す。
+  // --- Preserve the reading position, but only across a zoom change ------------
+  // Changing the scale changes every page height, so keeping the raw scroll position lands on a
+  // completely different page. Remember it as "page plus fraction within that page" before the
+  // change and restore it as soon as the new layout is settled, before paint.
   const rememberAnchor = useCallback(() => {
     anchorRef.current = anchorOf(layout, scrollRef.current?.scrollTop ?? 0);
   }, [layout]);
@@ -202,12 +201,12 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     setScrollTop(el.scrollTop);
   }, [layout]);
 
-  // --- 描画（1 枚ずつ直列に） ------------------------------------------------
+  // --- Rendering, one page at a time, serially --------------------------------
   useEffect(() => {
     const doc = docRef.current;
     if (!doc || !(scale > 0) || range.end <= range.start) return;
-    // 走っている描画は捨てる。倍率が変わったのに前の倍率の描画を待つと、指を離して
-    // から数秒ぼやけたままになる（pdf.js の cancel は例外で返るので握り潰す）。
+    // Throw away the render in flight: waiting for a render at the previous scale leaves the
+    // page blurry for seconds after the gesture ends. pdf.js cancel rejects, so swallow it.
     if (jobRef.current) {
       jobRef.current.cancelled = true;
       jobRef.current.task?.cancel();
@@ -235,7 +234,7 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
         try {
           await task.promise;
         } catch {
-          return; // cancel か描画失敗。どちらもこの周回を畳むだけでよい
+          return; // cancel or a render failure; either way just end this pass
         }
         job.task = null;
         if (job.cancelled) return;
@@ -249,8 +248,8 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     };
   }, [docEpoch, scale, range.start, range.end, layout]);
 
-  // 画面から遠いページの canvas は面積を返す。長い文書を一度でも端まで送ると、
-  // 残したままではページ数ぶんのビットマップがタブに積まれる。
+  // Canvases of pages far from the viewport give their area back. Scroll a long document to the
+  // end once and keeping them would pile up one bitmap per page in the tab.
   useEffect(() => {
     for (const [i, canvas] of canvasesRef.current) {
       if (i >= range.start - KEEP && i < range.end + KEEP) continue;
@@ -261,7 +260,7 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     }
   }, [range.start, range.end]);
 
-  // --- 操作 ------------------------------------------------------------------
+  // --- Controls ---------------------------------------------------------------
   const applyZoom = useCallback(
     (next: number) => {
       rememberAnchor();
@@ -271,9 +270,10 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     [rememberAnchor],
   );
 
-  // Ctrl/⌘＋ホイールで拡大縮小。素のホイールはスクロールのままにする（連続表示の
-  // 読み物なので、拡大に取られると読み進められない）。React の onWheel は passive
-  // 登録で preventDefault が効かないため、ネイティブで張る（ImageView と同じ理由）。
+  // Ctrl/Cmd + wheel zooms; a plain wheel stays scrolling, because this is a continuously
+  // scrolled document and stealing the wheel for zoom stops the reader moving through it.
+  // React's onWheel registers passive, where preventDefault does nothing, so bind natively
+  // (same reason as ImageView).
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;

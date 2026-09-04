@@ -1,22 +1,27 @@
-// 設定の書き出し / 取り込み（docs/log/79 / ADR 0060）のデータ層。
+// Data layer for settings export / import (docs/log/79 / ADR 0060).
 //
-// 1 個の JSON（バンドル）に、その人の設定のうち **秘密を含まない層** だけを詰める:
-//   prefs        … Console の個人設定（ui-prefs 同期の対象そのもの）
-//   ssm          … AWS SSM のプロファイル / ホスト（CP の DB・メンバー単位）
-//   instructions … ユーザー指示（~/.config/agent-fleet/user-notes.md）
-// 接続（Git / エージェント / AWS のトークン類）は **入れない**。バンドルはメールや
-// チャットで運ばれる前提の平文なので、秘密が 1 つでも混ざると全体の扱いが変わる。
+// A single JSON file (the bundle) carries only the layers of a person's settings that hold
+// no secrets:
+//   prefs        - Console personal settings (exactly what ui-prefs syncs)
+//   ssm          - AWS SSM profiles / hosts (CP database, per member)
+//   instructions - user instructions (~/.config/agent-fleet/user-notes.md)
+// Connections (Git / agent / AWS tokens) are never included. The bundle is plain text meant
+// to travel by mail or chat, so a single secret in it would change how the whole file must
+// be handled.
 //
-// ここは純ロジックだけ（fetch も React も import しない）。設定の既定値と累積キーの
-// 判定は呼び手（settings.ts）から渡してもらう —— settings.ts は localStorage に触る
-// ので node のテストから import できず、混ぜると全部 DOM テストになるため。
+// Pure logic only: no fetch, no React imports. The settings defaults and the "is this key
+// accumulated" predicate come from the caller (settings.ts), because settings.ts touches
+// localStorage and cannot be imported from node tests — mixing them would turn every test
+// here into a DOM test.
 //
-// 設計上の要点 2 つ:
-//   ① **ホストはプロファイルを「表示名」で参照する。** CP の id は環境ごとに違うので、
-//      id のまま運ぶと取り込み先で必ず張り替えが要る。表示名は ~/.aws のプロファイル名
-//      の素でもあり、人が見て分かる自然キーなので、形式の側で id 問題を消す。
-//   ② **取り込みは足すだけ。** 既にあるものは触らない（同名プロファイル・同じ
-//      alias+instance のホスト）。設定の移送で既存環境を削るのは割に合わない。
+// Two design points:
+//   1. Hosts reference a profile by its display name, not by id. CP ids differ per
+//      environment, so carrying an id always forces a re-link on import. The display name is
+//      also the basis of the ~/.aws profile name and is a natural key a human can read, so
+//      the format itself removes the id problem.
+//   2. Import only adds. Anything already present is left alone (same-named profile, host
+//      with the same alias+instance). Deleting from an existing environment to move settings
+//      in is not worth the risk.
 
 export const BUNDLE_KIND = "agent-fleet-settings";
 export const BUNDLE_VERSION = 1;
@@ -35,7 +40,7 @@ export interface SsmProfileEntry {
 
 export interface SsmHostEntry {
   alias: string;
-  /** 参照するプロファイルの表示名（id ではない — 上記②）。 */
+  /** Display name of the referenced profile, not its id (design point 2 above). */
   profile: string;
   instanceId: string;
   documentName: string;
@@ -69,10 +74,10 @@ export interface SettingsBundle {
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 const key = (v: string): string => v.trim().toLowerCase();
 
-// --- 書き出し -------------------------------------------------------------------
+// --- Export ---------------------------------------------------------------------
 
-/** 既知のキーだけを持つ設定の浅いコピー。古い Console が書いた見知らぬキーは落とす
- *  （取り込み側でどうせ弾かれるので、運ぶ意味がない）。 */
+/** Shallow copy of the settings holding only known keys. Unknown keys written by an older
+ *  Console are dropped: the import side rejects them anyway, so carrying them is pointless. */
 export function exportablePrefs(
   state: Record<string, unknown>,
   defaults: Record<string, unknown>,
@@ -84,8 +89,9 @@ export function exportablePrefs(
   return out;
 }
 
-/** CP の DTO（id 参照）をバンドルの形（表示名参照）へ移す。参照先が見つからない
- *  ホストは profile が空のまま入る＝取り込み側で理由付きスキップになる。 */
+/** Convert the CP DTOs (id references) into the bundle shape (display-name references). A
+ *  host whose profile cannot be resolved keeps an empty profile, so the import side skips it
+ *  with a reason. */
 export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
   const labelOf = new Map<string, string>();
   for (const p of profiles || []) labelOf.set(String(p?.id ?? ""), str(p?.label));
@@ -108,7 +114,8 @@ export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
   };
 }
 
-/** user-notes の GET 応答（targets は配列）をバンドルの形（kind → ON/OFF）へ。 */
+/** Convert the user-notes GET response (targets is an array) into the bundle shape
+ *  (kind -> on/off). */
 export function toInstructionsSection(payload: any): InstructionsSection {
   const targets: Record<string, boolean> = {};
   for (const t of payload?.targets || []) {
@@ -125,7 +132,7 @@ export function buildBundle(sections: BundleSections, exportedAt: string): Setti
   return { kind: BUNDLE_KIND, version: BUNDLE_VERSION, exportedAt, sections };
 }
 
-/** 書き出しファイル名（af-settings-YYYYMMDD-HHmm.json）。時刻はローカル。 */
+/** Export file name (af-settings-YYYYMMDD-HHmm.json). The time is local. */
 export function bundleFileName(at: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return (
@@ -140,11 +147,12 @@ export function bundleFileName(at: Date): string {
   );
 }
 
-// --- 読み取り -------------------------------------------------------------------
+// --- Parsing --------------------------------------------------------------------
 
 export type ParseError = "bad_json" | "bad_kind" | "bad_version" | "empty";
 
-/** 受け取った JSON をバンドルとして読む。失敗は理由コードで返す（文言は呼び手）。 */
+/** Read the received JSON as a bundle. Failures come back as a reason code; the caller
+ *  supplies the wording. */
 export function parseBundle(text: string): { bundle: SettingsBundle } | { error: ParseError } {
   let raw: any;
   try {
@@ -153,8 +161,8 @@ export function parseBundle(text: string): { bundle: SettingsBundle } | { error:
     return { error: "bad_json" };
   }
   if (!raw || typeof raw !== "object" || raw.kind !== BUNDLE_KIND) return { error: "bad_kind" };
-  // 版は前方互換にしない。知らない版を「知っているつもり」で部分適用すると、
-  // 何が入って何が入らなかったのかを利用者が確かめる手段が無くなる。
+  // The version is deliberately not forward-compatible. Partially applying an unknown
+  // version leaves the user with no way to tell what was imported and what was not.
   if (raw.version !== BUNDLE_VERSION) return { error: "bad_version" };
   const src = raw.sections && typeof raw.sections === "object" ? raw.sections : {};
   const sections: BundleSections = {};
@@ -179,10 +187,10 @@ export function parseBundle(text: string): { bundle: SettingsBundle } | { error:
   return { bundle: { kind: raw.kind, version: raw.version, exportedAt: str(raw.exportedAt), sections } };
 }
 
-// --- 取り込み（個人設定） --------------------------------------------------------
+// --- Import (personal settings) -------------------------------------------------
 
-/** 既定値と「型が合う」既知のキーだけを残す。型が合わない値（他版の Console や手編集）を
- *  そのまま state に入れると、読む側が一斉に壊れるので落とす。 */
+/** Keep only known keys whose value shape matches the default. A mismatched value (another
+ *  Console version, or a hand edit) put straight into state breaks every reader at once. */
 export function sanitizeImportedPrefs(
   raw: Record<string, unknown>,
   defaults: Record<string, unknown>,
@@ -205,16 +213,18 @@ export function sanitizeImportedPrefs(
 
 function sameShape(def: unknown, v: unknown): boolean {
   if (Array.isArray(def)) return Array.isArray(v);
-  if (def === null) return true; // 既定が null のキーは形を決めない
+  if (def === null) return true; // a null default pins no shape
   if (typeof def === "object") return !!v && typeof v === "object" && !Array.isArray(v);
   return typeof v === typeof def;
 }
 
-/** 取り込む値を現在値へ重ねる。累積データ（学習済み候補・キー割当・作業グループ…）は
- *  **空で潰さない／オブジェクトは足し算**にする —— まるごと PUT の同期で全端末の
- *  累積が消えた事故（settings.ts の prefsLoaded のコメント）と同じ穴を、取り込みという
- *  一発操作で開けないため。配列の累積（返信候補など）は中身の同一性を判定できないので
- *  置き換えるが、空の配列では置き換えない。 */
+/** Layer the imported values onto the current ones. Accumulated data (learned suggestions,
+ *  key bindings, working sets, ...) is never overwritten by an empty value, and objects are
+ *  merged rather than replaced: the same hole that once wiped every device's accumulated data
+ *  through a whole-object PUT (see the prefsLoaded comment in settings.ts) must not be
+ *  reopened by import, which is a single irreversible action. Accumulated arrays (reply
+ *  suggestions and the like) are replaced, because element identity cannot be judged here,
+ *  but never by an empty array. */
 export function mergeImportedPrefs(
   current: Record<string, unknown>,
   patch: Record<string, unknown>,
@@ -226,7 +236,7 @@ export function mergeImportedPrefs(
       out[k] = v;
       continue;
     }
-    if (isEmptyValue(v)) continue; // 空で上書きしない
+    if (isEmptyValue(v)) continue; // never overwrite with an empty value
     const cur = current[k];
     if (isPlainObject(v) && isPlainObject(cur)) {
       out[k] = { ...(cur as object), ...(v as object) };
@@ -248,21 +258,23 @@ function isEmptyValue(v: unknown): boolean {
   return false;
 }
 
-// --- 取り込み（SSM） -------------------------------------------------------------
+// --- Import (SSM) ---------------------------------------------------------------
 
 export type SkipReason = "exists" | "invalid" | "no_profile";
 
 export interface SsmPlan {
-  /** 新規に作るプロファイル。 */
+  /** Profiles to create. */
   profiles: SsmProfileEntry[];
-  /** 新規に作るホスト（profile は表示名のまま。id は作成後に解決する）。 */
+  /** Hosts to create; profile is still a display name and is resolved to an id after the
+   *  profiles have been created. */
   hosts: SsmHostEntry[];
   skippedProfiles: { label: string; reason: SkipReason }[];
   skippedHosts: { alias: string; reason: SkipReason }[];
 }
 
-/** 取り込み結果を「今ある物」と突き合わせて、実際に作る分だけに絞る。
- *  プロファイルは表示名、ホストは alias + インスタンス id が同じなら既存とみなす。 */
+/** Match the parsed section against what already exists and narrow it to what will actually
+ *  be created. A profile counts as existing when the display name matches; a host when both
+ *  alias and instance id match. */
 export function planSsmImport(
   section: SsmSection,
   existingProfiles: any[],
@@ -273,7 +285,7 @@ export function planSsmImport(
   const haveHost = new Set(
     (existingHosts || []).map((h) => key(str(h?.alias)) + "\u0000" + key(str(h?.instanceId))),
   );
-  // 取り込み後に参照できるプロファイル名 = 既存 ∪ これから作る分。
+  // Profile names referenceable after the import = existing plus the ones about to be made.
   const willHave = new Set(haveProfile);
   for (const raw of section.profiles || []) {
     const p: SsmProfileEntry = {
@@ -284,8 +296,8 @@ export function planSsmImport(
       roleName: str(raw?.roleName),
       region: str(raw?.region),
     };
-    // CP の validateProfile と同じ最低条件。ここで落としておかないと、
-    // 400 が並んで「何件入ったのか」が利用者に見えなくなる。
+    // Same minimum condition as CP's validateProfile. Without dropping these here the user
+    // just sees a row of 400s and cannot tell how many entries were imported.
     if (!p.label || !/^https:\/\/\S+$/.test(p.startUrl) || !p.ssoRegion) {
       plan.skippedProfiles.push({ label: p.label, reason: "invalid" });
       continue;
@@ -325,7 +337,7 @@ export function planSsmImport(
   return plan;
 }
 
-/** 表示名 → CP の id 表。作成済みのプロファイル一覧から引く。 */
+/** Display name -> CP id table, built from the list of profiles that now exist. */
 export function profileIdByLabel(profiles: any[]): Map<string, string> {
   const m = new Map<string, string>();
   for (const p of profiles || []) {
@@ -335,7 +347,7 @@ export function profileIdByLabel(profiles: any[]): Map<string, string> {
   return m;
 }
 
-// --- 概要 -----------------------------------------------------------------------
+// --- Summary --------------------------------------------------------------------
 
 export interface BundleSummary {
   prefs: number;

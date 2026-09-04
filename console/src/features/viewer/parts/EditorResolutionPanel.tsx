@@ -1,6 +1,6 @@
-// 保存が競合した / 保存できたか分からない ときの解決パネル（docs/log/44 §7）。
-// FileView から切り出した表示部品で、状態は 1 つも持たない —— 「どの段か」は
-// model.phase が、開閉は呼び出し側の state が持つ。
+// The resolution panel for a save that conflicted, or whose outcome is unknown (docs/log/44 §7).
+// A presentational component holding no state at all: which stage it is in comes from
+// model.phase, and its open state from the caller.
 import { useT } from "../../../lib/i18n/index.ts";
 import type { FileEditorModel } from "../../editor/model.ts";
 

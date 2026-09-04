@@ -1,10 +1,11 @@
 // DocView — in-memory Markdown (e.g. a plan) in its own pane, no file on disk.
 // The content lives in the pane descriptor. Port of views/DocView.
 //
-// プランとして開かれた（docSession を持つ）ときは「レビュー面」になる: 本文を選択すると
-// コメント追加のピルが出て、付けたコメントは引用箇所にハイライトが付く。溜めるだけで、
-// 送信はミラーのプランカードが担う（送り先の状態＝承認待ちか却下後かで経路が変わるため、
-// 判断はセッションの状態を持っている側に置く）。
+// Opened as a plan (with a docSession) it becomes a review surface: selecting text offers a pill
+// to add a comment, and each comment highlights the passage it quotes. Comments only accumulate
+// here; sending is the mirror's plan card, because the route depends on the target's state
+// (awaiting approval vs already rejected) and that decision belongs to whoever holds the session
+// state.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -27,7 +28,7 @@ import {
 interface DocViewProps {
   title?: string;
   content?: string;
-  /** どのセッションから開かれたか（プランのときだけ入る）。レビュー面の有効化条件。 */
+  /** Session this was opened from; set only for a plan. Its presence enables the review surface. */
   session?: string;
   /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
   headerActions?: ReactNode;
@@ -40,17 +41,18 @@ interface PendingComment {
   y: number;
 }
 
-/** 選択ピルを選択の少し上に出すための持ち上げ量（FileView と同じ値）。 */
+/** Lift that places the selection pill just above the selection (same value as FileView). */
 const PILL_OFFSET = 34;
-/** 画面端との最小余白。 */
+/** Minimum margin from the edge of the viewport. */
 const EDGE = 8;
-/** 控えの一覧に一度に見せる件数（超えたぶんはスクロール）。 */
+/** How many pending comments the list shows at once; the rest scroll. */
 const VISIBLE_COMMENTS = 5;
 
-// clampFixed は position:fixed の浮遊要素を、実測サイズでビューポート内へ寄せる。
-// 選択位置をそのまま left/top にすると、右端や下端の選択でポップが画面外へ出て
-// ボタンに手が届かなくなる（実測: 右端の行を選ぶと「追加」が切れる）。描画後に測って
-// から寄せる必要があるので、state ではなく style を直接書く（再描画ループを作らない）。
+// clampFixed pulls a position:fixed floating element back inside the viewport using its measured
+// size. Using the selection position directly as left/top pushes the popup off screen for a
+// selection near the right or bottom edge and the buttons become unreachable (measured: selecting
+// a line at the right edge cuts off the add button). The measurement has to happen after paint,
+// so the style is written directly rather than through state, which would loop the render.
 function clampFixed(el: HTMLElement | null, x: number, y: number) {
   if (!el) return;
   const w = el.offsetWidth;
@@ -70,22 +72,24 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
   const bodyRef = useRef<HTMLDivElement>(null);
   const key = session ? planKey(session, content || "") : null;
   const comments = usePlanComments(key);
-  // 選択に添えるピル（null = 出さない）と、ピルから開いたコメント入力。
+  // The pill attached to a selection (null = hidden), and the comment input opened from it.
   const [pill, setPill] = useState<PendingComment | null>(null);
   const [draft, setDraft] = useState<PendingComment | null>(null);
   const [body, setBody] = useState("");
   const [listOpen, setListOpen] = useState(true);
-  // 全文表示に開いたコメント（引用も本文も畳まずに出す）。既定は畳んだ一覧。
+  // Comments expanded to full text (neither quote nor body clipped). The list is collapsed by
+  // default.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const pillRef = useRef<HTMLDivElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLOListElement>(null);
-  // コンポーザーと同じ送信キー設定に従う（Ctrl+Enter か Enter か。lib/settings mirrorSend）。
+  // Follows the composer's send-key setting: Ctrl+Enter or Enter (lib/settings mirrorSend).
   const modSend = settings.mirrorSend !== "enter";
 
-  // 控えの一覧は5件ぶんの高さで打ち切る。行の高さはコメントの長さ（引用1行＋本文2行まで）で
-  // 変わるので、CSS の固定値では「5件」にならない — 6件目の位置から実測して決める。全文表示に
-  // 開いた行があっても伸びすぎないよう、画面の 40% で頭打ちにする。
+  // The pending list is cut off at the height of five rows. Row height varies with comment length
+  // (one quote line plus up to two body lines), so a fixed CSS value would not mean "five" —
+  // measure the sixth row's position instead. Cap at 40% of the viewport so an expanded row
+  // cannot stretch it too far.
   useLayoutEffect(() => {
     const el = listRef.current;
     if (!el) return;
@@ -99,8 +103,8 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
     el.style.maxHeight = Math.min(fit, Math.round(window.innerHeight * 0.4)) + "px";
   }, [comments, listOpen, expanded]);
 
-  // 浮遊要素は描画されてから実測して寄せる。開いている間の resize でも追従させる
-  // （ペイン分割やスマホの回転で画面が縮んでも押せなくならないように）。
+  // Floating elements are measured after paint and then clamped, and re-clamped on resize while
+  // open, so splitting a pane or rotating a phone cannot leave the buttons unreachable.
   useLayoutEffect(() => {
     if (!pill || draft) return;
     const fit = () => clampFixed(pillRef.current, pill.x, pill.y);
@@ -116,17 +120,18 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
     return () => window.removeEventListener("resize", fit);
   }, [draft]);
 
-  // 引用箇所のハイライトは、MarkdownView が innerHTML を描いたあとに被せる（子の effect が
-  // 先に走るので、この effect の時点では本文が出来ている）。本文もコメントも変わらない
-  // 再描画では MarkdownView 側が何もしないため、被せたマークはそのまま残る。
+  // Quote highlights are laid over the body after MarkdownView has written its innerHTML: child
+  // effects run first, so the body exists by the time this effect runs. On a re-render where
+  // neither the body nor the comments changed, MarkdownView does nothing and the marks survive.
   useEffect(() => {
     const root = bodyRef.current?.querySelector<HTMLElement>(".markdown");
     if (!root) return;
     applyQuoteMarks(root, key ? comments.map((c) => ({ quote: c.quote, nth: c.nth })) : []);
   }, [content, comments, key]);
 
-  // 選択が確定したらピルを出す。タッチ選択（長押し＋ドラッグ）は mouseup を出さないので
-  // selectionchange でも拾う（デバウンス。ReaderView / FileView と同じ作法）。
+  // Show the pill once a selection settles. Touch selection (long press and drag) fires no
+  // mouseup, so selectionchange is also watched, debounced — same approach as ReaderView and
+  // FileView.
   const capture = () => {
     const root = bodyRef.current?.querySelector<HTMLElement>(".markdown");
     if (!key || !root) return;
@@ -200,13 +205,14 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
             if (openInNew) openTargetInNew(target, true);
             else openTarget(target);
           }}
-          // クリックした先へ「行く」ので、ファイル一覧はキーボードごと受け取る。
+          // The click navigates there, so the file tree takes keyboard focus along with it.
           onOpenDir={(path) => revealInFiles(path, { focus: true })}
         />
       </div>
 
       {key && comments.length > 0 && (
-        // 溜まっているコメントの控え。送信はミラー側なので、ここでは確認と削除だけ。
+        // The pending comments. Sending happens in the mirror, so this offers only review and
+        // deletion.
         <div className={"doc-comments" + (listOpen ? "" : " collapsed")}>
           <button type="button" className="doc-comments-head" onClick={() => setListOpen((v) => !v)}>
             <Icon name={listOpen ? "chevron-down" : "chevron-up"} />
@@ -214,8 +220,8 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
             <span className="muted doc-comments-hint">{tr("plan.send_from_mirror")}</span>
           </button>
           {listOpen && (
-            // 5件ぶんの高さで打ち切ってスクロール（本文の邪魔をしない）。各行は畳んだ状態で
-            // 高さが揃うので、この件数指定が実際の見え方と一致する。
+            // Cut off at five rows and scroll, so the list stays out of the body's way. Collapsed
+            // rows are all the same height, so that count matches what is actually seen.
             <ol className="doc-comments-list" ref={listRef}>
               {comments.map((c, i) => {
                 const open = expanded.has(c.id);
@@ -257,8 +263,9 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
         </div>
       )}
 
-      {/* body へポータル: .fileview は container-type を持つため、中に置いた position:fixed は
-          ビューポートではなくペイン基準になってしまう（FileView の選択ピルと同じ理由）。 */}
+      {/* Portalled to body: .fileview sets container-type, so a position:fixed element inside it
+          is positioned against the pane rather than the viewport (same reason as FileView's
+          selection pill). */}
       {pill &&
         !draft &&
         createPortal(
@@ -266,7 +273,7 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
             <button
               type="button"
               className="sel-send-pill"
-              onMouseDown={(e) => e.preventDefault()} // クリックで選択が消えないように
+              onMouseDown={(e) => e.preventDefault()} // keeps the click from clearing the selection
               onClick={startDraft}
               disabled={full}
               title={full ? tr("plan.comments_full") : undefined}
@@ -293,7 +300,8 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
                   closeDraft();
                   return;
                 }
-                // 送信キーはコンポーザーと同じ設定に従う。IME の変換確定 Enter は横取りしない。
+                // The send key follows the composer's setting. Never intercept the Enter that
+                // commits an IME composition.
                 if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
                 const mod = e.ctrlKey || e.metaKey;
                 if (modSend ? mod : !mod && !e.shiftKey) {

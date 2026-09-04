@@ -1,15 +1,15 @@
-/* 使用量ビュー（docs/log/46 P4）— features/usage/UsageView.tsx 専用。
+/* Usage view (docs/log/46 P4) — for features/usage/UsageView.tsx only.
  *
- * ルート class は .usage-board。AdminTab の showback にも .usage-view があるので、
- * 名前がぶつからないよう別系統にしてある。
+ * The root class is .usage-board. AdminTab's showback already owns .usage-view, so this uses a
+ * separate family of names to avoid a collision.
  *
- * 色は tokens.css の --viz-*（検証済みカテゴリカル 8 スロット）と --kind-*（エージェント
- * 識別色の1ソース）だけを使う。このファイルで色を作らない＝検証を通っていない色が
- * 混ざらない。
+ * Colours come only from tokens.css: --viz-* (the validated categorical 8 slots) and --kind-*
+ * (the one source of agent identity colours). Defining no colour here is what keeps unvalidated
+ * colours out.
  *
- * マークの規約（dataviz）: 棒は最大 24px・データ端だけ 4px 丸め・積み上げの境目は
- * 2px の「面の色の隙間」（枠線ではなく余白で分ける）・グリッドは 1px 実線で背景から
- * 1段だけ浮かせる・値のラベルは要所だけ。
+ * Mark conventions (dataviz): bars at most 24px wide; 4px rounding on the data end only; stack
+ * segments separated by a 2px gap of background rather than a border; grid lines 1px solid, one
+ * step above the background; value labels only where they matter.
  */
 
 .usage-board {
@@ -18,7 +18,7 @@
   gap: 14px;
 }
 
-/* --- フィルタ行（下の全チャート・表を同じスライスに揃える） ------------------- */
+/* --- Filter row (holds every chart and table below to the same slice) ------- */
 
 .usage-controls {
   display: flex;
@@ -78,9 +78,10 @@
 .usage-controls .uc-reload {
   margin-left: auto;
 }
-/* 折り込み待ちの申告。再取得ボタンの隣（右）に置く — 自動で追いつくことを、押す指の
-   すぐ横で言う。auto マージンは uc-reload の1つだけに保つこと（2つ置くと余白が均等
-   配分されてボタンが中途半端な位置に浮く）。 */
+/* Notice that data is still being folded in, placed right next to the reload button so the
+   promise that it catches up on its own sits beside the finger about to press it. Keep exactly
+   one auto margin, on uc-reload: a second one splits the free space evenly and leaves the button
+   floating half-way. */
 .uc-folding {
   display: inline-flex;
   align-items: center;
@@ -112,7 +113,8 @@
   opacity: 0.7;
 }
 
-/* 再取得中は前の描画を薄く保持する（スケルトンで作り直すとレイアウトが跳ねる）。 */
+/* While reloading, keep the previous render faded rather than swapping in a skeleton, which makes
+   the layout jump. */
 .usage-stage {
   display: flex;
   flex-direction: column;
@@ -138,7 +140,7 @@
   padding: 8px 10px;
 }
 .ukpi-val {
-  /* 大きい単独の数値は比例数字（tabular-nums は列で揃えるときだけ）。 */
+  /* A large standalone number uses proportional figures; tabular-nums is only for columns. */
   font-size: 20px;
   font-weight: 600;
   line-height: 1.2;
@@ -150,7 +152,7 @@
   margin-top: 2px;
 }
 .ukpi.unmeasured {
-  /* 「0」ではなく「測れていない」を色ではなくハッチで示す（未計測は状態であって値ではない）。 */
+  /* Hatch, not colour, marks "not measured" rather than "0": unmeasured is a state, not a value. */
   background: repeating-linear-gradient(
     135deg,
     var(--panel2),
@@ -160,7 +162,7 @@
   );
 }
 
-/* --- カード ---------------------------------------------------------------- */
+/* --- Cards ----------------------------------------------------------------- */
 
 .usage-card {
   border: 1px solid var(--border);
@@ -194,10 +196,11 @@
   font-size: 12px;
 }
 
-/* rtk 効果 card — 台帳とは別系（コンテナ内 rtk の履歴）を末尾に1枚。チャート・表は
-   台帳チャートの .ux-* / .usage-table を流用し、メーターは WsBar の .wu-* 行
-   （グローバルバンドル）を流用。節約は正の値・単一系列なので warn/crit のリソース色では
-   なく Top バーのアクセント（--topbar-accent、未選択時は --accent フォールバック）1色。 */
+/* rtk savings card — one card at the end for a different source than the ledger (the in-container
+   rtk history). The chart and table reuse the ledger chart's .ux-* / .usage-table, and the meter
+   reuses WsBar's .wu-* rows from the global bundle. Savings are a positive, single series, so it
+   uses one colour: the top bar accent (--topbar-accent, falling back to --accent when nothing is
+   selected), not the warn/crit resource colours. */
 .rtk-gain-head {
   display: flex;
   align-items: center;
@@ -241,7 +244,7 @@
   margin: 10px 0 0;
 }
 
-/* --- 積み上げ棒（時系列） --------------------------------------------------- */
+/* --- Stacked bars (time series) -------------------------------------------- */
 
 .usage-chart {
   display: flex;
@@ -287,7 +290,7 @@
 .ux-col {
   flex: 1 1 0;
   min-width: 14px;
-  /* 棒は太らせない（帯の余りは空気にする）。 */
+  /* Never fatten the bars; leftover width in the band stays empty. */
   max-width: 34px;
   display: flex;
   flex-direction: column;
@@ -306,7 +309,7 @@
   display: flex;
   flex-direction: column-reverse;
   justify-content: flex-start;
-  /* 面の色の隙間。枠線でマークを囲まない。 */
+  /* A gap of background colour; marks are never outlined with a border. */
   gap: 2px;
 }
 .ux-seg {
@@ -314,12 +317,13 @@
   min-height: 2px;
   border-radius: 0;
 }
-/* データ端（＝積み上げの一番上）だけ 4px 丸め、ベースライン側は角のまま。 */
+/* 4px rounding on the data end (the top of the stack) only; the baseline end stays square. */
 .ux-seg.topmost {
   border-radius: 4px 4px 0 0;
 }
-/* ホバー/フォーカスした列は帯で応答する（読み手は日付を狙うのであって 2px の棒を狙わない
-   ＝当たり判定はマークより広い列全体）。グローバルな button:hover に任せず自分で定義する。 */
+/* A hovered or focused column responds as a whole band: the reader aims at a date, not at a 2px
+   bar, so the hit area is the column rather than the mark. Defined here rather than left to the
+   global button:hover. */
 .ux-col:hover,
 .ux-col.on {
   background: color-mix(in srgb, var(--fg) 7%, transparent);
@@ -363,7 +367,8 @@
   font-size: 11px;
   line-height: 1.6;
 }
-/* 凡例は面（棒/面グラフ）なので四角、ツールチップ内は短い線キー。 */
+/* The legend represents areas (bar/area charts) so it uses squares; inside the tooltip the key is
+   a short line. */
 .uxt-key {
   width: 10px;
   height: 2px;
@@ -374,7 +379,7 @@
   background: none;
 }
 .uxt-val {
-  /* 値が主役・系列名が従（凡例とは階層が逆）。 */
+  /* The value leads and the series name follows — the opposite hierarchy from the legend. */
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   margin-left: auto;
@@ -392,7 +397,7 @@
   padding-top: 3px;
 }
 
-/* --- 凡例 ------------------------------------------------------------------ */
+/* --- Legend ---------------------------------------------------------------- */
 
 .usage-legend {
   display: flex;
@@ -427,7 +432,7 @@
   flex: none;
 }
 
-/* --- 内訳（横棒） ---------------------------------------------------------- */
+/* --- Breakdown (horizontal bars) ------------------------------------------- */
 
 .usage-breakdowns {
   display: grid;
@@ -441,8 +446,9 @@
 }
 .ubd-row {
   display: grid;
-  /* 値列を内容幅にすると、内訳カードごとにバーの始点がずれる。表示桁を
-     固定して、機能・エージェント・モデルの各カードでベースラインを揃える。 */
+  /* Sizing the value column to its content would start the bars at a different x in each
+     breakdown card. Fixing the width keeps one baseline across the feature, agent and model
+     cards. */
   grid-template-columns: minmax(0, 1fr) 1.1fr 5ch;
   align-items: center;
   gap: 6px;
@@ -478,7 +484,7 @@
 .ubd-fill {
   display: block;
   height: 100%;
-  /* データ端だけ丸める（ベースライン側は角）。 */
+  /* Round the data end only; the baseline end stays square. */
   border-radius: 0 4px 4px 0;
   min-width: 2px;
 }
@@ -488,10 +494,11 @@
   white-space: nowrap;
 }
 
-/* --- 表（グラフの双子・行列表） --------------------------------------------- */
+/* --- Tables (the chart's twin, and the matrix table) ----------------------- */
 
-/* 表は行数がデータ次第（30日 × 系列 / 機能×モデルの全組み合わせ）なので、カードの中で
-   スクロールさせる。見出しは sticky なので、スクロールしても列の意味を見失わない。 */
+/* The row count follows the data (30 days x series, or every feature x model pair), so the table
+   scrolls inside its card. The header is sticky so the columns keep their meaning while
+   scrolling. */
 .usage-table-wrap {
   overflow: auto;
   max-height: 340px;
@@ -526,7 +533,7 @@
   font-weight: 600;
 }
 
-/* --- 未計測バナー ---------------------------------------------------------- */
+/* --- "Not measured" banner ------------------------------------------------- */
 
 .usage-coverage .ucov-list {
   margin: 0;

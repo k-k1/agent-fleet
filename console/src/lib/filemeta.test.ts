@@ -56,31 +56,31 @@ describe("resolveMarkdownFileTarget", () => {
   });
 });
 
-// ── drawio の判定（docs/log/65 §65.4）─────────────────────────────────────────
+// ── drawio detection (docs/log/65 §65.4) ────────────────────────────────────
 describe("isDrawioFile", () => {
-  it("拡張子で決まるのは .drawio / .dio だけ", () => {
+  it("decides by extension for .drawio / .dio only", () => {
     expect(isDrawioFile("repos/a/design.drawio")).toBe(true);
     expect(isDrawioFile("repos/a/design.DIO")).toBe(true);
-    expect(isDrawioFile("repos/a/design.drawio.svg")).toBe(false); // 画像として既に開ける
+    expect(isDrawioFile("repos/a/design.drawio.svg")).toBe(false); // already opens as an image
     expect(isDrawioFile("repos/a/notes.md")).toBe(false);
   });
 
-  it(".xml は中身の頭を見る（見せなければ図とは言わない）", () => {
+  it("looks at the head of an .xml file (without it, never calls it a diagram)", () => {
     const head = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="app.diagrams.net">';
     expect(isDrawioFile("repos/a/diagram.xml", head)).toBe(true);
     expect(isDrawioFile("repos/a/diagram.xml")).toBe(false);
     expect(isDrawioFile("repos/a/pom.xml", "<project><modelVersion/></project>")).toBe(false);
   });
 
-  it("2 MiB 超で本文が取れなくても .drawio は図として開ける", () => {
-    // Agent は maxEditorFileBytes を超えると content を差し替える。図そのものは
-    // download 経由で取り直すので、拡張子の判断だけで面を出してよい。
+  it("still opens a .drawio as a diagram when the body is unavailable past 2 MiB", () => {
+    // The Agent replaces content beyond maxEditorFileBytes. The diagram itself is refetched
+    // through download, so the extension verdict alone is enough to show the surface.
     expect(isDrawioFile("repos/a/big.drawio", "(file too large to preview)")).toBe(true);
   });
 });
 
 describe("looksLikeDrawioXml", () => {
-  it("XML 宣言・BOM・コメントを読み飛ばす", () => {
+  it("skips the XML declaration, BOM and comments", () => {
     expect(looksLikeDrawioXml("<mxfile>")).toBe(true);
     expect(looksLikeDrawioXml("<mxGraphModel dx=\"1\">")).toBe(true);
     expect(looksLikeDrawioXml('\uFEFF<?xml version="1.0"?><!-- made by drawio --><mxfile a="1">')).toBe(true);
@@ -91,7 +91,7 @@ describe("looksLikeDrawioXml", () => {
 });
 
 describe("langFor", () => {
-  it("図のソース面は XML として色を付ける", () => {
+  it("highlights a diagram's source surface as XML", () => {
     expect(langFor("a/b.drawio")).toBe("xml");
     expect(langFor("a/b.dio")).toBe("xml");
   });
@@ -109,18 +109,18 @@ describe("isPdfFile", () => {
 describe("documentFormat", () => {
   it("maps Office extensions onto anydoc's format names", () => {
     expect(documentFormat("repos/a/plan.docx")).toBe("docx");
-    expect(documentFormat("repos/a/plan.DOCM")).toBe("docx"); // マクロ付きも同じ解析器
+    expect(documentFormat("repos/a/plan.DOCM")).toBe("docx"); // macro-enabled uses the same parser
     expect(documentFormat("repos/a/book.xlsm")).toBe("xlsx");
-    expect(documentFormat("repos/a/deck.ppsx")).toBe("pptx"); // スライドショー形式
+    expect(documentFormat("repos/a/deck.ppsx")).toBe("pptx"); // slideshow format
     expect(documentFormat("repos/a/note.odt")).toBe("odt");
   });
 
   it("leaves text formats alone", () => {
-    // csv も anydoc は読めるが、すでにテキストとして開けている。変換に回すと
-    // コードビューと編集面を失う（docs/log/82 §82.4）。
+    // anydoc can read csv too, but it already opens as text; routing it through conversion loses
+    // the code view and the editing surface (docs/log/82 §82.4).
     expect(documentFormat("repos/a/data.csv")).toBe("");
     expect(documentFormat("repos/a/README.md")).toBe("");
-    expect(documentFormat("repos/a/spec.pdf")).toBe(""); // PDF は描く面が別にある
+    expect(documentFormat("repos/a/spec.pdf")).toBe(""); // PDFs have their own rendering surface
     expect(documentFormat("repos/a/docx")).toBe("");
   });
 

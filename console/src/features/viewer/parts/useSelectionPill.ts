@@ -1,9 +1,9 @@
-// 選択範囲に浮く「送る / 読み上げ」ピルの状態。取り込み口が 2 つある
-// （読み取り専用グリッドの DOM 走査と、CodeMirror 自身の報告）ので、
-// どちらが最後に触ったかを origin が持つ（docs/log/44 §1.8）。
+// State of the Send / Read out pill floating by the selection. There are two capture paths
+// (a DOM walk of the read-only grid, and CodeMirror's own report), so `origin` records which
+// one touched it last (docs/log/44 §1.8).
 //
-// FileView での呼び出し位置は元の captureSelection の定義位置のまま＝この 2 つの
-// effect が、その面で登録される順序は変わっていない。
+// The order in which these two effects register on the surface is load-bearing; do not move
+// the call site in FileView.
 import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { lineRangeOfSelection } from "./fileDom.ts";
@@ -12,9 +12,9 @@ import type { EditorSelectionReport } from "../../editor/selection.ts";
 
 export function useSelectionPill(opts: {
   bodyRef: RefObject<HTMLDivElement | null>;
-  /** 送信モーダルが開いている間は取り込まない（下の理由）。 */
+  /** While the send modal is open, capture nothing (reason below). */
   sendOpen: boolean;
-  /** 編集面が出ているか（surfaces.editor）。 */
+  /** Whether the editing surface is shown (surfaces.editor). */
   editorSurface: boolean;
 }) {
   const { bodyRef, sendOpen, editorSurface } = opts;
@@ -22,7 +22,7 @@ export function useSelectionPill(opts: {
   // editor's own report) from clearing each other's pill (docs/log/44 §1.8).
   const [sel, setSel] = useState<SelectionPill | null>(null);
 
-  // After a mouse selection in the code/source view, surface a floating "送る" pill by
+  // After a mouse selection in the code/source view, surface a floating Send pill by
   // the selection. Scoped to CodeView because it queries that view's <code> element
   // (absent in md-preview / slides / image), so it stays inert elsewhere.
   const captureSelection = () => {

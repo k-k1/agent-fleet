@@ -1,9 +1,13 @@
-// 作業項目レール（docs/log/80 P0）の描画テスト。芯は 4 つ:
-//   ① Workspace 停止中でもキャッシュの行が出て、「最終取得」と停止中の断りが付く
-//      —— この画面が使えないなら機能そのものが無い（ADR 0061 決定 1）
-//   ② 着手済みの行にバッジが出る（同じ課題に 2 人目が入るのを起動前に止める）
-//   ③ 行にボタンを並べない（§80.20）。行を押すと詳細が開き、操作はそこに集まる
-//   ④ 詳細の 始める が既存の起動スタックへ種（プロンプト・タイトル・ブランチ）を渡す
+// Rendering tests for the work item rail (docs/log/80 P0). Four points:
+//   1. A stopped Workspace still shows the cached rows, with the last-fetched stamp and the
+//      stopped note — if this screen does not work the feature does not exist (ADR 0061
+//      decision 1).
+//   2. A started row carries a badge, which stops a second person picking up the same ticket
+//      before they launch.
+//   3. No buttons on the row (§80.20): pressing a row opens the detail modal, where the controls
+//      live.
+//   4. The detail modal's start hands the existing launch stack its seed (prompt, title,
+//      branch).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -67,32 +71,32 @@ async function render(): Promise<void> {
 
 const text = () => host.textContent || "";
 const rows = () => host.querySelectorAll(".wi-row").length;
-/** 行を押す＝詳細を開く（§80.20 でボタンから置き換わった導線）。 */
+/** Pressing a row opens the detail modal (the path that replaced the row button in §80.20). */
 const openRow = async (n = 0) => {
   await act(async () => {
     host.querySelectorAll<HTMLElement>(".wi-row")[n].click();
   });
 };
-/** 詳細モーダルの footer 右端＝始める。 */
+/** The rightmost footer button of the detail modal is start. */
 const detailStart = () =>
   [...document.querySelectorAll<HTMLButtonElement>(".wi-dmodal .ui-modal-foot button")].pop()!;
 
-// 制御された input に打つ。★ `el.value = x` だけでは React の value tracker が
-// 「変わっていない」と見なして onChange が鳴らない（絞り込みが効いていないのに
-// テストは緑、という一番いらない形になる）ので、プロトタイプ側の setter を使う。
+// Typing into a controlled input. `el.value = x` alone leaves React's value tracker thinking
+// nothing changed, so onChange never fires — which yields the worst possible outcome, a green
+// test over a filter that does nothing. Go through the prototype setter instead.
 const typeInto = (el: HTMLInputElement, value: string) => {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
   el.dispatchEvent(new Event("input", { bubbles: true }));
 };
 
-// select も同じ理由でプロトタイプ側の setter を使う（React の value tracker）。
+// Same reason for select: go through the prototype setter (React's value tracker).
 const selectInto = (el: HTMLSelectElement, value: string) => {
   Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(el, value);
   el.dispatchEvent(new Event("change", { bubbles: true }));
 };
 
-// ui-modal の直下に居てよいのは shell の 3 つだけ。それ以外がここに出るということは、
-// padding を持つ器の外に中身が落ちているということ。
+// Only the three shell elements may be direct children of ui-modal. Anything else here means
+// content has fallen outside the container that carries the padding.
 const strayChildren = (panel: Element) =>
   [...panel.children]
     .filter((el) => !el.matches(".ui-modal-head, .ui-modal-body, .ui-modal-foot"))
@@ -120,21 +124,20 @@ afterEach(() => {
 });
 
 describe("WorkItemsSection", () => {
-  it("★ 停止中でもキャッシュの行を出し、最終取得と停止中の断りを添える", async () => {
+  it("shows cached rows while stopped, with the last-fetched stamp and the stopped note", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: false });
     await render();
     expect(rows()).toBe(1);
     expect(text()).toContain("ログイン後に一覧が空になる");
     expect(text()).toContain(t("wi.stopped_note"));
-    // 「いつ取ったか」を言わずに古い一覧を出さない。
+    // Never show a possibly stale list without saying when it was fetched.
     expect(host.querySelector(".wi-stamp")?.textContent || "").not.toBe("");
   });
 
-  it("★ labels が null の行でもレールが落ちない（Console が真っ白になった実バグ）", async () => {
-    // CP が Go の nil スライスを JSON の null として出していた。行の
-    // item.labels.slice(0, 2) が TypeError になり、アプリに ErrorBoundary が
-    // 無いので Console 全体が消えた。生成側は直したが、古い CP から来ても
-    // 描けることをここで固定する。
+  it("survives a row with null labels (this blanked the whole Console)", async () => {
+    // The CP emitted a Go nil slice as JSON null; item.labels.slice(0, 2) in the row threw a
+    // TypeError, and with no ErrorBoundary in the app the whole Console disappeared. The producer
+    // was fixed, but this pins down that the rail still renders when an older CP sends null.
     workItemList.mockResolvedValue({
       items: [{ ...item(), labels: null }, { ...item(), id: "2", key: "acme/web#46", labels: ["bug"] }],
       queries: [query],
@@ -148,7 +151,7 @@ describe("WorkItemsSection", () => {
     expect(text()).toContain("bug");
   });
 
-  it("取得失敗は「空」と別物として出し、直前の行を残す", async () => {
+  it("shows a failed fetch as distinct from empty and keeps the previous rows", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
     expect(rows()).toBe(1);
@@ -157,18 +160,18 @@ describe("WorkItemsSection", () => {
       await useWorkItemStore.getState().refresh();
     });
     expect(host.querySelector(".wi-err")).not.toBeNull();
-    expect(rows()).toBe(1); // 行は消えない
+    expect(rows()).toBe(1); // the rows stay
     expect(text()).not.toContain(t("wi.empty"));
   });
 
-  it("クエリが 1 本も無いときは「空」ではなく追加導線を出す", async () => {
+  it("offers the add path rather than \"empty\" when there is no query at all", async () => {
     workItemList.mockResolvedValue({ items: [], queries: [], sessions: [], fetchedAt: "", running: true });
     await render();
     expect(text()).toContain(t("wi.no_queries"));
     expect(text()).not.toContain(t("wi.empty"));
   });
 
-  it("クエリ単位の失敗はそのクエリの名前で出る", async () => {
+  it("names the query in a per-query failure", async () => {
     workItemList.mockResolvedValue({
       items: [item()],
       queries: [{ ...query, lastError: "github rejected the token" }],
@@ -178,10 +181,10 @@ describe("WorkItemsSection", () => {
     });
     await render();
     expect(text()).toContain(t("wi.query_failed", { label: "自分の未完了" }));
-    expect(rows()).toBe(1); // 失敗しても他の行は出たまま
+    expect(rows()).toBe(1); // the other rows stay visible through a failure
   });
 
-  it("★ 着手済みの行にはバッジが出る", async () => {
+  it("puts a badge on a started row", async () => {
     workItemList.mockResolvedValue({
       items: [item(), item({ id: "2", key: "acme/web#46", title: "まだ誰も見ていない" })],
       queries: [query],
@@ -195,20 +198,21 @@ describe("WorkItemsSection", () => {
     expect(badges[0].getAttribute("title")).toContain("sk7f3q9");
   });
 
-  // --- §80.20: 行はボタンを並べない。押すと詳細が開き、操作はそこに集まる ---
+  // --- §80.20: no buttons on the row; pressing it opens the detail modal, where controls live ---
 
-  it("★ 行に「始める」ボタンを並べない（41 行 × 1 ボタンをやめた）", async () => {
+  it("puts no start button on the row (41 rows no longer mean 41 buttons)", async () => {
     useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
     workItemList.mockResolvedValue({ items: jiraRows(5), queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
     expect(host.querySelectorAll(".wi-start").length).toBe(0);
     expect(host.querySelectorAll(".wi-report").length).toBe(0);
-    // 行に残るのは 🔗 と（着手済みなら）バッジだけ。行そのものが押せる。
+    // Only the external link and, when started, the badge stay on the row; the row itself is
+    // pressable.
     expect(host.querySelectorAll(".wi-link").length).toBe(5);
     expect(host.querySelector(".wi-row")?.getAttribute("role")).toBe("button");
   });
 
-  it("★ 行を押すと詳細が開き、CP が持っている項目がそのまま並ぶ（本文は取りに行かない）", async () => {
+  it("opens the detail modal on a row press, listing exactly what the CP holds and fetching no body", async () => {
     useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
@@ -223,7 +227,7 @@ describe("WorkItemsSection", () => {
     expect(modal.querySelector<HTMLAnchorElement>(".wi-dlink")?.href).toBe("https://github.com/acme/web/issues/45");
   });
 
-  it("★ 行の 🔗 と着手済みバッジは詳細を開かない（入れ子の操作要素）", async () => {
+  it("does not open the detail modal from the row's link or started badge (nested controls)", async () => {
     workItemList.mockResolvedValue({
       items: [item()],
       queries: [query],
@@ -242,7 +246,7 @@ describe("WorkItemsSection", () => {
     expect(document.querySelector(".wi-dmodal")).toBeNull();
   });
 
-  it("★ 詳細はまず起動先を聞く（チケットは作業コピーを知らない）", async () => {
+  it("asks where to launch first, because a ticket knows nothing about working copies", async () => {
     useReposStore.setState({
       repos: [
         { name: "web", path: "/home/dev/repos/web" },
@@ -252,17 +256,17 @@ describe("WorkItemsSection", () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
     await openRow();
-    // 開いただけでは起動しない。種もまだ置かない（キャンセルされうる）。
+    // Opening alone launches nothing and seeds nothing yet, since it can still be cancelled.
     expect(useLaunchTarget.getState().target).toBeNull();
     expect(useLaunchSeed.getState().workItem).toBeNull();
     const selects = document.querySelectorAll<HTMLSelectElement>(".wi-sfield select");
     expect(selects.length).toBe(2);
-    // 起動先には「新しい worktree」「base でそのまま」「既存の worktree」が並ぶ。
+    // The where options are: a new worktree, the base in place, and the existing worktree.
     expect(selects[1].options.length).toBe(3);
     expect(document.body.textContent || "").toContain("feature/issue-9");
   });
 
-  it("★ 新しい worktree を選ぶと base 宛に、種つきで起動スタックへ渡る", async () => {
+  it("hands the launch stack the base plus a seed when a new worktree is chosen", async () => {
     useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
@@ -273,14 +277,14 @@ describe("WorkItemsSection", () => {
     const seed = useLaunchSeed.getState();
     expect(seed.prompt).toContain("acme/web#45");
     expect(seed.prompt).toContain("gh issue view 45");
-    expect(seed.prompt).not.toContain(">"); // 既定では本文を貼らない
+    expect(seed.prompt).not.toContain(">"); // the body is not pasted by default
     expect(seed.title).toContain("#45");
     expect(seed.workItem).toEqual({ provider: "github", key: "acme/web#45", branch: "feature/issue-45" });
     expect(useLaunchTarget.getState().target?.name).toBe("web");
     expect(useLaunchTarget.getState().inPlace).toBe(false);
   });
 
-  it("★ 既存の作業コピーを選ぶと inPlace で渡る（起動ダイアログが新規 worktree に戻さない）", async () => {
+  it("passes inPlace for an existing working copy, so the launch dialog does not revert to a new worktree", async () => {
     useReposStore.setState({
       repos: [
         { name: "web", path: "/home/dev/repos/web" },
@@ -302,10 +306,10 @@ describe("WorkItemsSection", () => {
     expect(useLaunchTarget.getState().inPlace).toBe(true);
   });
 
-  // ★ 余白の回帰はここで止める。ui-modal 自身に padding は無く（見出しと footer が
-  // 自分で持つ形）、中身を直下に置くと本文だけが枠に貼りつく —— 実機で「はじめる」が
-  // その形になっていた。構造で書けば、見た目を見なくても壊れたと分かる。
-  it("★ モーダルの中身は共有の ui-modal-body / ui-modal-foot に載る（他のダイアログと余白が揃う）", async () => {
+  // Guards against the padding regression. ui-modal itself has no padding (the heading and footer
+  // carry their own), so content placed directly in it sticks to the frame — which is what the
+  // start hub actually did. Asserting on structure catches it without looking at the rendering.
+  it("puts modal content in the shared ui-modal-body / ui-modal-foot, matching the other dialogs", async () => {
     useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
@@ -316,12 +320,13 @@ describe("WorkItemsSection", () => {
     expect(detail.querySelector(":scope > .ui-modal-foot button")).not.toBeNull();
     expect(strayChildren(detail)).toEqual([]);
 
-    // 詳細は Esc / キャンセルで閉じる。歯車を開く前に畳んでおかないと 2 枚重なる。
+    // The detail modal closes on Esc or cancel; without closing it first, opening the gear would
+    // stack two modals.
     await act(async () => {
       [...document.querySelectorAll<HTMLButtonElement>(".wi-dmodal .ui-modal-foot button")][0].click();
     });
 
-    // 保存したクエリ（歯車）も同じ形であること。
+    // The saved queries modal (the gear) must have the same shape.
     const gear = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
       (b) => b.getAttribute("aria-label") === t("wi.queries"),
     )!;
@@ -331,7 +336,7 @@ describe("WorkItemsSection", () => {
     expect(strayChildren(queries)).toEqual([]);
   });
 
-  // --- docs/log/80 §80.18: 実データ（Jira 41 件・全行同じ担当者）で作り直した情報設計 ---
+  // --- docs/log/80 §80.18: information design reworked on real data (41 Jira rows, one assignee) ---
 
   const jiraRows = (n: number) =>
     Array.from({ length: n }, (_, i) =>
@@ -344,29 +349,30 @@ describe("WorkItemsSection", () => {
         assignee: "Rin Aoyagi",
         repo: "",
         labels: [],
-        // ★ 明確に古い日付にする。「24 時間以内なら時刻を出さない」を入れたので、
-        // 実行日に近い値だと走らせる日によって .wi-when の数が変わってしまう。
+        // Use an unambiguously old date. Nothing is rendered within 24 hours, so a value near
+        // the run date would make the .wi-when count depend on the day the suite runs.
         updatedAt: new Date(Date.UTC(2025, 11, 1, 0, i)).toISOString(),
       }),
     );
 
-  it("★ 41 件でも既定は 10 行。件数バッジは全件のままで、残りは数で書く", async () => {
+  it("draws 10 rows by default even for 41 items, keeps the badge at the full count and names the remainder", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
     expect(rows()).toBe(10);
-    // 畳んでいるだけで隠していない —— 見出しのバッジは 41 のまま。
+    // Folded, not hidden: the section badge still reads 41.
     expect(host.querySelector(".ui-section-count")?.textContent).toBe("41");
     const more = host.querySelector<HTMLButtonElement>(".wi-more")!;
     expect(more.textContent).toBe(t("wi.show_more", { n: 31 }));
     await act(async () => more.click());
     expect(rows()).toBe(41);
-    // たたむ で戻れる（開きっぱなしにしない）。
+    // Collapsing takes it back, so it does not stay expanded.
     await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
     expect(rows()).toBe(10);
   });
 
-  // docs/log/80 §80.20: 同じ JQL を 2 本保存していて 41 件が 82 行になった、という実機の報告。
-  it("★ 2 本のクエリが同じチケットを返しても 1 行（バッジも重複を数えない）", async () => {
+  // docs/log/80 §80.20: reported from the real rail — the same JQL saved twice turned 41 items
+  // into 82 rows.
+  it("keeps one row when two queries return the same ticket, and the badge does not count the duplicate", async () => {
     const q2 = { ...query, id: "q2", provider: "jira" };
     const dup = jiraRows(41).map((r) => ({ ...r, id: r.id + "-dup", queryId: "q2" }));
     workItemList.mockResolvedValue({
@@ -382,38 +388,38 @@ describe("WorkItemsSection", () => {
     expect(rows()).toBe(41);
   });
 
-  it("★ 全行が同じ担当者なら行から消え、メタが空なら 2 行目そのものを描かない", async () => {
+  it("drops an assignee shared by every row, and draws no second line when the meta is empty", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
     expect(text()).not.toContain("@Rin Aoyagi");
     expect(host.querySelectorAll(".wi-meta").length).toBe(0);
-    // 消したのは表示だけ —— 担当者は行の tooltip に残っている。
+    // Only the rendering was dropped: the assignee is still in the row's tooltip.
     expect(host.querySelector(".wi-title")?.getAttribute("title")).toContain("Rin Aoyagi");
-    // 空いた高さの代わりに、並び順の理由（更新の相対時刻）が出る。
+    // In place of the freed height, the reason for the sort order appears (relative update time).
     expect(host.querySelectorAll(".wi-when").length).toBe(10);
   });
 
-  it("担当者が割れていれば出す（チームのクエリ）", async () => {
+  it("shows the assignee when it varies (a team query)", async () => {
     const mixed = jiraRows(41).map((r, i) => (i === 3 ? { ...r, assignee: "Sora Ueda" } : r));
     workItemList.mockResolvedValue({ items: mixed, queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
     expect(text()).toContain("@Rin Aoyagi");
   });
 
-  it("★ レール内の絞り込みは行を減らすだけ（絞ってから畳む）", async () => {
+  it("filters the rail by reducing rows only, filtering before folding", async () => {
     const mixed = [...jiraRows(40), item({ id: "gh", key: "acme/web#45", title: "ログイン後に一覧が空になる" })];
     workItemList.mockResolvedValue({ items: mixed, queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
     const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
     await act(async () => typeInto(input, "ログイン"));
     expect(rows()).toBe(1);
-    expect(host.querySelector(".wi-more")).toBeNull(); // 1 件しか残らなければ折りたたみは要らない
+    expect(host.querySelector(".wi-more")).toBeNull(); // one remaining row needs no fold
     await act(async () => typeInto(input, "存在しない語"));
     expect(rows()).toBe(0);
     expect(text()).toContain(t("wi.filter_empty"));
   });
 
-  it("混んでいないレールに検索窓を出さない", async () => {
+  it("shows no filter box on a rail that is not crowded", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(4), queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
     expect(host.querySelector(".wi-filter")).toBeNull();
@@ -421,11 +427,12 @@ describe("WorkItemsSection", () => {
     expect(rows()).toBe(4);
   });
 
-  it("作業コピーが 1 つも無いときだけ はじめる ハブに委ねる", async () => {
+  it("defers to the start hub only when there is no working copy at all", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
     await openRow();
-    // 選ばせるものが無いので選択肢は出さず、始める がそのまま clone 導線へ渡す。
+    // With nothing to choose, no options are offered and start hands straight over to the clone
+    // path.
     expect(document.querySelector(".wi-sfield")).toBeNull();
     await act(async () => {
       detailStart().click();
@@ -434,7 +441,7 @@ describe("WorkItemsSection", () => {
     expect(useLaunchSeed.getState().workItem?.key).toBe("acme/web#45");
   });
 
-  it("★ 報告は着手済みのときだけ詳細に出て、押すと下書きモーダルへ入れ替わる", async () => {
+  it("offers report in the detail modal only once started, swapping to the draft modal on press", async () => {
     useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
     workItemList.mockResolvedValue({
       items: [item(), item({ id: "2", key: "acme/web#46", title: "まだ誰も見ていない" })],
@@ -444,7 +451,7 @@ describe("WorkItemsSection", () => {
       running: true,
     });
     await render();
-    // 着手していない行の詳細には報告も着手中セクションも出ない。
+    // A row that was never started shows neither the report button nor the started section.
     await openRow(1);
     expect(document.querySelector(".wi-dstarted")).toBeNull();
     await act(async () => {
@@ -459,12 +466,12 @@ describe("WorkItemsSection", () => {
       (b.textContent || "").includes(t("wi.report_title")),
     )!;
     await act(async () => report.click());
-    // ★ 2 枚重ねない —— 詳細は閉じ、報告だけが残る。
+    // Never stack two: the detail modal closes and only the report one remains.
     expect(document.querySelector(".wi-dmodal")).toBeNull();
     expect(document.querySelector(".wi-rmodal")).not.toBeNull();
   });
 
-  it("bitbucket の項目には報告を出さない（押した先で必ず断られる操作要素を出さない）", async () => {
+  it("offers no report on a bitbucket item, since the control would always be refused once pressed", async () => {
     useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
     workItemList.mockResolvedValue({
       items: [item({ provider: "bitbucket", kind: "pr", key: "acme/web#45" })],
@@ -479,7 +486,7 @@ describe("WorkItemsSection", () => {
     expect(document.querySelector(".wi-dmodal")?.textContent).not.toContain(t("wi.report_title"));
   });
 
-  // --- 保存クエリの取得元（3 択なので select をやめてセグメントにした） ---
+  // --- The saved query's source: three choices, so a segmented control instead of a select ---
 
   const openQueries = async () => {
     const gear = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
@@ -489,7 +496,7 @@ describe("WorkItemsSection", () => {
     return document.querySelector(".wi-qmodal")!;
   };
 
-  it("★ 取得元は select ではなくボタン 3 つ（畳む理由が無く、暗色で選択肢が読めなかった）", async () => {
+  it("renders the source as three buttons, not a select (nothing to collapse, and options were unreadable in the dark theme)", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
     const modal = await openQueries();
@@ -497,19 +504,20 @@ describe("WorkItemsSection", () => {
     const segs = [...modal.querySelectorAll<HTMLButtonElement>(".wi-qform .ui-seg .seg-btn")];
     expect(segs.map((b) => b.textContent)).toEqual(["GitHub", "Jira", "Bitbucket"]);
     expect(segs.map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
-    // 残ってよい select は「既定の作業コピー」の 1 つだけ（取得元は消えている）。
+    // The only select left is the default working copy; the source select is gone.
     expect(modal.querySelectorAll(".wi-qform select").length).toBe(1);
 
     await act(async () => segs[1].click());
     expect(segs.map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true", "false"]);
-    // 押した取得元の既定クエリ（JQL）に入れ替わる＝ select と同じ副作用が生きている。
+    // The field swaps to the pressed source's default query (JQL), so the select's side effect
+    // still works.
     const expr = [...modal.querySelectorAll<HTMLInputElement>(".wi-qform input")].pop()!;
     expect(expr.value).toContain("currentUser()");
   });
 
-  // --- §80.23: Bitbucket のクエリは書かせずに組み立てる ---
+  // --- §80.23: a Bitbucket query is assembled, never typed ---
 
-  /** Bitbucket を選び、接続の一覧が届くまで進める。 */
+  /** Select Bitbucket and advance until the connection's repository list has arrived. */
   const openBitbucket = async () => {
     await render();
     const modal = await openQueries();
@@ -521,57 +529,59 @@ describe("WorkItemsSection", () => {
     return modal;
   };
 
-  it("★ Bitbucket は接続の一覧から組み立てる（af が発明した書式を人に書かせない）", async () => {
+  it("assembles Bitbucket from the connection list, so nobody types af's invented format", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     bitbucketRepoList.mockResolvedValue({ repos: [{ full_name: "acme/web" }, { full_name: "acme/api" }] });
     const modal = await openBitbucket();
 
-    // 手書きのクエリ欄は出ない。text 入力は表示名だけで、何を出すかはチェック 3 つ。
+    // No free-text query field: the one text input is the label, and what to fetch is the three
+    // checkboxes.
     expect(modal.querySelectorAll<HTMLInputElement>('.wi-qform input[type="text"], .wi-qform input:not([type])').length).toBe(1);
-    expect(modal.querySelectorAll(".wi-qform .ui-seg").length).toBe(1); // 取得元だけ
+    expect(modal.querySelectorAll(".wi-qform .ui-seg").length).toBe(1); // the source only
     expect(modal.querySelectorAll('.wi-qchecks input[type="checkbox"]').length).toBe(3);
 
-    // 対象を選ぶと、保存される文字列が組み上がって見える。
+    // Choosing a target makes the string that will be saved visible as it is assembled.
     const target = modal.querySelectorAll<HTMLSelectElement>(".wi-qform select")[0];
     expect([...target.options].map((o) => o.value)).toEqual(["", "acme/api", "acme/web"]);
     await act(async () => selectInto(target, "acme/web"));
     expect(modal.querySelector(".wi-qfield code.wi-qquery")?.textContent).toBe('acme/web reviewers.uuid="@me"');
 
-    // 追加すると、その文字列がそのまま保存される（UUID も先頭の対象も人は打っていない）。
+    // Adding saves that exact string; nobody typed the UUID or the leading target.
     await act(async () => [...modal.querySelectorAll<HTMLButtonElement>(".wi-qform button")].pop()!.click());
     expect(workItemQueryCreate).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "bitbucket", query: 'acme/web reviewers.uuid="@me"' }),
     );
   });
 
-  it("★ ワークスペース単位（自分の PR）は候補が 1 つなら選ばせない", async () => {
+  it("does not ask for a workspace-scoped target (my own PRs) when there is one candidate", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     bitbucketRepoList.mockResolvedValue({ repos: [{ full_name: "acme/web" }, { full_name: "acme/api" }] });
     const modal = await openBitbucket();
 
     const checks = [...modal.querySelectorAll<HTMLInputElement>('.wi-qchecks input[type="checkbox"]')];
-    await act(async () => checks[0].click()); // レビュー待ちを外す
-    await act(async () => checks[2].click()); // 自分の PR を入れる
-    // ワークスペースは 1 つしかないので、選ばずに決まっている。
+    await act(async () => checks[0].click()); // clear waiting-on-my-review
+    await act(async () => checks[2].click()); // select my own PRs
+    // There is only one workspace, so it is settled without being chosen.
     const target = modal.querySelectorAll<HTMLSelectElement>(".wi-qform select")[0];
     expect([...target.options].map((o) => o.value)).toEqual(["", "acme"]);
     expect(target.value).toBe("acme");
     expect(modal.querySelector(".wi-qfield code.wi-qquery")?.textContent).toBe("acme");
   });
 
-  it("★ 何を出すかは複数選べる（3 つは排他ではない）。1 回の追加でクエリが 2 本増える", async () => {
+  it("accepts several intents at once (the three are not exclusive), adding two queries in one go", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     bitbucketRepoList.mockResolvedValue({ repos: [{ full_name: "acme/web" }] });
     const modal = await openBitbucket();
 
     const checks = [...modal.querySelectorAll<HTMLInputElement>('.wi-qchecks input[type="checkbox"]')];
-    await act(async () => checks[2].click()); // レビュー待ち ＋ 自分の PR
-    // 対象はリポジトリのまま（リポジトリが要る意図が残っている）。ワークスペースは af が畳む。
+    await act(async () => checks[2].click()); // waiting-on-my-review plus my own PRs
+    // The target stays a repository, because a repository-scoped intent is still selected; af
+    // folds it up to the workspace itself.
     expect([...modal.querySelectorAll(".wi-qfield code.wi-qquery")].map((c) => c.textContent)).toEqual([
       'acme/web reviewers.uuid="@me"',
       "acme",
     ]);
-    // まとめて足すので表示名は使わない（同じ名前の行が 2 本並ぶのを避ける）。
+    // Adding several at once ignores the label, to avoid two rows with the same name.
     expect(modal.querySelector<HTMLInputElement>(".wi-qform input")?.disabled).toBe(true);
 
     await act(async () => [...modal.querySelectorAll<HTMLButtonElement>(".wi-qform button")].pop()!.click());
@@ -582,12 +592,12 @@ describe("WorkItemsSection", () => {
     ]);
   });
 
-  it("★ 一覧が取れないとき（停止中・未接続）は手書きに落ちる。設定側で詰まらせない", async () => {
+  it("falls back to free text when the list cannot be fetched (stopped, not connected), never blocking in settings", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     bitbucketRepoList.mockResolvedValue({ error: { code: "workspace_stopped" } });
     const modal = await openBitbucket();
 
-    expect(modal.querySelectorAll(".wi-qchecks").length).toBe(0); // 組み立て UI は出ない
+    expect(modal.querySelectorAll(".wi-qchecks").length).toBe(0); // no assembly UI
     const expr = [...modal.querySelectorAll<HTMLInputElement>(".wi-qform input")].pop()!;
     expect(expr.placeholder).toContain("workspace/repo");
     expect(modal.textContent).toContain(t("wi.bb_list_failed"));

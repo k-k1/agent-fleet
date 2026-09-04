@@ -1,8 +1,8 @@
-// FileView が直接 DOM を触る 3 つの道具。どれも React の外側の話で、
-// 描画にも状態にも触らない純関数（＋副作用 1 つ）。
+// The three helpers with which FileView touches the DOM directly. All of them live outside
+// React and are pure functions (plus one side effect) that touch neither render nor state.
 //
-// 選択範囲 → 行番号の対応づけは、コードのセルが持つ data-ln を読む。DOM の
-// テキスト行ではなく論理行を見るので、折り返しにもハイライトにも左右されない。
+// Selection-to-line-number mapping reads the data-ln each code cell carries. It looks at
+// logical lines rather than DOM text lines, so wrapping and highlighting cannot affect it.
 
 // lineRangeOfSelection derives the 1-based line range + text of the current selection
 // within the code grid. Each code cell carries data-ln (its 1-based logical line), so

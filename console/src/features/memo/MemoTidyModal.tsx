@@ -135,7 +135,7 @@ export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
       }
       if (failed > 0) {
         toast(tr("sx.tidy_apply_failed"));
-        if (failed < chosen.length) onDone(); // 一部は適用済み — 再取得して反映する
+        if (failed < chosen.length) onDone(); // some already applied - refetch so they show up
         return;
       }
       toast(tr("sx.tidied", { count: chosen.length }), { kind: "success" });

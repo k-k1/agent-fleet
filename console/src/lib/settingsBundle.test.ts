@@ -162,7 +162,7 @@ describe("planSsmImport", () => {
     expect(plan.profiles.map((p) => p.label)).toEqual(["prod"]);
     expect(plan.skippedProfiles).toEqual([{ label: "broken", reason: "invalid" }]);
     expect(plan.hosts.map((h) => h.alias)).toEqual(["mng@web-01"]);
-    // 参照先のプロファイルが作られなかったホストは no_profile、alias 欠けは invalid。
+    // A host whose referenced profile was not created is no_profile; a missing alias is invalid.
     expect(plan.skippedHosts).toEqual([
       { alias: "mng@web-02", reason: "no_profile" },
       { alias: "", reason: "invalid" },

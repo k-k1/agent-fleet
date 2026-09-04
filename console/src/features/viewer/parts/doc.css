@@ -1,4 +1,4 @@
-/* ---- Office 文書の簡易プレビュー (docs/log/82 §82.4) ---- */
+/* ---- Simple preview of Office documents (docs/log/82 §82.4) ---- */
 .docpreview {
   flex: 1;
   min-height: 0;
@@ -10,8 +10,9 @@
   margin: 16px;
   font: 12px var(--mono);
 }
-/* 「これは簡易プレビューである」は、読み始める前に必ず目に入る位置に置く
-   （書式の落ちた表を原本と思われる方が危ない）。 */
+/* The "this is only a simple preview" note has to sit where the reader cannot miss it
+   before starting to read: mistaking a table that lost its formatting for the original
+   is the worse outcome. */
 .docpreview-note {
   display: flex;
   align-items: center;

@@ -84,8 +84,8 @@ export function DirtyGuardHost() {
           <p role="alert">{tr("editor.guard.save_failed")}</p>
         )}
       </div>
-      {/* ui-modal-foot が余白・区切り線・右寄せを持つ。ui-modal-actions は
-          どの CSS にも無いクラスで、この footer は素のままだった。 */}
+      {/* ui-modal-foot carries the padding, the divider and the right alignment.
+          ui-modal-actions exists in no stylesheet, so this footer rendered unstyled. */}
       <footer className="ui-modal-foot">
         <button
           type="button"

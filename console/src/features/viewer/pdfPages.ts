@@ -1,30 +1,33 @@
-// PDF ペインの「どのページを、どの大きさで、いつ描くか」の算術（docs/log/82 §82.5）。
+// The arithmetic behind which page the PDF pane draws, at what size, and when
+// (docs/log/82 §82.5).
 //
-// DOM に触れない純関数だけをここに置く。描画は canvas とスクロール位置に依存する
-// ので、テストできる形はこの層しかない —— 実際、取り違えると出る事故（拡大したのに
-// 前の倍率の canvas が残る、画面外のページまで一斉に描いてメモリを食う）は、すべて
-// この計算の間違いとして再現できる。
+// Only pure functions that never touch the DOM live here. Rendering depends on the canvas
+// and the scroll position, so this layer is the only testable form of it: the failures that
+// follow from getting it wrong (a canvas at the previous zoom surviving a zoom change, every
+// off-screen page rendering at once and eating memory) all reproduce as errors in this
+// arithmetic.
 
-/** 1 ページの素の大きさ（pdf.js の scale=1 ビューポート = CSS px）。 */
+/** Intrinsic size of one page (pdf.js's scale=1 viewport, in CSS px). */
 export interface PageSize {
   w: number;
   h: number;
 }
 
-/** ページを縦に積んだときの配置。tops[i] はスクロール容器内の上端 y。 */
+/** Layout of the pages stacked vertically. tops[i] is the top y within the scroll
+ *  container. */
 export interface PageLayout {
   tops: number[];
   sizes: PageSize[];
   total: number;
 }
 
-/** ページの間隔と外周の余白（CSS の .pdfview-doc と一致させること）。 */
+/** Gap between pages and the outer padding; must match .pdfview-doc in the CSS. */
 export const PAGE_GAP = 12;
 
-/** 表示倍率の段。1 が「幅に合わせる」。 */
+/** The zoom steps. 1 means fit-to-width. */
 export const ZOOM_STEPS: number[] = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 
-/** いま拡大している位置から次の段へ。端では動かない。 */
+/** Move one step from the current zoom. At either end it stays put. */
 export function stepZoom(zoom: number, dir: 1 | -1): number {
   const steps = ZOOM_STEPS;
   if (dir > 0) return steps.find((s) => s > zoom + 1e-6) ?? steps[steps.length - 1];
@@ -33,11 +36,11 @@ export function stepZoom(zoom: number, dir: 1 | -1): number {
   return out;
 }
 
-/** 容器の幅にいちばん広いページを合わせる倍率。
+/** Zoom that fits the widest page to the container width.
  *
- *  合わせる先を「いちばん広いページ」にするのは、横向きページが 1 枚混ざった文書で
- *  ページごとに倍率が変わると、読んでいる最中に段組みが飛ぶため。幅が取れない
- *  （まだ measure 前の）ときは 1 を返して、描画を次のレイアウトまで遅らせる。 */
+ *  Fitting to the widest page rather than each page keeps the column from jumping mid-read
+ *  in a document that contains a single landscape page. When no width is available yet (not
+ *  measured), it returns 1 so rendering waits for the next layout. */
 export function fitScale(sizes: PageSize[], containerWidth: number, padding: number): number {
   const usable = containerWidth - padding * 2;
   if (!(usable > 0)) return 1;
@@ -46,7 +49,7 @@ export function fitScale(sizes: PageSize[], containerWidth: number, padding: num
   return usable / widest;
 }
 
-/** 倍率を当てたときの各ページの位置と全体の高さ。 */
+/** Position of each page and the total height at a given zoom. */
 export function layoutPages(sizes: PageSize[], scale: number, gap = PAGE_GAP): PageLayout {
   const tops: number[] = [];
   const scaled: PageSize[] = [];
@@ -61,9 +64,10 @@ export function layoutPages(sizes: PageSize[], scale: number, gap = PAGE_GAP): P
   return { tops, sizes: scaled, total: Math.max(0, y - gap) };
 }
 
-/** いま描くべきページ番号（0 始まり）の範囲。overscan は画面の何倍を先読みするか。
+/** Range of page indices (0-based) to render now. overscan is how many viewports ahead to
+ *  prefetch.
  *
- *  返すのは半開区間 [start, end)。ページが 0 枚なら start === end === 0。 */
+ *  Returns the half-open interval [start, end). With no pages, start === end === 0. */
 export function visibleRange(
   layout: PageLayout,
   scrollTop: number,
@@ -87,10 +91,10 @@ export function visibleRange(
   return start > end ? { start: 0, end: 0 } : { start, end };
 }
 
-/** 情報バーに出す「いま見ているページ」（1 始まり）。
+/** The page currently being read, for the info bar (1-based).
  *
- *  画面の中央にある方のページを現在ページとする。上端で決めると、ページの境目が
- *  画面上端に来た瞬間に、ほとんど見えていない次ページへ番号が飛ぶ。 */
+ *  It is the page at the middle of the viewport. Deciding by the top edge would jump the
+ *  number to the next, barely visible page the moment a page boundary reaches the top. */
 export function currentPage(layout: PageLayout, scrollTop: number, viewportHeight: number): number {
   const n = layout.tops.length;
   if (n === 0) return 1;
@@ -99,13 +103,14 @@ export function currentPage(layout: PageLayout, scrollTop: number, viewportHeigh
   return 1;
 }
 
-/** 倍率を変える前に覚えておく読み位置（ページ番号＋そのページ内の割合）。 */
+/** Reading position remembered before a zoom change: page number plus the fraction within
+ *  that page. */
 export interface ScrollAnchor {
   page: number;
   fraction: number;
 }
 
-/** いまの読み位置を、倍率に依らない形（ページ＋割合）で取り出す。 */
+/** Extracts the current reading position in a zoom-independent form (page + fraction). */
 export function anchorOf(layout: PageLayout, scrollTop: number): ScrollAnchor {
   const n = layout.tops.length;
   if (n === 0) return { page: 0, fraction: 0 };
@@ -120,7 +125,8 @@ export function anchorOf(layout: PageLayout, scrollTop: number): ScrollAnchor {
   return { page, fraction: h > 0 ? (scrollTop - layout.tops[page]) / h : 0 };
 }
 
-/** 覚えた読み位置を、新しい倍率のレイアウトでのスクロール位置へ戻す。 */
+/** Maps a remembered reading position back to a scroll position in the new zoom's
+ *  layout. */
 export function scrollTopForAnchor(layout: PageLayout, anchor: ScrollAnchor): number {
   const n = layout.tops.length;
   if (n === 0) return 0;
@@ -129,10 +135,12 @@ export function scrollTopForAnchor(layout: PageLayout, anchor: ScrollAnchor): nu
   return Math.max(0, Math.round(layout.tops[page] + anchor.fraction * h));
 }
 
-/** canvas の実ピクセル数。画面の密度に合わせつつ、1 ページの総画素で頭打ちにする。
+/** Actual pixel count of a canvas: follows the display density but is capped by total pixels
+ *  per page.
  *
- *  Retina で 4 倍の canvas を何枚も持つと、長い文書ではタブごと落ちる。上限は
- *  「A4 を 300dpi 相当で持てる」程度に置き、超える分は解像度を落として面積を守る。 */
+ *  Holding many 4x canvases on a Retina display takes the whole tab down on a long document.
+ *  The cap is set at roughly "an A4 page at 300dpi", and anything above it trades resolution
+ *  to keep the area. */
 export const MAX_CANVAS_PIXELS = 8_000_000;
 
 export function canvasPixelRatio(cssW: number, cssH: number, dpr: number): number {

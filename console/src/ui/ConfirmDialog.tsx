@@ -11,7 +11,7 @@ import { useFocusTrap } from "../lib/focusTrap.ts";
 // components/ConfirmDialog). Renders a title, a body (string or nodes), and
 // Cancel / Confirm buttons; the confirm button is destructive when `danger`.
 // Unlike useConfirm (promise-based one-liner), this is a component the caller
-// renders directly — used where the body is rich JSX (e.g. 設定 > 環境 作り直す).
+// renders directly — used where the body is rich JSX (e.g. Settings > Environment > Recreate).
 interface ConfirmDialogProps {
   title?: ReactNode;
   children?: ReactNode;
@@ -35,8 +35,8 @@ export function ConfirmDialog({
   // Escape cancels (unless the operation is running) — layered, so the dialog
   // this confirm was opened from stays open.
   useEscLayer(onCancel, !busy);
-  // 端末の戻る操作でもこの確認だけ剥がせるように（ConfirmProvider と同じ流儀）。
-  // busy 中は Esc/backdrop 同様に無効。
+  // The device's back gesture peels off just this confirm (same convention as
+  // ConfirmProvider). Disabled while busy, like Esc and the backdrop.
   useBackClose(onCancel, !busy);
   // Trap Tab within the confirm; focus lands on the confirm button (data-autofocus
   // below) so Space/Enter fires it immediately — Esc is the escape hatch for

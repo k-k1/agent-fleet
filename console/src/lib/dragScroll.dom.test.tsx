@@ -1,15 +1,15 @@
-// 返信サジェストのチップ行は「条件付きレンダー」で、ストリーミング中（チャット）や
-// AUQ/plan でコンポーザーがロックされている間（ミラー）は DOM から消えて、また戻ってくる。
-// ref オブジェクトを見るだけの effect は再マウントを検知できない（ref の代入は再レンダーも
-// effect も起こさない）ので、戻ってきた新しい要素にはリスナーが付かず、ホイール横スクロールが
-// 死ぬ。ここではその「消えて戻る」を再現して、戻ったあとも効くことを保証する。
+// The reply-suggestion chip row is conditionally rendered: it leaves the DOM and comes back while
+// streaming (chat) and while AUQ/plan lock the composer (mirror). An effect that only reads a ref
+// object cannot see the remount (assigning to a ref triggers neither a re-render nor an effect),
+// so the new element gets no listeners and wheel scrolling dies. These tests reproduce that
+// leave-and-return and guarantee it still works afterwards.
 import { describe, it, expect, afterEach } from "vitest";
 import { useRef } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useDragScroll } from "./dragScroll.ts";
 
-// jsdom はレイアウトを持たないので、あふれている行を自前で用意する（300px の窓に 900px の中身）。
+// jsdom has no layout, so build an overflowing row by hand (900px of content in a 300px window).
 function makeOverflowing(el: HTMLElement) {
   Object.defineProperty(el, "scrollWidth", { value: 900, configurable: true });
   Object.defineProperty(el, "clientWidth", { value: 300, configurable: true });
@@ -72,8 +72,8 @@ describe("useDragScroll", () => {
   it("still works after the row unmounts and comes back (streaming / composer lock)", () => {
     mount(true);
     makeOverflowing(row());
-    render(false); // ストリーミング中などで行が消える
-    render(true); // 戻ってくる（＝別の DOM 要素）
+    render(false); // the row disappears, e.g. while streaming
+    render(true); // and comes back, as a different DOM element
     const el = row();
     makeOverflowing(el);
     wheel(el, 120);
@@ -81,7 +81,7 @@ describe("useDragScroll", () => {
   });
 
   it("attaches even when the row is absent on first mount", () => {
-    mount(false); // 初回は行が無い（ロック中に開いた等）
+    mount(false); // no row on the first pass (opened while locked, say)
     render(true);
     const el = row();
     makeOverflowing(el);

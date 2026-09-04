@@ -3,23 +3,24 @@
 // so it renders in BOTH the running and the stopped rail — picking a ticket happens
 // before a session exists, which is exactly when the Workspace tends to be stopped.
 //
-// ★ This is not a ticket viewer (docs/log/80 §80.1). No query builder, no detail pane, no
+// This is not a ticket viewer (docs/log/80 §80.1). No query builder, no detail pane, no
 // sort control: composing what to fetch is the saved query's job, and the row's job is to
 // start a session with the ticket's context already in place. Anything more is a worse
 // copy of the tracker's own web UI.
 //
-// ⚠️ The line moved once, on real data (docs/log/80 §80.18 / ADR 0061 decision 14). One saved
+// The line moved once, on real data (docs/log/80 §80.18 / ADR 0061 decision 14). One saved
 // query returned 41 rows, so the rail folds at RAIL_VISIBLE and offers a one-line filter
 // over the rows it already has. Neither touches the provider, is saved, or reorders —
 // that is the whole distinction between "the rail's job" and "the query's job".
 //
-// ★ 行にボタンを並べない（§80.20・利用者からの指摘）。41 行の右端に「始める」が 41 個
-// 並ぶと、レールが「押すと何かが起きる面」に見えて怖い —— 一覧は読む物なので、行は情報に
-// 戻し、操作は行を押して開く詳細モーダルに集めた。行に残すのは 🔗（トラッカーを直接見る）と
-// 着手済みバッジ（同じ課題の 2 人目を止める情報）だけ。
+// No buttons on the row (§80.20). Forty-one "start" buttons down the right edge make the rail
+// look like a surface where pressing does something, which is alarming for a list meant to be
+// read. The row is information again and every control lives in the detail modal the row opens.
+// Only two things stay on the row: the external link (going straight to the tracker) and the
+// started badge (the information that stops a second person picking up the same ticket).
 //
-// 起動そのものは詳細モーダルからも既存の起動スタック（seed → useLaunchTarget → LaunchModal）
-// に渡すだけで、worktree/branch/agent の実装は 1 か所のまま。
+// Launching from the detail modal still just hands the existing launch stack (seed ->
+// useLaunchTarget -> LaunchModal), so worktree/branch/agent stay implemented in one place.
 import { memo, useEffect, useMemo, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -72,17 +73,19 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
   const tr = useT();
   const tone = stateTone(item.state);
   const busy = started.length > 0;
-  // 行に出すのは「行ごとに違うもの」だけ（docs/log/80 §80.18.2）。全行で同じ担当者 /
-  // リポジトリは落とし、★ 残りが無ければ 2 行目そのものを描かない —— Jira の既定
-  // クエリはここで 1 行になり、レールの縦が半分になる。空いた高さは埋め直さない。
+  // The row shows only what differs between rows (docs/log/80 §80.18.2). An assignee or repo
+  // that is the same on every row is dropped, and if nothing is left the second line is not
+  // drawn at all — the default Jira query collapses to one line here, halving the rail's height.
+  // The freed height is not filled back in.
   const repo = uniform.repo ? "" : item.repo;
   const assignee = uniform.assignee ? "" : item.assignee;
   const labels = item.labels.slice(0, 2);
   const meta = !!(repo || assignee || labels.length);
   const when = railWhen(item.updatedAt);
   return (
-    // 行全体が詳細を開く。★ 中の 🔗 / 着手済みバッジは入れ子の操作要素なので、
-    // クリックを止めてから自分の仕事をする（押した先が 2 つ開く形にしない）。
+    // The whole row opens the detail modal. The external link and the started badge nested
+    // inside it are controls of their own, so each stops propagation before acting; otherwise
+    // one press would open two things.
     <div
       className={"wi-row" + (item.state === "done" ? " done" : "")}
       role="button"
@@ -107,8 +110,9 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
           <span className="wi-title" title={item.assignee ? `${item.title} — @${item.assignee}` : item.title}>
             {item.title}
           </span>
-          {/* ★ 放置されている行にだけ出す。今日動いた行では並び順が既にそれを言って
-              いるので、タイトルの 23%（実測 38px / 130px）を払う価値がない。 */}
+          {/* Shown only on rows that have been sitting: for anything touched today the sort
+              order already says so, and it is not worth 23% of the title (measured: 38px of
+              130px). */}
           {when && (
             <span className="wi-when" title={fullLocal(item.updatedAt)}>
               {when}
@@ -127,9 +131,9 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
           </div>
         )}
       </div>
-      {/* 着手済みバッジ。台帳の一番の実利がこれ —— 同じ課題に 2 人目が入るのを、
-          起動する前に止める（docs/log/80 §80.8）。★ 行から消さないのは、これが操作では
-          なく「この行はもう誰かが持っている」という情報だから。 */}
+      {/* The started badge. This is the ledger's main payoff: it stops a second person picking
+          up the same ticket before they launch (docs/log/80 §80.8). It stays on the row because
+          it is information — someone already holds this row — not a control. */}
       {busy && (
         <button
           type="button"
@@ -144,7 +148,8 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
           {started.length > 1 ? started.length : ""}
         </button>
       )}
-      {/* トラッカーを直接見るだけの導線は行に残す（af を経由しない、いちばん軽い操作）。 */}
+      {/* Going straight to the tracker stays on the row: it is the lightest action there is
+          and does not go through af at all. */}
       <a
         className="wi-link"
         href={item.url}
@@ -180,21 +185,22 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const [needle, setNeedle] = useState("");
   const [expanded, setExpanded] = useState(false);
 
-  // テナントを切り替えたら前のテナントの行を残さない（他のストアと同じ作法）。
+  // Switching tenant must not leave the previous tenant's rows behind (as in the other stores).
   useEffect(() => {
     reset();
   }, [tenant, reset]);
   useEffect(() => startWorkItemPolling(), [tenant]);
 
-  // 並べ替えてから畳む（同じチケットは 1 行・docs/log/80 §80.20）。並べ替えの後にやるのは、
-  // 「残す 1 行」が棚の先頭に来る行 —— 未完了で一番新しい方 —— になるようにするため。
+  // Sort first, then dedupe to one row per ticket (docs/log/80 §80.20). Deduping after the sort
+  // is what makes the surviving row the one that heads the shelf: still open and most recent.
   const items = useMemo(() => dedupeWorkItems(sortWorkItems(payload?.items || [])), [payload]);
   const ledger = payload?.sessions || [];
   const folders = useMemo(() => repos.map((r) => r.name), [repos]);
 
-  // 量の壁（実測 41 件・docs/log/80 §80.18.4）。絞り込んでから畳む: 検索窓に打った人が
-  // 見たいのは「絞った結果の上位 10 件」であって「上位 10 件の中の一致」ではない。
-  // ★ 畳むのは表示だけで payload は丸ごと持ったまま —— 停止中は取りに行けないから。
+  // The volume wall (measured at 41 rows, docs/log/80 §80.18.4). Filter first, then fold: what
+  // someone typing in the box wants is the top 10 of the filtered result, not the matches within
+  // the top 10. Folding is display only and the payload is kept whole, because a stopped
+  // workspace cannot be asked for more.
   const uniform = useMemo(() => uniformMeta(items), [items]);
   const matched = useMemo(() => items.filter((i) => matchWorkItem(i, needle)), [items, needle]);
   const crowded = items.length > RAIL_VISIBLE;
@@ -214,16 +220,17 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     });
   };
 
-  // 詳細で「どこで」まで決まってから既存の起動スタックへ渡す（docs/log/80 §80.8）。
-  // チケットは作業コピーを知らない —— GitHub 項目はリポジトリまで、Jira はそれすら
-  // 持たない —— ので、リポジトリと 新規 worktree / 既存コピー はここで決まっている。
+  // Hand off to the existing launch stack only once the detail modal has settled WHERE
+  // (docs/log/80 §80.8). A ticket knows nothing about working copies — a GitHub item names a
+  // repository at most, Jira not even that — so the repository and new-worktree vs. existing-copy
+  // choice are already decided by the time this runs.
   const pickTarget = (item: WorkItem, target: Repo, inPlace: boolean) => {
     seedFor(item);
     setDetailOn(null);
     openLaunch(target, "", inPlace);
   };
 
-  // 作業コピーが 1 つも無いときだけ はじめる ハブ（clone 導線）に委ねる。
+  // Defer to the start hub (the clone path) only when there is no working copy at all.
   const toStartHub = (item: WorkItem) => {
     seedFor(item);
     setDetailOn(null);
@@ -261,8 +268,9 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
         </>
       }
     >
-      {/* 「いつ取ったか」は必ず出す。停止中は取得が止まるので、古いかもしれない
-          一覧を古いと言わずに出すことだけはしない（ADR 0061 決定 1）。 */}
+      {/* Always say when this was fetched. Fetching stops while the workspace is stopped, and
+          the one thing this must never do is show a possibly stale list without saying so
+          (ADR 0061 decision 1). */}
       <div className="wi-stamp">
         {stamp ? tr("wi.fetched_at", { at: stamp }) : tr("wi.never_fetched")}
         {payload && !payload.running && <span className="wi-stopped">{tr("wi.stopped_note")}</span>}
@@ -292,8 +300,9 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
         <div className="pane-empty">{tr("wi.empty")}</div>
       ) : (
         <>
-          {/* 混んでいるレールにだけ出す 1 行。provider を叩かず・保存せず・並び順も
-              変えない —— いま出ている行の中を目で探すのを助けるだけ（§80.18.4）。 */}
+          {/* One line, shown only on a crowded rail. It never reaches the provider, is never
+              saved and does not reorder — it only helps the eye find a row among those already
+              on screen (§80.18.4). */}
           {crowded && (
             <div className="wi-filter">
               <Icon name="search" />
@@ -319,8 +328,8 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
             ))}
           </div>
           {matched.length === 0 && <div className="pane-empty">{tr("wi.filter_empty")}</div>}
-          {/* 残りの件数は必ず数で書く。バッジは全件のままなので、ここが「隠していない」
-              ことの説明になっている。 */}
+          {/* Always name the remaining count. The section badge still counts everything, so this
+              line is what explains that nothing is being hidden. */}
           {hidden > 0 && (
             <button type="button" className="wi-more" onClick={() => setExpanded(true)}>
               {tr("wi.show_more", { n: hidden })}
@@ -346,8 +355,8 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
             setDetailOn(null);
             openSession(name);
           }}
-          // 報告は詳細を閉じてから開く。★ モーダルを 2 枚重ねない —— Esc の層も
-          // フォーカストラップも 1 枚ずつを前提にしている。
+          // Close the detail modal before opening the report one: never stack two modals, since
+          // both the Esc layering and the focus trap assume one at a time.
           onReport={() => {
             setDetailOn(null);
             setReportOn(detailOn);

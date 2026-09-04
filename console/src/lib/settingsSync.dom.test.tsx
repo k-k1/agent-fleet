@@ -1,14 +1,17 @@
-// 設定のサーバ同期（ui-prefs）で「消える」経路を塞いだことの回帰テスト。
+// Regression guard for the paths through which server-synced settings (ui-prefs) could
+// silently disappear.
 //
-// 実際に起きた事故: ワークスペース再起動直後（GET が 502）に、localStorage が空の面
-// （ログアウト直後・別ブラウザ・別オリジンの dev Console）から返信を 1 通送っただけで、
-// 学習チップの保存が **既定値一式の PUT** になり、サーバの学習済み候補・ピン・利用実績が
-// まとめて消えた。サーバ優先の hydrate がそれを全端末へ伝播させ、翌日には全員が初期状態。
+// Damage: right after a workspace restart (GET returning 502), sending a single reply from a
+// surface whose localStorage was empty (just logged out, another browser, a dev Console on a
+// different origin) turned the save of the learned chip into a PUT of the whole default set,
+// wiping the server's learned suggestions, pins and usage counts at once. Server-first hydrate
+// then propagated that to every device.
 //
-// 固定する約束は 3 つ:
-//   1. サーバの現在値を一度も読めていない間は保存しない（読めた時点でまとめて送る）
-//   2. 空のサーバ値で、非空のローカルの累積データを潰さない（むしろ書き戻して復元する）
-//   3. ふつうの設定のクロスデバイス同期は今までどおり（守りすぎて同期が壊れていない）
+// Three promises are pinned here:
+//   1. Do not save while the server copy has never been read (send everything once it lands).
+//   2. Never let an empty server value flatten non-empty local accumulated data (push it back
+//      instead).
+//   3. Ordinary cross-device settings sync still works (the guard did not break syncing).
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const apiMock = vi.fn();
@@ -21,7 +24,8 @@ vi.mock("../core/api/client.ts", () => ({
 const SETTINGS_KEY = "af-display-settings";
 const learned = { "ok": { text: "OK", count: 9, at: 1 }, "commit して": { text: "commit して", count: 4, at: 2 } };
 
-// settings.ts は import 時に localStorage を読む単一状態なので、毎回モジュールごと作り直す。
+// settings.ts is single global state read from localStorage at import time, so rebuild the
+// whole module for every case.
 async function freshSettings(local: Record<string, unknown> = {}) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(local));
   vi.resetModules();
@@ -39,26 +43,27 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("ui-prefs: 読めるまで保存しない", () => {
+describe("ui-prefs: no saving until the server copy has been read", () => {
   it("keeps quiet while the server copy is unreadable, then sends once it lands", async () => {
-    // ワークスペース起動中の CP はこの形（api() は投げずに {error} を返す）。
+    // This is the shape CP returns while the workspace is starting: api() resolves with
+    // {error} instead of throwing.
     apiMock.mockResolvedValueOnce({ error: { code: "http_502", message: "workspace agent unreachable" } });
-    const s = await freshSettings({}); // localStorage も空＝手元は DEFAULTS
+    const s = await freshSettings({}); // localStorage empty too, so locally this is DEFAULTS
 
     expect(await s.hydrateUIPrefs()).toBe(false);
     expect(s.uiPrefsLoaded()).toBe(false);
 
     s.setSetting("iconSet", "seti");
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(apiJSONMock).not.toHaveBeenCalled(); // ← 既定値でサーバを潰さない
+    expect(apiJSONMock).not.toHaveBeenCalled(); // defaults must not flatten the server
 
-    // 復帰後: サーバの実データを読めたら、保留していた変更を 1 回だけ送る。
+    // After recovery: once the real server data is readable, send the pending change once.
     apiMock.mockResolvedValueOnce({ quickReplies: learned, chatSize: 16 });
     expect(await s.hydrateUIPrefs()).toBe(true);
     expect(s.uiPrefsLoaded()).toBe(true);
-    expect(s.getSettings().quickReplies).toEqual(learned); // サーバの学習が届く
+    expect(s.getSettings().quickReplies).toEqual(learned); // the server's learned data arrives
     expect(s.getSettings().chatSize).toBe(16);
-    expect(s.getSettings().iconSet).toBe("seti"); // 保留していたローカル変更も残る
+    expect(s.getSettings().iconSet).toBe("seti"); // the pending local change survives too
 
     await vi.advanceTimersByTimeAsync(1_000);
     expect(apiJSONMock).toHaveBeenCalledTimes(1);
@@ -71,7 +76,7 @@ describe("ui-prefs: 読めるまで保存しない", () => {
   it("keeps saving normally once the server copy has been read", async () => {
     apiMock.mockResolvedValueOnce({});
     const s = await freshSettings({});
-    expect(await s.hydrateUIPrefs()).toBe(true); // 空の {} は「読めた」— 新規ユーザーの正常系
+    expect(await s.hydrateUIPrefs()).toBe(true); // an empty {} counts as read: a new user
 
     s.setSetting("iconSet", "material");
     await vi.advanceTimersByTimeAsync(1_000);
@@ -79,18 +84,19 @@ describe("ui-prefs: 読めるまで保存しない", () => {
   });
 });
 
-describe("ui-prefs: 空で累積データを潰さない", () => {
+describe("ui-prefs: an empty value never flattens accumulated data", () => {
   it("never lets an emptied server copy wipe learned replies, and pushes them back", async () => {
     const s = await freshSettings({ quickReplies: learned, quickRepliesPinned: ["OK"], iconSet: "seti" });
-    // 事故後のサーバ（既定値一式）。ふつうのキーは採り、累積データは採らない。
+    // The server as it looked after the incident (the whole default set). Ordinary keys are
+    // adopted, accumulated data is not.
     apiMock.mockResolvedValueOnce({ quickReplies: {}, quickRepliesPinned: [], iconSet: "vscode" });
 
     expect(await s.hydrateUIPrefs()).toBe(true);
     expect(s.getSettings().quickReplies).toEqual(learned);
     expect(s.getSettings().quickRepliesPinned).toEqual(["OK"]);
-    expect(s.getSettings().iconSet).toBe("vscode"); // 累積でないキーは従来どおりサーバ優先
+    expect(s.getSettings().iconSet).toBe("vscode"); // non-accumulated keys stay server-first
 
-    // 自己修復: 手元が持っている学習をサーバへ書き戻す。
+    // Self-heal: push the locally held learned data back to the server.
     await vi.advanceTimersByTimeAsync(1_000);
     expect(apiJSONMock).toHaveBeenCalledTimes(1);
     const body = apiJSONMock.mock.calls[0][2] as Record<string, unknown>;
@@ -103,34 +109,34 @@ describe("ui-prefs: 空で累積データを潰さない", () => {
     apiMock.mockResolvedValueOnce({ quickReplies: learned });
 
     expect(await s.hydrateUIPrefs()).toBe(true);
-    expect(s.getSettings().quickReplies).toEqual(learned); // 別端末で増えた分は届く
+    expect(s.getSettings().quickReplies).toEqual(learned); // growth from another device arrives
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(apiJSONMock).not.toHaveBeenCalled(); // 採れたなら書き戻す理由は無い
+    expect(apiJSONMock).not.toHaveBeenCalled(); // nothing to push back once it was adopted
   });
 
 });
 
-// 実際に起きた事故: 別アカウントで作った作業グループが、同じブラウザ/ワークスペースで
-// 別アカウントに切り替えた後もメモリに残り続け、上の「空で潰さない」自己修復ロジックが
-// 誤って新アカウントの ui-prefs.json へ書き戻してしまった。identity/tenant の切替では、
-// この自己修復を先に迂回する必要がある。
-describe("ui-prefs: 持ち主が切り替わったら前の持ち主の累積データを漏らさない", () => {
+// Damage: working sets created under one account stayed in memory after switching to another
+// account in the same browser/workspace, and the "never flatten with empty" self-heal above
+// wrote them back into the new account's ui-prefs.json. An identity/tenant switch must bypass
+// that self-heal first.
+describe("ui-prefs: an owner switch never leaks the previous owner's accumulated data", () => {
   it("clears every accumulated key locally instead of showing the previous owner's data", async () => {
     const s = await freshSettings({ workingSets: [{ id: "g1", name: "旧アカウントのグループ", repos: [], convs: [], sessions: [], schedules: [] }] });
-    apiMock.mockResolvedValueOnce({}); // 新しい持ち主のサーバー値はまだ空（本来の姿）
+    apiMock.mockResolvedValueOnce({}); // the new owner's server value is still empty, as it should be
     void s.resyncAccumulatedForIdentitySwitch();
-    // hydrate の応答を待つ前に、ローカルはもう空になっている（前の持ち主のグループを
-    // 一瞬たりとも新しい持ち主の画面に出さない）。
+    // Local state is already empty before the hydrate response arrives: the previous owner's
+    // working sets must never appear on the new owner's screen, not even for a frame.
     expect(s.getSettings().workingSets).toEqual([]);
   });
 
   it("does not restore the previous owner's data via the empty-server self-heal path", async () => {
     const s = await freshSettings({ workingSets: [{ id: "g1", name: "旧アカウントのグループ", repos: [], convs: [], sessions: [], schedules: [] }] });
-    apiMock.mockResolvedValueOnce({}); // 新しい持ち主は本当に空
+    apiMock.mockResolvedValueOnce({}); // the new owner really is empty
     await s.resyncAccumulatedForIdentitySwitch();
     expect(s.getSettings().workingSets).toEqual([]);
     await vi.advanceTimersByTimeAsync(1_000);
-    // 復元(restore)が誤って発火していれば、ここで旧アカウントのグループが書き戻される。
+    // If the restore path fired by mistake, the old account's working sets would be pushed here.
     expect(apiJSONMock).not.toHaveBeenCalled();
   });
 
@@ -145,9 +151,9 @@ describe("ui-prefs: 持ち主が切り替わったら前の持ち主の累積デ
     const s = await freshSettings({});
     apiMock.mockResolvedValueOnce({});
     await s.hydrateUIPrefs();
-    s.setSetting("workingSets", [{ id: "g1", name: "旧アカウントのグループ", repos: [], convs: [], sessions: [], schedules: [] }]); // 600ms 後に保存予定
+    s.setSetting("workingSets", [{ id: "g1", name: "旧アカウントのグループ", repos: [], convs: [], sessions: [], schedules: [] }]); // scheduled to save in 600ms
     apiMock.mockResolvedValueOnce({});
-    await s.resyncAccumulatedForIdentitySwitch(); // 保留中の保存はここで捨てられるはず
+    await s.resyncAccumulatedForIdentitySwitch(); // the pending save must be discarded here
     await vi.advanceTimersByTimeAsync(1_000);
     expect(apiJSONMock).not.toHaveBeenCalled();
   });
@@ -177,22 +183,23 @@ describe("ui-prefs: 持ち主が切り替わったら前の持ち主の累積デ
     ] as const) {
       expect(s.isEmptyPref((after as any)[key])).toBe(true);
     }
-    // hiddenModels の既定値は {claude:["fable"]}（空ではなく初期おすすめ）— 「空」ではなく
-    // 「初期値」であることを確認する。
+    // hiddenModels defaults to {claude:["fable"]} - an initial recommendation, not an empty
+    // value. Check that it lands on the default rather than on empty.
     expect(after.hiddenModels).toEqual({ claude: ["fable"] });
   });
 });
 
-describe("ui-prefs: ACCUMULATED の分類", () => {
+describe("ui-prefs: the ACCUMULATED classification", () => {
   it("classifies which keys are protected and what counts as empty", async () => {
     const s = await freshSettings({});
     expect(s.isAccumulatedSetting("quickReplies")).toBe(true);
     expect(s.isAccumulatedSetting("keybindings")).toBe(true);
     expect(s.isAccumulatedSetting("workingSets")).toBe(true);
-    // トグルや色は「空」になりようがない＝守る対象ではない（消えても選び直せる）。
+    // Toggles and colours cannot become empty, so they are not protected: if one is lost the
+    // user can just pick it again.
     expect(s.isAccumulatedSetting("quickRepliesEnabled")).toBe(false);
     expect(s.isAccumulatedSetting("chatSize")).toBe(false);
-    // 0 / false は「消えた」ではなく選ばれた値。
+    // 0 / false are chosen values, not "lost".
     expect([s.isEmptyPref({}), s.isEmptyPref([]), s.isEmptyPref(""), s.isEmptyPref(null)]).toEqual([true, true, true, true]);
     expect([s.isEmptyPref(0), s.isEmptyPref(false), s.isEmptyPref({ a: 1 }), s.isEmptyPref(["a"])]).toEqual([false, false, false, false]);
   });

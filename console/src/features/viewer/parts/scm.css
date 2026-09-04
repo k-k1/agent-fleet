@@ -12,7 +12,7 @@
   overflow: auto;
   padding: 8px 10px;
 }
-/* The 変更 view and the working-tree diff pane have no inline right panel — their diff
+/* The changes view and the working-tree diff pane have no inline right panel — their diff
    opens in a separate pane — so the left column fills the whole pane. */
 .scmbody.scm-changes-single > .scmleft {
   width: auto;

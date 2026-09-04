@@ -1,16 +1,17 @@
-// 編集面まわりの「状態 → 表示文言」だけを集めたもの。分岐しか無く、どれも
-// tr() を引くだけの純関数なので、FileView からは呼ぶだけになる。
+// Nothing but the state-to-display-text mappings of the editing surface. All branches, all
+// pure functions that only look up tr(), so FileView just calls them.
 //
-// ここに集めた理由は、同じ状態を 3 か所（状態行・advisory の注記・提案の
-// エラー）が別々の語彙で言い分けていて、並べないと言い分けの一貫性が
-// 見えないため。
+// They live together because three places (the status line, the advisory note and the
+// suggestion error) describe the same state in different vocabulary, and the wording is
+// only comparable side by side.
 import type { useT } from "../../../lib/i18n/index.ts";
 import type { BufferValidationError } from "../../editor/buffer.ts";
 import type { FileEditorModel } from "../../editor/model.ts";
 
 type Tr = ReturnType<typeof useT>;
 
-/** 状態行の本文。notice（直近の検証エラー等）が最優先で、次に phase を読む。 */
+/** Body of the status line. The notice (most recent validation error, etc.) wins; phase is
+ *  only consulted after it. */
 export function editorStatusText(tr: Tr, model: FileEditorModel | null, notice: string): string {
   const phase = model?.phase;
   return (
@@ -36,7 +37,8 @@ export function editorStatusText(tr: Tr, model: FileEditorModel | null, notice: 
   );
 }
 
-/** 解決パネルを出す（＝状態行を警告色にする）phase かどうか。 */
+/** Whether the phase shows a resolution panel, i.e. turns the status line to the warning
+ *  colour. */
 export function isEditorAlert(phase: FileEditorModel["phase"] | undefined): boolean {
   return (
     phase === "save_state_unknown" ||
@@ -64,7 +66,7 @@ export function externalNoteText(
           : tr("editor.external.boundary");
 }
 
-/** バッファ検証エラーのコード → 表示文言。 */
+/** Buffer validation error code to display text. */
 export function validationErrText(tr: Tr, code: BufferValidationError["code"]): string {
   const messages: Record<BufferValidationError["code"], string> = {
     too_large: tr("editor.validation.too_large"),
@@ -75,9 +77,9 @@ export function validationErrText(tr: Tr, code: BufferValidationError["code"]): 
   return messages[code];
 }
 
-// AI 提案の失敗/棄却コード → 表示文言（docs/log/44 §3.4: `suggestion_stale` は
-// HTTP ではなく Console 側の安定 UI code）。buffer validator のコードは既存の
-// editor.validation.* を再利用する。
+// AI suggestion failure/rejection code to display text (docs/log/44 §3.4: `suggestion_stale`
+// is a stable Console-side UI code, not an HTTP one). Codes from the buffer validator reuse
+// the existing editor.validation.* messages.
 export function suggestErrText(tr: Tr, code: string): string {
   switch (code) {
     case "suggestion_stale":

@@ -236,7 +236,7 @@ export function MemoryTab() {
       <p className="muted ds-note">{tr("mem.intro")}</p>
       {err && <p className="mem-warn">{err}</p>}
 
-      {/* ① 対象と取得契機 */}
+      {/* 1. Roots and capture triggers */}
       <section className="mem-section">
         <div className="mem-head">
           <h3>{tr("mem.roots_title")}</h3>
@@ -285,8 +285,8 @@ export function MemoryTab() {
             ))}
           </ul>
         )}
-        {/* 有効化はトークンを継続的に消費する（バックグラウンドの抽出・統合）。
-            トグルの隣で必ず伝える — 「ただのスイッチ」に見せない。 */}
+        {/* Enabling this spends tokens continuously (background extraction and consolidation).
+            Say so right next to the toggle so it does not look like "just a switch". */}
         {data?.inactive?.some((r) => r.toggleable && !r.enabled) && (
           <p className="muted ds-hint">{tr("mem.codex_cost_hint")}</p>
         )}
@@ -298,7 +298,7 @@ export function MemoryTab() {
         </p>
       </section>
 
-      {/* ② 履歴と差分 */}
+      {/* 2. History and diffs */}
       <section className="mem-section">
         <div className="mem-head">
           <h3>{tr("mem.history_title")}</h3>
@@ -366,7 +366,7 @@ export function MemoryTab() {
         </div>
       </section>
 
-      {/* ③ 戻し範囲の選択 */}
+      {/* 3. Choosing the restore scope */}
       {scope && (
         <RestorePanel
           state={scope}
@@ -377,7 +377,7 @@ export function MemoryTab() {
         />
       )}
 
-      {/* ④ 持ち出し / 取り込み */}
+      {/* 4. Export / import */}
       <TransferSection busy={busy} setBusy={setBusy} onApplied={() => setReload((n) => n + 1)} />
     </div>
   );

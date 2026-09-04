@@ -77,7 +77,7 @@ describe("checkSuggestion (docs/log/44 §4.2)", () => {
     const emojiCtx = { ...ctx, content: emoji, bufferRevision: revisionOf(emoji) };
     const split = envelope({ sourceRevision: emojiCtx.bufferRevision });
     split.suggestion.baseRevision = emojiCtx.bufferRevision;
-    split.suggestion.range = { from: 2, to: 3 }; // ペアの内側
+    split.suggestion.range = { from: 2, to: 3 }; // inside the surrogate pair
     expect(checkSuggestion(split, emojiCtx)).toEqual({ ok: false, code: "suggestion_invalid" });
   });
 

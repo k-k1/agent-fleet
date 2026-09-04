@@ -69,13 +69,14 @@ interface CodeViewProps {
   marks?: LineMarks | null;
   targetLine?: number;
   targetColumn?: number;
-  /** 表示位置の記憶（parts/useScrollMemory）。スクロールするのは .codeview なので、
-   *  内側の ref と束ねてここへ渡す。面ごとに同一性が固定された関数が来る前提。 */
+  /** Scroll-position memory (parts/useScrollMemory). The element that scrolls is .codeview, so
+   *  this is merged with the inner ref before being attached. The callback is expected to have a
+   *  stable identity per pane. */
   scrollMemory?: ScrollMemoryRef;
 }
 
-// Memoised: FileView re-renders on every text-selection change (to position the 送る/
-// 読み上げ pill), but the grid's props (html / lines / gutter / wrap / marks) are stable
+// Memoised: FileView re-renders on every text-selection change (to position the send /
+// read-aloud pill), but the grid's props (html / lines / gutter / wrap / marks) are stable
 // across those renders. Without memo, each Shift+↓ rebuilt all N line rows and forced the
 // browser to re-evaluate the live selection inside the contentEditable — so holding the
 // key got progressively slower. memo skips the grid entirely when only `sel` changed.
@@ -280,8 +281,8 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
   // island so the caret never lands on a number.
   const preventEdit = useCallback((e: SyntheticEvent) => e.preventDefault(), []);
 
-  // 内側の ref（ミニマップの計算）と外から来た表示位置の記憶を 1 つの ref に束ねる。
-  // 記憶側は React 19 の ref クリーンアップを返すので、それも畳んで返す。
+  // Merges the inner ref (used for the minimap maths) and the scroll memory passed from outside
+  // into one ref. The memory side returns a React 19 ref cleanup, so that is folded in too.
   const attachScroll = useCallback(
     (el: HTMLDivElement) => {
       scrollRef.current = el;

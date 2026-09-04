@@ -2,8 +2,9 @@
 .seg.sm .seg-btn {
   padding: 2px 10px;
   font-size: 11px;
-  /* CJK labels (プレビュー/ソース) are breakable per character, which collapses the
-     flex content width and wraps the label; keep each button on one line. */
+  /* CJK labels (Preview/Source, 「プレビュー」「ソース」) are breakable per character,
+     which collapses the flex content width and wraps the label; keep each button
+     on one line. */
   white-space: nowrap;
 }
 .md-toggle {

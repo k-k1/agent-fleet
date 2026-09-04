@@ -19,10 +19,10 @@
  * read-mostly Markdown mirror instead of the raw PTY). */
 export type PaneContent =
   | { kind: "terminal"; chat: boolean }
-  /** `mode` is the opener's request for the starting display mode ("編集で開く"
+  /** `mode` is the opener's request for the starting display mode ("open in editor"
    * from a file menu); absent = the view picks its own (docs/log/44 §1.8). */
   | { kind: "file"; filePath: string; targetLine?: number; targetColumn?: number; mode?: "view" | "edit" }
-  | { kind: "read"; filePath: string } // 朗読ビュー（docs/log/24）: 本文を順次読み上げ＋縦書き閲覧
+  | { kind: "read"; filePath: string } // read-aloud view (docs/log/24): speaks the body in order, vertical reading
   | { kind: "scm"; scmRepo: string; scmPath?: string }
   | { kind: "changes"; scmRepo: string }
   | { kind: "commit"; scmRepo: string; scmPath?: string; commitSha: string }

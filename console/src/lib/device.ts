@@ -14,8 +14,9 @@ export function useIsMobile(): boolean {
     const mq = window.matchMedia(MOBILE_QUERY);
     const fn = () => setM(mq.matches);
     mq.addEventListener("change", fn);
-    // 購読開始時に現在値へ再同期 — 初期 render と effect の間に境界を跨いでいた場合、
-    // 次の change イベントまで古い値のままになる穴を塞ぐ。
+    // Resync to the current value when the subscription starts: if the boundary was crossed
+    // between the initial render and the effect, the value would otherwise stay stale until the
+    // next change event.
     fn();
     return () => mq.removeEventListener("change", fn);
   }, []);
@@ -24,7 +25,7 @@ export function useIsMobile(): boolean {
 
 // coarsePointer reports a touch-primary device (phone / tablet), where focusing an
 // input pops the on-screen keyboard. We use it to SUPPRESS auto-focus on view
-// switch / attach: switching ターミナル⇄チャット to read shouldn't summon the
+// switch / attach: switching between terminal and chat to read shouldn't summon the
 // keyboard. The user taps the terminal or the composer to focus (and get the
 // keyboard) when they actually want to type. Desktop (fine pointer) keeps
 // auto-focus, where there's no keyboard to intrude. Evaluated at call time so it

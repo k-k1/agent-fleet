@@ -1,10 +1,10 @@
-// 更新トーストの文言契約。ここは「押していいのか」を判断する唯一の材料なので、
-// 2 つの事実が別物であることを固定する。
-//   ・更新（リロード）で実行中のセッションは止まらない → 常に言う
-//   ・バックエンドも更新されている（CP が検出した stale）→ そのときだけ、任意の
-//     タイミングでワークスペースの停止→起動が要ると言う
-// 後者を無条件に出すと、Console だけの更新でも「要再起動」と言うことになり、WS バー
-// のバッジごと信用されなくなる（狼少年）。
+// Wording contract for the update toast. It is the only thing a user has to decide whether
+// tapping is safe, so the two facts it carries must stay distinct:
+//   * updating (reloading) does not stop running sessions - always say it;
+//   * the backend moved too (the CP-detected `stale` flag) - only then say a workspace
+//     stop -> start is needed, at a time of the user's choosing.
+// Printing the second unconditionally would claim "restart required" for a Console-only
+// update and cry wolf, devaluing the WS-bar badge along with it.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 describe("update toast", () => {
-  it("always says sessions keep running, and offers 更新", async () => {
+  it("always says sessions keep running, and offers the update button", async () => {
     act(() => useWorkspaceStore.setState({ state: "running", stale: false }));
     await render();
     expect(host.textContent).toContain("セッションは止まりません");

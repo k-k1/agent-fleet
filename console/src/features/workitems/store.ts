@@ -2,7 +2,7 @@
 // `workitems` frame (core/push/wire) and a slow poll while the section is mounted, which
 // takes over whenever the stream is down (the fallback rule every other store follows).
 //
-// ⚠️ A failed load never blanks `payload`. The rail's whole point is to still show
+// A failed load never blanks `payload`. The rail's whole point is to still show
 // something while the Workspace is stopped; committing an empty list on a transient
 // error would make it look like the tickets went away.
 import { create } from "zustand";
@@ -17,7 +17,7 @@ interface WorkItemState {
   loaded: boolean;
   /** "" = fine. Kept alongside the last good payload, never instead of it. */
   loadErr: string;
-  /** True while the 更新 button's forced refresh is in flight. */
+  /** True while the refresh button's forced refresh is in flight. */
   refreshing: boolean;
   applyPush(d: unknown): void;
   refresh(): Promise<void>;

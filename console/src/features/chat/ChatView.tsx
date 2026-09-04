@@ -572,7 +572,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       const c2 = await chatCompact(key);
       if (c2 && c2.id) {
         applyConvIfCurrent(c2);
-        publishSnapshot(c2); // 他ペイン/一覧にも新しい会話状態を届ける
+        publishSnapshot(c2); // deliver the new conversation state to other panes and the list
         bumpChatList();
       } else {
         setErrorFor(key, c2?.error ? errText(c2.error) : tr("chat.compact_failed"));
@@ -599,7 +599,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       const c2 = await chatSetAgent(key, kind);
       if (c2 && c2.id) {
         applyConvIfCurrent(c2);
-        publishSnapshot(c2); // 他ペイン/一覧にも新しい会話状態を届ける
+        publishSnapshot(c2); // deliver the new conversation state to other panes and the list
         bumpChatList();
       } else {
         setErrorFor(key, c2?.error ? errText(c2.error) : tr("chat.switch_agent_failed"));
@@ -712,7 +712,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       setPaneTts: (ctl) => setPaneTts(convId, ctl),
     });
     let streamDone = false;
-    markChatBusy(convId, true); // publish 進行中 to the rail
+    markChatBusy(convId, true); // publish "in progress" to the rail
     // The live reply + working steps + final conversation live in the store, keyed by
     // conversation, and the bubble renders from there — so the turn survives this pane
     // being closed OR pointed at another chat, and can only ever be painted into the
@@ -754,7 +754,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           setLive(convId, { text: "", steps: [...steps], agent: liveAgent });
           if (workMode === "off") {
             stopTtsForReplacement(paneTts(convId));
-            setPaneTts(convId, makeTts()); // 従来動作: 次の tentative message をライブ再生
+            setPaneTts(convId, makeTts()); // legacy behaviour: play the next tentative message live
           } else if (step.text?.trim()) {
             workTts.push(step.text);
           }
@@ -1042,15 +1042,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           disabled={compacting || switching || showStreaming || storeBusy || !wsRunning}
           onUpdated={(c2) => {
             applyConvIfCurrent(c2);
-            publishSnapshot(c2); // 他ペイン/一覧にも新しい会話状態を届ける（圧縮と同じ流儀）
+            publishSnapshot(c2); // deliver the new state to other panes and the list, as compaction does
           }}
           onClose={() => setPlanOpen(false)}
         />
       )}
       {/* Context fill (docs/log/33): the same gauge the mirror shows, fed from the
           conversation's per-turn usage snapshot (chat_usage.go). Hidden until the
-          first turn reports usage. The trailing 圧縮 button runs the summary
-          handoff (docs/log/33 第2段). */}
+          first turn reports usage. The trailing "compact" button (「圧縮」) runs the
+          summary handoff (docs/log/33 stage 2). */}
       {conv?.context && conv.context.tokens > 0 && (
         <ContextBar
           read={conv.context.read || 0}
@@ -1074,7 +1074,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           }
         />
       )}
-      {/* 縦へ送って読む面 — 横へはみ出しても横スワイプを殺さない（app/swipeGuard.ts）。 */}
+      {/* A vertically scrolled reading surface: overflowing horizontally must not kill the
+          horizontal swipe (app/swipeGuard.ts). */}
       <div className="chat-scroll" data-swipe-y="" ref={scrollRef}>
         {loadError && (
           <div className="chat-error" role="alert">

@@ -110,8 +110,9 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
     <div className="admin-stage mcp-admin">
       <section className="admin-panel">
         <div className="usage-toolbar">
-          {/* テナントが 1 つしか渡らない置き場（テナント設定モーダル）では選ぶものが
-              無い。1 択のセレクトは操作できる顔をした飾りにしかならないので出さない。 */}
+          {/* Where only one tenant is passed in (the tenant settings modal) there is nothing to
+              choose. A single-option select is decoration wearing the face of a control, so
+              don't render it. */}
           {tenants.length > 1 && (
             <label>
               {tr("admin.tenant")}

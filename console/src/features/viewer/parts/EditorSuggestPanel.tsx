@@ -1,7 +1,8 @@
-// AI 提案パネル（docs/log/44 Phase 4）。compose（指示文入力）→ 生成中 → レビュー
-// （summary＋選択範囲→置換文の diff＋適用/却下）の3段を1つのオーバーレイで持つ。
-// 競合パネルと違いエラーではないので role="alert" にはしない。適用可否は
-// baseRevision と現在 bufferRevision の一致から導出し、stale なら適用を無効化する。
+// AI suggestion panel (docs/log/44 Phase 4). One overlay holds all three stages: compose
+// (entering the instruction), generating, and review (summary + a diff from the selection to
+// the replacement + apply/discard). Unlike the conflict panel this is not an error, so it is
+// not role="alert". Whether it can be applied is derived from baseRevision matching the
+// current bufferRevision; a stale suggestion disables apply.
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { lineDiff } from "../DiffView.tsx";

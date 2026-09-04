@@ -1,83 +1,95 @@
-// 返信サジェスト（クイック返信）— コンポーサー直上に出す短文候補の学習・ランキング。
+// Reply suggestions (quick replies) — learning and ranking for the short-answer chips shown just
+// above the composer.
 //
-// Layer A: ユーザーが過去に送った短文の頻度/最近度を学習し、上位を候補に出す
-//          （ok / 進めて / commit のような常用返信が自然に並ぶ）。
-// Layer B-1: 直近のエージェント回答の内容で並びを押し上げる（トークン0のヒューリスティック）。
+// Layer A: learns the frequency and recency of the short messages the user has sent and offers the
+//          top ones, so everyday replies line up on their own.
+// Layer B-1: reorders by the content of the agent's most recent answer (a zero-token heuristic).
 //
-// 保存は settings.quickReplies（ssmHostUsage と同型 = サーバミラーで複数デバイス同期）。
-// キーは正規化 + 全角半角の畳み込み + 小文字化（"OK"/"ok"、"１"/"1"、"ｂ"/"b" を同一視）、
-// 表示テキストは最後に送った綴りを保持。
-// ユーザーが消した候補は settings.quickRepliesHidden（キーの配列）に積んで恒久的に隠す
-// （シードも隠せる）。同じ文をもう一度自分で送ったら、その意思表示として隠しを解除する。
+// Storage is settings.quickReplies, the same shape as ssmHostUsage, so the server mirror syncs it
+// across devices. Keys are normalized, width-folded and lowercased, collapsing "OK"/"ok" and the
+// fullwidth and halfwidth forms of digits and letters into one entry; the display text keeps the
+// spelling of the most recent send.
+// A suggestion the user deletes is pushed onto settings.quickRepliesHidden (an array of keys) and
+// hidden permanently, seeds included. Sending the same text again is taken as intent to use it once
+// more, and lifts the hiding.
 //
-// ピン留め（settings.quickRepliesPinned）= ランキングの上書き。学習の頻度も B-1 の文脈加点も
-// 「そのとき何が有用か」の推測でしかなく、加点（80〜120）は現実的な使用回数より桁が大きいので、
-// 文脈語に当たった候補が常に左を占め、実際によく使う長めの一文が limit の外へ押し出される
-// （＝「使っているのに消えることがある」）。ピンは推測を外して固定するための唯一の確定手段なので、
-// 隠し・長さ上限・limit・間引きのどれにも負けず、必ず先頭にこの順で出す。
+// Pinning (settings.quickRepliesPinned) overrides the ranking. Learned frequency and the B-1
+// context boost are only guesses at what is useful right now, and the boost (80-120) is an order of
+// magnitude larger than realistic use counts, so a candidate matching a context word always takes
+// the left-hand slots while a longer sentence the user really relies on is pushed past limit and
+// disappears despite being in use. A pin is the only way to fix a suggestion in place, so it loses
+// to nothing — not the hidden list, the length cap, limit or eviction — and is always emitted
+// first, in pin order.
 
 export type QuickReplyUse = { text: string; count: number; at: number };
 export type QuickReplyMap = Record<string, QuickReplyUse>;
 
-// 候補とする短文の上限長（これを超えるものは「クイック返信」ではなく質問文/プロンプトとみなす）。
-// 学習時（isQuickReplyCandidate）と表示時（rankQuickReplies）の両方に効かせ、閾値を下げたとき
-// 過去に学習済みの長いエントリも遡って隠れるようにする。チップが1行を占有しない長さに合わせて 20。
+// Maximum length of a suggestion; anything longer is a question or a prompt, not a quick reply.
+// Enforced both when learning (isQuickReplyCandidate) and when displaying (rankQuickReplies), so
+// lowering the threshold retroactively hides longer entries that were already learned. 20 is the
+// length at which a chip still does not take a whole row.
 const MAX_LEN = 20;
-// 保存する最大エントリ数。超えたら最弱（count→at 昇順）から間引く。隠しリストの上限も同じ値
-// （学習エントリを1件ずつ隠せる余地を必ず残す）。表示は limit で絞るので、ここは「どれだけの
-// 語彙を覚えておけるか」＝間引きで死ぬ候補の少なさだけに効く。settings に載る分だけサーバミラー
-// のペイロードも増えるが、1件が短文＋数値2つなので 100 件でも数 KB。
+// Maximum number of stored entries; past this the weakest (ascending count, then at) are evicted.
+// The hidden list shares the cap, which always leaves room to hide learned entries one at a time.
+// Display is capped by limit, so this only governs how much vocabulary is remembered, i.e. how few
+// candidates die in eviction. Everything stored rides along in the settings payload to the server
+// mirror, but one entry is a short string plus two numbers, so even 100 is a few KB.
 const MAX_ENTRIES = 100;
-// ピン留めできる最大件数。ピンは必ず表示するので、際限なく増やすとチップ行がピンで埋まる。
-// 超えたら最も古いピンから落とす（新しい意思表示を優先）。
+// Maximum number of pins. Pins are always shown, so without a cap they fill the chip row. Past it
+// the oldest pin is dropped, favouring the more recent intent.
 const MAX_PINNED = 12;
 
-// 空白畳み・トリム。表示・突合の両方に使う。
+// Collapse whitespace and trim. Used for both display and matching.
 function normalize(text: string): string {
   return text.trim().replace(/\s+/g, " ");
 }
 
-// 全角・半角の差を吸収する（突合キー専用）。日本語入力の ON/OFF ひとつで「１」「ｂ」「ＯＫ」と
-// 「1」「b」「OK」が別物になり、同じ返信が別エントリとして学習される（＝チップが重複し、回数も
-// 割れる）ため、キーだけ NFKC で正規形へ寄せる。NFKC は互換文字の標準の正規化で、全角英数字→
-// 半角、半角カナ→全角（濁点の合成 ｺﾐｯﾄ/ｶﾞ も含む）をまとめて正しく畳める（コード点を自分で
-// ずらす実装だと濁点付き半角カナで崩れる）。大文字・小文字は従来どおり keyOf の小文字化で同一視。
-// 表示テキストには掛けない — ユーザーが打った綴りのまま見せる。
+// Absorb fullwidth/halfwidth differences (matching key only). One toggle of the IME makes the
+// fullwidth and halfwidth forms of the same reply two different entries, duplicating the chip and
+// splitting its count, so the key alone is pushed through NFKC. NFKC is the standard normalization
+// for compatibility characters: it folds fullwidth alphanumerics to halfwidth and halfwidth kana to
+// fullwidth, composed voiced marks included — which an implementation that shifts code points by
+// hand gets wrong for voiced halfwidth kana. Case is still folded by keyOf's lowercasing. Never
+// applied to the display text: the user's own spelling is what gets shown.
 function foldWidth(text: string): string {
   return text.normalize("NFKC");
 }
 
-// 学習・隠し・ピンの突合キー。正規化 → 全角半角の畳み込み → 小文字化。
-// キー正規化を変えると保存済みエントリのキーは古いままになるので、突合は必ず「保存キー」ではなく
-// 「保存された表示テキストを keyOf したもの」で行い、record/forget/rank 側で新旧を1件に畳む。
+// The matching key for learning, hiding and pinning: normalize, fold width, lowercase.
+// Changing this normalization leaves stored entries under their old keys, so always match against
+// keyOf(stored display text) rather than the stored key, and let record/forget/rank fold the old
+// and new keys into one entry.
 function keyOf(text: string): string {
   return foldWidth(normalize(text)).toLowerCase();
 }
 
-// 同じ畳み方を外でも使うための公開版（Tab 補完のリング＝lib/suggestCycle、✨候補と学習チップの
-// 重複判定＝MirrorView / ChatView）。突合の基準がここと食い違うと、チップ行に見えているものと
-// 選べるもの・重複扱いになるものがズレる。
+// Public version of the same folding, for the Tab-completion ring (lib/suggestCycle) and the
+// duplicate check between generated suggestions and learned chips (MirrorView / ChatView). If a
+// caller matches on a different basis, what the chip row shows drifts from what can be selected
+// and what counts as a duplicate.
 export function quickReplyKey(text: string): string {
   return keyOf(text);
 }
 
-// この送信テキストを学習対象にするか。1行・短い・添付なし・スラッシュ/パス類でないこと。
+// Whether this sent text should be learned: one line, short, no attachments, and not a slash
+// command or a path.
 export function isQuickReplyCandidate(text: string, hasAttachments: boolean): boolean {
   if (hasAttachments) return false;
   const t = text.trim();
   if (!t) return false;
   if (t.length > MAX_LEN) return false;
-  if (/[\r\n]/.test(t)) return false; // 複数行は返信テンプレではない
-  if (t.startsWith("/")) return false; // スラッシュコマンド / 絶対パス
+  if (/[\r\n]/.test(t)) return false; // multi-line text is not a reply template
+  if (t.startsWith("/")) return false; // slash command or absolute path
   return true;
 }
 
-// 送信テキストを頻度マップへ記録し、新しいマップを返す（純関数）。上限超過分は間引く。
+// Record a sent text into the frequency map and return a new map (pure). Evicts past the cap.
 export function recordQuickReply(map: QuickReplyMap, text: string, now: number): QuickReplyMap {
   const norm = normalize(text);
   const k = keyOf(norm);
-  // 同じキーに畳まれる既存エントリ（自分自身と、キー正規化の変更前に全角/半角違いで別キーへ
-  // 学習されていたもの）の回数を引き継ぎ、古いキーは落とす。表示綴りは最後に送ったもの。
+  // Carry over the counts of every existing entry that folds to this key — itself, plus anything
+  // learned under a width-variant key before the key normalization changed — and drop the old keys.
+  // The display spelling is the one most recently sent.
   const next: QuickReplyMap = { ...map };
   let count = 0;
   for (const [k2, e] of Object.entries(map)) {
@@ -88,7 +100,7 @@ export function recordQuickReply(map: QuickReplyMap, text: string, now: number):
   next[k] = { text: norm, count: count + 1, at: now };
   const keys = Object.keys(next);
   if (keys.length > MAX_ENTRIES) {
-    // 最弱（使用回数→最近度）から落とす。今書いたキーは新しいので残る。
+    // Evict the weakest first (by use count, then recency). The key just written is new, so it stays.
     keys
       .sort((a, b) => next[a].count - next[b].count || next[a].at - next[b].at)
       .slice(0, keys.length - MAX_ENTRIES)
@@ -97,12 +109,13 @@ export function recordQuickReply(map: QuickReplyMap, text: string, now: number):
   return next;
 }
 
-// 学習エントリを1件消す（純関数）。表示から消すだけでは次の送信で復活するので、呼び出し側は
-// hideQuickReply と対で使う（シードは学習マップに無いので、隠しリスト側だけが効く）。
+// Delete one learned entry (pure). Removing it from the display alone lets the next send revive it,
+// so callers pair this with hideQuickReply. Seeds are not in the learned map, so for them only the
+// hidden list has any effect.
 export function forgetQuickReply(map: QuickReplyMap, text: string): QuickReplyMap {
   const k = keyOf(text);
-  // 全角/半角違いで別キーに残っている同じ文（旧キー）も一緒に消す — 1つ消したのに
-  // 見た目が同じチップが残る、を避ける。
+  // Also delete the same sentence still held under an old width-variant key, so deleting one chip
+  // does not leave an identical-looking one behind.
   const dead = Object.keys(map).filter((k2) => k2 === k || keyOf(map[k2].text) === k);
   if (!dead.length) return map;
   const next = { ...map };
@@ -110,16 +123,17 @@ export function forgetQuickReply(map: QuickReplyMap, text: string): QuickReplyMa
   return next;
 }
 
-// 「1回しか送っていない」学習エントリの表示テキストを返す（純関数・設定画面の一括削除用）。
-// 学習は送信のたび黙って増えるので、一度きりの言い回しが大半を占めて一覧が読めなくなる。常用の
-// 候補を残したまま、その使い捨てだけを落とすための対象リスト。
+// Display texts of learned entries sent exactly once (pure; for the bulk delete in settings).
+// Learning grows silently on every send, so one-off phrasings come to dominate and the list becomes
+// unreadable. This is the target list for dropping the throwaways while keeping the everyday ones.
 //
-// - 回数は保存キーではなく綴りから引き直したキーで畳んでから数える（全角/半角違いで2キーに
-//   割れた同じ文は合わせて2回＝一度きりではない）。一覧の行の作り方と同じ。
-// - ピン留めは明示の指定なので、回数に関わらず対象外（ピンは何にも負けない、が要件）。
-// 呼び出し側は forgetQuickReply で消す。隠しリストには積まない — これは「二度と出すな」ではなく
-// 学習ノイズの掃除で、同じ文をまた送れば普通に学習し直すのが期待される挙動だから（シードと同じ
-// 綴りが1回だけ学習されていた場合に、隠しへ積むとシードごと消えてしまうのも防ぐ）。
+// - Counts are folded by the key derived from the spelling, not by the stored key: the same
+//   sentence split across two width-variant keys totals 2 and is therefore not a one-off. Same as
+//   how the list's rows are built.
+// - A pin is an explicit choice, so it is excluded whatever its count; a pin loses to nothing.
+// Callers delete with forgetQuickReply and must not add to the hidden list: this is cleaning up
+// learning noise, not "never show this again", and sending the text again should learn it afresh.
+// It also avoids wiping out a seed when a text spelled like one happened to be learned once.
 export function oneTimeQuickReplies(map: QuickReplyMap, pinned?: string[]): string[] {
   const byKey = new Map<string, { text: string; count: number; at: number }>();
   for (const e of Object.values(map)) {
@@ -136,26 +150,27 @@ export function oneTimeQuickReplies(map: QuickReplyMap, pinned?: string[]): stri
   return [...byKey.entries()].filter(([k, e]) => e.count <= 1 && !pins.has(k)).map(([, e]) => e.text);
 }
 
-// 隠しリストにキーを積む。上限は学習エントリと同じ（際限なく増やさない・古いものから落とす）。
+// Push a key onto the hidden list. Same cap as learned entries: bounded, oldest dropped first.
 export function hideQuickReply(hidden: string[], text: string): string[] {
   const k = keyOf(text);
-  // 突合は keyOf 済み同士で（全角/半角違いで積まれた旧キーも同じものとして扱う）。
+  // Compare keyOf to keyOf, so an old key stored in the other width is treated as the same entry.
   if (!k || hidden.some((h) => keyOf(h) === k)) return hidden;
   const next = [...hidden, k];
   return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next;
 }
 
-// 隠しを解除する。自分でその文を送り直したときに呼ぶ（＝もう一度使う意思表示）。
-// 変化が無ければ同じ配列参照を返すので、呼び出し側は差分だけ保存できる。
+// Lift the hiding. Called when the user sends that text again, which is their intent to reuse it.
+// Returns the same array reference when nothing changed, so callers can save only real diffs.
 export function unhideQuickReply(hidden: string[], text: string): string[] {
   const k = keyOf(text);
   if (!hidden.some((h) => keyOf(h) === k)) return hidden;
   return hidden.filter((h) => keyOf(h) !== k);
 }
 
-// ピン留め（常に表示）。隠しと違いキーではなく表示綴りをそのまま積む — 学習エントリが間引かれても、
-// シードに無い文でも、ピンだけで表示テキストを復元できるようにするため（ピンが「消えない」ことは
-// この機能の要件そのもの）。並びはピンした順＝ユーザーが決めた並びで、ランキングでは動かさない。
+// Pinning (always shown). Unlike hiding, this stores the display spelling rather than the key, so
+// the text can be restored from the pin alone even after the learned entry was evicted or when it
+// was never a seed; a pin never disappearing is the whole requirement. The order is the order they
+// were pinned, i.e. the user's own order, and the ranking never moves them.
 export function pinQuickReply(pinned: string[], text: string): string[] {
   const norm = normalize(text);
   const k = keyOf(norm);
@@ -164,88 +179,97 @@ export function pinQuickReply(pinned: string[], text: string): string[] {
   return next.length > MAX_PINNED ? next.slice(next.length - MAX_PINNED) : next;
 }
 
-// ピンを外す。変化が無ければ同じ配列参照を返す。
+// Unpin. Returns the same array reference when nothing changed.
 export function unpinQuickReply(pinned: string[], text: string): string[] {
   const k = keyOf(text);
   if (!pinned.some((p) => keyOf(p) === k)) return pinned;
   return pinned.filter((p) => keyOf(p) !== k);
 }
 
-// この文がピン留めされているか（大小・空白の違いは無視）。
+// Whether this text is pinned (case and whitespace differences ignored).
 export function isQuickReplyPinned(pinned: string[] | undefined, text: string): boolean {
   const k = keyOf(text);
   return (pinned ?? []).some((p) => keyOf(p) === k);
 }
 
-// i18n-exempt-start: 以下はサジェストの seed 語と突合用の辞書データ（翻訳対象の UI 文言ではなく、
-// locale キーで ja/en を出し分ける“中身”。fontStack の生値や VOICEVOX 名と同じ扱い）。
-// 初期シード（学習が空でも ok/進めて/commit が並ぶよう種まき）。count 0 なので実利用が即上回る。
+// i18n-exempt-start: what follows is dictionary data - the seed phrases and the words matched
+// against - not UI copy to translate. The locale key selects the ja/en *content*, the same way raw
+// fontStack values or VOICEVOX voice names work.
+// Initial seeds, so a few everyday replies are offered before anything has been learned. Their
+// count is 0, so real usage overtakes them immediately.
 const SEEDS: Record<string, string[]> = {
   ja: ["OK", "進めて", "続けて", "commit して", "やめて"],
   en: ["OK", "Go ahead", "Continue", "Commit it", "Stop"],
 };
 
-// 肯定/否定の短答セット（末尾が「？」の回答直後に押し上げる対象）。小文字で突合。
+// Short affirmative/negative answers, boosted right after an answer that ends in a question mark.
+// Matched in lowercase.
 const AFFIRM = new Set(["ok", "はい", "yes", "y", "進めて", "続けて", "go ahead", "continue", "sure"]);
 const NEGATE = new Set(["no", "いいえ", "n", "やめて", "待って", "stop", "cancel", "キャンセル"]);
 
-// 直近回答（lastReply）から加点する（B-1）。lastReply は小文字化済みを渡す想定はせず内部で処理。
+// Boost from the most recent answer (lastReply) — B-1. lastReply is not assumed to arrive
+// lowercased; that is handled here.
 //
-// ★加点は「合算」ではなく「最大値」を採る。合算にすると、たまたま複数のキーワードを含む欲張った
-// 一文（例「OK,順に進めよう。都度コミットしてね」= コミット + 進め）が +180 を得て、単語ひとつの
-// 素直な候補（「コミット」+100 /「進めて」+80）を構造的に永久に上回り、どの文脈でも先頭に貼り付く。
-// 文脈適合は「どれか1つ当たったか」で十分で、当たった数は関連度ではない。
-// lr は keyOf 済みの直近回答（全角半角・大小を畳んだもの）。回答は長いので畳み込みは
-// 呼び出し側で1回だけ行い、候補ごとに掛け直さない。
+// The boost takes the MAXIMUM, not the sum. Summing lets a greedy sentence that happens to contain
+// several keywords (commit plus proceed, say) collect +180 and structurally beat a plain
+// single-word candidate (+100 / +80) forever, so it sticks to the front in every context. Matching
+// one context signal is enough; the number of matches is not a measure of relevance.
+// lr is the already-keyOf'd recent answer (width and case folded). Answers are long, so the caller
+// folds once rather than re-folding for every candidate.
 function contextBoost(entryText: string, lastReply: string, lr: string): number {
   if (!lastReply) return 0;
-  // 候補側も同じ畳み方で突合する（「ｃｏｍｍｉｔ」と打って学習した候補でも当たる）。
+  // Fold the candidate the same way, so one learned from fullwidth typing still matches.
   const et = keyOf(entryText);
   let boost = 0;
-  // 質問（末尾「?」/「？」）→ 肯定・否定の短答を押し上げる。
+  // A question (ends in ? or its fullwidth form) boosts the short affirmative/negative answers.
   if (/[?？]\s*$/.test(lastReply)) {
     if (AFFIRM.has(et) || NEGATE.has(et)) boost = Math.max(boost, 120);
   }
-  // 「commit / コミット」の話題 → commit 系を押し上げる。
+  // An answer about committing boosts the commit-related suggestions.
   if ((lr.includes("commit") || lr.includes("コミット")) && (et.includes("commit") || et.includes("コミット")))
     boost = Math.max(boost, 100);
-  // 「続ける/進める/proceed/continue」の話題 → 続行系を押し上げる。
+  // An answer about proceeding or continuing boosts the continuation suggestions.
   if (/続け|進め|proceed|continue/.test(lr) && /続け|進め|proceed|continue|ok/.test(et)) boost = Math.max(boost, 80);
   return boost;
 }
 // i18n-exempt-end
 
 export type RankArgs = {
-  draft: string; // 現在のコンポーサー入力（前方一致フィルタに使う）
-  lastReply: string; // 直近エージェント回答の最終テキスト（B-1）
-  locale: string; // "ja" | "en"（シード言語の選択）
-  hidden?: string[]; // ユーザーがメニューから消したキー（settings.quickRepliesHidden）
-  pinned?: string[]; // ピン留め＝常に先頭に出す文（settings.quickRepliesPinned・ピンした順）
-  limit?: number; // 学習側（ランキング）の返す候補数上限（既定 6）。ピンはこの上限とは別枠で、
-  // 何件ピンしていても学習側の枠を圧迫しない（＝合計はピン件数 + limit まで出うる）。
+  draft: string; // current composer input, used as a prefix filter
+  lastReply: string; // final text of the agent's most recent answer (B-1)
+  locale: string; // "ja" | "en" (which seed language to use)
+  hidden?: string[]; // keys the user deleted from the menu (settings.quickRepliesHidden)
+  pinned?: string[]; // pinned = always shown first (settings.quickRepliesPinned, in pin order)
+  limit?: number; // cap on the candidates the learned ranking returns (default 6). Pins sit outside
+  // this cap, so however many are pinned they never squeeze the learned slots: the total can reach
+  // the number of pins + limit.
 };
 
-// 候補を算出して並べて返す（表示テキストの配列）。先頭はピン留め（ピンした順）、続いてランキング。
+// Compute and order the candidates, as an array of display texts: pins first in pin order, then the
+// ranking.
 export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
   const { draft, lastReply, locale, hidden, pinned, limit = 6 } = args;
   const seeds = SEEDS[locale] ?? SEEDS.ja;
-  // 隠しリストは保存済みの値をそのまま信用せず keyOf を掛け直す（キー正規化を変える前に
-  // 全角/半角のまま積まれたキーも効かせる。keyOf は冪等なので新しいキーは素通り）。
+  // Do not trust the stored hidden values as they are; run keyOf over them again so keys pushed in
+  // their original width before the normalization changed still take effect. keyOf is idempotent,
+  // so newer keys pass straight through.
   const hide = new Set((hidden ?? []).map((h) => keyOf(h)));
   const pins = (pinned ?? []).map((p) => normalize(p)).filter((p) => p);
   const pinKeys = new Set(pins.map((p) => keyOf(p)));
-  // 学習エントリ + 未学習シードを統合（キー重複はシードを捨てる）。閾値を下げたとき過去に
-  // 学習済みの長いエントリを遡って隠すため、ここでも MAX_LEN 超は取り込まない。消された
-  // キーはシード側でも復活させない（隠しは学習の有無に関わらず効く）。
+  // Merge the learned entries with the seeds not yet learned; on a key collision the seed is
+  // dropped. MAX_LEN is applied here too, so lowering the threshold retroactively hides long
+  // entries already learned. A hidden key is not revived by the seed either: hiding applies whether
+  // or not the text was ever learned.
   const byKey = new Map<string, { text: string; count: number; at: number }>();
   for (const e of Object.values(map)) {
     if (normalize(e.text).length > MAX_LEN) continue;
     const k = keyOf(e.text);
     if (hide.has(k)) continue;
-    if (pinKeys.has(k)) continue; // ピンは別枠で先に出す（二重に並べない）
+    if (pinKeys.has(k)) continue; // pins are emitted separately and first; do not list them twice
     const prev = byKey.get(k);
-    // 全角/半角違いで別キーに分かれていた同じ文は1件に畳む（回数は合算・綴りは新しい方）。
-    // record 側でも畳むが、こちらは保存を書き換えないまま表示だけ先に直す経路。
+    // Fold the same sentence split across width-variant keys into one entry: counts summed,
+    // spelling from the newer. record folds too, but this path fixes the display without
+    // rewriting what is stored.
     byKey.set(
       k,
       prev
@@ -259,11 +283,13 @@ export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
     if (!byKey.has(k)) byKey.set(k, { text: normalize(s), count: 0, at: 0 });
   }
 
-  // 前方一致も keyOf で突合する＝IME を切り替えて「ｃｏ」と打っても "commit" が出る（逆も同じ）。
+  // The prefix match also runs through keyOf, so "commit" is still offered when the prefix is typed
+  // in the other width, and vice versa.
   const draftNorm = keyOf(draft);
   const lastReplyKey = keyOf(lastReply);
   const scored = [...byKey.values()]
-    // draft 入力中は前方一致で絞り、draft そのものと一致する候補は除く（無意味なので）。
+    // While a draft is being typed, filter by prefix and drop a candidate equal to the draft
+    // itself, which would offer nothing.
     .filter((e) => {
       const et = keyOf(e.text);
       if (draftNorm && !et.startsWith(draftNorm)) return false;
@@ -271,15 +297,17 @@ export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
       return true;
     })
     .map((e) => ({ text: e.text, score: e.count + contextBoost(e.text, lastReply, lastReplyKey), at: e.at }))
-    // スコア降順 → 同点は最近度 → なお同点なら短い方を先に（チップは短いほど押しやすく、
-    // 並びが Object のキー順という説明できない順序に落ちるのも防ぐ）。
+    // Score descending, ties broken by recency, then by shorter first: a short chip is easier to
+    // hit, and it keeps the order from falling back to the unexplainable order of an Object's keys.
     .sort((a, b) => b.score - a.score || b.at - a.at || a.text.length - b.text.length);
 
-  // ピンは入力中の前方一致（オートコンプリート）にだけ従う。長さ上限・隠し・スコアには従わない。
+  // Pins obey only the prefix match while typing (autocomplete), never the length cap, hiding or
+  // the score.
   const head = pins.filter((p) => {
     const pt = keyOf(p);
     return !draftNorm || (pt.startsWith(draftNorm) && pt !== draftNorm);
   });
-  // ピンは別枠（何件ピンしていても学習側の limit を圧迫しない）。学習側はランキング上位を limit 件まで。
+  // Pins sit outside the cap, so any number of them leaves the learned limit intact; the learned
+  // side contributes the top-ranked entries up to limit.
   return [...head, ...scored.slice(0, limit).map((e) => e.text)];
 }

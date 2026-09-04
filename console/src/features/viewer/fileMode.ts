@@ -21,8 +21,8 @@ export type MarkdownMode = "edit" | "preview" | "split";
  *  MarkdownView, which stays available for Marp decks too (§1.1). */
 export type PreviewRenderer = "normal" | "slides";
 
-/** 図（.drawio）の面。`figure` が同梱ビューアの描画、`source` が XML そのもの
- *  （編集できるなら CodeMirror、できないなら読み取り専用の CodeView）。 */
+/** The diagram (.drawio) surface. `figure` is the bundled viewer's rendering; `source` is the
+ *  XML itself — CodeMirror when editable, the read-only CodeView when not. */
 export type DiagramMode = "figure" | "source";
 
 /** The pane's own layer, derived for Markdown and driven directly otherwise. */
@@ -36,7 +36,7 @@ export interface FileModeCaps {
   marp: boolean;
   /** A validated, PUT-able editor snapshot exists, so the buffer can be edited. */
   editable: boolean;
-  /** drawio の図として開ける（docs/log/65）。Markdown と同時に立つことはない。 */
+  /** It can open as a drawio diagram (docs/log/65). Never set at the same time as `markdown`. */
   diagram: boolean;
 }
 
@@ -56,7 +56,7 @@ export interface FileSurfaces {
   preview: PreviewRenderer | null;
   /** Source and preview are shown side by side. */
   split: boolean;
-  /** drawio の図（同梱ビューア）を表示している。 */
+  /** The drawio diagram (the bundled viewer) is on screen. */
   diagram: boolean;
 }
 
@@ -75,8 +75,8 @@ export function initialFileMode(
   caps: FileModeCaps,
   options: { hasTargetLine?: boolean; requested?: PaneMode } = {},
 ): FileModeState {
-  // 図はまず図として開く。ただし行を指してきた引用と「編集で開く」は、その行 /
-  // その編集面が無ければ意味を成さないので XML ソース側に着地させる（§65.4）。
+  // A diagram opens as a diagram first. A citation naming a line and "編集で開く" would both be
+  // meaningless without that row or that editing surface, so they land on the XML source (§65.4).
   if (caps.diagram) {
     const wantsSource = options.hasTargetLine || options.requested === "edit";
     return { kind: "diagram", diagram: wantsSource ? "source" : "figure" };
@@ -158,7 +158,8 @@ export interface MarkdownModeControl {
   readOnlySource: boolean;
 }
 
-/** 図の面のボタン群（図 / ソース）。Markdown の 3 モード群と同時には出ない。 */
+/** The diagram surface's button group (Diagram / Source). Never shown together with Markdown's
+ *  three-mode group. */
 export function diagramModeControls(
   state: FileModeState,
   caps: FileModeCaps,
@@ -171,7 +172,7 @@ export function diagramModeControls(
   }));
 }
 
-/** 図の面を選ぶ。 */
+/** Select the diagram surface. */
 export function withDiagramMode(state: FileModeState, diagram: DiagramMode, caps: FileModeCaps): FileModeState {
   if (!caps.diagram) return state;
   return { kind: "diagram", diagram };

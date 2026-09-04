@@ -1,53 +1,57 @@
-// features/usage/colors — 系列 → 色スロットの割り当て（docs/log/46 P4）。
+// features/usage/colors — assigns series to colour slots (docs/log/46 P4).
 //
-// 規約は3つだけ。守るとグラフが色覚特性を含めて読める状態のまま保たれる。
+// Three rules; keeping them is what keeps the charts readable under colour-vision deficiency.
 //
-//  1. **色は「順位」ではなく「実体」に付く。** フィルタで系列が減っても生き残った
-//     系列の色は変わらない（"Acme は青" を学んだ読み手を裏切らない）。列挙型の軸
-//     （feature / kind / trigger / origin / measured / model_src / verb）は固定表で、
-//     データに一切依存しない。
-//  2. **スロット順に積む。** 積み上げ棒で触れ合うのは「隣のスロット同士」だけになる
-//     ので、パレットの隣接ペアさえ検証しておけば実際の隣接も安全（dataviz スキルの
-//     adjacent 検証はまさにこの前提。tokens.css --viz-* のコメント参照）。
-//  3. **9本目の色は作らない。** 8スロットを超えた分は必ずグレーの「その他」へ畳む。
-//     生成した9色目は CVD 下で既存色と区別できず、検証が崩れる。
+//  1. A colour belongs to the entity, not to its rank. Filtering out series must not change the
+//     colour of the ones that survive (a reader who learned "Acme is blue" is not betrayed).
+//     The enumerated axes (feature / kind / trigger / origin / measured / model_src / verb) use
+//     fixed tables and do not depend on the data at all.
+//  2. Stack in slot order. In a stacked bar the only pairs that ever touch are neighbouring
+//     slots, so validating the palette's adjacent pairs is enough to make real adjacency safe
+//     (the dataviz skill's adjacency check assumes exactly this; see the --viz-* comments in
+//     tokens.css).
+//  3. Never invent a ninth colour. Anything past the 8 slots folds into the grey "other". A
+//     generated ninth colour is indistinguishable from an existing one under CVD and breaks the
+//     validation.
 //
-// model / origin_conv は値が無限に増えうるので固定表を作れない。**キー文字列のハッシュ**
-// から優先スロットを決める（同じモデル名は常に同じ色＝実体に付く）。衝突時だけ空き
-// スロットへ回す。上位8件を超えた分は「その他」へ畳む — 畳む対象の選択だけは量に依存
-// するが、これは top-N + その他 という一般的な畳み方で、色の実体固定とは両立する。
+// model / origin_conv can grow without bound, so no fixed table is possible: the preferred slot
+// comes from a hash of the key string (the same model name always gets the same colour, i.e. the
+// colour belongs to the entity), and only collisions fall through to a free slot. Anything past
+// the top 8 folds into "other" — only the choice of what to fold depends on magnitude, which is
+// the ordinary top-N + other fold and is compatible with pinning colours to entities.
 
-/** 使用量ビューが塗る1系列。slot 0 = 「その他」（グレー・実体には割り当てない）。 */
+/** One series painted by the usage view. Slot 0 = "other" (grey; never assigned to an entity). */
 export interface SeriesPaint {
   key: string;
   slot: number;
   color: string;
-  /** 畳まれた（その他に入った）系列か。凡例と表では畳まれた内訳も名前で出す。 */
+  /** Was this series folded into "other"? The legend and table still name the folded entries. */
   folded: boolean;
 }
 
-/** カテゴリカルの上限。dataviz の「8スロット・9色目を作らない」に合わせる。 */
+/** Categorical ceiling, matching dataviz's "8 slots, never a ninth colour". */
 export const MAX_SLOTS = 8;
 
 export const OTHER_KEY = "__other__";
 
 /**
- * feature の固定スロット表（docs/log/46 §1-a の列挙）。
+ * Fixed slot table for feature (the enumeration in docs/log/46 §1-a).
  *
- * enum は13個（ADR0029 の凍結12個＋docs/log/44 Phase 4 の `suggest.edit`）あり、スロットは
- * 8つしかない。**9色目を作らない**（規約3）ので、溢れる5つは常にグレーの「その他」へ
- * 入る — これは取りこぼしではなく選択で、色を持つ8つは「単独で桁が立ちうるもの」を
- * 採ってある:
+ * There are 13 enum values (the 12 frozen by ADR0029 plus `suggest.edit` from docs/log/44
+ * Phase 4) and only 8 slots. Rule 3 forbids a ninth colour, so the 5 that overflow always land
+ * in the grey "other" — a choice, not an oversight: the 8 that keep a colour are the ones that
+ * can carry an order of magnitude on their own.
  *
- * - `assistant.ask`（単発アドバイザリ・非永続）は `assistant.chat` の陰に隠れる量。
- * - `title.chat` / `suggest.chat` は会話1本あたり数回で、`title.session` /
- *   `suggest.session`（セッション毎に自動発火）より1桁小さい。
- * - `branch.suggest` / `suggest.edit` は手動起動のみ。
+ * - `assistant.ask` (one-shot advisory, non-persistent) is dwarfed by `assistant.chat`.
+ * - `title.chat` / `suggest.chat` fire a few times per conversation, an order of magnitude less
+ *   than `title.session` / `suggest.session`, which fire automatically per session.
+ * - `branch.suggest` / `suggest.edit` are manual only.
  *
- * **畳んだ分を見えなくしない**のがこの表の条件で、UI 側で3つ担保している: 畳みが1つでも
- * あれば凡例に「その他」を必ず出す（系列が1本でも出す）／ツールチップに畳まれた実キーを
- * 並べる／「その他」クリックで畳まれたキー全部の絞り込みを掛ける（同一軸 OR）。
- * 内訳リストと表ビューは畳まずに実キーのまま出す。
+ * The table is only acceptable because the folded part stays visible, which the UI guarantees
+ * three ways: "other" always appears in the legend when anything folded (even for a single
+ * series); the tooltip lists the real folded keys; clicking "other" filters on all folded keys
+ * at once (OR within the axis). The breakdown list and the table view show the real keys
+ * unfolded.
  */
 const FEATURE_SLOT: Record<string, number> = {
   session: 1,
@@ -57,24 +61,26 @@ const FEATURE_SLOT: Record<string, number> = {
   "title.session": 5,
   "suggest.session": 6,
   "assistant.bridge": 7,
-  // unknown は「タグ付け忘れ＝見えない消費」の信号なので、必ず色を持たせて目立たせる。
+  // unknown signals a missing tag, i.e. consumption nobody can see, so it always keeps a colour.
   unknown: 8,
 };
 
-/** kind の積み順（＝スロット順）。
+/** Stacking order for kind (which is also slot order).
  *
- * kind の色は tokens.css --kind-* が唯一の正で、使用量ビューのために塗り替えない
- * （agent-display-naming の1ソース規約）。ただし --kind-* は識別子であってグラフ用
- * パレットとして検証されたものではなく、7色を素の並びで積むと隣接ペアが CVD 検証に
- * 落ちる（agy 青 ↔ kiro 紫 が protan ΔE 2.0、copilot / opencode はどちらもほぼ無彩色）。
+ * tokens.css --kind-* is the single source of truth for kind colours and must not be repainted
+ * for the usage view (the one-source rule of agent-display-naming). But --kind-* is an identifier
+ * palette, never validated as a chart palette: stacked in their natural order the adjacent pairs
+ * fail the CVD check (agy blue vs kiro purple is protan ΔE 2.0; copilot and opencode are both
+ * near-achromatic).
  *
- * そこで**色は変えず並びだけ**を全順列から選んだ。この順で積むと隣接ペアは
- * dark: CVD ΔE 13.0 / 通常視 19.8、light: CVD ΔE 17.3 / 通常視 19.4 で、どちらのテーマも
- * 隣接ゲートを通る。彩度・明度の帯（灰2色）は色そのものの性質なので通らないままで、
- * その分は凡例のラベル・ツールチップ・表ビュー（色だけに頼らせない）で担保する。 */
+ * So the colours are untouched and only the order was chosen, out of all permutations. In this
+ * order the adjacent pairs measure dark: CVD ΔE 13.0 / normal vision 19.8, light: CVD ΔE 17.3 /
+ * normal vision 19.4, passing the adjacency gate in both themes. The saturation and lightness
+ * bands (the two greys) still fail, because that is a property of the colours themselves; the
+ * legend labels, tooltip and table view cover that by never relying on colour alone. */
 export const KIND_STACK_ORDER = ["cursor", "agy", "claude", "copilot", "codex", "kiro", "opencode"];
 
-/** 小さな列挙軸の固定順（スロットは 1 起点で順に割り当てる）。 */
+/** Fixed order for the small enumerated axes (slots are assigned in order, starting at 1). */
 const ENUM_ORDER: Record<string, string[]> = {
   trigger: ["user", "auto", "manual", "schedule", "operator", "bridge", "recovery"],
   origin: ["user", "operator", "schedule", "handoff", "unknown"],
@@ -83,7 +89,7 @@ const ENUM_ORDER: Record<string, string[]> = {
   verb: ["", "translate", "summarize"],
 };
 
-/** キー文字列 → 安定ハッシュ（FNV-1a 32bit）。同じ名前は常に同じ優先スロット。 */
+/** Key string to a stable hash (FNV-1a 32-bit): the same name always prefers the same slot. */
 export function hashKey(s: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -93,17 +99,18 @@ export function hashKey(s: string): number {
   return h >>> 0;
 }
 
-/** スロット番号 → CSS 色（0 = その他）。 */
+/** Slot number to a CSS colour (0 = other). */
 export const slotColor = (slot: number): string => (slot <= 0 ? "var(--viz-other)" : `var(--viz-${slot})`);
 
 const kindColor = (kind: string): string =>
   KIND_STACK_ORDER.includes(kind) ? `var(--kind-${kind})` : "var(--viz-other)";
 
 /**
- * paintSeries — 軸 dim の系列キー群に色を割り当て、**描画順（スロット順）** で返す。
+ * paintSeries — assigns colours to the series keys of axis `dim` and returns them in draw order,
+ * i.e. slot order.
  *
- * keysByMagnitude は「量の多い順」で渡す（畳む対象を決めるためだけに使う。色は順位に
- * 依存しない）。戻り値は常に slot 昇順で、その他（slot 0）は最後。
+ * Pass keysByMagnitude largest-first; magnitude is used only to decide what to fold, never to
+ * decide a colour. The result is always sorted by ascending slot, with "other" (slot 0) last.
  */
 export function paintSeries(dim: string, keysByMagnitude: string[]): SeriesPaint[] {
   const out: SeriesPaint[] = [];
@@ -128,7 +135,7 @@ export function paintSeries(dim: string, keysByMagnitude: string[]): SeriesPaint
       push(key, slot, slotColor(slot));
     }
   } else {
-    // 無限に増えうる軸（model / origin_conv）: ハッシュ優先スロット + 衝突は空きへ。
+    // Unbounded axes (model / origin_conv): hashed preferred slot, collisions go to a free one.
     const taken = new Set<number>();
     keysByMagnitude.forEach((key, idx) => {
       if (idx >= MAX_SLOTS) {
@@ -149,7 +156,7 @@ export function paintSeries(dim: string, keysByMagnitude: string[]): SeriesPaint
     });
   }
 
-  // スロット順に描く（規約2）。同スロット（その他）内はキー名で安定化。
+  // Draw in slot order (rule 2). Within one slot ("other") key name keeps it stable.
   return out.sort((a, b) => {
     const as = a.slot <= 0 ? Infinity : a.slot;
     const bs = b.slot <= 0 ? Infinity : b.slot;

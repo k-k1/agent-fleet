@@ -178,8 +178,8 @@ function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void;
             {st.site && <span className="p-pl">{String(st.site).replace(/^https:\/\//, "")}</span>}
             <DisconnectButton onClick={disconnect} />
           </div>
-          {/* 1 回の認可が複数サイトを含みうる。どれに自分の作業があるかは本人しか
-              知らないので、最初の 1 件で決め打ちにしない（docs/log/80 §80.17）。 */}
+          {/* One authorization can cover several sites, and only the user knows which one
+              holds their work — so do not silently settle on the first (docs/log/80 §80.17). */}
           {sites.length > 1 && (
             <label className="ps-row">
               <span className="ps-label">{tr("tracker.jira_site")}</span>

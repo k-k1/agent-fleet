@@ -5,7 +5,7 @@ vi.stubGlobal("localStorage", {
   getItem: (key: string) => values.get(key) ?? null,
   setItem: (key: string, value: string) => values.set(key, value),
   removeItem: (key: string) => values.delete(key),
-  // forgetHiddenRepoModels は「af.repo-model.* を総なめ」なので列挙 API も要る。
+  // forgetHiddenRepoModels walks every af.repo-model.* key, so the enumeration API is needed too.
   get length() {
     return values.size;
   },
@@ -49,8 +49,9 @@ describe("repo launch settings", () => {
     expect(resolveModel("opencode", "repo", "")).toBe("openai/gpt");
   });
 
-  // 「使わないモデル」に入れたら、リポジトリごとの前回値からも消える。ここが残ると
-  // そのリポジトリの起動導線だけ除外モデルを既定に持ち続け、毎回 Agent 側で弾かれる。
+  // Adding a model to "models to exclude" must also drop it from the per-repo last-used value. If
+  // it survives here, that repo's launch path keeps defaulting to the excluded model and the Agent
+  // refuses every launch.
   it("forgets remembered models that were just excluded", () => {
     const { forgetHiddenRepoModels, resolveModel, writeRepoLast } = repoLast;
     writeRepoLast("repo-a", "claude", "fable");
@@ -59,14 +60,14 @@ describe("repo launch settings", () => {
 
     forgetHiddenRepoModels("claude", ["fable"]);
 
-    expect(resolveModel("claude", "repo-a", "sonnet")).toBe("sonnet"); // 忘れて既定へ
-    expect(resolveModel("claude", "repo-b", "opus")).toBe("sonnet"); // 無関係な値は残る
-    // claude のキーは kind 無し（歴史的経緯）なので、他 kind を巻き添えにしないこと。
+    expect(resolveModel("claude", "repo-a", "sonnet")).toBe("sonnet"); // forgotten, back to the default
+    expect(resolveModel("claude", "repo-b", "opus")).toBe("sonnet"); // an unrelated value survives
+    // claude's key carries no kind, so sweeping it must not take out the other kinds.
     expect(resolveModel("codex", "repo-a", "")).toBe("gpt-5.6-terra");
   });
 
-  // 別端末で除外された場合、この端末の localStorage は掃除前のまま。resolveModel 側でも
-  // 除外値を採用しない（採用すると起動のたびに Agent 側ガードで弾かれる）。
+  // When the exclusion was made on another device, this device's localStorage is still pre-sweep.
+  // resolveModel must not adopt an excluded value either, or the Agent's guard refuses every launch.
   it("never resolves to a model excluded in settings", async () => {
     const { resolveModel, writeRepoLast } = repoLast;
     const { setSettings } = await import("./settings.ts");
@@ -74,9 +75,9 @@ describe("repo launch settings", () => {
     try {
       writeRepoLast("repo-x", "claude", "fable");
       writeRepoLast("repo-x", "codex", "gpt-5.6-terra");
-      expect(resolveModel("claude", "repo-x", "sonnet")).toBe("sonnet"); // 記憶を捨てて既定へ
-      expect(resolveModel("claude", "repo-y", "fable")).not.toBe("fable"); // 既定自体が除外
-      expect(resolveModel("codex", "repo-x", "")).toBe(""); // 動的 kind は CLI 任せへ
+      expect(resolveModel("claude", "repo-x", "sonnet")).toBe("sonnet"); // drop the memory, use the default
+      expect(resolveModel("claude", "repo-y", "fable")).not.toBe("fable"); // the default itself is excluded
+      expect(resolveModel("codex", "repo-x", "")).toBe(""); // dynamic kinds leave it to the CLI
     } finally {
       setSettings({ hiddenModels: {} });
     }

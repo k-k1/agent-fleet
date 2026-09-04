@@ -1,20 +1,22 @@
-// UsageView — 機能別トークン使用量のダッシュボード（docs/log/46 P4 / ADR0029 §7-5）。
+// UsageView — the per-feature token usage dashboard (docs/log/46 P4 / ADR0029 §7-5).
 //
-// **モーダル非依存の純粋コンポーネント**として書く。今は設定モーダルの「使用量」タブが
-// 薄いラッパとして差しているだけで、将来ペインに昇格させたくなったら PaneKind を足して
-// 同じ View を差せる（逆はできない＝ペイン前提で書くと設定に入らないので、この順序）。
+// Written as a pure component with no dependency on the modal. Today the usage tab of the
+// settings modal only wraps it thinly; if it is ever promoted to a pane, adding a PaneKind is
+// enough to mount the same view. The reverse does not work — a pane-only component cannot go
+// into settings — hence this order.
 //
-// 読むもの: GET /api/usage/series（サーバ側で集計済み。生ログは流れてこない）。
-// 1画面で3リクエスト — 選択中の軸の時系列 / 機能×モデル / エージェント×モデル。後ろ2つは
-// matrix なので、内訳（機能別・モデル別・エージェント別）もそこから起こせる。加えて末尾の
-// rtk 効果カードだけ別系（GET /api/agents/rtk/gain — RtkGainCard 参照）を1回読む。
+// It reads GET /api/usage/series, already aggregated server-side; raw logs never arrive here.
+// Three requests per screen: the time series for the selected axis, feature x model and
+// agent x model. The last two are matrices, so the breakdowns (by feature, by model, by agent)
+// are derived from them. In addition the rtk savings card at the bottom reads a separate lineage
+// once (GET /api/agents/rtk/gain; see RtkGainCard).
 //
-// 表示の約束（docs/log/46 §1-c の非交渉ライン）:
-//   * **「0」と「未計測」を混同させない。** トークンを報告しない CLI は spend 0 になるが、
-//     それは「使っていない」ではない。未計測の呼び出し回数を独立したタイルで出し、
-//     coverage から自動生成した注記を常時添える（手書きの表はドリフトする）。
-//   * **コストは副次指標。** claude だけ実測が返るので「API 換算相当額」と明記して
-//     小さく出す。主指標は spend（= in + ccreate + out）。
+// Display guarantees (the non-negotiable lines of docs/log/46 §1-c):
+//   * Never let zero be confused with unmeasured. A CLI that reports no tokens comes out at
+//     spend 0, which does not mean it was unused. The unmeasured call count gets its own tile,
+//     always accompanied by a note generated from coverage (a hand-written table drifts).
+//   * Cost is a secondary metric. Only claude returns a measured value, so it is labelled as an
+//     API-equivalent amount and shown small. The primary metric is spend (= in + ccreate + out).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errText, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
@@ -42,15 +44,16 @@ import {
 } from "./series.ts";
 import type { FilterTerm, UsageMetric } from "./series.ts";
 
-// 期間プリセット（dataviz: 日付レンジが読み手の最初に触るフィルタ）。
+// Range presets (dataviz: the date range is the first filter a reader reaches for).
 const RANGES: { hours: number; key: MsgKey }[] = [
   { hours: 24, key: "usage.range_24h" },
   { hours: 24 * 7, key: "usage.range_7d" },
   { hours: 24 * 30, key: "usage.range_30d" },
 ];
 
-// 時系列の割り方。origin（出自）を並べているのが docs/log/46 §2-c の主眼 —「人が始めた
-// セッション」と「オペレーター/定時が無人で立てたセッション」を同じ絵で対比する。
+// How the time series is split. Listing origin is the point of docs/log/46 §2-c: it puts
+// sessions a person started and sessions the operator or the scheduler raised unattended into the
+// same picture.
 const BY_DIMS: { dim: UsageDim; key: MsgKey }[] = [
   { dim: "feature", key: "usage.by_feature" },
   { dim: "kind", key: "usage.by_kind" },
@@ -59,8 +62,9 @@ const BY_DIMS: { dim: UsageDim; key: MsgKey }[] = [
   { dim: "trigger", key: "usage.by_trigger" },
 ];
 
-// 折り込み待ちの再取得。実測で十数秒かかる（158 セッションで ~20s）ので、2 秒 × 30 回 =
-// 最大 1 分待つ。上限に当たっても壊れた表示にはならない（申告バッジが残るだけ）。
+// Refetch while waiting for folding. Measured at over ten seconds (~20s for 158 sessions), so
+// wait 2s x 30 = up to a minute. Hitting the cap does not break the display; only the badge that
+// declares folding stays up.
 const FOLD_POLL_MS = 2000;
 const FOLD_POLL_MAX = 30;
 
@@ -68,30 +72,34 @@ const METRICS: { metric: UsageMetric; key: MsgKey }[] = [
   { metric: "spend", key: "usage.metric_spend" },
   { metric: "calls", key: "usage.metric_calls" },
   { metric: "cread", key: "usage.metric_cread" },
-  // 金額は**推定**を出す（実測はセッション本体に無く、あの列がずっと「—」だった）。
-  // 実測は消さず、推定の隣にツールチップで併記する（別の計測法なので足さない）。
+  // The money metric is the estimate: the sessions themselves carry no measured cost and that
+  // column used to be permanently "—". The measured value is kept, shown next to the estimate in
+  // a tooltip, and never added to it — they are different ways of measuring.
   { metric: "cost_est_usd", key: "usage.metric_cost" },
 ];
 
-/** 軸の値 → 表示名。未知の値（新しいモデル名など）はキーをそのまま出す。 */
+/** Axis value to display name. An unknown value, such as a new model name, shows as its key. */
 export const dimLabel = (dim: string, key: string): string => {
   if (key === OTHER_KEY) return tMaybe("usage.other") ?? "other";
   if (key === "") return tMaybe("usage.empty_value") ?? "—";
   return tMaybe(`usage.val.${dim}.${key}`) ?? key;
 };
 
-// 0 を "$0.0000" と書くと「タダで動いた」に読めてしまうので、値が無い＝「—」（未計測と
-// 同じ書き方）で出す。
+// Writing 0 as "$0.0000" reads as "it ran for free", so no value shows as "—", the same as
+// unmeasured.
 const fmtUSD = (v: number): string => (v <= 0 ? "—" : v >= 1 ? "$" + v.toFixed(2) : "$" + v.toFixed(4));
 
-// 推定額は必ず「≈」を付ける。実測（claude の補助呼び出し）と同じ書体で並ぶと、単価表 ×
-// トークンで起こした数字が請求額として読まれる。
+// An estimate always carries the approximation sign. Set in the same type as the measured value
+// (claude's auxiliary calls), a number derived from the price table times the tokens gets read as
+// a bill.
 export const fmtUSDEst = (v: number): string => (v <= 0 ? "—" : "≈" + fmtUSD(v));
 
-// 単価（$/100万トークン）。末尾の 0 を残すと $2.00 / $0.0200 と並んで読みにくいので落とす。
+// Unit price ($ per million tokens). Trailing zeros are dropped: $2.00 next to $0.0200 is hard
+// to read.
 const fmtRate = (v: number): string => "$" + String(v >= 1 ? +v.toFixed(2) : +v.toFixed(4));
 
-/** 単価の出所を1行で。catalog:<provider>/<model> は provider まで出す（検算の手掛かり）。 */
+/** The price source on one line. For catalog:<provider>/<model> the provider is shown too, as a
+ * handle for checking the arithmetic. */
 export function priceSrcLine(price: UsagePrice | undefined): string {
   if (!price) return "";
   const [kind, ref] = price.src.split(/:(.+)/);
@@ -100,7 +108,8 @@ export function priceSrcLine(price: UsagePrice | undefined): string {
     : (tMaybe("usage.price_src_builtin") ?? "");
 }
 
-/** 金額セルのツールチップ。単価・出所・実測を積む（金額だけでは検算できない）。 */
+/** Tooltip of a money cell: unit price, source and the measured value, because an amount alone
+ * cannot be checked. */
 export function costCellTitle(agg: UsageAgg, price: UsagePrice | undefined, tr: ReturnType<typeof useT>): string {
   if (!agg.cost_est_usd) return tr("usage.cost_unpriced_hint");
   const lines = [tr("usage.cost_est_hint")];
@@ -112,7 +121,7 @@ export function costCellTitle(agg: UsageAgg, price: UsagePrice | undefined, tr: 
   return lines.join("\n");
 }
 
-/** 指標つきの数値整形。トークンは compact（fmtTok）、回数は桁区切り、コストは $。 */
+/** Metric-aware number formatting: tokens compact (fmtTok), counts grouped, cost in $. */
 export function fmtMetric(metric: UsageMetric, v: number): string {
   if (metric === "cost_est_usd") return fmtUSDEst(v);
   if (metric === "cost_usd") return fmtUSD(v);
@@ -139,22 +148,22 @@ export function UsageView() {
   const [kindModel, setKindModel] = useState<UsageSeries | null>(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
-  // セッション本体の消費は「読まれた時に転写から台帳へ折り込む」— しかも**非同期**なので、
-  // 折り込みが走っている間の応答は直近ターンを含まない（docs/log/46 §3-b）。サーバはそれを
-  // folding で申告してくるので、落ち着くまでこちらで取り直す。これが無いと、利用者が
-  // 「最新にならない」まま再取得を何度も押して当てにいく画面になる（実際にそうなっていた）。
+  // The sessions' own consumption is folded from the transcript into the ledger when it is read,
+  // and asynchronously, so while folding runs the response omits the most recent turns
+  // (docs/log/46 §3-b). The server declares that with folding, and this side refetches until it
+  // settles; without that, users press reload repeatedly at a screen that never catches up.
   const [folding, setFolding] = useState(false);
   const [foldTick, setFoldTick] = useState(0);
   const foldTries = useRef(0);
-  // 明示的な再取得だけスロットルを飛ばす（自動の取り直しに付けると走り続ける）。
+  // Only an explicit refetch skips the throttle; on an automatic one folding would never stop.
   const forceFold = useRef(false);
 
   const filter = filterParam(filters);
 
   const load = useCallback(
     async (signal: AbortSignal): Promise<boolean> => {
-      if (!running) return true; // ワークスペース停止中は叩かない（起動後に deps で再実行）
-      // now はリクエスト時刻で固定する（3本の系列が別々の "今" を見ないように）。
+      if (!running) return true; // no calls while the workspace is stopped; deps re-run on start
+      // Pin now to the request time so the three series do not each see a different "now".
       const { from, to, bucket } = rangeOf(hours, new Date());
       const fold = forceFold.current ? ("force" as const) : undefined;
       const common = { from, to, filter: filter || undefined, fold };
@@ -164,11 +173,13 @@ export function UsageView() {
         fetchUsageSeries({ ...common, by: "kind", split: "model" }, signal),
       ]);
       if (signal.aborted) return true;
-      // 過渡的な 502（ワークスペース起動直後に CP が返す）は再試行に回す。ここで
-      // 空データを確定させると、エージェントが上がっても「記録なし」のまま固まる。
+      // A transient 502, which the CP returns right after the workspace starts, goes to retry.
+      // Settling on empty data here would freeze the view at "no records" even once the agent is
+      // up.
       if (isTransientErr(a) || isTransientErr(b) || isTransientErr(c)) return false;
-      // ここから先は終端（成功でも本物のエラーでも）— force は消費済みにする。再試行に
-      // 回した分では消さない（502 で消すと、押した再取得がスロットルに当たって空振りする）。
+      // From here the request is terminal, success or a real error, so force is spent. It is not
+      // cleared on a retry: clearing it on a 502 would make the reload the user pressed hit the
+      // throttle and do nothing.
       forceFold.current = false;
       const bad = [a, b, c].find((r) => (r as { error?: unknown })?.error);
       if (bad) {
@@ -189,8 +200,9 @@ export function UsageView() {
   );
   useRetryLoad(load, [running, hours, by, filter, reloadTick, foldTick]);
 
-  // 折り込みが終わるまでの自動再取得。上限を置くのは、サーバが何かの理由で folding を
-  // 落とし損ねた時に永久ポーリングへ落ちないため（止まった先は「再取得」が救う）。
+  // Automatic refetch until folding finishes. The cap exists so that a server which for any
+  // reason fails to clear folding cannot turn this into endless polling; reload recovers from
+  // where it stops.
   useEffect(() => {
     if (!folding) {
       foldTries.current = 0;
@@ -210,8 +222,8 @@ export function UsageView() {
     setReloadTick((n) => n + 1);
   };
 
-  // 内訳は matrix から起こす（追加リクエスト無し）: 機能別 = 行合計、モデル別 = 列合計、
-  // エージェント別 = kind×model の行合計。
+  // The breakdowns come from the matrices, with no extra request: by feature = row totals, by
+  // model = column totals, by agent = the row totals of kind x model.
   const featTotals = useMemo(() => matrixTotals(featModel, "row"), [featModel]);
   const modelTotals = useMemo(() => matrixTotals(featModel, "col"), [featModel]);
   const kindTotals = useMemo(() => matrixTotals(kindModel, "row"), [kindModel]);
@@ -233,7 +245,8 @@ export function UsageView() {
   };
   const isFiltered = (dim: string, value: string) => filters.some((f) => f.dim === dim && f.value === value);
 
-  // 「その他」は実体ではないので、畳まれた実キー全部の OR へ展開して絞る（series.ts）。
+  // "other" is not an entity, so filtering on it expands to an OR over every folded real key
+  // (series.ts).
   const pickSeries = (dim: string, value: string, folded: string[]) =>
     value === OTHER_KEY
       ? setFilters((cur) => toggleFoldedFilter(cur, dim, folded))
@@ -259,8 +272,8 @@ export function UsageView() {
     <div className="usage-board">
       <p className="muted ds-note">{tr("usage.intro")}</p>
 
-      {/* フィルタは1行に集約し、下の全チャート・表を同じスライスで再描画する
-          （dataviz: チャートごとのフィルタは作らない）。 */}
+      {/* Filters live on one row and redraw every chart and table below from the same slice
+          (dataviz: never a per-chart filter). */}
       <div className="usage-controls">
         <div className="uc-group" role="group" aria-label={tr("usage.range_label")}>
           {RANGES.map((r) => (
@@ -298,8 +311,8 @@ export function UsageView() {
         <button type="button" className="ghost uc-reload" onClick={reload}>
           <Icon name="refresh" /> {tr("usage.reload")}
         </button>
-        {/* 折り込み中である事実を出す。黙って古い数字を見せると「反映されない」になり、
-            利用者は再取得を連打する（それが直前までの挙動だった）。 */}
+        {/* Say that folding is in progress. Showing stale numbers silently reads as "it never
+            updates" and makes users hammer reload. */}
         {folding && (
           <span className="uc-folding muted" title={tr("usage.folding_hint")}>
             <Icon name="sync" spin /> {tr("usage.folding")}
@@ -438,7 +451,7 @@ export function UsageView() {
   );
 }
 
-// 粒度ごとの表示バケット数（rtk は全履歴を返すので末尾だけ描く）。
+// How many buckets to show per grain; rtk returns the whole history, so only the tail is drawn.
 const RTK_MODES = [
   { mode: "daily", n: 30, key: "usage.rtk_daily" },
   { mode: "weekly", n: 26, key: "usage.rtk_weekly" },
@@ -446,15 +459,16 @@ const RTK_MODES = [
 ] as const;
 type RtkMode = (typeof RTK_MODES)[number]["mode"];
 
-// rtk の日付は素の "YYYY-MM-DD" / "YYYY-MM"（タイムゾーン無し）。Date に文字列のまま
-// 渡すと UTC 深夜扱いになり、負オフセットのロケールで前日／前月にずれるので、ローカル
-// 日付として手で組む。
+// rtk dates are bare "YYYY-MM-DD" / "YYYY-MM" with no timezone. Handing the string straight to
+// Date treats it as UTC midnight, which shifts to the previous day or month in a negative-offset
+// locale, so build it as a local date instead.
 const rtkDate = (s: string): Date => {
   const [y, m, d] = s.split("-").map(Number);
   return new Date(y || 1970, (m || 1) - 1, d || 1);
 };
 
-/** バケットの軸ラベル。long はツールチップ／表の行見出し用（月次は年も出す）。 */
+/** Axis label for a bucket. `long` is for the tooltip and table row heading; monthly also shows
+ * the year. */
 const rtkBucketLabel = (b: RtkGainBucket, mode: RtkMode, long = false): string => {
   if (mode === "monthly")
     return fmtDateTime(rtkDate(b.month || ""), long ? { year: "numeric", month: "short" } : { month: "short" });
@@ -462,7 +476,7 @@ const rtkBucketLabel = (b: RtkGainBucket, mode: RtkMode, long = false): string =
   return fmtDateTime(t, { month: "numeric", day: "numeric" });
 };
 
-/** 実行時間の短い表示（ms→s→m→h）。トークンではないので fmtTok は使わない。 */
+/** Short duration display (ms to s to m to h). Not tokens, so not fmtTok. */
 const fmtDur = (ms: number): string => {
   if (!isFinite(ms) || ms <= 0) return "—";
   if (ms < 1000) return Math.round(ms) + "ms";
@@ -471,14 +485,16 @@ const fmtDur = (ms: number): string => {
   return (ms / 3_600_000).toFixed(1) + "h";
 };
 
-// RtkGainCard — rtk 効果（トークン節約）。台帳とは別系のコンテナ内計測（api.ts の
-// fetchRtkGain 参照）で、ヘッドライン数値は全期間の累積。上の期間プリセット／フィルタ
-// には連動せず、代わりに rtk が持つ粒度（日次/週次/月次）を自前のセグメントで切り替える
-// （再読込ボタンだけ共有）。設定 > エージェントの RTK トグルの「結果」側 — かつて設定
-// タブに居たが、監視は設定ではないのでダッシュボードのここに一枚で置く。
-// rtk 不在・エラー・節約ゼロは丸ごと自己非表示（WsBar チップ時代からの約束）。
-// 節約は正の値・単一系列なので、リソースの warn/crit ではなくアクセント1色で塗り、
-// 凡例は置かない（タイトルが系列名）。値はツールチップと表ビューの両方で読める。
+// RtkGainCard — the rtk savings card ("rtk 効果"). A separate lineage from the ledger: an
+// in-container measurement (see fetchRtkGain in api.ts) whose headline number is the all-time
+// total. It does not follow the range presets or filters above; it switches rtk's own grains
+// (daily / weekly / monthly) with its own segmented control, sharing only the reload button. It
+// is the result side of the RTK toggle in Settings > Agents, and lives on the dashboard rather
+// than in settings because monitoring is not configuration.
+// A missing rtk, an error, or zero savings hides the whole card.
+// Savings are positive and a single series, so they are painted in one accent colour rather than
+// the resource warn/crit palette, and carry no legend (the title is the series name). The values
+// are readable both in the tooltip and in the table view.
 function RtkGainCard({ reloadTick }: { reloadTick: number }) {
   const tr = useT();
   const [gain, setGain] = useState<RtkGain | null>(null);
@@ -487,7 +503,7 @@ function RtkGainCard({ reloadTick }: { reloadTick: number }) {
   const load = useCallback(async (signal: AbortSignal): Promise<boolean> => {
     const r = await fetchRtkGain(signal);
     if (signal.aborted) return true;
-    if (isTransientErr(r)) return false; // WS 起動直後の 502 は retryLoad に回す
+    if (isTransientErr(r)) return false; // a 502 right after workspace start goes to retryLoad
     setGain(r as RtkGain);
     return true;
   }, []);
@@ -497,7 +513,7 @@ function RtkGainCard({ reloadTick }: { reloadTick: number }) {
   const saved = s?.total_saved || 0;
   if (!s || saved <= 0) return null;
   const pct = Math.round(s.avg_savings_pct || 0);
-  // 古い Agent は daily しか返さない — 実際にデータのある粒度だけセグメントに出す。
+  // An older Agent returns only daily, so the control offers just the grains that have data.
   const modes = RTK_MODES.filter((m) => (gain?.[m.mode] || []).length > 0);
   const cur = modes.some((m) => m.mode === mode) ? mode : "daily";
   const curN = RTK_MODES.find((m) => m.mode === cur)?.n || 30;
@@ -570,9 +586,10 @@ function RtkGainCard({ reloadTick }: { reloadTick: number }) {
   );
 }
 
-// StackChart と同じ .ux-* の絵柄・ホバー・ラベル間引きを、単一系列（節約トークン）用に
-// 薄く焼き直したもの。共有部品化しないのは、あちらのツールチップが「系列の内訳」で
-// こちらは「同一バケットの別指標（節約率・コマンド数）」だから — 形が違う。
+// The same .ux-* look, hover and label thinning as StackChart, redone thinly for a single series
+// (saved tokens). It is not shared because the tooltips differ in shape: StackChart's breaks a
+// bucket down by series, this one shows other metrics of the same bucket (savings rate, command
+// count).
 function RtkChart({ buckets, mode }: { buckets: RtkGainBucket[]; mode: RtkMode }) {
   const tr = useT();
   const [hover, setHover] = useState<number | null>(null);
@@ -625,8 +642,8 @@ function RtkChart({ buckets, mode }: { buckets: RtkGainBucket[]; mode: RtkMode }
                   }}
                 />
               </span>
-              {/* 間引いた目盛りは NBSP(" ")。普通の空白だと潰れて tick が高さ 0 になり、
-                  .ux-cols の align-items:flex-end で列ごと基線より下に沈む（実バグ）。 */}
+              {/* A thinned tick is an NBSP. An ordinary space collapses, the tick gets height 0,
+                  and align-items:flex-end on .ux-cols drops the whole column below the baseline. */}
               <span className="ux-tick muted">{i % stride === 0 ? rtkBucketLabel(b, mode) : "\u00A0"}</span>
             </button>
           ))}
@@ -690,7 +707,8 @@ function RtkTable({ buckets, mode }: { buckets: RtkGainBucket[]; mode: RtkMode }
   );
 }
 
-/** matrix から行合計 / 列合計を起こす（内訳バー用。追加リクエストを撃たないため）。 */
+/** Row or column totals derived from a matrix, for the breakdown bars, so no extra request is
+ * fired. */
 function matrixTotals(s: UsageSeries | null, axis: "row" | "col"): Map<string, UsageAgg> {
   const m = new Map<string, UsageAgg>();
   const add = (k: string, a: UsageAgg) => {
@@ -718,12 +736,13 @@ function matrixTotals(s: UsageSeries | null, axis: "row" | "col"): Map<string, U
 
 // --- KPI ---------------------------------------------------------------------
 
-// 主指標 spend を大きく、cache_read とコストは併記（別軸のグラフは作らない — 2軸は
-// 相関を捏造するので dataviz の禁じ手）。未計測は独立したタイルで、0 と混ざらない位置に。
+// The primary metric spend is large, with cache_read and cost beside it. No second-axis chart:
+// dataviz forbids dual axes because they fabricate correlation. Unmeasured gets its own tile,
+// positioned where it cannot blend into a zero.
 function KpiRow({ totals, unmeasured }: { totals: UsageAgg | undefined; unmeasured: number }) {
   const tr = useT();
   const t = totals;
-  // 実測は消さずに併記する（推定の答え合わせになる唯一の値）。足し算はしない。
+  // The measured value is kept alongside, never added: it is the only check on the estimate.
   const measured = t?.cost_usd || 0;
   const costTitle =
     tr("usage.kpi_cost_hint") + (measured > 0 ? "\n" + tr("usage.cost_measured", { v: fmtUSD(measured) }) : "");
@@ -753,7 +772,7 @@ function KpiRow({ totals, unmeasured }: { totals: UsageAgg | undefined; unmeasur
   );
 }
 
-// --- 積み上げ棒（時系列） -----------------------------------------------------
+// --- Stacked bars (time series) ----------------------------------------------
 
 interface ChartProps {
   stack: ReturnType<typeof stackModel>;
@@ -765,10 +784,10 @@ interface ChartProps {
 const bucketLabel = (t: string, bucket: string): string =>
   bucket === "hour" ? fmtDateTime(t, TIME_HM) : fmtDateTime(t, { month: "numeric", day: "numeric" });
 
-// 目盛りは 0 / 中間 / 上端の3本だけ（グリッドは1px実線・背景から1段だけ浮かせる）。
-// 上端は「きりの良い数」に丸めるが、刻みを細かめに持つ（1,2,2.5,3,4,5,8,10）。粗い梯子だと
-// 最大 3.3M が 5M に飛んで棒が縦半分しか使えず、日々の差が読みにくくなる。
-// 半分の値も同時に目盛りになるので、割って汚くならない数だけを選んである。
+// Only three gridlines: 0, midpoint and top (1px solid, one step off the background). The top is
+// rounded to a nice number, but on a fine ladder (1, 2, 2.5, 3, 4, 5, 8, 10). A coarse ladder
+// jumps a 3.3M maximum to 5M, leaving the bars only half the height and hiding day-to-day
+// differences. Half the top is also a gridline, so only numbers that halve cleanly are listed.
 function niceMax(v: number): number {
   if (v <= 0) return 1;
   const pow = Math.pow(10, Math.floor(Math.log10(v)));
@@ -783,9 +802,10 @@ function StackChart({ stack, by, metric, bucket }: ChartProps) {
   const top = niceMax(stack.max);
   const rows = stack.rows;
 
-  // 目盛りラベルの間引き。狭い幅（スマホ・ペイン）で 11本や 24本の日付を全部書くと
-  // 文字が重なって読めなくなるので、幅を実測して n 本おきに出す。棒そのものは全部描く
-  // （値はツールチップと表ビューで読める＝ラベルを間引いてもデータは隠れない）。
+  // Thinning of the tick labels. At a narrow width (phone, pane) writing all 11 or 24 dates
+  // overlaps them into illegibility, so the width is measured and every nth label is drawn. Every
+  // bar is still drawn, and the values stay readable in the tooltip and the table view, so
+  // thinning labels hides no data.
   const plotRef = useRef<HTMLDivElement>(null);
   const [plotW, setPlotW] = useState(0);
   useEffect(() => {
@@ -817,7 +837,8 @@ function StackChart({ stack, by, metric, bucket }: ChartProps) {
               key={row.t}
               type="button"
               className={"ux-col" + (hover === i ? " on" : "")}
-              // ツールチップは補助。同じ値は「表」ビューでも読める（色/ホバー任せにしない）。
+              // The tooltip is a supplement; the same values are in the table view, so nothing
+              // depends on colour or hover alone.
               onMouseEnter={() => setHover(i)}
               onMouseLeave={() => setHover((h) => (h === i ? null : h))}
               onFocus={() => setHover(i)}
@@ -869,10 +890,10 @@ function StackChart({ stack, by, metric, bucket }: ChartProps) {
   );
 }
 
-// 凡例は2系列以上、**または畳み込みがある時**に出す（色だけに identity を持たせない）。
-// 畳みがあるのに凡例を隠すと「名前のないグレーの棒」だけが残り、何の消費か読めなくなる
-// （色スロットを持たない feature が1つだけ出た時にまさにこれが起きていた）。
-// クリックでその系列に絞る — 「その他」は畳まれた実キー全部の OR で絞る。
+// The legend appears with two or more series, or whenever anything is folded, so identity is
+// never carried by colour alone. Hiding it while something is folded leaves an unnamed grey bar
+// and no way to tell what was consumed. Clicking filters to that series; "other" filters on an OR
+// over every folded real key.
 export function Legend({
   stack,
   by,
@@ -908,7 +929,8 @@ export function Legend({
   );
 }
 
-// 表ビュー: グラフと同じ値を色抜きで読める WCAG 上の双子（ツールチップに値を閉じ込めない）。
+// Table view: the WCAG twin of the chart, giving the same values without colour, so no value is
+// locked inside a tooltip.
 function SeriesTable({ stack, by, metric, bucket }: ChartProps) {
   const tr = useT();
   const keys = stack.legend.map((l) => l.key);
@@ -945,7 +967,7 @@ function SeriesTable({ stack, by, metric, bucket }: ChartProps) {
   );
 }
 
-// --- 内訳（横棒） -------------------------------------------------------------
+// --- Breakdown (horizontal bars) ---------------------------------------------
 
 function Breakdown({
   title,
@@ -988,7 +1010,8 @@ function Breakdown({
                   style={{ width: `${(r.frac * 100).toFixed(2)}%`, background: r.color }}
                 />
               </span>
-              {/* 値は直接ラベル（明色スロットのコントラスト不足に対する relief でもある）。 */}
+              {/* Label the value directly; this also relieves the weak contrast of the light
+                  slots. */}
               <span className="ubd-val">{fmtMetric(metric, r.value)}</span>
             </button>
           ))}
@@ -998,10 +1021,11 @@ function Breakdown({
   );
 }
 
-// --- 機能 × モデルの表 --------------------------------------------------------
+// --- The feature x model table -----------------------------------------------
 
-// docs/log/46 §2-b の本命ビュー。「この機能はどのモデルで走っているか」— 補助呼び出しが
-// CLI 既定のフラッグシップに流れていれば、ここに calls と平均で出る。
+// The view docs/log/46 §2-b was really after: which model each feature runs on. If auxiliary
+// calls are going to the CLI's default flagship, it shows here in the call count and the
+// average.
 function MatrixTable({ src, rowDim }: { src: UsageSeries | null; rowDim: string }) {
   const tr = useT();
   const rows = useMemo(() => matrixRows(src?.matrix), [src]);
@@ -1029,17 +1053,18 @@ function MatrixTable({ src, rowDim }: { src: UsageSeries | null; rowDim: string 
                   </th>
                 )}
                 <td>{dimLabel("model", c.key)}</td>
-                {/* 1呼び出しが複数モデルに割れた時、回数は最も消費したモデル1行にだけ付く
-                    （サーバ側 aggregateUsageRows）。0 回・消費ありの行はその相方なので、
-                    「1回あたり」を 0 と書かずに — を出し、理由をツールチップに置く。 */}
+                {/* When one call splits across models, the count lands on the single row of the
+                    model that consumed most (aggregateUsageRows, server side). A row with 0 calls
+                    but non-zero spend is its counterpart, so per-call shows "—" rather than 0,
+                    with the reason in the tooltip. */}
                 <td className="num" title={c.agg.calls === 0 && c.agg.spend > 0 ? tr("usage.calls_shared") : undefined}>
                   {fmtNum(c.agg.calls)}
                 </td>
                 <td className="num">{fmtTok(c.agg.spend)}</td>
                 <td className="num">{c.agg.calls > 0 ? fmtTok(Math.round(perCall(c.agg))) : "—"}</td>
-                {/* 推定額。単価表に無いモデルは 0 ではなく「—」＋理由をツールチップに置く
-                    （0 と「値付けできない」を混同させない）。使った単価と出所、実測が
-                    あればそれも同じツールチップに積む。 */}
+                {/* The estimate. A model missing from the price table shows "—" and not 0, with
+                    the reason in the tooltip, so zero is never confused with unpriceable. The
+                    unit price, its source and any measured value go in the same tooltip. */}
                 <td className="num" title={costCellTitle(c.agg, src?.prices?.[c.key], tr)}>
                   {fmtUSDEst(c.agg.cost_est_usd || 0)}
                 </td>
@@ -1052,10 +1077,10 @@ function MatrixTable({ src, rowDim }: { src: UsageSeries | null; rowDim: string 
   );
 }
 
-// --- 未計測バナー -------------------------------------------------------------
+// --- Coverage banner ---------------------------------------------------------
 
-// coverage はサーバが観測データから起こす。ここで文言を手書きしない（手書きの表は
-// エージェントが増えた瞬間にドリフトする）。
+// The server derives coverage from the observed data. Never hand-write the wording here: a
+// hand-written table drifts the moment another agent is added.
 function CoverageBanner({
   notes,
   unmeasured,
@@ -1070,8 +1095,8 @@ function CoverageBanner({
   catalog: UsageCatalog | undefined;
 }) {
   const tr = useT();
-  // 推定額をいくらぶんの消費から起こせたか。値付けできない分を黙っていると、
-  // 「≈$41」が全消費ぶんの金額として読まれる。
+  // How much of the consumption the estimate could be derived from. Staying silent about the
+  // unpriceable part makes "≈$41" read as the amount for everything.
   const unpricedPct = priced + unpriced > 0 ? Math.round((unpriced / (priced + unpriced)) * 100) : 0;
   if (!notes.length && unmeasured === 0 && unpriced === 0 && !catalog) return null;
   return (
@@ -1082,8 +1107,8 @@ function CoverageBanner({
         </h4>
       </div>
       {unmeasured > 0 && <p className="uc-sub">{tr("usage.coverage_unmeasured", { n: fmtNum(unmeasured) })}</p>}
-      {/* 四捨五入で 0% になる端数を「消費の 0% は…」と書くと自己矛盾した注記になるので、
-          1% 未満は専用の言い方にする（実データで踏んだ: 57k / 34.1M）。 */}
+      {/* A fraction that rounds to 0% would give the self-contradictory "0% of consumption is
+          ...", so anything below 1% gets its own wording (seen on real data: 57k / 34.1M). */}
       {unpriced > 0 && (
         <p className="uc-sub">
           {unpricedPct >= 1
@@ -1091,8 +1116,9 @@ function CoverageBanner({
             : tr("usage.coverage_unpriced_sub1", { n: fmtTok(unpriced) })}
         </p>
       )}
-      {/* カタログの取得日を必ず出す。推定額は保存していないので、カタログが更新されると
-          過去の金額も変わる —— どの時点の単価かを言わずに額だけ動かすのは黙って嘘に近い。 */}
+      {/* Always show when the catalogue was fetched: estimates are not stored, so a catalogue
+          update changes past amounts too, and moving the amounts without saying which prices
+          they came from is close to lying silently. */}
       {catalog && (
         <p className="uc-sub" title={tMaybe("usage.catalog_origin_" + catalog.origin) ?? undefined}>
           {tr("usage.catalog_note", {

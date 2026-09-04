@@ -1,9 +1,9 @@
-// File ペインが `.drawio` をどう出すか（docs/log/65 §65.4）。
+// How the File pane presents a `.drawio` file (docs/log/65 §65.4).
 //
-// 描画そのものは jsdom では確かめられない（iframe の中のスクリプトは走らない）。
-// ここで守るのは「どの面が出るか」と「iframe の権限」——後者は実ブラウザでも
-// 見えにくいのに、緩めた瞬間に隔離が全部無くなる種類の設定。
-// 図が実際に描けることは scripts/drawio/check.mjs が実ブラウザで見る。
+// Rendering itself cannot be checked in jsdom (scripts inside an iframe never run). What is
+// guarded here is which surface appears and what the iframe is allowed to do; the latter is hard
+// to see even in a real browser, yet loosening it removes the isolation entirely.
+// That a diagram actually draws is checked by scripts/drawio/check.mjs in a real browser.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -33,8 +33,9 @@ vi.mock("../../core/api/client.ts", () => ({
   downloadURL: (p: string) => `/dl/${p}`,
   isTransientErr: () => false,
   errText: (e: unknown) => String(e),
-  // **恒等関数にしない。** rel() を通したかどうかを判定できなくなる（素の相対パスでも
-  // 同じ文字列になり、パスを剥がすプロキシ下で壊れる実装が緑のまま通る）。
+  // Never make this the identity function: it would stop the test telling whether rel() was
+  // applied (a bare relative path yields the same string, so an implementation that breaks under
+  // a path-stripping proxy stays green).
   rel: (p: string) => `/agent-fleet/${p}`,
 }));
 
@@ -58,8 +59,8 @@ async function render(props: { filePath?: string; targetLine?: number; openMode?
 }
 
 const frame = () => host.querySelector("iframe.drawio-frame") as HTMLIFrameElement | null;
-// 図の面が「見えているか」。畳んだときは外さず hidden にするだけなので、
-// 要素の有無ではなく hidden で見る（作り直すと 4MB を読み直すため）。
+// Whether the diagram surface is visible. Collapsing hides it rather than unmounting it, so
+// check `hidden` and not the element's presence (rebuilding would refetch 4 MB).
 const diagramVisible = () => {
   const shell = host.querySelector(".file-diagram-shell");
   return !!shell && !shell.hasAttribute("hidden");
@@ -101,8 +102,8 @@ afterEach(() => {
   clearDirtyRegistryForTests();
 });
 
-describe(".drawio の面", () => {
-  it("図として開き、Markdown の 3 モード群も view/edit タブも出さない", async () => {
+describe("the .drawio surface", () => {
+  it("opens as a diagram, with neither the Markdown mode group nor the view/edit tabs", async () => {
     await render();
     expect(frame()).not.toBeNull();
     expect(groupButtons("Diagram display mode")).toEqual(["Diagram", "Edit"]);
@@ -110,72 +111,73 @@ describe(".drawio の面", () => {
     expect(host.querySelector('[role="tablist"]')).toBeNull();
   });
 
-  it("iframe には allow-scripts しか与えない", async () => {
+  it("grants the iframe nothing but allow-scripts", async () => {
     await render();
-    // allow-same-origin を足すと Console と同じ権限になり、allow-popups を足すと
-    // lightbox の window.open（図面を app.diagrams.net へ渡す）が通る。
+    // allow-same-origin would give it the Console's own privileges, and allow-popups would let
+    // the lightbox's window.open through, handing the drawing to app.diagrams.net.
     expect(frame()!.getAttribute("sandbox")).toBe("allow-scripts");
   });
 
-  it("図は fs/file ではなく download から取る（2 MiB の打ち切りを避ける）", async () => {
+  it("fetches the diagram from download, not fs/file, to avoid the 2 MiB truncation", async () => {
     await render();
     expect(fetched).toEqual(["/dl/repos/x/design.drawio"]);
   });
 
-  it("本文が打ち切られていても図の面は出る", async () => {
+  it("still shows the diagram surface when the content was truncated", async () => {
     served = { content: "(file too large to preview)", editable: false, truncated: true };
     await render();
     expect(frame()).not.toBeNull();
-    // 編集面が無いので、もう一方は読み取り専用の「ソース」と名乗る。
+    // With no editing surface, the other mode calls itself read-only "Source".
     expect(groupButtons("Diagram display mode")).toEqual(["Diagram", "Source"]);
   });
 
-  it("ソース面へ切り替えると図を畳んで編集面を出す（フレームは残す）", async () => {
+  it("switching to the source surface collapses the diagram and shows the editor, keeping the frame", async () => {
     await render();
     expect(diagramVisible()).toBe(true);
     expect(editorVisible()).toBe(false);
     clickMode("Edit");
     expect(diagramVisible()).toBe(false);
     expect(editorVisible()).toBe(true);
-    // 畳んでも作り直さない: 4MB の読み直しとズーム位置の消失を避ける。
+    // Collapsing never rebuilds it: that would refetch 4 MB and lose the zoom position.
     expect(frame()).not.toBeNull();
   });
 
-  it("行を指して開いた引用はソース面に着地し、図はまだ作らない", async () => {
+  it("a citation naming a line lands on the source surface and does not build the diagram yet", async () => {
     await render({ targetLine: 3 });
-    // 一度も図を見ていないうちは取得もしない。
+    // Nothing is fetched before the diagram has been shown once.
     expect(frame()).toBeNull();
     expect(fetched).toEqual([]);
     expect(editorVisible()).toBe(true);
   });
 
-  it("mxfile を収めた .xml も図として開く", async () => {
+  it("opens an .xml holding an mxfile as a diagram too", async () => {
     await render({ filePath: "repos/x/diagram.xml" });
     expect(frame()).not.toBeNull();
   });
 
-  it("図には朗読を出さない（読み上げる本文が無い）", async () => {
+  it("offers no reader on a diagram, since there is no prose to read out", async () => {
     await render();
     const labels = [...host.querySelectorAll("button")].map((b) => b.textContent);
     expect(labels.some((l) => l?.includes("Read aloud"))).toBe(false);
   });
 
-  it("ただの .xml は今までどおりソースのまま", async () => {
+  it("leaves a plain .xml on the source surface as before", async () => {
     served = { content: "<project><modelVersion>4.0.0</modelVersion></project>", editable: true, truncated: false };
     await render({ filePath: "repos/x/pom.xml" });
     expect(frame()).toBeNull();
     expect(groupButtons("Diagram display mode")).toBeNull();
     expect(host.querySelector('[role="tablist"]')).not.toBeNull();
-    // 図でないテキストからは朗読を取り上げない（外す条件が広すぎないことの確認）。
+    // Non-diagram text keeps its reader; this checks the removal condition is not too broad.
     const labels = [...host.querySelectorAll("button")].map((b) => b.textContent);
     expect(labels.some((l) => l?.includes("Read aloud"))).toBe(true);
   });
 });
 
-// ── フレームとの手順（docs/log/65 §65.11-7・§65.11-8）───────────────────────────
-// jsdom は srcdoc の中のスクリプトを走らせないので、フレームの発言はこちらで作る。
-// ここで守るのは「親が何を、いつ送るか」——実機だけで壊れた 2 件の再発防止。
-describe("フレームとの手順", () => {
+// ── The protocol with the frame (docs/log/65 §65.11-7, §65.11-8) ─────────────────────────────
+// jsdom never runs the scripts inside a srcdoc, so the frame's messages are synthesised here.
+// What is guarded is what the parent sends and when: a regression guard for two failures that
+// only ever appeared in a real browser.
+describe("the protocol with the frame", () => {
   const fromFrame = (data: Record<string, unknown>) => {
     const win = frame()!.contentWindow!;
     act(() => {
@@ -190,11 +192,11 @@ describe("フレームとの手順", () => {
     vi.spyOn(frame()!.contentWindow!, "postMessage").mockImplementation(() => {});
   };
 
-  it("ready を待ってからビューア本体を渡し、booted を待って描画を頼む", async () => {
+  it("waits for ready before handing over the viewer, and for booted before asking to render", async () => {
     await render();
     spyOnFrame();
-    // 作った直後には何も送らない: srcdoc の文書ができる前に送るとメッセージは
-    // 初期の about:blank に配達されて消える（実測）。
+    // Nothing is sent right after creation: measured, a message sent before the srcdoc document
+    // exists is delivered to the initial about:blank and lost.
     expect(posts()).toEqual([]);
 
     fromFrame({ t: "ready" });
@@ -202,7 +204,7 @@ describe("フレームとの手順", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    // ビューアは **親が** 取る（フレームからでは Lax cookie が付かず 401 になる）。
+    // The parent fetches the viewer: from the frame no Lax cookie is attached and it gets a 401.
     expect(fetched.some((u) => u.includes("viewer-static"))).toBe(true);
     expect(posts().map((m) => m.t)).toEqual(["boot"]);
     expect(posts()[0].src).toBe(VIEWER_SRC);
@@ -212,19 +214,19 @@ describe("フレームとの手順", () => {
     expect(posts()[1].xml).toBe(DIAGRAM);
   });
 
-  it("ステンシルはフレームの申告を受けて親が CP から取り、中身を返す", async () => {
+  it("fetches stencils from the CP in the parent on the frame's request and returns the contents", async () => {
     await render();
     spyOnFrame();
     fetched = [];
-    // フレームは「これが要る」としか言わない。**取りに行くのは親**（フレームからでは
-    // オリジンが無く Lax cookie が付かないので authGate に 401 で弾かれる）。
+    // The frame only declares what it needs; the parent does the fetching. From the frame there
+    // is no origin, so no Lax cookie is attached and authGate rejects it with a 401.
     fromFrame({ t: "stencils", sets: ["aws4.xml", "rack/general.xml"] });
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    // **rel() を通すこと。** 素の相対パスは文書 URL に対して解決されるので、
-    // パスを剥がすプロキシの下や `/open/...` の深い URL で行き先がずれる。
+    // Always go through rel(): a bare relative path resolves against the document URL, so it
+    // points somewhere else under a path-stripping proxy or on a deep `/open/...` URL.
     expect(fetched).toEqual([
       "/agent-fleet/api/drawio/stencils/aws4.xml",
       "/agent-fleet/api/drawio/stencils/rack/general.xml",
@@ -234,7 +236,7 @@ describe("フレームとの手順", () => {
     expect((back[0].xml as string[]).length).toBe(2);
   });
 
-  it("ステンシルが取れなくても図はそのまま（エラーにしない）", async () => {
+  it("leaves the diagram as it is when stencils cannot be fetched, without raising an error", async () => {
     await render();
     spyOnFrame();
     vi.stubGlobal("fetch", () => Promise.resolve({ ok: false, status: 502, text: async () => "" } as Response));
@@ -243,19 +245,19 @@ describe("フレームとの手順", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    // 閉域では図案だけが空になり、枠と色は残る。**図は正しく開けているのだから、
-    // 利用者に見せる異常ではない** —— 画面には何も出さない。
+    // On a closed network only the shape art is empty; frames and colours remain. The diagram
+    // opened correctly, so this is not a fault to show the user: nothing appears on screen.
     expect(host.textContent).not.toContain("stencil");
     expect(frame()!.hidden).toBe(false);
-    // ただしフレームには「取れなかった」と伝える。**伝えないと、upstream の 1 回の
-    // 瞬断でそのペインの寿命いっぱいアイコンが欠ける**（頼んだ済みのまま固定される）。
+    // The frame is still told the fetch failed. Without that, a single upstream blip leaves the
+    // icons missing for the whole life of the pane, stuck in the "already requested" state.
     const back = posts().filter((m) => m.t === "stencils");
     expect(back).toHaveLength(1);
     expect(back[0].xml).toEqual([]);
     expect(back[0].missing).toEqual(["aws4.xml"]);
   });
 
-  it("ビューアを読み込めなかったときに「図が壊れている」と言わない", async () => {
+  it("does not claim the diagram is broken when the viewer failed to load", async () => {
     await render();
     spyOnFrame();
     fromFrame({ t: "error", code: "boot" });
@@ -264,7 +266,7 @@ describe("フレームとの手順", () => {
     expect(note).not.toContain("not readable as drawio");
   });
 
-  it("図として読めないときはそのまま伝える", async () => {
+  it("says so plainly when the file is not readable as a diagram", async () => {
     await render();
     spyOnFrame();
     fromFrame({ t: "error", code: "parse" });
@@ -272,11 +274,12 @@ describe("フレームとの手順", () => {
   });
 });
 
-// ── テーマ切り替え（docs/log/65 §65.11-12）─────────────────────────────────────
-// drawio は 1 つの文書内でのテーマ往復を想定していない（実測: 同じフレームに描き直しを
-// 頼むと見出しが消え、ラベルはライト時の白いピル＋黒文字のまま残る）。**フレームごと
-// 作り直し、見ていた場所を引き継ぐ**のが契約で、ここではその配線を見る。
-describe("テーマ切り替え", () => {
+// ── Theme switching (docs/log/65 §65.11-12) ──────────────────────────────────────────────────
+// drawio does not support switching theme back and forth within one document. Measured: asking
+// the same frame to redraw loses the headings and leaves labels as the light theme's white pills
+// with black text. The contract is to rebuild the whole frame and carry the viewing position
+// over; this checks that wiring.
+describe("theme switching", () => {
   const mount = async (dark: boolean) => {
     await act(async () => {
       root!.render(<DrawioView filePath="repos/x/design.drawio" dark={dark} />);
@@ -304,15 +307,15 @@ describe("テーマ切り替え", () => {
     });
   };
 
-  it("テーマが変わったらフレームを作り直し、ページと倍率を引き継ぐ", async () => {
+  it("rebuilds the frame on a theme change and carries the page and zoom over", async () => {
     await mount(false);
     const first = frameEl();
     await drive(first);
     expect(postsOf(first).map((m) => m.t)).toEqual(["boot", "render"]);
-    // 最初の描画には引き継ぐものが無い。
+    // The first render has nothing to carry over.
     expect(postsOf(first)[1].restore).toBeNull();
 
-    // 利用者が拡大して 2 ページ目を見ている状態をフレームから伝える。
+    // The frame reports that the user has zoomed in and is looking at page 2.
     act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
@@ -322,19 +325,19 @@ describe("テーマ切り替え", () => {
       );
     });
 
-    // ダークへ切り替える。
+    // Switch to dark.
     await mount(true);
     const second = frameEl();
-    // **同じ要素を使い回さない**（作り直しが目的）。
+    // The element must not be reused; rebuilding it is the whole point.
     expect(second).not.toBe(first);
     await drive(second);
     const render = postsOf(second).find((m) => m.t === "render")!;
     expect(render.dark).toBe(true);
-    // 見ていた場所がそのまま渡る。ページは番号ではなく id で指す。
+    // The viewing position is passed on unchanged; the page is named by id, not by number.
     expect(render.restore).toEqual({ pageId: "p2", scale: 2.5, tx: 12, ty: 34, adjusted: true });
   });
 
-  it("自分で動かしていなければ復元させない（収まりのままにする）", async () => {
+  it("does not restore a position the user never adjusted, leaving it fitted", async () => {
     await mount(false);
     const first = frameEl();
     await drive(first);
@@ -350,7 +353,7 @@ describe("テーマ切り替え", () => {
     const second = frameEl();
     await drive(second);
     const render = postsOf(second).find((m) => m.t === "render")!;
-    // 渡しはするが adjusted=false なので、フレーム側は収め直しを選ぶ。
+    // It is still passed, but adjusted=false, so the frame chooses to fit again.
     expect((render.restore as { adjusted: boolean }).adjusted).toBe(false);
   });
 });

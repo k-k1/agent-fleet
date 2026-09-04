@@ -141,7 +141,8 @@ export function AssistantTurn({
           </span>
         )}
       </div>
-      {/* 作業過程（ツール応答）は最終回答の上に折りたたんで表示（既定は畳む・保持）。 */}
+      {/* The work trace (tool responses) sits collapsed above the final answer; collapsed by
+          default and kept, not discarded. */}
       {steps && steps.length > 0 && <ChatSteps steps={steps} />}
       <div className="chat-body" ref={bodyRef} onMouseUp={onMouseUp}>
         {text && <ChatMarkdown source={text} breaks />}

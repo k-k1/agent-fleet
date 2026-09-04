@@ -31,7 +31,7 @@ describe("stepSuggestCycle", () => {
     expect(c?.text).toBe("ok, やってみて");
     c = stepSuggestCycle(c, c!.text, CHIPS, false);
     expect(c?.text).toBe("ok cもいれよう");
-    c = stepSuggestCycle(c, c!.text, CHIPS, false); // 一周 → 打った文字へ戻る
+    c = stepSuggestCycle(c, c!.text, CHIPS, false); // full loop, back to the typed text
     expect(c?.text).toBe("ok");
     expect(c?.idx).toBe(0);
     c = stepSuggestCycle(c, c!.text, CHIPS, false);
@@ -46,8 +46,8 @@ describe("stepSuggestCycle", () => {
 
   it("freezes the candidate list, so cycling doesn't re-filter on the completed text", () => {
     const c1 = stepSuggestCycle(null, "ok", CHIPS, false)!;
-    // 入力欄は "ok, 進めて" になっている。ここで再計算すると候補は1件に狭まるが、凍結して
-    // いるので次の Tab は元の3件の2番目へ進む。
+    // The input now holds the first candidate. Recomputing here would narrow the list to one
+    // entry, but because it is frozen the next Tab moves to the second of the original three.
     const c2 = stepSuggestCycle(c1, c1.text, CHIPS, false)!;
     expect(c2.base).toBe("ok");
     expect(c2.items).toEqual(c1.items);
@@ -56,14 +56,14 @@ describe("stepSuggestCycle", () => {
 
   it("restarts when the draft was edited by hand", () => {
     const c1 = stepSuggestCycle(null, "ok", CHIPS, false)!;
-    const c2 = stepSuggestCycle(c1, "co", CHIPS, false)!; // 打ち直した
+    const c2 = stepSuggestCycle(c1, "co", CHIPS, false)!; // retyped
     expect(c2.base).toBe("co");
     expect(c2.text).toBe("commit して");
   });
 
   it("declines when there is nothing to complete", () => {
     expect(stepSuggestCycle(null, "zzz", CHIPS, false)).toBeNull();
-    expect(stepSuggestCycle(null, "", CHIPS, false)).toBeNull(); // 空入力は従来の Tab（チップへ）
+    expect(stepSuggestCycle(null, "", CHIPS, false)).toBeNull(); // empty input keeps the old Tab (focus the chips)
     expect(stepSuggestCycle(null, "   ", CHIPS, false)).toBeNull();
     expect(stepSuggestCycle(null, "ok\n2行目", CHIPS, false)).toBeNull();
     expect(stepSuggestCycle(null, "ok", [], false)).toBeNull();

@@ -1,7 +1,7 @@
 // FileView — a single file (read-only) with CodeLeaf-style affordances: info bar
 // (name / language / size / lines / truncation), syntax-highlighted code with a
 // gutter + minimap + git change bar, markdown preview/source/slides toggle,
-// image preview, and the selection → 送る pill (SendSelectionModal). Port of
+// image preview, and the selection send pill (「送る」, SendSelectionModal). Port of
 // views/FileView onto the zustand stores.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -98,8 +98,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const settings = useSettings();
   // wrap is the per-pane override; fall back to the global setting.
   const wrapOn = wrap === undefined || wrap === null ? settings.wrap : wrap;
-  // 中身と、開き直しで一緒にリセットされる表示状態（parts/useFileContent）。
-  // この面でいちばん先に走る effect 2 つ（linemarks / 読み込み）もここが持つ。
+  // Content plus the display state that resets with it on a reopen (parts/useFileContent).
+  // The two effects that run first in this view (linemarks / loading) live there too.
   const {
     data,
     setData,
@@ -115,15 +115,15 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     setPdfPages,
     marks,
   } = useFileContent(filePath);
-  // 表示位置の記憶（scrollMemory）。タブを切り替えて戻ってくると、この面は
-  // 丸ごと unmount されて中身も取り直しになる（PaneHost は選ばれた 1 枚しか
-  // 描かない）ので、読んでいた位置はコンポーネントの外に置く。面ごとに別の記憶。
+  // Scroll memory. Switching tabs and coming back unmounts this view entirely and refetches the
+  // content (PaneHost draws only the selected view), so the reading position is kept outside the
+  // component. One memory per view.
   const scrollMemory = useScrollMemory(scrollMemoryKey(paneId, filePath));
-  // 図の面が返す状態（ページ数・倍率）。ヘッダの表示にだけ使う。
+  // State reported back by the diagram view (page count, zoom); used only by the header.
   const [diagramState, setDiagramState] = useState<DrawioState | null>(null);
-  // 図の面は **一度出したら畳んでも外さない**（hidden にするだけ）。作り直すと 4MB の
-  // ビューアを読み直し、ズーム位置と開いていたページも失う。逆に一度も見ていない
-  // うちは作らない —— ソースだけ見て閉じる人に図の取得をさせない。
+  // Once shown, the diagram view is never unmounted, only hidden: rebuilding it reloads the 4 MB
+  // viewer and loses the zoom and the open page. It is not created before it is first shown
+  // either, so someone who only reads the source never pays for fetching the diagram.
   const [diagramMounted, setDiagramMounted] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [sendOpen, setSendOpen] = useState(false);
@@ -147,8 +147,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const editorFocusRef = useRef<(() => void) | null>(null);
   const editorHandleRef = useRef<CodeEditorHandle | null>(null);
   const modeGroupRef = useRef<HTMLSpanElement>(null);
-  // AI 提案（docs/log/44 Phase 4）: compose パネルの開閉と指示文。レビュー段階は
-  // editor.model.suggestion の有無が持つので、ここには置かない。
+  // AI suggestions (docs/log/44 Phase 4): the compose panel's open state and instruction text.
+  // The review stage is held by the presence of editor.model.suggestion, not here.
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestInstruction, setSuggestInstruction] = useState("");
 
@@ -161,8 +161,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const imgFmt = imageFormat(filePath);
   const isImage = !!imgFmt;
   const isPdf = isPdfFile(filePath);
-  // Word / Excel / PowerPoint …（docs/log/82 §82.4）。PDF と違って「見た目」ではなく
-  // Markdown へ変換して読む面なので、種類は別に持つ。
+  // Word / Excel / PowerPoint … (docs/log/82 §82.4). Unlike PDF these are not rendered as-is but
+  // converted to Markdown to read, so the format is tracked separately.
   const docFmt = documentFormat(filePath);
   const isDoc = !!docFmt;
 
@@ -218,7 +218,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const editor = useFileEditor(paneId || `file:${filePath}`, editorInitial);
   const viewContent = editor.model?.content ?? data?.content ?? "";
 
-  // --- 外部変更の追従 (docs/log/44 §7, Phase 3.5) ------------------------------
+  // --- Following external changes (docs/log/44 §7, Phase 3.5) ------------------
   // Buffered panes route probe observations through the editor model; a pane
   // showing an editable file without a buffer (the plain-mode Markdown
   // fallback) follows by replacing the loaded data directly.
@@ -301,9 +301,9 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
 
   // What the loaded file allows. The mode state machine (docs/log/44 §1.1) derives
   // the pane's view/edit layer and the surfaces to render from these.
-  // 図として開けるか。.drawio / .dio は拡張子で決まり、.xml は中身の頭で決まる
-  // （docs/log/65 §65.4）。2 MiB 超で content が打ち切られていても、拡張子で決まる分は
-  // そのまま効く —— 図そのものは download 経由で取り直すので開ける。
+  // Whether it can open as a diagram. .drawio / .dio are decided by extension, .xml by the head
+  // of its content (docs/log/65 §65.4). Extension-based detection still holds when content was
+  // truncated past 2 MiB: the diagram itself is refetched via download, so it still opens.
   const isDiagram = useMemo(
     () => isDrawioFile(filePath, isText ? (data?.content ?? "").slice(0, 4096) : null),
     [filePath, isText, data],
@@ -324,7 +324,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // already shows leaves `data` untouched, and staying in the preview would hide
   // the very row that was asked for (docs/log/44 §1.8).
   // A fresh open request re-picks it too, the same way a new citation does:
-  // choosing 編集 for the file a pane already shows retargets that pane (same
+  // choosing edit (「編集」) for the file a pane already shows retargets that pane (same
   // `data`), and only the request is new.
   const startingMode = () => initialFileMode(caps, { hasTargetLine: !!targetLine, requested: openMode });
   const modeIsCurrent = modeState.key === data && modeState.targetLine === targetLine && modeState.openMode === openMode;
@@ -499,7 +499,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     setEditorNotice(validationErrText(tr, error.code));
   };
 
-  // 選択範囲＋指示文で生成を依頼する。選択が空（カーソルのみ）なら全文を対象にする。
+  // Requests a suggestion for the selection plus the instruction. An empty selection (a bare
+  // caret) targets the whole document.
   const submitSuggestion = () => {
     const model = editor.model;
     if (!model) return;
@@ -565,15 +566,16 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     }
   };
 
-  // 選択範囲に浮くピル（parts/useSelectionPill）。2 つの取り込み口と、
-  // それを止める effect 2 つはここが持つ。
+  // The pill floating over the selection (parts/useSelectionPill). The two capture entry points
+  // and the two effects that dismiss it live there.
   const { sel, setSel, captureSelection, captureEditorSelection } = useSelectionPill({
     bodyRef,
     sendOpen,
     editorSurface: surfaces.editor,
   });
 
-  // 朗読ビュー（docs/log/24）を開く。読み上げ＋縦書き閲覧は専用の ReaderView（kind="read"）に集約。
+  // Opens the reader view (docs/log/24). Speech and vertical-writing reading live entirely in
+  // the dedicated ReaderView (kind="read").
   const openReader = () => openTarget({ content: { kind: "read", filePath } });
 
   if (!filePath) return <div className="fileview" />;
@@ -658,8 +660,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
           />
         )}
         {isImage && isText && <FileImageModeToggle mode={imgMode} onChange={setImgMode} />}
-        {/* 図には朗読を出さない。読み上げる本文が無く（あるのは mxfile の XML）、
-            押しても意味のある結果にならない —— 能力が無いなら操作要素を出さない。 */}
+        {/* No reader button on a diagram: there is no prose to read out (only the mxfile XML),
+            so pressing it could do nothing useful. No capability, no control. */}
         {isText && !huge && !isDiagram && <FileReaderButton onOpen={openReader} />}
         <FileHeadPath filePath={filePath} />
       </ViewHead>
@@ -825,9 +827,9 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
         />
       )}
 
-      {/* AI 提案（docs/log/44 Phase 4）。競合等のアラートパネルが出ているときは譲る
-          （プローブ advisory と同じ優先順位）。レビュー段階は model.suggestion が持ち、
-          staleness は revision から導出する。 */}
+      {/* AI suggestions (docs/log/44 Phase 4). Yields while a conflict or other alert panel is
+          up, the same precedence as the probe advisory. The review stage is held by
+          model.suggestion and staleness is derived from the revision. */}
       {canEdit && editor.model && !editorAlert && (suggestOpen || editor.suggesting || editor.model.suggestion) && (
         <EditorSuggestPanel
           model={editor.model}
@@ -865,7 +867,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
             >
               <Icon name="comment-discussion" /> {tr("view.send")}
             </button>
-            {/* 音声読み上げが有効なときだけ、選択範囲を読み上げるピルを併置（docs/log/24）。 */}
+            {/* Only when speech is enabled, a second pill reads the selection out (docs/log/24). */}
             {settings.ttsEnabled && (
               <button
                 type="button"

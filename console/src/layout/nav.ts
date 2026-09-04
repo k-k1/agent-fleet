@@ -46,7 +46,8 @@ export function cyclePane(layout: Layout, delta: number): string | undefined {
   if (rows.length === 0) return undefined;
   const idx = rows.findIndex((r) => r.id === layout.activeCellId);
   const cur = idx < 0 ? 0 : idx;
-  // 二重 mod: |delta| > rows.length の負方向でも負インデックスにならない。
+  // Double mod: never yields a negative index, even for |delta| > rows.length in the negative
+  // direction.
   return rows[(((cur + delta) % rows.length) + rows.length) % rows.length].id;
 }
 

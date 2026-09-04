@@ -1,4 +1,4 @@
-// Per-repo memory of the last kind/model launched, so the 起動 modal (LaunchModal)
+// Per-repo memory of the last kind/model launched, so the launch modal (LaunchModal)
 // opens defaulted to what you last used in this repo. Kept in localStorage (not
 // derived from the sessions list) so it renders instantly with no fetch, and survives
 // session archival. Written through on EVERY launch path — modal, quick dropdown, and
@@ -51,18 +51,19 @@ function readRemembered(key: string): { found: boolean; value: string } {
 // NewSessionModal has no repo yet so it passes "" and starts at the default).
 //   claude: repo last-used → global default (settings.defaultModel) → DEFAULT_MODEL.
 //     The terminal fallback is a concrete tier, never "" — so a legacy stored default of
-//     "" (from the removed "既定" option) is coerced to DEFAULT_MODEL rather than deferring
+//     "" (from the removed "default" option) is coerced to DEFAULT_MODEL rather than deferring
 //     to claude's release-varying own pick.
-//   codex/opencode: repo last-used → "" (既定 — the CLI's own default). Their catalogs
+//   codex/opencode: repo last-used → "" (default — the CLI's own pick). Their catalogs
 //     are release-varying concrete ids, so there is no pinned terminal fallback, and the
 //     claude-oriented settings.defaultModel must not apply.
 // The caller's own explicit pick (modal selection) and fork/relaunch inheritance sit
 // ABOVE this — they overwrite whatever this returns — so this only computes the initial
 // default. Only meaningful for kinds with caps.model.
-// 「使わないモデル」（settings.hiddenModels）に入っている値は、どの段でも採用しない。
-// 設定を変えた端末では AgentsTab が保存値を掃くが、prefs はユーザー単位で同期されるので
-// 別端末には掃除前の localStorage が残る — その端末だけ除外モデルを既定に持ち、起動の
-// たびに Agent 側ガードで弾かれることになる。ここで最後の一枚を挟んでおく。
+// A model listed under "models to exclude" (settings.hiddenModels) is never adopted at any step of
+// the chain. AgentsTab sweeps the stored values on the device where the setting changed, but prefs
+// sync per user while localStorage does not, so another device keeps its pre-sweep copy — that
+// device alone would default to an excluded model and be refused by the Agent's guard on every
+// launch. This is the last line of defence against that.
 function visibleOr(kind: string, model: string, fallback: () => string): string {
   const claudeIds = kind === "claude" ? CLAUDE_MODELS.map(([id]) => id) : undefined;
   return isModelHidden(getSettings().hiddenModels, kind, model, claudeIds) ? fallback() : model;
@@ -76,18 +77,18 @@ export function resolveModel(kind: string, repo: string, defaultModel: string): 
   };
   const last = repo ? readRemembered(MODEL_KEY(repo, kind)) : { found: false, value: "" };
   if (last.found) {
-    // 除外されていた場合だけ、記憶が無かったときと同じ道（既定）へ落とす。
+    // Only when it was excluded, fall through the same path as "nothing remembered" (the default).
     const kept = visibleOr(kind, last.value, () => "");
     if (kept || !last.value) return kept;
   }
   if (kind === "claude") return visibleOr("claude", defaultModel || DEFAULT_MODEL, claudeFallback);
-  return visibleOr(kind, defaultModel, () => ""); // 動的 kind は「既定」＝CLI 任せへ
+  return visibleOr(kind, defaultModel, () => ""); // dynamic kinds fall back to the default, i.e. the CLI's pick
 }
 
-// forgetHiddenRepoModels は「使わないモデル」に入った id を、リポジトリごとの
-// last-used メモリ（この localStorage）からも消す。設定側の掃除（AgentsTab）だけでは
-// ここが残り、そのリポジトリの起動導線だけ除外モデルを既定に持ち続けてしまう。
-// 消した後の resolveModel は kind の既定へ落ちる。
+// forgetHiddenRepoModels drops an id that was added to "models to exclude" from the per-repo
+// last-used memory (this localStorage) as well. Sweeping only the settings side (AgentsTab) leaves
+// this behind, and that repo's launch path keeps defaulting to the excluded model. Once removed,
+// resolveModel falls back to the kind's default.
 const OTHER_KIND_PREFIXES = repoLaunchKinds
   .filter((k) => k !== "claude")
   .map((k) => `af.repo-model.${k}.`);
@@ -100,15 +101,15 @@ export function forgetHiddenRepoModels(kind: string, hidden: string[]): void {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (!key || !key.startsWith(prefix)) continue;
-      // claude の履歴キーは kind 無し（歴史的経緯）なので、他 kind のキーの前方一致に
-      // なる。claude を掃くときだけ、kind 付きキーを巻き添えにしないよう弾く。
+      // claude's memory key carries no kind, so it is a prefix of every other kind's key. When
+      // sweeping claude, skip the kind-scoped keys so they are not taken out with it.
       if (kind === "claude" && OTHER_KIND_PREFIXES.some((p) => key.startsWith(p))) continue;
       const value = localStorage.getItem(key) || "";
       if (value && value !== DEFAULT_VALUE && hidden.some((h) => modelMatchesHidden(value, h))) drop.push(key);
     }
     drop.forEach((key) => localStorage.removeItem(key));
   } catch {
-    /* private mode — 実害は「この端末の前回値が残る」だけ（起動は Agent 側が断る） */
+    /* private mode — at worst this device keeps its stale last-used value; the Agent still refuses the launch */
   }
 }
 

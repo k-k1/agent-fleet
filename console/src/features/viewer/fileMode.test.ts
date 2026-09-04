@@ -365,23 +365,23 @@ describe("reconcileFileMode", () => {
   });
 });
 
-// ── 図（.drawio）の面 — docs/log/65 §65.4 ─────────────────────────────────────
+// ── The diagram (.drawio) surface — docs/log/65 §65.4 ────────────────────────────────────────
 describe("diagram mode", () => {
   const dcaps = (over: Partial<FileModeCaps> = {}) => caps({ markdown: false, diagram: true, ...over });
 
-  it("図として開き、行を指した引用と「編集で開く」はソースに着地する", () => {
+  it("opens as a diagram, while a line citation and 「編集で開く」 land on the source", () => {
     expect(initialFileMode(dcaps())).toEqual({ kind: "diagram", diagram: "figure" });
     expect(initialFileMode(dcaps(), { hasTargetLine: true })).toEqual({ kind: "diagram", diagram: "source" });
     expect(initialFileMode(dcaps(), { requested: "edit" })).toEqual({ kind: "diagram", diagram: "source" });
   });
 
-  it("図の面はペインの view 層、ソース面は編集できるときだけ edit 層", () => {
+  it("puts the diagram surface on the pane's view layer, and the source on edit only when editable", () => {
     expect(paneModeOf({ kind: "diagram", diagram: "figure" }, dcaps())).toBe("view");
     expect(paneModeOf({ kind: "diagram", diagram: "source" }, dcaps())).toBe("edit");
     expect(paneModeOf({ kind: "diagram", diagram: "source" }, dcaps({ editable: false }))).toBe("view");
   });
 
-  it("ソース面は編集できないときだけ読み取り専用の CodeView になる", () => {
+  it("falls back to the read-only CodeView for the source only when it cannot be edited", () => {
     expect(surfacesFor({ kind: "diagram", diagram: "figure" }, dcaps())).toEqual({
       editor: false,
       source: false,
@@ -396,7 +396,7 @@ describe("diagram mode", () => {
     });
   });
 
-  it("図とソースを 2 状態で往復する（キーボードコマンド）", () => {
+  it("cycles between the diagram and the source as two states, via the keyboard command", () => {
     const cycle = fileModeCycle(dcaps());
     expect(cycle).toEqual([
       { kind: "diagram", diagram: "figure" },
@@ -404,11 +404,11 @@ describe("diagram mode", () => {
     ]);
     expect(cycleFileMode({ kind: "diagram", diagram: "figure" }, dcaps())).toEqual({ kind: "diagram", diagram: "source" });
     expect(cycleFileMode({ kind: "diagram", diagram: "source" }, dcaps())).toEqual({ kind: "diagram", diagram: "figure" });
-    // 別種の状態から入ってきても図に着地する（clamp と同じ向き）。
+    // Arriving from another kind of state still lands on the diagram, the same way clamping does.
     expect(cycleFileMode({ kind: "plain", mode: "view" }, dcaps())).toEqual({ kind: "diagram", diagram: "figure" });
   });
 
-  it("能力が変わったら状態を寄せ直す（Markdown の面と混ざらない）", () => {
+  it("reconciles the state when capabilities change, never mixing with the Markdown surfaces", () => {
     expect(reconcileFileMode({ kind: "markdown", md: "preview", renderer: "normal" }, dcaps())).toEqual({
       kind: "diagram",
       diagram: "figure",
@@ -419,7 +419,7 @@ describe("diagram mode", () => {
     });
   });
 
-  it("図のときは Markdown の 3 モード群を出さない", () => {
+  it("shows no Markdown three-mode group while on a diagram", () => {
     expect(markdownModeControls({ kind: "diagram", diagram: "figure" }, dcaps())).toEqual([]);
     expect(diagramModeControls({ kind: "diagram", diagram: "figure" }, dcaps())).toEqual([
       { mode: "figure", pressed: true, readOnlySource: false },
@@ -428,7 +428,7 @@ describe("diagram mode", () => {
     expect(diagramModeControls({ kind: "markdown", md: "preview", renderer: "normal" }, dcaps())).toEqual([]);
   });
 
-  it("withDiagramMode は図でないファイルでは何もしない", () => {
+  it("makes withDiagramMode a no-op on a file that is not a diagram", () => {
     expect(withDiagramMode({ kind: "diagram", diagram: "figure" }, "source", dcaps())).toEqual({
       kind: "diagram",
       diagram: "source",
@@ -437,7 +437,7 @@ describe("diagram mode", () => {
     expect(withDiagramMode(plain, "figure", caps({ markdown: false, diagram: false }))).toBe(plain);
   });
 
-  it("surfaceKey は図の面を別の面として数える（焦点の移動判定）", () => {
+  it("counts the diagram surfaces as distinct in surfaceKey, which decides focus moves", () => {
     const figure = surfaceKey(surfacesFor({ kind: "diagram", diagram: "figure" }, dcaps()));
     const source = surfaceKey(surfacesFor({ kind: "diagram", diagram: "source" }, dcaps()));
     expect(figure).not.toBe(source);

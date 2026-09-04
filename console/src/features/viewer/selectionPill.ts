@@ -1,6 +1,6 @@
 import type { EditorSelectionReport } from "../editor/selection.ts";
 
-// selectionPill — who owns the floating 送る pill (docs/log/44 §1.8).
+// selectionPill — who owns the floating "send" pill (「送る」) (docs/log/44 §1.8).
 //
 // Two surfaces can produce a selection: the read-only grid, whose selection is
 // read by walking the DOM, and the editing surface, which reports its own from

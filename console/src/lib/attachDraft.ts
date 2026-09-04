@@ -1,7 +1,7 @@
 // Attachment-draft persistence (IndexedDB), the companion of lib/draft.ts. The composers
 // already keep the typed text through a close/reopen or a view switch; the files staged
 // next to it used to die with the component, which is the same accident — a screenshot
-// pasted into 作業を始める, or dropped on the mirror, was gone as soon as the user went to
+// pasted into the Start working dialog, or dropped on the mirror, was gone as soon as the user went to
 // check the branch and came back.
 //
 // Why IndexedDB and not localStorage (where the text lives): these records carry image
@@ -253,7 +253,7 @@ let seq = 0;
 const nextId = (): string => "at" + ++seq;
 
 // makeAttachment wraps a file in the composer's shape, minting the preview URL for an
-// image. `name` defaults to the file's own (作業を始める stages files before any upload);
+// image. `name` defaults to the file's own (Start working stages files before any upload);
 // the mirror passes the server-side basename it got back instead.
 export function makeAttachment(file: File, opts?: { name?: string; path?: string; image?: boolean }): Attachment {
   const image = opts?.image ?? file.type.startsWith("image/");
@@ -301,7 +301,7 @@ const reviveAttachment = (a: Attachment): Attachment => ({
 
 // useAttachDraft is the composer's attachment list, backed by the store above: hydrated
 // from `key` on mount and on every key change (session switch / another repo picked in
-// the はじめる hub), written through on every edit, and dropped by clear() when the turn
+// the Start hub), written through on every edit, and dropped by clear() when the turn
 // was actually sent or the session actually launched.
 //
 // Two orderings matter and are both handled here:

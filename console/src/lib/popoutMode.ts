@@ -1,4 +1,4 @@
-// Pop-out tab mode (ペインの別タブ切り離し). A tab opened via a pop-out link runs
+// Pop-out tab mode (detaching a pane into its own tab). A tab opened via a pop-out link runs
 // in one of two modes:
 //   "popout" — minimal chrome: a thin title bar + the single pane, reduced keys.
 //   "full"   — the normal console chrome seeded with a 1-pane layout.
@@ -29,8 +29,8 @@ const subscribe = (fn: () => void): (() => void) => {
 
 export const popoutMode = (): PopoutMode => mode;
 
-/** Set (or clear) this tab's pop-out mode. "popout" → "full" is the タイトルバーの
- * 展開 button converting the tab into a normal console in place. */
+/** Set (or clear) this tab's pop-out mode. "popout" → "full" is the title bar's
+ * "expand" button (「展開」) converting the tab into a normal console in place. */
 export function setPopoutMode(m: PopoutMode): void {
   if (mode === m) return;
   mode = m;

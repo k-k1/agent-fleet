@@ -71,9 +71,9 @@ function contentFromFlat(p: any): PaneContent {
     }
     case "diff": {
       const docTitle = str(p.docTitle);
-      // diffEdits も untrusted JSON — 配列でない/要素が壊れている永続値をそのまま
-      // 通すと DiffView（.map / e.old アクセス）が throw する。{old,new} の文字列
-      // だけを残す形へ正規化する。
+      // diffEdits is untrusted JSON too: a stored value that is not an array, or whose elements
+      // are broken, makes DiffView throw (.map / e.old access). Normalize it down to the
+      // {old,new} strings.
       const diffEdits = Array.isArray(p.diffEdits)
         ? p.diffEdits.map((e: any) => ({
             ...(typeof e?.old === "string" ? { old: e.old } : {}),
@@ -214,8 +214,8 @@ export function normalizeStored(raw: unknown): Layout | null {
   ) {
     colRatios = equalRatios(cols.length);
   } else {
-    // 旧クランプの取りこぼし等で合計が 1 からずれた保存値も、復元時に合計 1 へ
-    // 正規化する（全要素 > 0 は上の検査で保証済み）。
+    // A stored value whose total drifted from 1 (an old clamp missing a case, say) is normalized
+    // back to a total of 1 on restore; the check above already guarantees every element > 0.
     const sum = colRatios.reduce((n, r) => n + r, 0);
     colRatios = colRatios.map((r) => r / sum);
   }

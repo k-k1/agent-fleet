@@ -1,11 +1,11 @@
 // Transient-notification stack replacing the blocking native window.alert():
 //   const toast = useToast();
-//   toast("clone に失敗: …");                 // error: auto-dismiss + kept in 通知センター
-//   toast("保存しました", { kind: "success" }); // auto-dismisses, not kept
-//   toast("削除しました", { kind: "success", persist: true }); // kept in 通知センター
+//   toast("clone failed: …");                // error: auto-dismiss + kept in the notification center
+//   toast("Saved", { kind: "success" });     // auto-dismisses, not kept
+//   toast("Deleted", { kind: "success", persist: true }); // kept in the notification center
 // Errors (role=alert) and any { persist:true } toast are logged to the notification center
-// via toastLog so they can be reviewed after leaving the screen; trivial toasts (copy 等)
-// stay purely ephemeral. Errors used to be sticky; they now auto-dismiss but persist.
+// via toastLog so they can be reviewed after leaving the screen; trivial toasts (a copy
+// confirmation and the like) stay purely ephemeral.
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
@@ -18,7 +18,7 @@ export type ToastKind = "error" | "warn" | "info" | "success";
 export interface ToastOptions {
   kind?: ToastKind;
   duration?: number; // ms; 0 = sticky (manual close only)
-  persist?: boolean; // also keep in the 通知センター after dismiss (default: errors)
+  persist?: boolean; // also keep in the notification center after dismiss (default: errors)
 }
 
 interface ToastItem {
@@ -58,10 +58,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       const kind = opts?.kind ?? "error";
       const id = ++seq.current;
       setItems((xs) => [...xs, { id, message, kind }]);
-      // Errors (and any opt-in persist) are recorded in the 通知センター so a failure that
-      // scrolled away can still be reviewed. Only string messages can be logged.
+      // Errors (and any opt-in persist) are recorded in the notification center so a failure
+      // that scrolled away can still be reviewed. Only string messages can be logged.
       if ((opts?.persist ?? kind === "error") && typeof message === "string") pushToastLog(kind, message);
-      // Errors used to be sticky (0); now they auto-dismiss but remain in the 通知センター.
+      // Errors auto-dismiss rather than sticking (0); the notification center keeps them.
       const duration = opts?.duration ?? (kind === "error" ? 8000 : 4000);
       if (duration > 0) setTimeout(() => remove(id), duration);
     },

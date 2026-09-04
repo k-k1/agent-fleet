@@ -59,13 +59,14 @@ export function SkillList({
             onMouseDown={(ev) => ev.preventDefault()}
             onClick={() => onPick(s)}
           >
-            {/* 1 行目＝起動文字列＋引数ヒント＋出所バッジ、2 行目＝説明。説明を
-                独立行にすることで、名前と引数に幅を食われず全幅で読める。 */}
+            {/* Line 1 is the invoke string, the argument hint and the origin badges; line 2 is
+                the description. Giving the description its own line lets it use the full width
+                instead of competing with the name and arguments. */}
             <span className="mirror-skill-head">
               <span className="mirror-skill-name">{s.invoke ? s.invoke.trim() : s.name}</span>
               {s.argumentHint ? <span className="mirror-skill-hint">{s.argumentHint}</span> : null}
-              {/* バッジは 1 つの入れ物に — 直接並べて margin-left:auto を各々に付けると、
-                  2 つ出たとき余白が両者に均等配分されて右端に寄らない。 */}
+              {/* The badges need one container: laid out directly with margin-left:auto on each,
+                  two of them split the free space evenly and neither reaches the right edge. */}
               <span className="mirror-skill-badges">
                 {s.origin ? <SkillOriginBadge origin={s.origin} /> : null}
                 {s.source === "user" ? <span className="mirror-skill-src">{tr("mirror.skills_src_user")}</span> : null}

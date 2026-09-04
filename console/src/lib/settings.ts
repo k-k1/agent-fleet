@@ -18,49 +18,52 @@ export const CODE_FONTS = [
   "JetBrains Mono",
   "Fira Code",
   "IBM Plex Mono",
-  "システム等幅", // i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳）
+  "システム等幅", // i18n-exempt: raw font value matched in fontStack (display via font.*)
 ];
 
-// ── 和文フォント（Ambiguous 幅の文字をどのフォントで描くか）─────────────────
+// ── CJK font (which font draws Ambiguous-width characters) ──────────────────
 //
-// フォントのフォールバックは書体単位ではなく 1 文字ごとに効く。漢字・かなは欧文
-// フォントに無いのでスタック末尾の CJK フォントまで落ちるが、①②③（U+2460…）や
-// ■ ○ ★ Ⅰ Ⅱ は DejaVu Sans Mono / Menlo / Consolas が“持っている”ので、そこで
-// 止まって和文フォントまで落ちない。それらは East Asian Width = Ambiguous で、
-// 欧文フォントは半角として細く小さく描くため、隣の全角の漢字と並ぶと丸数字だけが
-// 痩せて見える——これが「diff の○数字が小さい」の正体。
+// Font fallback applies per character, not per typeface. Kanji and kana are absent from Latin
+// fonts, so they fall through to the CJK font at the end of the stack; but ①②③ (U+2460...)
+// and ■ ○ ★ Ⅰ Ⅱ *are* present in DejaVu Sans Mono / Menlo / Consolas, so resolution stops
+// there and never reaches the CJK font. Those characters are East Asian Width = Ambiguous, and
+// a Latin font draws them half-width — thin and small beside a full-width kanji, which is why
+// the circled digits in a diff look shrunken.
 //
-// 直し方は、その範囲だけを unicode-range で和文フォントに割り当てた @font-face を
-// 作り、スタックの先頭に置くこと。src は利用者の選択で変わるので、CSS には書かず
-// applyCjkFont() が <style> を張り替える（tokens.css の --mono も同じ名前を前置する）。
+// The fix is an @font-face that maps only that range to the CJK font, placed at the head of the
+// stack. Its src depends on the user's choice, so it is not written in CSS: applyCjkFont()
+// rewrites a <style> element (tokens.css prepends the same family to --mono).
 export const CJK_FAMILY = "AF CJK Ambiguous";
 export const CJK_FAMILY_PROSE = "AF CJK Ambiguous Prose";
 
-// 和文へ回す範囲は 2 段。桁揃えを壊さない側（等幅の面）と、文章の面。
+// Two ranges are routed to the CJK font: one for surfaces where column alignment must not
+// break (monospace), and one for prose.
 //
-// 等幅（diff・ビューア・コードブロック）＝ 列がずれてはいけない面には、ASCII 図の
-// 部品として使われない「日本語の採番記号」だけを回す：
-//   U+2160-217F 数字のローマ数字（Ⅰ Ⅱ ⅰ）
-//   U+2460-24FF 囲み英数字（① ⑴ Ⓐ）— 今回の主目的
-//   U+3200-32FF 囲み CJK 文字・月（㊀ ㈱ ㍻）
+// The monospace surfaces (diff, viewer, code blocks) must not shift columns, so they get only
+// the Japanese numbering marks, which are never used as parts of an ASCII diagram:
+//   U+2160-217F Roman numerals (Ⅰ Ⅱ ⅰ)
+//   U+2460-24FF enclosed alphanumerics (① ⑴ Ⓐ) — the main target
+//   U+3200-32FF enclosed CJK letters and months (㊀ ㈱ ㍻)
 export const CJK_UNICODE_RANGE = "U+2160-217F, U+2460-24FF, U+3200-32FF";
 
-// 文章の面（ミラーやチャットの地の文＝プロポーショナル）は桁が無いので、日本語の
-// 箇条書きでよく使う記号まで広げる：
-//   U+25A0-25FF 幾何学模様（■ □ ○ ● ◇ ▲）
-//   U+2600-26FF その他の記号（★ ☆ ☎）
-// これらを等幅側に入れないのは、CLI 出力の枠（├─┤）の中の ● ■ が全角になると
-// 枠の右端がずれるから。CLI は Ambiguous を 1 桁として数えて出力を組んでいる。
+// Prose surfaces (mirror and chat body text, proportional) have no columns, so the range widens
+// to the symbols Japanese bullet lists commonly use:
+//   U+25A0-25FF geometric shapes (■ □ ○ ● ◇ ▲)
+//   U+2600-26FF miscellaneous symbols (★ ☆ ☎)
+// They stay out of the monospace range because a ● or ■ inside a CLI box (├─┤) rendered
+// full-width pushes the box's right edge out of line: the CLI composes its output counting
+// Ambiguous as one column.
 export const CJK_UNICODE_RANGE_PROSE = `${CJK_UNICODE_RANGE}, U+25A0-25FF, U+2600-26FF`;
 
-// 意図的にどちらからも外したもの：矢印(U+2190-21FF)と罫線(U+2500-257F)。ASCII 図や
-// 樹形図の骨格そのものなので、全角にすると図が崩れる。ギリシャ文字・アクセント付き
-// ラテン文字も Ambiguous だが、コード中の識別子が全角になるので対象外。
+// Deliberately excluded from both: arrows (U+2190-21FF) and box drawing (U+2500-257F). They are
+// the skeleton of ASCII diagrams and tree views, which full-width glyphs would break. Greek and
+// accented Latin letters are Ambiguous too, but widening them would turn identifiers in code
+// full-width, so they are out of scope as well.
 
-// 選べる和文フォント。"自動" は OS 任せ（GENERIC_CJK をそのまま使う）、"欧文優先" は
-// @font-face を張らない＝従来どおり欧文フォントの半角グリフ。それ以外は実フォント名で、
-// 未インストールなら GENERIC_CJK へ落ちる。
-// i18n-exempt-start: 値は保存される生フォント値（表示は font.* で翻訳・docs/log/28 §2.4）
+// Selectable CJK fonts. CJK_FONT_AUTO leaves the choice to the OS (GENERIC_CJK as it is);
+// CJK_FONT_OFF installs no @font-face, i.e. the Latin font's half-width glyphs as before.
+// Anything else is a real font name, falling back to GENERIC_CJK when it is not installed.
+// i18n-exempt-start: raw font values that get persisted (display via font.*, docs/log/28 §2.4)
 export const CJK_FONT_AUTO = "自動";
 export const CJK_FONT_OFF = "欧文優先";
 export const CJK_FONTS = [
@@ -73,8 +76,8 @@ export const CJK_FONTS = [
 ];
 // i18n-exempt-end
 
-// 選択フォントの後ろに必ず積む汎用の和文チェーン。Mac で "Meiryo" を選んだ人も
-// ここでヒラギノに落ちるので、「選んだのに直らない」が起きない。
+// Generic CJK chain always appended after the chosen font, so someone who picks "Meiryo" on a
+// Mac still lands on Hiragino instead of seeing nothing change at all.
 const GENERIC_CJK = [
   "Noto Sans Mono CJK JP",
   "Noto Sans CJK JP",
@@ -87,13 +90,13 @@ const GENERIC_CJK = [
 // Chat fonts: unlike the code viewer, the chat reads as prose, so proportional
 // families are offered first ("システム" = system sans, "セリフ" = serif), with the
 // monospace code fonts still available for anyone who prefers them.
-// i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/log/28 §2.4）
+// i18n-exempt: raw font values matched in fontStack (display via font.*, docs/log/28 §2.4)
 export const CHAT_FONTS = ["システム", "セリフ", "Source Code Pro", "JetBrains Mono", "Fira Code", "IBM Plex Mono"];
 
-// Reader (朗読ビュー) fonts: the reader is Japanese prose, so it offers the two
-// families that matter for reading — 明朝 (serif, the default) and ゴシック (sans) —
-// each resolved with CJK fallbacks in readerFontStack.
-// i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/log/28 §2.4）
+// Reader view fonts: the reader shows Japanese prose, so it offers the two families that
+// matter for reading — 明朝 (mincho, serif, the default) and ゴシック (gothic, sans) — each
+// resolved with CJK fallbacks in readerFontStack.
+// i18n-exempt: raw font values matched in fontStack (display via font.*, docs/log/28 §2.4)
 export const READER_FONTS = ["明朝", "ゴシック"];
 
 // File-icon sets (brand SVGs under assets/fileicons/<id>/). value = asset subdir.
@@ -104,23 +107,24 @@ export const ICON_SETS: { id: string; labelKey: MsgKey }[] = [
   { id: "seti", labelKey: "iconset.seti" },
 ];
 
-// Base UI theme. label は i18n キー（DisplayTab / TopBar が t() で解決）。
+// Base UI theme. labelKey is an i18n key, resolved with t() by DisplayTab / TopBar.
 export const THEMES: { id: string; labelKey: MsgKey }[] = [
   { id: "dark", labelKey: "theme.dark" },
   { id: "light", labelKey: "theme.light" },
 ];
 
-// メイン領域の配置プロファイル。DisplayTab と TopBar の外観ポップの両方が使うので、
-// 選択肢はここに一本化する（片側だけラベルが増える／ずれるのを防ぐ）。
+// Main-area layout profiles. Both DisplayTab and the TopBar appearance popover use them, so
+// the choices are defined here once; otherwise one side gains or drifts a label on its own.
 export const PANE_LAYOUTS: { id: "split" | "tabs"; labelKey: MsgKey }[] = [
   { id: "split", labelKey: "display.pane_layout_split" },
   { id: "tabs", labelKey: "display.pane_layout_tabs" },
 ];
 
-// UI 表示言語（docs/log/28 / ADR 0016）。ラベルは各言語の自称なので翻訳しない（どの言語で見ても
-// 母語名で並ぶ）。id は i18n カタログ／SUPPORTED_LOCALES と一致させる。
+// UI display language (docs/log/28 / ADR 0016). The labels are each language's endonym and are
+// never translated, so the list reads in native names whatever the UI language is. The ids must
+// match the i18n catalogues / SUPPORTED_LOCALES.
 export const LOCALES = [
-  { id: "ja", label: "日本語" }, // i18n-exempt: 言語の自称（どの UI 言語でも母語名で表示）
+  { id: "ja", label: "日本語" }, // i18n-exempt: endonym (shown natively whatever the UI language)
   { id: "en", label: "English" },
 ];
 
@@ -165,18 +169,19 @@ export const SURFACE_COLORS: { id: string; labelKey: MsgKey; dark: string | null
 ];
 
 // The four themeable surfaces (settings key + labels). Shared by DisplayTab and the
-// TopBar 外観 popover so "which surfaces are colorable" is defined once — `short` for
+// TopBar appearance popover so "which surfaces are colorable" is defined once — `short` for
 // the compact popover rows, `long` for the settings-tab rows.
 export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor" | "sharedColor" | "assistantColor"; shortKey: MsgKey; longKey: MsgKey }[] = [
   { key: "topbarColor", shortKey: "surface.topbar.short", longKey: "surface.topbar.long" },
   { key: "leftpaneColor", shortKey: "surface.leftpane.short", longKey: "surface.leftpane.long" },
   { key: "viewerColor", shortKey: "surface.viewer.short", longKey: "surface.viewer.long" },
   // chatColor drives the session mirror's (.mirrorview) --chat-bg / --chat-accent; labelled
-  // セッション so it isn't confused with the assistant chat. Key kept as chatColor for
-  // backward-compat with persisted prefs.
+  // "session" (「セッション」) so it isn't confused with the assistant chat. Key kept as
+  // chatColor for backward-compat with persisted prefs.
   { key: "chatColor", shortKey: "surface.session.short", longKey: "surface.session.long" },
-  // sharedColor は共有セッション(.shared-view)の同じ仕組み。他人の会話を読んでいる面を
-  // 自分のミラーと別の色にできると、どちらを見ているか一目で分かる(docs/log/59)。
+  // sharedColor is the same mechanism for a shared session (.shared-view). Giving the surface
+  // where you read someone else's conversation a different color from your own mirror makes it
+  // obvious at a glance which one you are looking at (docs/log/59).
   { key: "sharedColor", shortKey: "surface.shared.short", longKey: "surface.shared.long" },
   // assistantColor is the same surface mechanism for the assistant chat (.chatview).
   { key: "assistantColor", shortKey: "surface.assistant.short", longKey: "surface.assistant.long" },
@@ -232,7 +237,8 @@ function shadeForSurface(hex: string, theme: string, kind: string): string {
   return mixHex(hex, theme === "light" ? "#000000" : "#ffffff", t);
 }
 
-// 読み上げのキャラクター 1 体分の設定（ttsVoicePool の値）。すべて省略可＝既定挙動。
+// Settings for one read-aloud character (a ttsVoicePool value). Every field is optional; an
+// absent field means the default behaviour.
 export interface TtsCharConf {
   use?: boolean;
   style?: string;
@@ -244,13 +250,14 @@ export interface AgentLaunchDefault {
   effort: string;
   startMode: "normal" | "plan";
   /**
-   * 権限確認をスキップして起動するか（docs/log/76）。true = fleet 従来の既定（claude なら
-   * --dangerously-skip-permissions、他 kind も同格のフラグ）、false = ツール実行のたびに
-   * 承認を求めさせる。**既定は true で、挙動は変えない。**
+   * Launch with the permission prompts skipped (docs/log/76). true = the long-standing fleet
+   * default (--dangerously-skip-permissions for claude, the equivalent flag for other kinds);
+   * false = ask for approval on every tool run. The default is true, so behaviour is unchanged.
    *
-   * Agent もこの値をプロセス内で読む（ui_prefs.go skipPermissionsPref）ので、Console を
-   * 通らない起動（MCP の create_session・定時実行・再起動・fork）にも同じ既定が効く。
-   * caps.permissionChoice を持たない kind（codex / opencode）では無視される。
+   * The Agent reads this value in-process too (ui_prefs.go skipPermissionsPref), so the same
+   * default applies to launches that do not go through the Console (MCP create_session,
+   * scheduled runs, restart, fork). Ignored for kinds without caps.permissionChoice
+   * (codex / opencode).
    */
   skipPermissions: boolean;
 }
@@ -260,9 +267,9 @@ export type AgentLaunchDefaults = Record<string, AgentLaunchDefault>;
 export interface Settings {
   termFont: string;
   termSize: number;
-  /** 和文フォント。①②③ など East Asian Width = Ambiguous の文字だけを、欧文の
-   * コードフォントではなくこのフォントで描く（applyCjkFont / CJK_UNICODE_RANGE）。
-   * 値は CJK_FONTS のいずれか。"自動" = OS 任せ、"欧文優先" = 従来どおり欧文側。 */
+  /** CJK font: draws only the East Asian Width = Ambiguous characters (①②③ and the like)
+   * with this font instead of the Latin code font (applyCjkFont / CJK_UNICODE_RANGE). One of
+   * CJK_FONTS; CJK_FONT_AUTO leaves it to the OS, CJK_FONT_OFF keeps the Latin font. */
   cjkFont: string;
   viewerFont: string;
   viewerSize: number;
@@ -272,24 +279,25 @@ export interface Settings {
   wrap: boolean;
   tabSize: number;
   minimap: boolean;
-  // Markdown ビュー（Doc/File プレビュー・チャット内マークダウン）のコードブロックを既定で
-  // 折り返し表示するか。各ブロック右下のトグルボタン（features/viewer/MarkdownView.tsx）の
-  // 初期状態になる（ボタンでブロックごとに個別に上書き可能、その上書き自体は永続化しない）。
-  // 既定 true — 横スクロールより折り返しの方が読みやすいことが多いため。
+  // Wrap code blocks in the Markdown view (Doc/File preview, markdown inside chat) by default.
+  // This is the initial state of the toggle at each block's bottom right
+  // (features/viewer/MarkdownView.tsx); the per-block override it makes is not persisted.
+  // Default true — wrapping usually reads better than horizontal scrolling.
   markdownCodeWrap: boolean;
   iconSet: string;
   theme: string;
   /** Main-area layout profile. Stored only on this device; each profile's
    * concrete layout remains per user, tenant and browser tab. */
   paneLayout: "split" | "tabs";
-  // UI 表示言語（docs/log/28 / ADR 0016）。"ja" | "en"。theme と違い端末ローカルにせずサーバ同期し、
-  // 言語は人単位で全端末に追従させる。既定はブラウザ言語判定→日本語フォールバック（detectLocale）。
+  // UI display language (docs/log/28 / ADR 0016), "ja" | "en". Unlike theme this is not
+  // device-local: it syncs through the server so the language follows the person onto every
+  // device. The default comes from the browser language, falling back to Japanese (detectLocale).
   locale: string;
   // Per-region base theme, independent of `theme`: "inherit" (default, follow the app),
   // "dark", or "light". Applied by scoping data-theme onto the region container.
   // mirrorTheme → .mirrorview (session mirror); assistantTheme → .chatview (assistant chat).
   mirrorTheme: string;
-  // sharedTheme → .shared-view（受信側の共有セッション、docs/log/59）。
+  // sharedTheme → .shared-view (the recipient side of a shared session, docs/log/59).
   sharedTheme: string;
   assistantTheme: string;
   topbarColor: string;
@@ -301,28 +309,28 @@ export interface Settings {
   sharedColor: string;
   assistantColor: string;
   mirrorSend: string;
-  // Default claude model for new sessions (launch dialog + repo 起動). Usually a tier
+  // Default claude model for new sessions (launch dialog + repo launch). Usually a tier
   // alias (opus/sonnet/haiku), but may be a user-registered full id to pin a release.
   defaultModel: string;
   // Per-agent launch defaults. defaultModel remains as a migration mirror for older
   // Console/server prefs; new code reads this map for all three agent kinds.
   agentLaunchDefaults: AgentLaunchDefaults;
-  // 使わないモデル（AgentsTab > 各カード > 動作設定）: kind → 除外するモデル id。
-  // 課金事故の予防が動機（Claude Team プランの Fable は API クレジット扱い）で、モデル
-  // id の名前空間が kind ごとに別なので除外リストも kind スコープ。Agent がこのキーを
-  // ui-prefs から読み、ピッカーと MCP list_models の両方を絞ったうえで、除外モデルを
-  // 指定した起動そのものを断る（workspace/agent/model_deny.go）。
+  // Models to hide (AgentsTab > each card > behaviour settings): kind → excluded model ids.
+  // The motive is preventing billing accidents (on a Claude Team plan, Fable is charged as API
+  // credit); model id namespaces differ per kind, so the exclusion list is kind-scoped too. The
+  // Agent reads this key from ui-prefs, narrows both the picker and MCP list_models, and then
+  // refuses outright a launch that names an excluded model (workspace/agent/model_deny.go).
   hiddenModels: Record<string, string[]>;
   // Claude Code OAuth has no account-aware catalog endpoint. Full model ids registered by
   // the user become durable choices in the Console picker and MCP list_models.
   claudeCustomModels: string[];
-  // ON/OFF for the SESSION title suggestion (設定 > AI補助). Covers both the automatic
-  // banner and the rename dialog's 「AIに提案してもらう」 button; the chat side is
-  // assistantTitleSuggest and branch names are branchSuggestEnabled — each AI 補助
-  // feature gates on its own key now (it used to also silently gate branch names).
+  // ON/OFF for the SESSION title suggestion (Settings > AI assist). Covers both the automatic
+  // banner and the rename dialog's "ask AI for a suggestion" (「AIに提案してもらう」) button;
+  // the chat side is assistantTitleSuggest and branch names are branchSuggestEnabled — each AI
+  // assist feature gates on its own key now (it used to also silently gate branch names).
   // Default true so existing users get it without an explicit opt-in.
   autoTitleSuggest: boolean;
-  // Global ON/OFF for session-to-session messaging (AgentsTab セッション, docs/log/58 /
+  // Global ON/OFF for session-to-session messaging (AgentsTab > Sessions, docs/log/58 /
   // ADR 0041). Not per-agent: it applies to every kind that gets af's own MCP server
   // (claude / codex / opencode / cursor / kiro / agy / copilot), and shell / ssm can
   // neither send nor receive by construction.
@@ -350,41 +358,42 @@ export interface Settings {
   // The Agent reads this from ui-prefs, so it shapes the MCP list_models an assistant
   // picks from as well as this picker. Legacy values migrate in normalizeSettings.
   opencodeCatalog: "off" | "free" | "go" | "zen";
-  // ミラーの「思考」ブロックを最初から展開して表示するか（kind スコープ／設定 > エージェント >
-  // 各カード > 動作設定）。既定は全 kind オフ＝従来どおり畳んだ状態で出す（クリックで開く）。
-  // 思考の量は kind とモデルで大きく違い、常時展開が読みやすいかは backend ごとに割れるので、
-  // hiddenModels と同じく kind をキーにした Record にしてある（未設定 kind は false）。
+  // Show the mirror's thinking block expanded from the start (kind-scoped; Settings > Agents >
+  // each card > behaviour settings). Default off for every kind, i.e. collapsed as before and
+  // opened by a click. How much thinking a backend emits varies enormously by kind and model, so
+  // whether always-expanded reads well depends on the backend — hence a Record keyed by kind
+  // like hiddenModels (an unset kind is false).
   expandThinking: Record<string, boolean>;
-  // ON/OFF for the CHAT title suggestion (設定 > AI補助; the rename dialog's
-  // 「AIに提案してもらう」 button — the assistant has no automatic banner). Split out of
+  // ON/OFF for the CHAT title suggestion (Settings > AI assist; the rename dialog's "ask AI for
+  // a suggestion" (「AIに提案してもらう」) button — the assistant has no automatic banner). Split out of
   // autoTitleSuggest so sessions and chats gate independently; load()/hydrateUIPrefs
   // migrate an explicit legacy OFF, and the Agent falls back to autoTitleSuggest when
   // this key is absent.
   assistantTitleSuggest: boolean;
-  // ON/OFF for the branch-name AI suggestion (設定 > AI補助; the worktree / branch
+  // ON/OFF for the branch-name AI suggestion (Settings > AI assist; the worktree / branch
   // rename dialogs). Used to ride on autoTitleSuggest, which no label or note ever
-  // said — one AI 補助 feature, one key. Migrates from autoTitleSuggest so an explicit
+  // said — one AI assist feature, one key. Migrates from autoTitleSuggest so an explicit
   // legacy OFF keeps branch names off too.
   branchSuggestEnabled: boolean;
-  // ON/OFF for the File pane's AI edit suggestion (設定 > AI補助). Previously had no
+  // ON/OFF for the File pane's AI edit suggestion (Settings > AI assist). Previously had no
   // setting at all and was always on; default true keeps that behaviour.
   editSuggestEnabled: boolean;
   // Forced output language for assistant chat: "auto" = follow the input language
   // (default), "ja" / "en" = always reply in that language (even for foreign-language
   // content). The Agent reads this key from ui-prefs and injects a language rule into the
   // chat system prompt (translate assistant is exempt). See docs/log/19.
-  // ⚠️ CHAT ONLY. Read-aloud used to borrow this key to pick the TTS engine and voice;
+  // CHAT ONLY. Read-aloud used to borrow this key to pick the TTS engine and voice;
   // that axis is now ttsLang — one key, one meaning.
   outputLanguage: string;
-  // Assistant-CHAT backend priority (AssistantTab 並べ替え): auto-selection takes the
+  // Assistant-CHAT backend priority (AssistantTab reordering): auto-selection takes the
   // first CONNECTED kind in this order (the Agent's preferredChatAgent, read live from
   // ui-prefs). Applies to builtin assistants' NEW conversations; user-defined assistants
   // keep their own per-assistant agent choice. Replaces the legacy single-pin
   // assistantAgent key — hydrateUIPrefs migrates a stored pin by promoting it to the
   // front, and the Agent normalizes partial/stale lists against its own default order.
-  // ⚠️ Chat only. The one-shot helpers rank backends with aiAssistOrder.
+  // Chat only. The one-shot helpers rank backends with aiAssistOrder.
   assistantAgentOrder: string[];
-  // AI 補助生成 backend priority (設定 > AI補助): the same normalization, ranked
+  // AI-assist generation backend priority (Settings > AI assist): the same normalization, ranked
   // separately from the chat because the two want opposite things — the chat wants the
   // strongest CLI, the one-shots run constantly and want the cheapest one that works.
   // Migrated from assistantAgentOrder (they were one list), so nothing changes on upgrade.
@@ -394,11 +403,11 @@ export interface Settings {
   // delegates to the CLI default. Explicit models are kept for every backend so
   // priority fallback never silently changes the requested model.
   assistantModels: Record<string, string>;
-  // AI 補助生成 models, split by what the call actually needs (設定 > AI補助):
+  // AI-assist generation models, split by what the call actually needs (Settings > AI assist):
   //   aiShortModels — a short label: session/chat titles, branch names, reply chips.
-  //     Recommended resolves to a cheap tier (haiku 級).
+  //     Recommended resolves to a cheap tier (haiku class).
   //   aiProseModels — text a human will read and keep: File pane edit suggestions,
-  //     chat plan updates. Recommended resolves to the mid tier (sonnet 級).
+  //     chat plan updates. Recommended resolves to the mid tier (sonnet class).
   // They were one key (assistantUtilityModels) whose label only mentioned titles and
   // suggestions, yet a value set there ALSO replaced the prose defaults — picking haiku
   // for titles quietly downgraded edit suggestions. BOTH inherit that old value, so the
@@ -415,32 +424,35 @@ export interface Settings {
   // a message). Backend clamps to [1, 50] — there is no unlimited mode; the clamp is
   // the structural runaway stop (docs/log/30).
   assistantAutoTurnLimit: number;
-  // 自動応答専用モデル（claude の会話のみ・空 = 会話のモデルのまま）。報告処理は
-  // 定型作業なので、haiku 等の軽量モデルに逃がすとトークン費用を大きく下げられる。
-  // 利用者ターン・圧縮の要約ターンは会話本来のモデルのまま（Agent 側 chatAutoTurnModel）。
+  // Model used for auto turns only (claude conversations only; empty = keep the conversation's
+  // model). Processing a report is routine work, so routing it to a light model such as haiku
+  // cuts token cost substantially. User turns and compaction summary turns stay on the
+  // conversation's own model (chatAutoTurnModel on the Agent side).
   assistantAutoTurnModel: string;
-  // 自動応答の束ね時間（秒・0 = 即時）。完了報告が届いてもすぐ自動応答せず、この
-  // 窓の間に届いた報告を 1 ターンにまとめて処理する（報告カード・通知は即時のまま）。
-  // Agent 側 chatAutoTurnDelay がクランプ（最大 600 秒）。
+  // Coalescing window for auto turns (seconds; 0 = immediate). A completion report does not
+  // trigger an auto turn right away: every report arriving inside the window is processed in one
+  // turn (report cards and notifications stay immediate). The Agent's chatAutoTurnDelay clamps
+  // it to 600 seconds.
   assistantAutoTurnDelay: number;
-  // 静かな完了報告: 正常な完了報告では自動応答を実行しない（カードと通知のみ。報告は
-  // 次のターンに相乗り）。異常系・質問・プラン承認は従来どおり。既定 OFF。
+  // Quiet completion reports: a normal completion report runs no auto turn (card and
+  // notification only; the report rides along on the next turn). Failures, questions and plan
+  // approvals behave as before. Default OFF.
   assistantQuietCompletion: boolean;
-  // 自動走行 (docs/log/30): when an instructed session stops at an AskUserQuestion, the
+  // Auto-pilot (docs/log/30): when an instructed session stops at an AskUserQuestion, the
   // operator answers with the session's own recommendation; when it stops at plan
   // approval, the operator has another session review the plan, feeds back findings,
   // and approves once clean — sharing each decision in chat. Default OFF — acting in
   // the user's stead is consequential, so this is a deliberate opt-in; unclear or
   // destructive choices/plans still ask the user.
   assistantAutoPilot: boolean;
-  // 中断時の自動再開 (docs/log/47): when a session's turn is CUT OFF before it answered by
+  // Auto-resume after an abort (docs/log/47): when a session's turn is CUT OFF before it answered by
   // something that clears on its own (dropped connection, temporary rate limit), the
   // operator nudges it to continue instead of only relaying to the user. Default ON —
   // unlike auto-pilot this makes no decision on the user's behalf, it just re-runs work
   // they already asked for; failures whose cause won't clear (usage limit, prompt too
   // long) are classified out and never auto-resumed.
   assistantAutoResume: boolean;
-  // 利用上限リセット後の自動再開 (docs/log/47 §4-4, Agent settings > Claude): a claude
+  // Auto-resume after a usage-limit reset (docs/log/47 §4-4, Agent settings > Claude): a claude
   // session cut off by its usage limit gets a one-shot schedule at the reset instant
   // that tells it to carry on (the agent books it with the CP scheduler, so a workspace
   // stopped in the meantime is woken for it). Default ON. Note this toggle governs the
@@ -449,180 +461,213 @@ export interface Settings {
   rateLimitAutoResume: boolean;
   // Auto-resume a cut-off turn (docs/log/47 §4-6): when a claude turn dies on something that
   // clears on its own (dropped connection, temporary rate limit, stream idle timeout),
-  // the agent itself re-sends 「続けて」 after a short backoff, up to maxAutoResumeAttempts.
+  // the agent itself re-sends 「続けて」 (continue) after a short backoff, up to maxAutoResumeAttempts.
   // Default ON. Unlike assistantAutoResume this needs no assistant conversation — it
   // applies to every claude TUI session — and the assistant only hears about the cut-off
   // once the retries are exhausted (which is what makes it cheaper in tokens, not just
   // in latency).
   claudeAbortAutoResume: boolean;
-  // Preventive auto-compaction (docs/log/33 第4段): when a chat's context is still at/above
+  // Preventive auto-compaction (docs/log/33 stage 4): when a chat's context is still at/above
   // the backend threshold (90%) as a new turn starts, summarize-and-hand-off first.
   // Default ON — the 80% notice gives a manual window before this fires.
   assistantAutoCompact: boolean;
-  // 自動圧縮の絶対トークン閾値（相対 90% との OR — docs/log/33 §5.1）。resume 駆動の
-  // チャットは毎ターン全コンテキストを再読するため、占有量がそのままターン単価になる。
-  // Agent 側 chatAutoCompactTokenThreshold が下限 20k をクランプ。
+  // Absolute token threshold for auto-compaction, OR'd with the relative 90% (docs/log/33
+  // §5.1). A resume-driven chat re-reads the whole context every turn, so occupancy is directly
+  // the price of a turn. The Agent's chatAutoCompactTokenThreshold clamps it to a 20k floor.
   assistantAutoCompactTokens: number;
-  // get_session_output（オペレーターがセッション出力を読むツール）の取得上限（KiB・
-  // 末尾のみ）。ツール結果は会話コンテキストに蓄積するため、上限が以降の全ターンの
-  // 単価に効く。Agent 側 mcpSessionOutputTail が [4, 1024] KiB にクランプ。
+  // Fetch limit for get_session_output (the tool an operator reads session output with), in KiB
+  // and from the tail only. Tool results accumulate in the conversation context, so this limit
+  // sets the price of every later turn. The Agent's mcpSessionOutputTail clamps it to
+  // [4, 1024] KiB.
   assistantOutputTailKiB: number;
   // Per-SSM-host terminal color: host id → color id (see lib/termcolor SSM_HOST_COLORS).
   // Applied to a session's terminal background when it's created (sent as its color).
   ssmHostColors: Record<string, string>;
-  // Per-SSM-host usage tally: host id → { count = 起動回数, at = 最終起動 epoch ms }。
-  // 接続モーダルの「クイック接続」カードの並び（頻度優先・同数は最近優先）に使う。
-  // startSsm 成功時に更新（ssmHostColors と同じくクライアント settings のみで完結）。
+  // Per-SSM-host usage tally: host id → { count = launches, at = last launch epoch ms }. Orders
+  // the quick-connect cards in the connection modal (most frequent first, ties broken by most
+  // recent). Updated when startSsm succeeds; like ssmHostColors it lives only in client settings.
   ssmHostUsage: Record<string, { count: number; at: number }>;
-  // 返信サジェスト（クイック返信・lib/quickReplies）の ON/OFF。既定 ON。
+  // ON/OFF for reply suggestions (quick replies, lib/quickReplies). Default ON.
   quickRepliesEnabled: boolean;
-  // 返信サジェスト v2（LLM 文脈生成の✨ボタン）の ON/OFF。既定 ON（押した時だけトークン消費）。
-  // Agent 側 replySuggestEnabled（ui-prefs）と同じ既定に合わせる。
+  // ON/OFF for reply suggestions v2, the sparkle button that generates from context with an
+  // LLM. Default ON — tokens are spent only when it is pressed. Matches the default of the
+  // Agent's replySuggestEnabled (ui-prefs).
   replySuggestEnabled: boolean;
-  // 返信サジェストの学習データ: 正規化キー → { text=表示綴り, count=送信回数, at=最終送信 epoch ms }。
-  // send() 成功時に更新（ssmHostUsage と同型でサーバミラー＝複数デバイス同期）。
+  // Learned data for reply suggestions: normalized key → { text = display spelling,
+  // count = times sent, at = last sent epoch ms }. Updated when send() succeeds; same shape as
+  // ssmHostUsage and mirrored to the server, so it syncs across devices.
   quickReplies: Record<string, { text: string; count: number; at: number }>;
-  // 返信サジェストでユーザーがメニューから消した候補（正規化キーの配列）。学習の削除だけでは
-  // シードや再学習で復活するので、隠し指定として別に持つ。同じ文を自分で送り直すと解除。
+  // Suggestions the user removed from the reply-suggestion menu (normalized keys). Deleting the
+  // learned entry alone is not enough — seeding or re-learning brings it back — so the hidden
+  // marking is kept separately. Sending the same text again clears it.
   quickRepliesHidden: string[];
-  // ピン留め（常に表示）した候補。キーではなく表示綴りをピンした順で持つ — 学習が間引かれても
-  // ピンだけで復元でき、並びもユーザーが決めた順のまま出せる（lib/quickReplies）。
+  // Pinned (always shown) suggestions. Holds display spellings in pin order rather than keys, so
+  // a pin survives the learned data being pruned and the order stays the one the user chose
+  // (lib/quickReplies).
   quickRepliesPinned: string[];
-  // 作業項目から起動するときのブランチ名テンプレート（docs/log/80 P2）。差し込みは
-  // {key}（PROJ-123 / issue-45）と {slug}（タイトル由来の ASCII slug・日本語なら空）。
-  // 空文字 = 既定（feature/{key}-{slug}）。ここを空にすればサーバの temp/<slug> に戻る
-  // わけではない —— 起動ダイアログのブランチ欄を空にするのがその操作。
+  // Branch-name template for launching from a work item (docs/log/80 P2). The placeholders are
+  // {key} (PROJ-123 / issue-45) and {slug} (an ASCII slug from the title, empty for Japanese).
+  // Empty string = the default, feature/{key}-{slug}. Clearing this does NOT fall back to the
+  // server's temp/<slug>; clearing the branch field in the launch dialog is what does that.
   workItemBranchTemplate: string;
-  // 音声読み上げ（TTS, docs/log/24 + ADR0013）。エージェント回答を VOICEVOX（ずんだもん）で
-  // 読み上げる。CP-native な /api/tts/synthesize を句点区切りで逐次呼ぶ（features/chat/tts.ts）。
+  // Read-aloud (TTS, docs/log/24 + ADR0013): speaks agent answers through VOICEVOX (Zundamon)
+  // by calling the CP-native /api/tts/synthesize sentence by sentence (features/chat/tts.ts).
   ttsEnabled: boolean;
-  // プロバイダ選択（Phase 2 で auto ルーティング実装）。auto = 日本語×engine ready なら
-  // ずんだもん、engine 不在（起動中/無効）は Polly JP へ自動フォールバック、非日本語は Polly。
-  // 最終決定は CP（engine の ready を知る単一の真実源）。明示 polly なら常に Polly。
+  // Provider choice. auto = Zundamon when the text is Japanese and the engine is ready, an
+  // automatic fallback to Polly JP when the engine is absent (starting or disabled), and Polly
+  // for anything not Japanese. The CP makes the final call, being the single source of truth for
+  // engine readiness. An explicit "polly" always uses Polly.
   ttsProvider: string; // "auto" | "voicevox" | "polly"
-  // 読み上げの言語（"auto" | "ja" | "en"）。auto = UI 表示言語に従う。ttsProvider が auto の
-  // ときのエンジン選択（en → Polly）と Polly の既定 VoiceId（en → Joanna）を決める。
-  // ⚠️ もとはアシスタントの「回答言語」(outputLanguage) を借りていた。チャットの回答言語を
-  // English にしただけでミラーの読み上げまで Polly に化ける、という 1 キー 2 用途の事故を
-  // 断つために独立させた（移行で outputLanguage の値を引き継ぐ＝挙動は変わらない）。
+  // Read-aloud language ("auto" | "ja" | "en"). auto follows the UI display language. It decides
+  // the engine when ttsProvider is auto (en → Polly) and Polly's default VoiceId (en → Joanna).
+  // Deliberately separate from the assistant's reply language (outputLanguage), which it used to
+  // borrow: one key with two meanings meant that setting the chat's reply language to English
+  // silently turned the mirror's read-aloud into Polly. The migration carries the old value
+  // over, so nothing changes on upgrade.
   ttsLang: string;
-  ttsVoiceVoicevox: string; // VOICEVOX の speaker 番号（"3"=ずんだもん・ノーマル）
-  ttsVoicePolly: string; // Polly の VoiceId（"Takumi" 等）。auto のフォールバック時も使う
-  ttsSpeed: number; // 0.5〜2.0（speedScale）
-  // ずんだもん（VOICEVOX）の出力音量倍率（0〜1）。ずんだもんは他キャラより素の音圧が高いため、
-  // 少し下げて他の声・通知音と揃える。ずんだもんの声（VV_CHAR_NAMES がずんだもんの speaker）で
-  // 再生するときだけ、再生時の出力ゲインに掛ける（合成条件ではないのでキャッシュは無効化しない）。
+  ttsVoiceVoicevox: string; // VOICEVOX speaker number ("3" = Zundamon, normal style)
+  ttsVoicePolly: string; // Polly VoiceId ("Takumi" etc.); also used for the auto fallback
+  ttsSpeed: number; // 0.5 to 2.0 (speedScale)
+  // Output volume multiplier (0..1) for Zundamon (VOICEVOX). Zundamon is louder at source than
+  // the other characters, so it is turned down slightly to match the other voices and the
+  // notification sounds. Applied to the playback gain only when the Zundamon voice is used
+  // (VV_CHAR_NAMES identifies its speakers); it is not a synthesis parameter, so it does not
+  // invalidate the cache.
   ttsZundamonVolume: number;
-  // Console が背景タブ／最小化（document.hidden）、または別ウィンドウへフォーカスが移った間の
-  // 再生方法。mute=無音、quiet=マスター音量を下げる（既定 35%・ttsBackgroundVolume で調整）、
-  // normal=通常音量。
+  // How to play while the Console is a background tab or minimized (document.hidden), or focus
+  // has moved to another window. mute = silent; quiet = lower the master volume (35% by default,
+  // adjustable with ttsBackgroundVolume); normal = normal volume.
   ttsBackgroundPlayback: "mute" | "quiet" | "normal";
-  // バックグラウンド再生（ttsBackgroundPlayback="quiet"）時のマスター音量倍率（0〜1）。スライダーで
-  // 調整。Console に戻ると通常音量へ滑らかに戻る（ttsControl.ts の ttsMasterGain）。
+  // Master volume multiplier (0..1) for background playback (ttsBackgroundPlayback = "quiet"),
+  // set with a slider. Returning to the Console ramps smoothly back to normal volume
+  // (ttsMasterGain in ttsControl.ts).
   ttsBackgroundVolume: number;
-  // ペインに属する読み上げを、現在の横方向の列位置に合わせてステレオ配置する。
-  // 左右端でも完全には振り切らず、聞きやすさのため最大 ±70% に留める。
+  // Pan a pane's read-aloud in stereo to match the pane's current horizontal column. Even at the
+  // far edges it is capped at ±70% rather than panned fully, which is easier to listen to.
   ttsStereoByPane: boolean;
-  // バックグラウンドのセッションが回答/質問を返したら音声で知らせる（docs/log/24 Tier1）。チャットの
-  // 自動読み上げ(ttsEnabled)とは別軸。名前前置きの短い告知を直列キューで読む。タブが見えている
-  // 間のみ（セッション監視は document.hidden で止まるため）。
+  // Announce by voice when a background session answers or asks (docs/log/24 Tier1). A separate
+  // axis from the chat's automatic read-aloud (ttsEnabled): it reads a short announcement
+  // prefixed with the session name, through a serial queue. Only while the tab is visible,
+  // because session monitoring stops on document.hidden.
   ttsSessionNotify: boolean;
-  // サブスク利用制限（5時間 / 週次）の窓が、制限に当たっていた状態からリセットされたら通知する
-  // （app/usageResetNotify.ts）。WsBar の使用状況チップが持つ resetsAt を使い、ブラウザ通知＋
-  // （音声読み上げ ON 時は）短い音声で「利用を再開できます」と知らせる。制限に当たっていない
-  // 通常のリセットでは鳴らさない（スパム防止）。Console のタブが開いている間に確実に検知し、
-  // 閉じている間のリセットは次に開いたとき 1 度だけ通知する。
+  // Notify when a subscription usage window (5-hour / weekly) resets from a state where the
+  // limit had actually been hit (app/usageResetNotify.ts). Uses the resetsAt on the WsBar usage
+  // chip and raises a browser notification plus, when read-aloud is on, a short spoken "you can
+  // resume now" message. A normal reset that never hit the limit stays silent, to avoid spam.
+  // Detected reliably while the Console tab is open; a reset that happened while it was closed
+  // notifies exactly once on the next open.
   usageResetNotify: boolean;
-  // 英単語をカタカナ英語に変換してから VOICEVOX に読ませる（docs/log/24, CP の enkana 前処理）。
-  // ずんだもんの声のまま英語を "それっぽく"（日本語アクセントで）読む。CMU 発音辞書ベースの
-  // 音写なので、定着した和製カタカナ（コーヒー等）ではなく音写（カフィー等）になる。
+  // Convert English words to katakana before handing them to VOICEVOX (docs/log/24, the CP's
+  // enkana preprocessing), so English is read plausibly in a Japanese accent without leaving
+  // Zundamon's voice. It is a transliteration based on the CMU pronouncing dictionary, so a word
+  // comes out phonetically (カフィー) rather than as the established loanword (コーヒー).
   ttsEnglishKana: boolean;
-  // ユーザー読み仮名辞書（docs/log/24）。1 行 "表記=読み"。読み上げ直前に読み上げテキストへ
-  // リテラル置換で適用（英語/日本語/記号どれでも。enkana の ON/OFF に依らず効く）。表記は
-  // 長いものから当てる。空 = 無効。features/chat/ttsText.ts の parse/applyUserDict。
+  // User reading dictionary (docs/log/24). One "spelling=reading" per line, applied as a literal
+  // substitution to the text just before it is spoken (English, Japanese or symbols alike, and
+  // regardless of whether enkana is on). Longer spellings match first. Empty = disabled. See
+  // parse/applyUserDict in features/chat/ttsText.ts.
   ttsUserDict: string;
-  // 合成キャッシュの上限（合計再生秒数）。同一文言＋同一合成条件の音声をメモリに保持して
-  // 再読み上げを即時化する（features/chat/tts.ts）。PCM で約 0.1MB/秒。0 = キャッシュなし。
+  // Synthesis cache ceiling, in total seconds of audio. Keeps audio for identical text under
+  // identical synthesis conditions in memory so a repeat reading is instant
+  // (features/chat/tts.ts). About 0.1MB per second as PCM. 0 = no cache.
   ttsCacheSec: number;
-  // ミラー（チャット）: アクティブなペインのセッションに新しい回答が届いたら自動でカラオケ
-  // 朗読する（features/mirror/turnTts.ts）。見ていないセッションの短い告知 ttsSessionNotify
-  // とは相補（こちらは見ている画面の本文を読む）。
+  // Mirror (chat): read a new answer aloud karaoke-style as soon as it arrives for the active
+  // pane's session (features/mirror/turnTts.ts). Complements ttsSessionNotify, the short
+  // announcement for sessions you are not watching — this one reads the body you are looking at.
   ttsAutoReadMirror: boolean;
-  // 自動読み上げをアクティブなペインだけでなく「開いている全ペイン」で行う（ttsAutoReadMirror
-  // のサブオプション）。各ペインの新着回答は 1 本の再生に直列で並ぶ。同じセッションを複数
-  // ペインで開いていても読むのは 1 ペインだけ（features/mirror/turnTts.ts の担当登録）。
-  // セッションごとの声（ttsVoicePerSession）と併用すると、どのペインの回答かを声で判別できる。
+  // Read aloud in every open pane, not just the active one (a sub-option of ttsAutoReadMirror).
+  // New answers from all panes queue serially into a single playback. The same session open in
+  // several panes is still read by one pane only (the ownership registration in
+  // features/mirror/turnTts.ts). Combined with per-session voices (ttsVoicePerSession), the
+  // voice tells you which pane an answer came from.
   ttsAutoReadAllPanes: boolean;
-  // 確定した作業過程（最終回答より前のナレーション）を小声で読む。off=読まない、
-  // whisper=ささやき、hushed=ヒソヒソ。対応スタイルが無い話者/Polly は同じ声の音量を下げる。
+  // Read the settled work trace (the narration before the final answer) quietly. off = do not
+  // read it; whisper and hushed select the matching VOICEVOX styles. A speaker without those
+  // styles, and Polly, simply lower the volume of the same voice.
   ttsWorkRead: string; // "off" | "whisper" | "hushed"
-  // 作業過程を小声で読むとき（ttsWorkRead≠off）の出力音量倍率（0〜1）。スライダーで調整。
-  // スタイル（ささやき／ヒソヒソ）とは別に、最終回答より小さく聞こえる出力ゲインを与える。
+  // Output volume multiplier (0..1) when the work trace is read quietly (ttsWorkRead != off),
+  // set with a slider. Independent of the whisper/hushed style: this is the output gain that
+  // makes it audibly quieter than the final answer.
   ttsWorkVolume: number;
-  // セッションごとに声を変える（features/chat/tts.ts の sessionVoiceOpts）。セッション名の
-  // ハッシュで話者プール（VOICEVOX 標準キャラ / Polly 3 声）から決定的に割り当て、ミラーの
-  // 読み上げとセッション音声通知に適用（どのセッションの回答かを声で判別できる）。
-  // チャットタブ・朗読ビューは選択した話者のまま。
+  // Give each session its own voice (sessionVoiceOpts in features/chat/tts.ts). A hash of the
+  // session name deterministically picks from the speaker pool (the standard VOICEVOX characters
+  // / Polly's three voices), applied to the mirror's read-aloud and to session voice
+  // notifications, so the voice identifies the session. The chat tab and the reader view keep
+  // the selected speaker.
   ttsVoicePerSession: boolean;
-  // キャラクター設定（features/chat/tts.ts の voiceCharacters/activeVoicePool）。キーは
-  // エンジンのキャラ名。use=セッション声プール・朗読ビューの選択肢に入れるか（未設定は
-  // 既定プール = tts.ts の SESSION_VOICES に載っているキャラのみ true）、style=基準スタイル
-  // （speaker 番号。未設定はノーマル）、speed=キャラ別速度（未設定はグローバル ttsSpeed）。
-  // 一覧は VOICEVOX エンジンの実カタログ（GET /api/tts/speakers）から出す。
+  // Per-character settings (voiceCharacters / activeVoicePool in features/chat/tts.ts), keyed by
+  // the engine's character name. use = include it in the session voice pool and the reader
+  // view's choices (unset means the default pool: true only for the characters listed in
+  // SESSION_VOICES in tts.ts); style = the base style (a speaker number, normal when unset);
+  // speed = a per-character speed (the global ttsSpeed when unset). The list itself comes from
+  // the VOICEVOX engine's live catalog (GET /api/tts/speakers).
   ttsVoicePool: Record<string, TtsCharConf>;
-  // ミラー（チャット）: アクティブなペインのセッションが確認待ち（AskUserQuestion／
-  // プラン承認／許可要求）になったら、質問文と選択肢を読み上げる。選択肢は表示ラベルで
-  // なく説明文（ツールチップの中身）を優先して読む（features/chat/ttsText.ts の pendingSpeech）。
+  // Mirror (chat): when the active pane's session stops for confirmation (AskUserQuestion, plan
+  // approval, a permission request), read the question and its choices aloud. For a choice it
+  // prefers the description (the tooltip body) over the display label (pendingSpeech in
+  // features/chat/ttsText.ts).
   ttsReadPending: boolean;
-  // ミラーの自動読み上げで、長い回答（目安 500 字超）はアシスタント（headless CLI）に
-  // 2 文へ要約させてそれを読む（features/mirror/MirrorView.tsx）。フル本文はターンの
-  // 読み上げボタンでいつでも聞ける。生成失敗・タイムアウトは全文読みにフォールバック。
+  // In the mirror's automatic read-aloud, a long answer (roughly over 500 characters) is
+  // summarized to two sentences by the assistant (a headless CLI) and that is read instead
+  // (features/mirror/MirrorView.tsx). The full body is always available from the turn's
+  // read-aloud button. A failed or timed-out summary falls back to reading the whole text.
   ttsSummaryRead: boolean;
-  // 文の内容で感情スタイルを切り替える（features/chat/tts.ts の emotionOpts）。エラー・
-  // 失敗系の文はツンツン系、成功・完了系はあまあま系スタイルで読む。スタイル variant を
-  // 持つ話者（ずんだもん・四国めたん・九州そら）のときだけ効く。
+  // Switch the emotion style by what the sentence says (emotionOpts in features/chat/tts.ts):
+  // errors and failures are read in the ツンツン (prickly) styles, successes and completions in
+  // the あまあま (sweet) ones. Only effective for speakers that have style variants (Zundamon,
+  // Shikoku Metan, Kyushu Sora).
   ttsEmotion: boolean;
-  // インラインコード（`…`）を省略して読む（features/chat/ttsText.ts の abbrevCode）。
-  // ハッシュ等は頭 2 文字＋フィラー語（なんとか 等）、camelCase/パスは頭一語＋フィラー
-  // （3 語以上は＋末尾一語）。短い語・空白入り・日本語入り・読み仮名辞書に掛かる表記はそのまま。
-  // バッククォート無しの裸ハッシュ（f437e17 等の小文字 16 進・UUID）も同じ扱い（isBareHash）。
+  // Read inline code (`...`) abbreviated (abbrevCode in features/chat/ttsText.ts). A hash becomes
+  // its first two characters plus a filler word (なんとか and the like); camelCase and paths
+  // become the first word plus a filler, with the last word appended when there are three or
+  // more. Short tokens, anything containing a space or Japanese, and spellings covered by the
+  // reading dictionary are left as they are. A bare hash without backticks (lowercase hex such
+  // as f437e17, or a UUID) is treated the same way (isBareHash).
   ttsAbbrevCode: boolean;
-  // 助詞（を・は・で・に・と）の直後に漢字が続くとき、読点を挿入して小さな間で読む
-  // （features/chat/ttsText.ts の pauseParticles。句点の一拍より短い「息継ぎ」相当）。
+  // When a particle (を・は・で・に・と) is immediately followed by a kanji, insert a comma so
+  // it is read with a small pause (pauseParticles in features/chat/ttsText.ts) — a breath,
+  // shorter than the beat a full stop gives.
   ttsParticlePause: boolean;
-  // 朗読ビュー（docs/log/24）を縦書きで表示するか（既定 false=横書き）。ReaderView のトグルに追随。
+  // Show the reader view (docs/log/24) in vertical writing; default false = horizontal. Follows
+  // the toggle in ReaderView.
   readerVertical: boolean;
-  // 朗読ビューの声。"" = 設定の話者のまま / "vv:<speaker>" = VOICEVOX のキャラ /
-  // "polly:<VoiceId>" = Polly。ReaderView ヘッダーの選択に追随（features/chat/tts.ts の
-  // voiceChoiceOpts が TtsOptions の上書きへ解決する）。
+  // Reader view voice. "" = keep the speaker from settings; "vv:<speaker>" = a VOICEVOX
+  // character; "polly:<VoiceId>" = Polly. Follows the selection in the ReaderView header
+  // (voiceChoiceOpts in features/chat/tts.ts resolves it into a TtsOptions override).
   readerVoice: string;
-  // 朗読ビューの本文フォント（READER_FONTS の値。"明朝"=セリフ既定 / "ゴシック"=サンセリフ）。
-  // ReaderView が --reader-font（readerFontStack で解決）として本文へ渡す。
+  // Reader view body font: a READER_FONTS value (明朝 = serif, the default; ゴシック = sans).
+  // ReaderView passes it to the body as --reader-font, resolved by readerFontStack.
   readerFont: string;
-  // 朗読ビューの本文文字サイズ（px）。ReaderView が --reader-size として本文へ渡す。
+  // Reader view body font size in px. ReaderView passes it to the body as --reader-size.
   readerSize: number;
-  // キーボードショートカットのユーザー再割当（docs/log/29 + ADR-0017）。キー＝コマンド id、または
-  // アプリ予約キーの合成 id（app.leader / app.palette / app.cheatsheet）。値＝上書きするコード
-  // （chords.ts の正規形文字列。""＝明示的に無効化）。未登録キーは既定のまま。直接アクセラレータと
-  // 予約キーのみ再割当可（リーダー配下のシーケンス p r 等は構造なので固定）。features/keys/bindings.ts
-  // の effectiveCommands / boundChord が解決する。クロスデバイス同期（DEVICE_LOCAL 外）。
+  // User rebindings of keyboard shortcuts (docs/log/29 + ADR-0017). Key = a command id, or the
+  // synthetic id of an app-reserved key (app.leader / app.palette / app.cheatsheet). Value = the
+  // overriding code (the normalized chord string from chords.ts; "" disables it explicitly). An
+  // unlisted key keeps its default. Only direct accelerators and reserved keys can be rebound —
+  // leader sequences (p r and the like) are structure and stay fixed. Resolved by
+  // effectiveCommands / boundChord in features/keys/bindings.ts. Synced across devices (not
+  // DEVICE_LOCAL).
   keybindings: Record<string, string>;
-  // 端末入力優先（docs/log/29）。ON のとき、端末（xterm）にフォーカスがある間はアプリのグローバル
-  // ショートカットを抑止して端末へ素通しする（Ctrl 系を端末に渡す）。唯一 Leader（既定 Ctrl/⌘+K・
-  // 再割当可）だけは残し、そこから which-key／パレットで全コマンドに到達できる。既定 OFF（capture 優先）。
+  // Terminal input priority (docs/log/29). When ON, global app shortcuts are suppressed while
+  // the terminal (xterm) has focus and keys pass straight through to it (Ctrl combinations go to
+  // the terminal). Only the leader key (Ctrl/⌘+K by default, rebindable) survives, and every
+  // command is still reachable from it through which-key or the palette. Default OFF, i.e. the
+  // app captures.
   terminalPriority: boolean;
-  // 作業グループ（docs/log/52 + ADR 0036）の定義。名前付きの { 作業コピー, 会話, repo なし
-  // セッション } の集合で、左ペインの表示を案件ごとに絞り込む。定義はクロスデバイス同期
-  // （サーバ ui-prefs）、いま「どのグループを見ているか」は workingSetActive（端末ローカル）。
-  // 壊れた値・消えた実体への参照は lib/workingSets.ts の normalize / 述語が無害化する。
+  // Working set definitions (docs/log/52 + ADR 0036): named sets of { working copies,
+  // conversations, sessions without a repo } that narrow the left pane down to one piece of
+  // work. The definitions sync across devices (server ui-prefs); which set is currently being
+  // viewed is workingSetActive, which is device-local. Corrupt values and references to entities
+  // that no longer exist are neutralized by normalize / the predicates in lib/workingSets.ts.
   workingSets: WorkingSet[];
-  // 表示中の作業グループ id（"" = すべて）。theme と同じ端末ローカル（DEVICE_LOCAL）—
-  // PC では案件X・タブレットでは案件Y を見る、が端末ごとに成立する。
+  // Id of the working set currently shown ("" = all). Device-local like theme (DEVICE_LOCAL), so
+  // watching work X on a PC and work Y on a tablet holds per device.
   workingSetActive: string;
-  // shell/SSM 端末へのキー素通し（docs/log/29）。ON のとき、shell・ssm 端末にフォーカスがある間は
-  // terminalPriority と違い Leader（Ctrl/⌘+K）とパレット（Ctrl/⌘+P）も含めて全アプリショートカットを
-  // 抑止し、Ctrl+K（kill-line）／Ctrl+P（履歴前へ）などをそのまま xterm/PTY へ渡す＝純ターミナル。
-  // 対象は shell/ssm のみ（エージェント端末は従来どおり）。既定 OFF。復帰はマウスや他ペインクリック。
+  // Pass keys straight through to shell/SSM terminals (docs/log/29). When ON, and unlike
+  // terminalPriority, every app shortcut is suppressed while a shell or ssm terminal has focus —
+  // including the leader (Ctrl/⌘+K) and the palette (Ctrl/⌘+P) — so Ctrl+K (kill-line), Ctrl+P
+  // (previous history) and the rest reach xterm/PTY unchanged: a pure terminal. Only shell/ssm
+  // are affected; agent terminals behave as before. Default OFF. Click elsewhere to leave it.
   shellTermPassthrough: boolean;
 }
 
@@ -651,42 +696,44 @@ export function normalizeAssistantOrder(v: unknown): string[] {
   return out;
 }
 
-// migrateAiAssistPrefs — 「AI 補助生成」を アシスタント から分離したときの引き継ぎ
-// （docs/log/84）。**足りないキーを埋めるだけ**で、既にある値には触らない。
+// migrateAiAssistPrefs — carry-over for splitting AI assist generation out of the assistant
+// (docs/log/84). It only fills in missing keys and never touches a value that is already there.
 //
-// load()（localStorage）と hydrateUIPrefs()（サーバ prefs）の両方から同じ関数を呼ぶ。
-// 分けて書くと片方だけ直す事故が起きる — 実際、旧 assistantTitleSuggest の移行は
-// 2 箇所に同じ規則が写経されていた。
+// Both load() (localStorage) and hydrateUIPrefs() (server prefs) call this same function.
+// Writing the rule out twice invites fixing only one copy — the old assistantTitleSuggest
+// migration really had been transcribed into two places.
 //
-// 原則は「アップグレードで挙動を変えない」。ただし aiProseModels だけは意図的に
-// 引き継がない: 旧 assistantUtilityModels は名前もラベルも「タイトル・サジェスト」と
-// 言いながら、ファイル編集提案・計画更新の既定（sonnet 級）まで置き換えていた。
-// そこへ haiku を入れていた人は、名前どおり短文用途に入れたのであって文章生成を
-// 落としたかったわけではない。文章側は用途に合った推奨へ戻す（＝この整理の目的）。
+// The principle is that an upgrade must not change behaviour. aiProseModels is the deliberate
+// exception: the old assistantUtilityModels said "titles and suggestions" in both its name and
+// its label, yet it also replaced the defaults for File pane edit suggestions and plan updates
+// (the sonnet class). Someone who put haiku there meant it for short labels, as the name said,
+// not to downgrade prose generation. The prose side goes back to the recommendation that fits
+// its purpose — the point of this split.
 export function migrateAiAssistPrefs(o: Record<string, unknown>): void {
-  // タイトル提案は 1 機能 1 キーへ。旧 autoTitleSuggest はセッション・チャット・
-  // ブランチ名の 3 つを兼ねていたので、明示的な OFF は 3 つとも引き継ぐ。
+  // Title suggestion moves to one key per feature. The old autoTitleSuggest covered sessions,
+  // chats and branch names at once, so an explicit OFF is carried over to all three.
   if (typeof o.autoTitleSuggest === "boolean") {
     if (!("assistantTitleSuggest" in o)) o.assistantTitleSuggest = o.autoTitleSuggest;
     if (!("branchSuggestEnabled" in o)) o.branchSuggestEnabled = o.autoTitleSuggest;
   }
-  // CLI 優先順位はチャット用と補助生成用へ。分離前は 1 本だったので、補助生成側は
-  // その順序をそのまま受け継ぐ（＝分けたことに気づかないまま挙動が変わらない）。
+  // The CLI priority splits into a chat list and an assist-generation list. It was one list
+  // before, so the assist side inherits that order verbatim; the split changes nothing anyone
+  // would notice.
   if (!("aiAssistOrder" in o) && Array.isArray(o.assistantAgentOrder)) {
     o.aiAssistOrder = normalizeAssistantOrder(o.assistantAgentOrder);
   }
-  // 旧ユーティリティモデルは短文・文章の**両方**が継ぐ。旧キーは（名前に反して）実際に
-  // 両方へ効いていたので、これがリリース時点の挙動をそのまま持ち越す初期値になる。
-  // 分けた意味は「この先それぞれ独立に変えられる」ことで、リリースの瞬間に片方を
-  // 勝手に別のモデルへ動かすことではない。
+  // Both the short and the prose keys inherit the old utility models. Despite its name the old
+  // key really did drive both, so this is the initial value that carries the pre-release
+  // behaviour over unchanged. The point of splitting them is being able to change them
+  // independently later, not moving one to a different model the moment this ships.
   if (o.assistantUtilityModels && typeof o.assistantUtilityModels === "object") {
     const legacy = o.assistantUtilityModels as Record<string, string>;
     if (!("aiShortModels" in o)) o.aiShortModels = { ...legacy };
     if (!("aiProseModels" in o)) o.aiProseModels = { ...legacy };
   }
-  // 読み上げ言語は outputLanguage の借用をやめて独立キーへ。借りていた頃の値を継ぐので、
-  // 「回答言語を English にしていたら読み上げも Polly」という現状の挙動は保たれる。
-  // 次からは片方だけ変えられる。
+  // The read-aloud language stops borrowing outputLanguage and gets its own key. It inherits the
+  // borrowed value, so the current behaviour — reply language English means read-aloud goes to
+  // Polly — is preserved. From now on either one can be changed alone.
   if (!("ttsLang" in o) && typeof o.outputLanguage === "string") o.ttsLang = o.outputLanguage;
 }
 
@@ -706,7 +753,7 @@ const DEFAULTS: Settings = {
   cjkFont: CJK_FONT_AUTO,
   viewerFont: "JetBrains Mono",
   viewerSize: 13,
-  chatFont: "システム", // i18n-exempt: fontStack 突合用の生フォント値
+  chatFont: "システム", // i18n-exempt: raw font value matched in fontStack
   chatSize: 14,
   lineNumbers: true,
   wrap: false,
@@ -731,13 +778,14 @@ const DEFAULTS: Settings = {
   mirrorSend: "mod-enter",
   defaultModel: DEFAULT_MODEL, // concrete tier (avoids claude's release-varying own pick)
   agentLaunchDefaults: DEFAULT_AGENT_LAUNCH,
-  // 新規アカウントは claude の Fable を既定で除外しておく。Claude Team プランでは
-  // Fable が API クレジット扱いになるため、初回から誤選択の事故を防ぐ（既存ユーザーの
-  // 保存済み設定は上書きしない — load()/hydrateUIPrefs() は未保存キーにだけ既定値を使う）。
+  // New accounts exclude claude's Fable by default: on a Claude Team plan Fable is charged as
+  // API credit, so this prevents an accidental pick from the very first launch. Existing users'
+  // saved settings are not overwritten — load()/hydrateUIPrefs() apply defaults only to keys
+  // that were never saved.
   hiddenModels: { claude: ["fable"] },
   claudeCustomModels: [],
   autoTitleSuggest: true,
-  peerMessaging: false, // opt-in（docs/log/58 / ADR 0041）— 既定で増やしてよい面ではない
+  peerMessaging: false, // opt-in (docs/log/58 / ADR 0041) — not a surface to widen by default
   opencodeCatalog: "off",
   expandThinking: {},
   assistantTitleSuggest: true,
@@ -780,34 +828,35 @@ const DEFAULTS: Settings = {
   assistantAutoCompactTokens: 150000,
   assistantOutputTailKiB: 32,
   ssmHostColors: {},
-  // 音声読み上げの初期値＝おすすめ設定。設定タブの「リセット」ボタンが戻す値（TTS_RESET）と
-  // 同じで、新規ユーザー（と未設定の既存ユーザー）はこの状態から始まる。読み上げ本体・音声通知
-  // だけは OFF スタート、ほかは ON にしたとき快適な既定（セッションごとに声を変える／はやめ／
-  // 自動読み上げ・全ペイン・確認質問・カタカナ読み ON／キャッシュ 15 分）。TTS_RESET はこの
-  // DEFAULTS から TTS 関連キーだけ抜き出して定義しているので、両者は常に一致する。
+  // Read-aloud defaults, i.e. the recommended setup. They are the same values the settings tab's
+  // reset button restores (TTS_RESET), so new users — and existing users who never chose — start
+  // here. Only read-aloud itself and the voice notification start OFF; everything else is the
+  // setup that is comfortable once it is turned on (per-session voices, fast speed, auto-read
+  // across all panes, confirmation questions, katakana readings, a 15-minute cache). TTS_RESET is
+  // derived from these DEFAULTS by picking out the TTS keys, so the two can never disagree.
   ttsEnabled: false,
   ttsProvider: "auto",
   ttsLang: "auto",
-  ttsVoiceVoicevox: "3", // ノーマル
+  ttsVoiceVoicevox: "3", // normal style
   ttsVoicePolly: "Takumi",
-  ttsSpeed: 1.25, // はやめ
-  ttsZundamonVolume: 0.85, // ずんだもんは少し下げて他の声と揃える
+  ttsSpeed: 1.25, // fast
+  ttsZundamonVolume: 0.85, // Zundamon turned down slightly to match the other voices
   ttsBackgroundPlayback: "quiet",
-  ttsBackgroundVolume: 0.35, // 背景時 35%（従来の固定値 HIDDEN_TTS_GAIN と同値）
+  ttsBackgroundVolume: 0.35, // 35% in the background (the value of the former fixed HIDDEN_TTS_GAIN)
   ttsStereoByPane: true,
   ttsSessionNotify: false,
   usageResetNotify: true,
   ttsEnglishKana: true,
   ttsUserDict: "",
-  ttsCacheSec: 900, // 15分
+  ttsCacheSec: 900, // 15 minutes
   ttsAutoReadMirror: true,
   ttsAutoReadAllPanes: true,
   ttsWorkRead: "off",
-  ttsWorkVolume: 0.5, // 作業過程の小声（従来の ささやき 0.58 / ヒソヒソ 0.3 の中間）
+  ttsWorkVolume: 0.5, // quiet work trace (between the former whisper 0.58 and hushed 0.3)
   ttsVoicePerSession: true,
-  // {} = 標準 14 キャラ（tts.ts の SESSION_VOICES）がセッション割り当て対象。新規ユーザーも
-  // リセットもこの状態から始まる（キャラは標準 14 人スタートで統一）。エンジンに追加キャラが
-  // いても、使いたければキャラクター一覧で個別にチェックする運用。
+  // {} = the 14 standard characters (SESSION_VOICES in tts.ts) are what sessions get assigned.
+  // A new user and a reset both start here, so the character set is always the same 14. Extra
+  // characters the engine offers must be ticked individually in the character list to be used.
   ttsVoicePool: {},
   ttsEmotion: false,
   ttsReadPending: true,
@@ -816,7 +865,7 @@ const DEFAULTS: Settings = {
   ttsParticlePause: true,
   readerVertical: false,
   readerVoice: "",
-  readerFont: "明朝", // i18n-exempt: fontStack 突合用の生フォント値
+  readerFont: "明朝", // i18n-exempt: raw font value matched in fontStack
   readerSize: 17,
   keybindings: {},
   terminalPriority: false,
@@ -832,8 +881,8 @@ const DEFAULTS: Settings = {
   workingSetActive: "",
 };
 
-// VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
-// i18n-exempt-start: VOICEVOX スタイル名は固有名詞として未翻訳（docs/log/28 §6.4）
+// VOICEVOX Zundamon styles (speaker number → label), used by the speaker picker in the settings UI.
+// i18n-exempt-start: VOICEVOX style names are proper nouns and stay untranslated (docs/log/28 §6.4)
 export const VOICEVOX_ZUNDAMON: [string, string][] = [
   ["3", "ノーマル"],
   ["1", "あまあま"],
@@ -844,29 +893,30 @@ export const VOICEVOX_ZUNDAMON: [string, string][] = [
 ];
 // i18n-exempt-end
 
-// TTS プロバイダ（docs/log/24 Phase 2）。auto の使い分けは CP が決める。ラベルは i18n キー。
+// TTS providers (docs/log/24 Phase 2). The CP decides what auto resolves to. Labels are i18n keys.
 export const TTS_PROVIDERS: [string, MsgKey][] = [
   ["auto", "tts.provider_auto"],
   ["voicevox", "tts.provider_voicevox"],
   ["polly", "tts.provider_polly"],
 ];
 
-// 読み上げ言語（設定 > 読み上げ）。"auto" は UI 表示言語に従う — アシスタントの
-// 「回答言語」の auto（入力の言語に合わせる）とは別物なので、ラベルも別キーにしてある。
+// Read-aloud language (Settings > Read aloud). "auto" follows the UI display language — a
+// different thing from the assistant's reply-language auto, which follows the input, so it has
+// its own label key.
 export const TTS_LANGS: [string, MsgKey][] = [
   ["auto", "tts.lang_auto"],
   ["ja", "tts.lang_ja"],
   ["en", "tts.lang_en"],
 ];
 
-// Polly の日本語ニューラル話者（VoiceId → i18n キー）。
+// Polly's Japanese neural speakers (VoiceId → i18n key).
 export const TTS_POLLY_VOICES: [string, MsgKey][] = [
   ["Takumi", "tts.polly_takumi"],
   ["Kazuha", "tts.polly_kazuha"],
   ["Tomoko", "tts.polly_tomoko"],
 ];
 
-// 合成キャッシュの上限（合計再生秒数 → i18n キー）。メモリ消費は PCM で約 0.1MB/秒。
+// Synthesis cache ceilings (total seconds of audio → i18n key). PCM uses about 0.1MB per second.
 export const TTS_CACHE_SIZES: [number, MsgKey][] = [
   [0, "tts.cache_none"],
   [300, "tts.cache_5m"],
@@ -874,11 +924,12 @@ export const TTS_CACHE_SIZES: [number, MsgKey][] = [
   [1800, "tts.cache_30m"],
 ];
 
-// 音声読み上げ設定の「初期状態」（設定タブのリセットボタンが書き戻す値）。DEFAULTS の TTS 関連
-// キーだけを抜き出したもので、新規ユーザーの初期値と常に一致する（DEFAULTS を単一の真実源に
-// することでドリフトを防ぐ）。ttsVoicePool は {}（= tts.ts の標準 14 キャラがチェック済み）で、
-// リセットも新規ユーザーもキャラは標準 14 人からのスタートで揃う。読み仮名辞書（ttsUserDict）は
-// ユーザーが打ち込んだ内容なのでリセットでは消さない（含めない）。
+// The initial state of the read-aloud settings, i.e. what the settings tab's reset button writes
+// back. It is derived from the TTS keys of DEFAULTS, so it always matches what a new user gets;
+// keeping DEFAULTS the single source of truth is what prevents drift. ttsVoicePool is {} (the 14
+// standard characters in tts.ts are ticked), so a reset and a new user start from the same
+// characters. The reading dictionary (ttsUserDict) is content the user typed, so a reset does not
+// erase it and it is not included here.
 const TTS_RESET_KEYS = [
   "ttsEnabled",
   "ttsSessionNotify",
@@ -909,7 +960,7 @@ export const TTS_RESET: Partial<Settings> = Object.fromEntries(
   TTS_RESET_KEYS.map((k) => [k, DEFAULTS[k]]),
 ) as Partial<Settings>;
 
-// 読み上げ速度（speedScale）。ラベルは i18n キー。
+// Read-aloud speeds (speedScale). Labels are i18n keys.
 export const TTS_SPEEDS: [number, MsgKey][] = [
   [0.75, "tts.speed_slow"],
   [1.0, "tts.speed_normal"],
@@ -945,9 +996,9 @@ export const MIRROR_SEND_MODES: { id: string; labelKey: MsgKey }[] = [
 ];
 
 // Claude model choices, shared by the launch dialog and the default-model setting. Only
-// concrete tiers — the "既定"/"" (defer to claude's release-varying own default) option was
-// dropped on purpose so model selection stays deterministic. Each alias still tracks the
-// newest model within its tier. Mirrored in Go as claude.Models()
+// concrete tiers — the "default" (「既定」) / "" option, which deferred to claude's own
+// release-varying default, was dropped on purpose so model selection stays deterministic. Each
+// alias still tracks the newest model within its tier. Mirrored in Go as claude.Models()
 // (workspace/agent/internal/agents/claude/models.go, served by /agents/claude/models
 // for the MCP list_models) — keep the two lists in sync.
 export const CLAUDE_MODELS: [string, string][] = [
@@ -957,9 +1008,10 @@ export const CLAUDE_MODELS: [string, string][] = [
   ["haiku", "Haiku"],
 ];
 
-// applyCjkFont — CJK_FAMILY の @font-face を現在の設定で張り替える。applyTheme と
-// 同じ 3 箇所（初回・変更時・サーバ hydrate 時）から呼ぶ。"欧文優先" のときは規則ごと
-// 外す（未定義のフォント名はスタック中で単に読み飛ばされるので、それで従来の見た目に戻る）。
+// applyCjkFont — rewrites the CJK_FAMILY @font-face from the current settings. Called from the
+// same three places as applyTheme (first paint, on change, after a server hydrate). With
+// CJK_FONT_OFF the rule is removed entirely; an undefined family name is simply skipped in the
+// stack, which is what restores the previous appearance.
 export function applyCjkFont(s: Settings): void {
   if (typeof document === "undefined") return;
   const id = "af-cjk-font";
@@ -980,25 +1032,25 @@ export function applyCjkFont(s: Settings): void {
   if (!el.isConnected) document.head.appendChild(el);
 }
 
-// 欧文フォント側の等幅スタック（和文優先の @font-face を前置しない素の形）。
+// The Latin monospace stack — the bare form, with no CJK-first @font-face prepended.
 function codeFontStack(name: string): string {
-  if (!name || name === "システム等幅") { // i18n-exempt: fontStack 突合用の生フォント値
+  if (!name || name === "システム等幅") { // i18n-exempt: raw font value matched in fontStack
     return 'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace';
   }
   return `"${name}", "Noto Sans Mono CJK JP", ui-monospace, Menlo, Consolas, monospace`;
 }
 
 // Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
-// 先頭の CJK_FAMILY は applyCjkFont() が張る unicode-range 限定の @font-face で、
-// ①②③ など「東アジア文字幅=Ambiguous」の文字だけを和文フォントへ回す（下記参照）。
+// The leading CJK_FAMILY is the unicode-range-limited @font-face that applyCjkFont() installs;
+// it routes only East Asian Width = Ambiguous characters (①②③ and the like) to the CJK font.
 export function fontStack(name: string): string {
   return `"${CJK_FAMILY}", ${codeFontStack(name)}`;
 }
 
-// ターミナル用スタック — fontStack と違い CJK_FAMILY を前置しない。xterm は
-// Ambiguous を桁幅 1 として数え（CLI 側の折り返し計算も同じ前提）、和文フォントの
-// 全角グリフを 1 セルに描くと文字が隣へはみ出して行が崩れるため、端末だけは
-// 欧文フォントの半角グリフのままにする。
+// Terminal stack — unlike fontStack it does not prepend CJK_FAMILY. xterm counts Ambiguous as
+// one column wide (the CLI's own wrapping assumes the same), so drawing a CJK font's full-width
+// glyph into one cell spills over into the neighbouring cell and breaks the line; the terminal
+// alone keeps the Latin font's half-width glyphs.
 export function termFontStack(name: string): string {
   return codeFontStack(name);
 }
@@ -1006,13 +1058,13 @@ export function termFontStack(name: string): string {
 // Chat font stack — proportional by default. "システム"/"セリフ" map to sans/serif
 // system stacks (with CJK fallbacks); any other name is a code font (monospace).
 export function chatFontStack(name: string): string {
-  if (!name || name === "システム") { // i18n-exempt: fontStack 突合用の生フォント値
-    // ゴシック系なので、和文優先の CJK_FAMILY（ゴシック）を前置しても字面が揃う。
-    // 桁が無い面なので広い方（PROSE = ■ ○ ★ まで）を使う。"セリフ" 側は前置しない
-    // （明朝の地に丸数字だけゴシックが混ざるのを避ける）。
+  if (!name || name === "システム") { // i18n-exempt: raw font value matched in fontStack
+    // A gothic family, so prepending the gothic CJK_FAMILY keeps the letterforms consistent.
+    // There are no columns here, so use the wider range (PROSE, up to ■ ○ ★). The serif branch
+    // does not prepend it, to avoid gothic circled digits inside mincho body text.
     return `"${CJK_FAMILY_PROSE}", system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", sans-serif`;
   }
-  if (name === "セリフ") { // i18n-exempt: fontStack 突合用の生フォント値
+  if (name === "セリフ") { // i18n-exempt: raw font value matched in fontStack
     return 'Georgia, "Times New Roman", "Hiragino Mincho ProN", "Noto Serif CJK JP", serif';
   }
   return fontStack(name);
@@ -1022,7 +1074,7 @@ export function chatFontStack(name: string): string {
 // (default "明朝") = serif (mincho). Both list CJK families first with generic
 // fallbacks so they render correctly where the OS lacks Hiragino/Yu.
 export function readerFontStack(name: string): string {
-  if (name === "ゴシック") { // i18n-exempt: fontStack 突合用の生フォント値
+  if (name === "ゴシック") { // i18n-exempt: raw font value matched in fontStack
     return '"Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", "Noto Sans CJK JP", system-ui, sans-serif';
   }
   return '"Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Noto Serif CJK JP", "Noto Serif", serif';
@@ -1031,13 +1083,14 @@ export function readerFontStack(name: string): string {
 function load(): Settings {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
-    // 旧ON/OFF設定を3択へ移行する。明示済みの新設定があればそちらを優先する。
+    // Migrate the old ON/OFF setting to the three-way choice; an explicit new setting wins.
     if (!("ttsBackgroundPlayback" in saved) && typeof saved.ttsQuietWhenHidden === "boolean") {
       saved.ttsBackgroundPlayback = saved.ttsQuietWhenHidden ? "quiet" : "normal";
     }
     delete saved.ttsQuietWhenHidden;
-    // AI 補助生成の分離（タイトル提案の 1 機能 1 キー化・優先順位/モデルの 2 系統化・
-    // 読み上げ言語の独立）。hydrateUIPrefs() と同じ関数を通す。
+    // Split of AI assist generation (one key per title-suggestion feature, two separate
+    // priority/model lists, an independent read-aloud language). Runs the same function as
+    // hydrateUIPrefs().
     migrateAiAssistPrefs(saved);
     const legacyClaudeModel = typeof saved.defaultModel === "string" ? saved.defaultModel : DEFAULT_MODEL;
     const rows = saved.agentLaunchDefaults && typeof saved.agentLaunchDefaults === "object"
@@ -1048,7 +1101,7 @@ function load(): Settings {
       ...saved,
       claudeCustomModels: normalizeClaudeCustomModels(saved.claudeCustomModels),
       agentLaunchDefaults: normalizeAgentLaunchDefaults(rows, legacyClaudeModel),
-      // 旧「モデル一覧」の値（go-first / hide-zen / all）を課金経路の3択へ寄せる。
+      // Map the legacy model-list values (go-first / hide-zen / all) onto the three billing routes.
       opencodeCatalog: migrateOpencodeCatalog(saved.opencodeCatalog),
     };
   } catch {
@@ -1086,9 +1139,9 @@ export function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = 
       model: typeof row.model === "string" ? row.model : kind === "claude" ? legacyClaudeModel : base.model,
       effort: typeof row.effort === "string" ? row.effort : base.effort,
       startMode: row.startMode === "plan" ? "plan" : "normal",
-      // 既定は「スキップする」。明示的に false のときだけ承認ありにする — 欠落や
-      // 壊れた値を承認ありに倒すと、古い prefs を読んだ端末で全セッションが承認待ちに
-      // なる（挙動を変えない、が本機能の前提）。
+      // The default is to skip. Only an explicit false asks for approval: defaulting a missing
+      // or corrupt value to "ask" would leave every session on a device that read older prefs
+      // waiting for approval, and not changing behaviour is the premise of this feature.
       skipPermissions: row.skipPermissions !== false,
     };
   }
@@ -1099,8 +1152,9 @@ export function agentLaunchDefault(s: Settings, kind: string): AgentLaunchDefaul
   return s.agentLaunchDefaults[kind] || { model: "", effort: "", startMode: "normal", skipPermissions: true };
 }
 
-// expandThinking は kind の「思考を最初から展開する」設定。未設定・不明 kind・壊れた
-// 保存値（サーバー ui-prefs は他バージョンの Console も書く）は false＝畳んで表示。
+// expandThinking is a kind's "expand thinking from the start" setting. Unset, an unknown kind,
+// and a corrupt saved value (server ui-prefs are written by other Console versions too) all
+// mean false, i.e. shown collapsed.
 export function expandThinking(s: Settings, kind?: string | null): boolean {
   if (!kind) return false;
   return s.expandThinking?.[kind] === true;
@@ -1144,8 +1198,8 @@ export function applyTheme(s: Settings): void {
   // surfaces in light theme (toward white), darker in dark theme (toward black).
   // Unset => theme --bg.
   setVar("--viewer-bg", surfaceBg(s.viewerColor, theme));
-  // Viewer surface accent — the terminal pane shares --viewer-bg, so the ターミナル/チャット
-  // toggle rebinds --sel-accent to this. Null (no viewer color) → CSS falls back to topbar.
+  // Viewer surface accent — the terminal pane shares --viewer-bg, so the terminal/chat toggle
+  // rebinds --sel-accent to this. Null (no viewer color) → CSS falls back to topbar.
   setVar("--viewer-accent", surfaceAccent(s.viewerColor));
   // NOTE: the session mirror's --chat-bg/--chat-accent and the assistant chat's surface are
   // NOT set here anymore — each region owns them per its own theme (mirrorTheme/assistantTheme)
@@ -1153,19 +1207,21 @@ export function applyTheme(s: Settings): void {
   // theme. See MirrorView.tsx / ChatView.tsx (surfaceBg + surfaceAccent + effectiveTheme).
 }
 
-// detectLocale — 保存済み locale が無いときの初期 UI 言語。ブラウザ言語から解決し、未対応/不明は
-// 日本語へフォールバック（既存ユーザーの挙動を変えない）。DEFAULTS 評価時に一度だけ走る。
+// detectLocale — the initial UI language when no locale is saved. Resolved from the browser
+// language, falling back to Japanese for anything unsupported or unknown so existing users see
+// no change. Runs once, when DEFAULTS is evaluated.
 function detectLocale(): string {
   try {
     if ((navigator.language || "").toLowerCase().startsWith("en")) return "en";
   } catch {
-    /* navigator 不在 */
+    /* no navigator */
   }
   return "ja";
 }
 
-// applyLocale — i18n ランタイムへ現ロケールを push し、<html lang> を実行時更新する。applyTheme と
-// 同じ 3 箇所（初回描画前・変更時・サーバ hydrate 時）で呼ぶ。
+// applyLocale — pushes the current locale into the i18n runtime and updates <html lang> at
+// runtime. Called from the same three places as applyTheme (before first paint, on change,
+// after a server hydrate).
 export function applyLocale(s: Settings): void {
   setLocale(s.locale);
   if (typeof document !== "undefined") document.documentElement.lang = s.locale;
@@ -1178,16 +1234,17 @@ export function getSettings(): Settings {
   return state;
 }
 
-/** ある設定キーの既定値。「既定に戻す」系の操作（キー操作の文字サイズリセット等）が
- *  DEFAULTS を単一の真実源として読むための細い窓 —— 既定値をコピーして持つと、新規
- *  ユーザーの初期値と静かにズレる（TTS_RESET も同じ理由で DEFAULTS から作っている）。 */
+/** The default value of one settings key. A narrow window so that "restore the default"
+ *  operations (the keyboard font-size reset and the like) read DEFAULTS as the single source of
+ *  truth — a copied default drifts silently away from what a new user gets (TTS_RESET is derived
+ *  from DEFAULTS for the same reason). */
 export function defaultSetting<K extends keyof Settings>(key: K): Settings[K] {
   return DEFAULTS[key];
 }
 
-/** 既定値一式のコピー。設定の書き出し / 取り込み（docs/log/79）が「知っているキーと、その
- *  値の形」を突き合わせるための窓 —— 取り込む側が独自にキー一覧を持つと、設定を足した
- *  日に静かに運ばれなくなる。 */
+/** A copy of the whole default set. The window settings export / import (docs/log/79) uses to
+ *  check which keys it knows and what shape their values have — if the import side kept its own
+ *  key list, a newly added setting would silently stop being carried. */
 export function settingsDefaults(): Settings {
   return { ...DEFAULTS };
 }
@@ -1197,21 +1254,21 @@ export function settingsDefaults(): Settings {
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let saveInFlight: Promise<void> | null = null;
 
-// サーバの ui-prefs を **一度でも読めたか**。保存は「まるごと PUT・最後の書き手が勝つ」
-// なので、読めていない間に送ってはいけない — 読めていない state は「この端末の
-// localStorage か DEFAULTS」であって利用者の設定とは限らず、そのまま PUT すると
-// サーバの実データ（学習済み候補・ピン・利用実績・キー割当…）を既定値で消し去る。
-// 実際にこれが起きた（返信サジェストが全端末で初期状態に戻った）: ワークスペース
-// 再起動直後で GET が 502、かつ localStorage が空（ログアウト直後 / 別ブラウザ /
-// 別オリジンの dev Console）だった面から、ミラーの返信 1 通の学習が既定値一式を
-// PUT してサーバを上書きした。以後の起動・フォーカス復帰で他端末にも伝播する。
+// Has the server's ui-prefs been read even once? Saving is a whole-object PUT where the last
+// writer wins, so nothing may be sent before that read succeeds: an unhydrated state is only
+// this browser's localStorage or DEFAULTS, not necessarily the user's settings, and PUTting it
+// wipes the real server data (learned suggestions, pins, usage tallies, keybindings) with
+// defaults. Damage: a GET returning 502 right after a workspace restart, together with an empty
+// localStorage, let the learning from a single mirror reply PUT the full default set over the
+// server, and it propagated from there to every other device.
 let prefsLoaded = false;
-// 読めるまでの間に起きたローカル変更。読めた直後にまとめて 1 回だけ送る。
+// Local changes made before that read succeeded. Sent once, all together, as soon as it does.
 let savePending = false;
 let hydrateRetry: ReturnType<typeof setTimeout> | null = null;
 let hydrateAttempt = 0;
-// 取得できないまま放置すると変更が永久に同期されないので、短い間隔から数回だけ自力で
-// 追いかける。使い切った後は App の focus / visibilitychange（refreshUIPrefs）が拾う。
+// Left unfetched, changes would never sync, so retry a few times independently, starting from a
+// short interval. Once those are used up, App's focus / visibilitychange (refreshUIPrefs) picks
+// it up.
 const HYDRATE_RETRY_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 
 function scheduleHydrateRetry(): void {
@@ -1223,7 +1280,8 @@ function scheduleHydrateRetry(): void {
   }, wait);
 }
 
-// サーバの現在値を読めた瞬間に呼ぶ。保留していたローカル変更をここで初めて送り出す。
+// Called the moment the server's current values have been read. Pending local changes are sent
+// out here, and not before.
 function markPrefsLoaded(): void {
   prefsLoaded = true;
   hydrateAttempt = 0;
@@ -1246,10 +1304,11 @@ function scheduleServerSave(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    // 端末ローカルキーはサーバへ送らない（この端末の外へ出さない）。
+    // Device-local keys are not sent to the server; they never leave this device.
     saveInFlight = apiJSON("api/env/ui-prefs", "PUT", serverPrefs(state))
-      // 失敗を握り潰すと「同期されていないのに同期されているつもり」になる。上限
-      // 64 KiB 超（413）のような恒久的な失敗もここでしか気づけないので必ず残す。
+      // Swallowing a failure means believing the settings are synced when they are not. A
+      // permanent failure such as exceeding the 64 KiB limit (413) is only visible here, so it
+      // must always be logged.
       .then((res) => {
         if (res && typeof res === "object" && res.error) warnPrefsSaveFailed(res.error);
       })
@@ -1271,44 +1330,47 @@ export const uiPrefsLoaded = (): boolean => prefsLoaded;
 // an older server snapshot must not overwrite the value this tab is currently writing.
 export async function refreshUIPrefs(): Promise<void> {
   if (saveTimer || saveInFlight) return;
-  hydrateAttempt = 0; // 前景に戻った＝状況が変わった。自力リトライの権利も戻す。
+  hydrateAttempt = 0; // back in the foreground = conditions changed; restore the retry budget
   await hydrateUIPrefs();
 }
 
-// 端末ローカル設定 — localStorage にだけ持ち、サーバへは送らず・サーバからも復元しない。
-// 「この端末で音を鳴らすか」「この画面をどう見せるか」は使う場所（オフィス/自宅、明るさ、
-// ヘッドホン有無）で変わる環境依存の設定なので、ユーザ単位で全端末に追従させると邪魔になる。
-// 声・速度・辞書・フォント等の“好み”は従来どおりクロスデバイス同期のまま（DEVICE_LOCAL 外）。
-// これにより「サーバ優先＋保存デバウンス取りこぼしで OFF が復活」する経路もこれらのキーでは消える。
+// Device-local settings — kept only in localStorage, never sent to nor restored from the server.
+// "Does this device make sound" and "how does this screen look" depend on where it is used
+// (office or home, brightness, headphones), so making them follow the user onto every device
+// gets in the way. Preferences such as voice, speed, dictionary and fonts stay cross-device as
+// before (not DEVICE_LOCAL). For these keys it also removes the path where server-wins plus a
+// dropped debounced save brings an OFF switch back to life.
 const DEVICE_LOCAL = new Set<keyof Settings>([
-  "paneLayout", // メイン領域の方式（同じ利用者でも端末ごとに使い分ける）
-  "ttsEnabled", // 音声読み上げ ON/OFF
-  "ttsSessionNotify", // 音声通知 ON/OFF
-  "usageResetNotify", // 制限リセット通知 ON/OFF（この端末で鳴らすか）
-  "theme", // ダーク/ライト
-  "mirrorTheme", // セッションミラーのテーマ（端末ごとの見せ方）
-  "sharedTheme", // 共有セッションのテーマ（端末ごとの見せ方）
-  "assistantTheme", // アシスタントチャットのテーマ（端末ごとの見せ方）
-  "topbarColor", // 外観の配色（サーフェス色）
+  "paneLayout", // main-area layout (one user may want a different one per device)
+  "ttsEnabled", // read-aloud ON/OFF
+  "ttsSessionNotify", // voice notification ON/OFF
+  "usageResetNotify", // limit-reset notification ON/OFF (does this device make the sound)
+  "theme", // dark/light
+  "mirrorTheme", // session mirror theme (per-device presentation)
+  "sharedTheme", // shared session theme (per-device presentation)
+  "assistantTheme", // assistant chat theme (per-device presentation)
+  "topbarColor", // appearance palette (surface colors)
   "leftpaneColor",
   "viewerColor",
   "chatColor",
   "sharedColor",
   "assistantColor",
-  "workingSetActive", // 表示中の作業グループ（docs/log/52 — 端末ごとに別案件を見る）
+  "workingSetActive", // working set currently shown (docs/log/52 — a different one per device)
 ]);
 
 /** Exported as a policy seam so persistence tests can pin which preferences
  * must never cross the device boundary. */
 export const isDeviceLocalSetting = (key: keyof Settings): boolean => DEVICE_LOCAL.has(key);
 
-// 累積データ — トグルや色と違い「溜まっていく」設定で、失うと取り戻せない（学習済みの
-// 返信候補、ピン、SSM の利用実績、キー割当、作業グループ、読み仮名辞書…）。ふつうの設定は
-// サーバ優先で構わないが、これらだけは **空のサーバ値で非空のローカルを潰さない**。
-// サーバが空になる原因は「利用者が消した」より「まだ書かれていない / 事故で消えた」の方が
-// 圧倒的に多く、後者の被害は全端末に伝播して復旧不能だから（上の prefsLoaded のコメント参照）。
-// 代償: 端末 A の「全消去」は、まだ候補を持っている端末 B には伝わらず B から復元される。
-// 消し直せば済む側と、二度と戻らない側では、守る対象は後者。
+// Accumulated data — unlike toggles and colors these settings build up over time and cannot be
+// recovered once lost (learned reply suggestions, pins, SSM usage tallies, keybindings, working
+// sets, the reading dictionary). Server-wins is fine for ordinary settings, but for these an
+// empty server value must never overwrite a non-empty local one: an empty server value is far
+// more often "not written yet / lost by accident" than "the user deleted it", and the accidental
+// case propagates to every device and cannot be undone (see the prefsLoaded comment above).
+// The cost: a "delete all" on device A does not reach device B, which still holds the entries
+// and restores them. Between something you can delete again and something that never comes back,
+// the latter is what gets protected.
 const ACCUMULATED = new Set<keyof Settings>([
   "quickReplies",
   "quickRepliesPinned",
@@ -1328,8 +1390,8 @@ const ACCUMULATED = new Set<keyof Settings>([
  * silently emptied by a server copy that has lost them. */
 export const isAccumulatedSetting = (key: keyof Settings): boolean => ACCUMULATED.has(key);
 
-// 「中身が無い」— null/undefined・空文字・空配列・空オブジェクト。数値/真偽値は対象外
-// （0 や false は「消えた」ではなく選択された値）。
+// "Has no content" — null/undefined, empty string, empty array, empty object. Numbers and
+// booleans are out of scope: 0 and false are chosen values, not lost ones.
 export function isEmptyPref(v: unknown): boolean {
   if (v == null || v === "") return true;
   if (Array.isArray(v)) return v.length === 0;
@@ -1337,7 +1399,8 @@ export function isEmptyPref(v: unknown): boolean {
   return false;
 }
 
-// serverPrefs は端末ローカルキーを除いた、サーバへ保存してよい設定だけの浅いコピー。
+// serverPrefs is a shallow copy of only the settings that may be stored on the server, i.e.
+// everything except the device-local keys.
 function serverPrefs(s: Settings): Partial<Settings> {
   const out: Partial<Settings> = {};
   for (const k of Object.keys(s) as (keyof Settings)[]) {
@@ -1355,9 +1418,9 @@ function serverPrefs(s: Settings): Partial<Settings> {
 // rule server-side (opencode.CatalogPref), so the two never disagree.
 export function migrateOpencodeCatalog(v: unknown): "off" | "free" | "go" | "zen" {
   if (v === "off" || v === "free" || v === "go" || v === "zen") return v;
-  if (v === "hide-zen") return "go"; // Zen を隠す = Go だけ使う意思
-  if (v === "go-first" || v === "all") return "zen"; // どちらも両方見たい意思
-  return "off"; // 未設定/不明 = 明示的に選ぶまで無効
+  if (v === "hide-zen") return "go"; // hiding Zen means intending to use Go only
+  if (v === "go-first" || v === "all") return "zen"; // both mean wanting to see both
+  return "off"; // unset/unknown = disabled until explicitly chosen
 }
 
 export async function hydrateUIPrefs(): Promise<boolean> {
@@ -1368,45 +1431,48 @@ export async function hydrateUIPrefs(): Promise<boolean> {
     scheduleHydrateRetry();
     return false;
   }
-  // api() は HTTP エラーでも投げず {error:{code:"http_502"}} を返す（ワークスペース起動中の
-  // CP はまさにこれ）。取得できていないことを「サーバは空」と読み違えると、この後の保存が
-  // 既定値でサーバを上書きする — 失敗は失敗として扱い、prefsLoaded を立てない。
+  // api() does not throw on an HTTP error; it returns {error:{code:"http_502"}} — exactly what
+  // the CP does while a workspace is starting. Mistaking "could not fetch" for "the server is
+  // empty" lets the next save overwrite the server with defaults, so treat a failure as a
+  // failure and leave prefsLoaded unset.
   if (!srv || typeof srv !== "object" || srv.error) {
     scheduleHydrateRetry();
     return false;
   }
-  // サーバーに旧booleanだけが残るユーザーも、新しい3択へ一度だけ移行する。
+  // Users whose server copy still holds only the old boolean are migrated once to the three-way choice.
   if (!("ttsBackgroundPlayback" in srv) && typeof srv.ttsQuietWhenHidden === "boolean") {
     srv.ttsBackgroundPlayback = srv.ttsQuietWhenHidden ? "quiet" : "normal";
   }
-  // 旧・単一ピン（assistantAgent）だけが残るユーザーは、ピンを先頭に昇格した
-  // 優先順位リストへ移行する（Agent 側 assistantAgentOrderPref と同じ規則）。
+  // Users left with only the legacy single pin (assistantAgent) migrate to a priority list with
+  // that pin promoted to the front (the same rule as the Agent's assistantAgentOrderPref).
   if (!("assistantAgentOrder" in srv) && typeof srv.assistantAgent === "string" && srv.assistantAgent !== "auto") {
     srv.assistantAgentOrder = normalizeAssistantOrder([srv.assistantAgent]);
   }
-  // AI 補助生成の分離（load() と同じ関数＝同じ規則）。★ 単一ピンの昇格より後に呼ぶ:
-  // aiAssistOrder は assistantAgentOrder から継ぐので、先に呼ぶと旧ピンだけを持つ
-  // ユーザーの補助生成側が既定順のままになる。
+  // Split of AI assist generation (same function as load(), hence the same rules). Must run
+  // AFTER the single-pin promotion: aiAssistOrder inherits from assistantAgentOrder, so calling
+  // it first would leave a user who has only the legacy pin on the default order.
   migrateAiAssistPrefs(srv);
-  // opencode の設定は「一覧の整形」から「どの課金経路を使うか」へ変わった。旧値のうち
-  // 「Zen を隠す」は Go だけを使う意思なので go、「Go 優先」「すべて表示」は両方見たい
-  // ので zen（＝従来の見え方）へ寄せる。Agent 側 CatalogPref と同じ規則。
-  // サーバに値がある場合だけ触る。無いキーに既定を書き込むと、下のマージで
-  // ローカルの選択を上書きしてしまう（保存前の選択が毎回 zen に戻る）。
+  // The opencode setting changed from "how to shape the list" to "which billing route to use".
+  // Of the legacy values, "hide Zen" means intending to use Go only, so it maps to go; "Go
+  // first" and "show all" mean wanting to see both, so they map to zen (the previous
+  // appearance). Same rule as the Agent's CatalogPref. Only touch it when the server actually
+  // has a value: writing a default into a missing key would let the merge below overwrite the
+  // local choice, sending an unsaved selection back to zen every time.
   if ("opencodeCatalog" in srv) srv.opencodeCatalog = migrateOpencodeCatalog(srv.opencodeCatalog);
   let changed = false;
   const merged: Settings = { ...state };
-  // オブジェクト/配列値のキーは参照比較だと毎 hydrate 不一致になる（サーバー応答は常に
-  // 新しいオブジェクト）— 値で比較して、実際に変わったときだけ changed にする。
+  // Object/array values compared by reference would differ on every hydrate (the server response
+  // is always a fresh object) — compare by value so `changed` is set only on a real change.
   const sameValue = (a: unknown, b: unknown): boolean =>
     a === b ||
     (typeof a === "object" && a !== null && typeof b === "object" && b !== null &&
       JSON.stringify(a) === JSON.stringify(b));
-  // サーバが失った累積データを手元が持っていたら、採らずに押し戻す（自己修復）。
+  // If the server lost accumulated data that this device still has, push it back instead of
+  // taking the server's value (self-repair).
   let restore = false;
   for (const k of Object.keys(DEFAULTS)) {
     const key = k as keyof Settings;
-    if (isDeviceLocalSetting(key)) continue; // 端末ローカルは復元しない
+    if (isDeviceLocalSetting(key)) continue; // device-local keys are never restored
     if (!(k in srv) || sameValue(srv[k], (merged as any)[k])) continue;
     if (isAccumulatedSetting(key) && isEmptyPref(srv[k]) && !isEmptyPref((merged as any)[k])) {
       restore = true;
@@ -1436,11 +1502,11 @@ export async function hydrateUIPrefs(): Promise<boolean> {
     merged.claudeCustomModels = customClaude;
     changed = true;
   }
-  // ここまで来た＝サーバの現在値を実際に読めた。保留していた保存はこの後で流れる
-  // （markPrefsLoaded → scheduleServerSave は 600ms 後に state を読むので、下の
-  // state = merged が先に効く）。
+  // Reaching here means the server's current values really were read. A pending save flows after
+  // this: markPrefsLoaded → scheduleServerSave reads state 600ms later, so the `state = merged`
+  // below takes effect first.
   markPrefsLoaded();
-  // サーバに無かった累積データは、こちらから書き戻して復元する。
+  // Accumulated data the server did not have is written back from here to restore it.
   if (restore) scheduleServerSave();
   if (!changed) return true;
   state = merged;
@@ -1454,19 +1520,18 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   return true;
 }
 
-// アイデンティティ境界（テナント切替・同一テナント内でのユーザー切替）をまたぐ再同期。
-// ACCUMULATED は「サーバが空でもローカル非空なら守って書き戻す」設計だが、それは
-// 同一ユーザーの複数端末を空更新の事故から守るための前提であって、別の持ち主に
-// 切り替わった直後に古い持ち主のデータがまだメモリに残っている状態には効いてはならない
-// （効くと、前の持ち主の累積データが新しい持ち主の ui-prefs.json へ書き戻されてしまう —
-// 作業グループが別アカウントに漏れた事故の真因）。ACCUMULATED を個別に列挙せず
-// isAccumulatedSetting 経由で回すことで、将来このセットに追加されるキーも自動的に
-// この保護に入り、キーごとの個別修正が要らなくなる。
-// 戻り値の Promise は呼び出し元(App.tsx)は待たない fire-and-forget 用途だが、
-// テストが完了を待てるように await 可能にしておく。
+// Resync across an identity boundary (a tenant switch, or a user switch inside one tenant).
+// ACCUMULATED is designed to protect a non-empty local copy against an empty server value, but
+// that premise is about one user's several devices; it must NOT apply just after the owner
+// changed while the previous owner's data is still in memory. If it did, the previous owner's
+// accumulated data would be written back into the new owner's ui-prefs.json — exactly how
+// working sets once leaked into another account. Iterating through isAccumulatedSetting instead
+// of listing ACCUMULATED again means keys added to that set later are covered automatically,
+// with no per-key fix. The returned Promise is fire-and-forget for the caller (App.tsx), but is
+// awaitable so tests can wait for completion.
 export function resyncAccumulatedForIdentitySwitch(): Promise<boolean> {
-  // 保留中の保存（600ms デバウンス）は前の持ち主の値を運んでいる可能性があるので、
-  // 新しい持ち主へ向けて送らずに捨てる。
+  // A pending save (the 600ms debounce) may be carrying the previous owner's values, so drop it
+  // rather than send it under the new owner.
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
@@ -1481,19 +1546,20 @@ export function resyncAccumulatedForIdentitySwitch(): Promise<boolean> {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}
   subs.forEach((fn) => fn());
-  // ローカルが既に空なので、上の restore ガードは働かず、新しい持ち主のサーバー値が
-  // 空でも非空でもそのまま採用される。
+  // Local is already empty, so the restore guard above does not fire and the new owner's server
+  // values are taken as they are, empty or not.
   return hydrateUIPrefs();
 }
 
-// ジェネリック署名でキーと値の対応を型で縛る（"theme" に boolean を渡す類の不整合を防ぐ）。
+// The generic signature ties key and value together in the type system, preventing mismatches
+// such as passing a boolean for "theme".
 export function setSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
   setSettings({ [key]: value } as Partial<Settings>);
 }
 
-// setSettings — 複数キーを 1 回で更新する（1 レンダー・1 サーバー保存にまとめる）。
-// リセットのように多数のキーをまとめて書き換える用途で使う（setSetting を 17 回呼ぶと
-// その回数だけ再レンダーとデバウンス保存が走るため）。
+// setSettings — update several keys at once, coalescing them into one render and one server
+// save. Used where many keys change together, such as a reset: calling setSetting 17 times would
+// run that many re-renders and debounced saves.
 export function setSettings(patch: Partial<Settings>): void {
   state = { ...state, ...patch };
   try {

@@ -1,49 +1,51 @@
-// drawio ビューアを閉じ込める iframe の中身（docs/log/65 §65.3・ADR 0046 決定 2）。
+// The contents of the iframe that contains the drawio viewer (docs/log/65 §65.3, ADR 0046
+// decision 2).
 //
-// なぜ iframe なのか（実測。docs/log/65 §65.2.1）:
-//   - viewer-static.min.js は window にグローバルを 932 個生やし、`lang` / `dash` /
-//     `Base64` / `MathJax` のような一般名や **window.DOMPurify の上書き**まで含む。
-//     アプリの window に入れたら戻す手段が無い。
-//   - ツールバーの lightbox は DRAWIO_LIGHTBOX_URL（既定 app.diagrams.net）を
-//     window.open して図面を渡す。しかも showLightbox は
-//     `"open" == lightbox || window.self !== window.top` を条件にしているので、
-//     **iframe の中では設定に関わらず外部を開こうとする側に倒れる**。
-//     ここでは (a) ツールバーに出さない (b) URL を空にする (c) 親が sandbox に
-//     allow-popups を与えない、の三重で塞ぐ。
+// Why an iframe (measured; docs/log/65 §65.2.1):
+//   - viewer-static.min.js creates 932 globals on window, including generic names such as
+//     `lang` / `dash` / `Base64` / `MathJax` and even an overwrite of window.DOMPurify. Once
+//     they are on the app's window there is no way to undo it.
+//   - The toolbar's lightbox window.opens DRAWIO_LIGHTBOX_URL (app.diagrams.net by default) and
+//     hands the drawing to it. showLightbox's condition is
+//     `"open" == lightbox || window.self !== window.top`, so inside an iframe it falls on the
+//     side that tries to open the external site regardless of configuration. It is blocked
+//     three ways here: (a) keep it off the toolbar, (b) blank the URL, (c) the parent does not
+//     grant allow-popups in the sandbox.
 //
-// srcdoc なので iframe はオリジンを持たない（親は allow-same-origin を与えない）。
-// **フレームは何ひとつ自分で取りに行かない** —— 図の XML も、ビューア本体 4MB の
-// ソースも、親が取得して postMessage で渡す（CSP は default-src 'none' のまま、
-// script-src に外部オリジンすら要らない）。
+// Because it is a srcdoc, the iframe has no origin (the parent does not grant
+// allow-same-origin). The frame fetches nothing at all by itself: both the diagram XML and the
+// 4 MB viewer source are fetched by the parent and passed in by postMessage, so the CSP stays
+// at default-src 'none' and script-src needs no external origin.
 //
-// ビューアを `<script src>` で読ませてはならない（実測・2026-08-16 の不具合）:
-// オリジンを持たないフレームからの要求は **cross-site 扱いになり、SameSite=Lax の
-// セッション cookie が付かない**。CP の authGate は `/assets/*` を素通ししないので
-// 401 になり、GraphViewer が未定義のまま render に入って「図として解釈できない」と
-// 誤報告していた。取得は資格情報を持つ親の仕事、フレームは受け取るだけ。
+// Never load the viewer with `<script src>`: a request from an origin-less frame counts as
+// cross-site, so the SameSite=Lax session cookie is not attached. The CP's authGate does not
+// pass `/assets/*` through, the request 401s, and render then runs with GraphViewer undefined
+// and misreports the file as not interpretable as a diagram (measured). Fetching is the
+// parent's job, since it holds the credentials; the frame only receives.
 
-/** 親 → フレーム / フレーム → 親 のメッセージ。`af` で他の postMessage と混ざらないようにする。 */
+/** Messages parent → frame and frame → parent. `af` keeps them apart from other postMessages. */
 export const DRAWIO_MSG = "af-drawio" as const;
 
-/** 親 → フレーム。`boot` は 1 回だけ（4MB のソースを載せる）、`render` は何度でも。 */
-/** 見ている場所。テーマ切り替えでフレームを作り直すとき、そのまま返して復元する。 */
+/** Parent → frame. `boot` is sent once (it carries the 4 MB source); `render` any number of times. */
+/** The viewing position, passed straight back to restore it when a theme change rebuilds the frame. */
 export interface DrawioViewState {
-  /** 表示中のページ（diagram の id）。番号ではなく id —— 番号はページの増減でずれる。 */
+  /** The page on screen, as the diagram's id rather than its number: numbers shift as pages are added or removed. */
   pageId: string | null;
   scale: number;
   tx: number;
   ty: number;
-  /** 利用者が自分でズーム / パンしたか。していないなら復元せず収め直す。 */
+  /** Whether the user zoomed or panned themselves. If not, refit instead of restoring. */
   adjusted: boolean;
 }
 
 export type DrawioFrameRequest =
   | { af: typeof DRAWIO_MSG; t: "boot"; src: string }
   | { af: typeof DRAWIO_MSG; t: "render"; xml: string; dark: boolean; restore?: DrawioViewState | null }
-  /** フレームが申告したステンシルの中身と、取れなかったものの名前。
-   *  閉域では `xml` が空で `missing` が全部になる（**エラーではない** —— 枠と色だけの
-   *  絵に静かに落ちる）。`missing` を返すのは、フレームがそれを「頼んだ済み」から
-   *  外して次の描画でもう一度頼めるようにするため（docs/log/65 §65.5.4）。 */
+  /** The contents of the stencils the frame declared, plus the names of those that could not be
+   *  fetched. On a closed network `xml` is empty and `missing` holds them all; that is not an
+   *  error, it degrades quietly to a picture with frames and colours only. `missing` is returned
+   *  so the frame can drop those from "already requested" and ask again on the next render
+   *  (docs/log/65 §65.5.4). */
   | { af: typeof DRAWIO_MSG; t: "stencils"; xml: string[]; missing?: string[] };
 
 export type DrawioFrameEvent =
@@ -55,56 +57,58 @@ export type DrawioFrameEvent =
       pages: number;
       page: number;
       scale: number;
-      /** ビューアが実際に暗色描画になっているか（要求どおりかを親／ハーネスが検算する）。
-       *  **画素を数える判定は当てにならない** —— 暗色にならないまま暗い背景に載った絵は
-       *  図形の明るい塗りのせいで「明るい画素」がむしろ増える（実測 40778 対 2387）。 */
+      /** Whether the viewer really rendered dark, so the parent or the harness can verify it
+       *  matches what was asked. Counting pixels is not a reliable test: a drawing that stayed
+       *  light on a dark background ends up with MORE light pixels because of the shapes' bright
+       *  fills (measured, 40778 against 2387). */
       darkMode: boolean;
-      /** 作り直したフレームへ引き継ぐための現在地。 */
+      /** The current position, to carry over to a rebuilt frame. */
       pageId: string | null;
       tx: number;
       ty: number;
       adjusted: boolean;
     }
-  /** この図を描くのに要るステンシル集合のファイル名（`aws4.xml` / `rack/f5.xml`）。
-   *  **フレームは自分で取りに行かない** —— オリジンを持たないフレームからの要求は
-   *  cross-site 扱いで SameSite=Lax の cookie が付かず、CP の authGate に 401 で
-   *  弾かれる（§65.11-7 と同じ穴。実測で確認済み）。取得は資格情報を持つ親の仕事。 */
+  /** File names of the stencil sets this diagram needs (`aws4.xml`, `rack/f5.xml`).
+   *  The frame never fetches them itself: a request from an origin-less frame counts as
+   *  cross-site, carries no SameSite=Lax cookie and is rejected by the CP's authGate with a 401
+   *  (measured; the same hole as §65.11-7). Fetching is the parent's job, as it holds the
+   *  credentials. */
   | { af: typeof DRAWIO_MSG; t: "stencils"; sets: string[] }
-  /** `boot` はビューアを評価できなかった、`parse` は図として読めなかった。
-   *  **この 2 つを混ぜてはいけない** —— 読み込み失敗を「図が壊れている」と表示すると、
-   *  原因がファイル側にあるように見えて調査が丸ごと逸れる（実際に起きた）。 */
+  /** `boot` means the viewer could not be evaluated, `parse` that the file was not readable as
+   *  a diagram. Never conflate the two: reporting a load failure as "the diagram is broken"
+   *  makes the cause look like the file and sends the whole investigation the wrong way. */
   | { af: typeof DRAWIO_MSG; t: "error"; code: "boot" | "parse" | "empty" };
 
 const FRAME_EVENTS = ["ready", "booted", "rendered", "stencils", "error"];
 
-/** フレームから来たイベントか判定する（postMessage は誰でも送れる）。 */
+/** Whether the event really came from the frame; anyone can send a postMessage. */
 export function isDrawioFrameEvent(data: unknown): data is DrawioFrameEvent {
   if (!data || typeof data !== "object") return false;
   const m = data as { af?: unknown; t?: unknown };
   return m.af === DRAWIO_MSG && typeof m.t === "string" && FRAME_EVENTS.includes(m.t);
 }
 
-// srcdoc は属性値なので、埋め込む文字列はダブルクォートまで含めて必ずエスケープする。
+// srcdoc is an attribute value, so every embedded string must be escaped, double quotes included.
 function attrEscape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export interface DrawioFrameOptions {
-  /** 初期テーマ。描画要求ごとにも渡すので、ここは最初の一枚の色を決めるだけ。 */
+  /** The initial theme. It is passed with every render request too, so this only decides the colour of the first frame. */
   dark: boolean;
 }
 
 /**
- * iframe に入れる HTML を組み立てる。
+ * Builds the HTML placed inside the iframe.
  *
- * CSP は default-src 'none' から始めて必要なものだけ開ける。**connect-src は 'none'
- * のまま** ——ステンシルも含め、フレームは何ひとつ自分で取りに行かない。ここを開ける
- * 変更は、そのままフレームが外部を叩ける経路の復活を意味する（docs/log/65 §65.5.4）。
+ * The CSP starts at default-src 'none' and opens only what is needed. connect-src stays 'none':
+ * the frame fetches nothing by itself, stencils included. Opening it would restore a path by
+ * which the frame can reach external hosts (docs/log/65 §65.5.4).
  */
 export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
-  // ビューアのソースは親が postMessage で渡し、インライン script として評価する。
-  // したがって **外部オリジンを script-src に載せる必要が無い**（載せると、フレームが
-  // 自分で取りに行く経路が復活してしまう）。
+  // The parent passes the viewer source in by postMessage and it is evaluated as an inline
+  // script, so no external origin belongs in script-src; adding one would restore the path by
+  // which the frame fetches for itself.
   const csp = [
     "default-src 'none'",
     "script-src 'unsafe-inline'",
@@ -114,17 +118,17 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     "connect-src 'none'",
   ].join("; ");
 
-  // フレーム内スクリプト。ここは Console のモジュールではなく素の DOM しか使えない。
-  // i18n-exempt-start: 中身はスクリプトとその日本語コメントで、画面に出る文字列は無い。
+  // The in-frame script. Only plain DOM is available here, not the Console's modules.
+  // i18n-exempt-start: this is script text and its comments; no string here reaches the screen.
   const boot = `
 (function () {
-  // 外部を指す既定値を全部潰す（docs/log/65 §65.2.1-3）。P1 で STENCIL_PATH だけ
-  // 自オリジンの CP プロキシへ向ける。
+  // Kill every default that points outside (docs/log/65 §65.2.1-3). In P1 only STENCIL_PATH is
+  // pointed at the same-origin CP proxy.
   //
-  // **空文字では潰せない**: ビューアは window.X = window.X || "https://…" の形で
-  // 既定値を入れるので、"" は falsy ＝ 外部の既定値が生き残る。実測では
-  // DRAW_MATH_URL を "" にしたまま viewer.diagrams.net/math4/es5/startup.js を
-  // 取りに行き、CSP が止めていた。ネットワークに出ない dead value を入れる。
+  // The empty string does not kill them: the viewer fills defaults in as
+  // window.X = window.X || "https://…", so "" is falsy and the external default survives.
+  // Measured: with DRAW_MATH_URL left at "" it went for viewer.diagrams.net/math4/es5/startup.js
+  // and the CSP stopped it. Use a dead value that never reaches the network.
   var DEAD = "about:blank";
   window.PROXY_URL = DEAD;
   window.STYLE_PATH = DEAD;
@@ -142,8 +146,9 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   var viewer = null;
   var booted = false;
   var dark = ${dark ? "true" : "false"};
-  // 収まりの基準倍率と、利用者が自分で動かしたかどうか。**動かした後にペインの寸法が
-  // 変わっても勝手に収め直さない** —— 拡大して見ている最中に元へ戻されるのが一番困る。
+  // The fit scale, and whether the user moved the view themselves. Once they have, a change in
+  // the pane's size must not refit on its own: being reset while reading zoomed in is the worst
+  // thing that can happen.
   var fitScale = 1;
   var adjusted = false;
 
@@ -152,12 +157,12 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     parent.postMessage(m, "*");
   }
 
-  // ビューアの失敗は非同期に起きることがあり、握り潰すとペインが理由なく空になる。
-  // 何が起きても親に 1 行返す（親はこれを「図として開けない」と表示に変える）。
+  // The viewer can fail asynchronously, and swallowing that leaves the pane empty for no
+  // apparent reason, so always report one line to the parent, which turns it into a message.
   //
-  // **window.onerror では受け取れない**: 読み込まれるビューア本体が自分のロガーで
-  // window.onerror を上書きするため、代入した関数は静かに外される（実測）。
-  // 上書きできない addEventListener 側で受ける。
+  // window.onerror cannot catch it: the viewer overwrites window.onerror with its own logger, so
+  // an assigned handler is silently dropped (measured). Listen via addEventListener, which it
+  // cannot overwrite.
   window.addEventListener("error", function (e) {
     post({
       t: "error",
@@ -166,11 +171,11 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     });
   });
 
-  // ビューアはコンテナの寸法を自分で決めにかかる（graph.resizeContainer / 
-  // updateContainerHeight）。ペインいっぱいに保ちたいので、**インライン指定の
-  // 幅・高さ**を与えたうえで resize を切る —— addSizeHandler の分岐がインライン
-  // style.height の有無を見ているため、CSS クラスだけでは効かない（実測: 
-  // 860x520 のフレームでコンテナが 181x341 まで縮み、図が左上に貼り付いた）。
+  // The viewer tries to size the container itself (graph.resizeContainer /
+  // updateContainerHeight). To keep it filling the pane, give it an inline width and height and
+  // turn resizing off: addSizeHandler branches on the presence of an inline style.height, so a
+  // CSS class alone has no effect (measured: in an 860x520 frame the container shrank to
+  // 181x341 and the drawing stuck to the top left).
   function host() {
     var old = document.getElementById("c");
     var el = document.createElement("div");
@@ -180,29 +185,29 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     return el;
   }
 
-  // 背景は **html と body の両方に inline で** 置く。スタイルシートは
-  // html,body{background:…} の形で両方に色を付けているので、html だけを inline で
-  // 上書きしても **body の指定が上に塗ってしまい、一度も効かない**（実測: 組み立て時が
-  // dark・描画要求が light のとき、図形はライトなのに背景は #1e1e1e のままだった。
-  // 逆向きでは白のまま。利用者が見た 2 つの症状はどちらもこれ）。docs/log/65 §65.11-13。
+  // Set the background inline on BOTH html and body. The stylesheet colours both with
+  // html,body{background:…}, so overriding html alone never takes effect: body's rule paints
+  // over it. Measured: built dark but rendered light, the shapes were light while the background
+  // stayed #1e1e1e, and the reverse stayed white. Both symptoms users saw were this.
+  // docs/log/65 §65.11-13.
   function setBackground(isDark) {
     var color = isDark ? "#1e1e1e" : "#ffffff";
     document.documentElement.style.background = color;
     if (document.body) document.body.style.background = color;
   }
 
-  // ツールバーはコンテナの外（上）に置かれ、コンテナには marginTop が付く。
-  // その分を引かないと下端がフレームからはみ出す。
+  // The toolbar sits outside the container, above it, and the container gets a marginTop.
+  // Without subtracting that, the bottom edge overflows the frame.
   function sizeToViewport(el) {
     var chrome = parseInt(el.style.marginTop || "0", 10) || 0;
     el.style.width = document.documentElement.clientWidth + "px";
     el.style.height = Math.max(0, document.documentElement.clientHeight - chrome) + "px";
   }
 
-  // 収め直しはビューア自身の fitGraph に任せる。allowZoomIn が既定 false なので
-  // maxFitScale = 1 ＝ **大きい図は縮小され、小さい図は原寸のまま**中央に出る。
-  // 自前で graph.fit を呼ぶとビューアの initialViewState と食い違い、ズームボタンの
-  // 基準がずれる。
+  // Leave refitting to the viewer's own fitGraph. allowZoomIn defaults to false, so
+  // maxFitScale = 1: a large diagram is scaled down and a small one stays at natural size, both
+  // centred. Calling graph.fit directly disagrees with the viewer's initialViewState and shifts
+  // the reference the zoom buttons work from.
   function fit(v) {
     if (!v || typeof v.fitGraph !== "function") return;
     sizeToViewport(v.graph.container);
@@ -223,48 +228,49 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
       "data-mxgraph",
       JSON.stringify({
         xml: xml,
-        // lightbox は出さない（外部持ち出しの経路）。ページ送り・ズーム・レイヤーだけ。
+        // No lightbox: that is the path that takes the drawing outside. Pages, zoom, layers only.
         toolbar: "pages zoom layers",
         "toolbar-nohide": true,
         lightbox: 0,
         nav: true,
         resize: 0,
         center: true,
-        // **真偽値では効かない**: isDarkMode() は "dark" / "auto" という文字列と
-        // 比較するので、true を渡すと黙って「ライト」になる。既定の文字色は黒のまま
-        // 暗い背景に載り、既定色のラベルが黒地に黒で消える（実測: 文字 0 / 背景 30 の
-        // 輝度＝コントラスト比 1.3:1）。docs/log/65 §65.11-10。
+        // A boolean does not work: isDarkMode() compares against the strings "dark" / "auto",
+        // so passing true silently means light. The default text colour stays black on the dark
+        // background and default-coloured labels vanish, black on black (measured: luminance 0
+        // for the text against 30 for the background, a contrast ratio of 1.3:1).
+        // docs/log/65 §65.11-10.
         "dark-mode": dark ? "dark" : "light",
         highlight: "#3572b0",
-        // 復元するページ。**番号ではなく id** で指す（graphConfig.pageId）——
-        // 番号はページの増減でずれるうえ、ここで欲しいのは「さっき見ていたページ」。
+        // The page to restore, named by id rather than number (graphConfig.pageId): numbers
+        // shift as pages are added or removed, and what is wanted is the page last viewed.
         pageId: restore && restore.pageId ? restore.pageId : undefined,
       })
     );
     if (!booted || typeof GraphViewer === "undefined") {
-      // ここに来るのは「ビューアを評価できていない」ということでしかない。
-      // 図のせいにしない（誤ったメッセージは調査をファイル側へ逸らす）。
+      // Reaching here means only that the viewer could not be evaluated. Do not blame the
+      // diagram: the wrong message sends the investigation towards the file.
       post({ t: "error", code: "boot" });
       return;
     }
     try {
       GraphViewer.createViewerForElement(el, function (v) {
         viewer = v;
-        // 収まってから状態を返す（scale はヘッダの倍率表示とハーネスの判定に使う）。
+        // Report the state once fitted; scale drives the header's zoom label and the harness check.
         requestAnimationFrame(function () {
-          // 先に収める: fitScale と initialViewState（ダブルタップの戻り先）を確定させる。
+          // Fit first, to settle fitScale and initialViewState, where a double tap returns to.
           fit(v);
-          // そのうえで、利用者が自分で動かしていた場所へ戻す。動かしていなければ
-          // 収まりのままにする —— 何もしていない人にとっては、それが正しい状態。
+          // Then return to where the user had moved the view. If they never did, leave it
+          // fitted: for someone who did nothing, that is the correct state.
           if (restore && restore.adjusted) {
             v.graph.view.scaleAndTranslate(restore.scale, restore.tx, restore.ty);
             adjusted = true;
           }
           postState(v);
-          // 図はもう出ている。足りないアイコンは後追いで差し込む（描画は待たせない）。
+          // The diagram is already up; missing icons are filled in afterwards, never blocking it.
           askForStencils(v);
         });
-        // ページ送り・レイヤー操作の結果も同じ形で返す（ヘッダの「n / m」のため）。
+        // Page and layer changes report in the same shape, for the header's "n / m".
         if (v.addListener) {
           v.addListener("graphChanged", function () {
             postState(v);
@@ -276,23 +282,23 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     }
   }
 
-  // ── ステンシル（docs/log/65 §65.5）───────────────────────────────────────
-  // ベンダーアイコン（\`shape=mxgraph.aws4.*\` 等）の図案はビューアに入っていない
-  // （全体で 40.8 MB あるので同梱しない）。**フレームは取りに行かない**：必要な
-  // ファイル名を親へ申告し、親が CP から取って postMessage で返す。
+  // ── Stencils (docs/log/65 §65.5) ─────────────────────────────────────────
+  // The shape art for vendor icons (\`shape=mxgraph.aws4.*\` and friends) is not in the viewer;
+  // at 40.8 MB in total it is not bundled. The frame does not fetch it: it declares the file
+  // names it needs to the parent, which fetches them from the CP and returns them by postMessage.
   //
-  // dynamicLoading を true に戻してフレームに取らせる案は実測で否決した:
-  //   - オリジンが無いので CP の authGate に 401 で弾かれる（§65.11-7 と同じ穴）
-  //   - CSP の connect-src を開ける必要が出る（外部取得の経路が復活する）
-  //   - **一度失敗したセットは二度と再取得されない**（loadStencilSet の失敗は
-  //     握り潰され、その後 \`packages[basename] = 1\` が立つ。実測: 再描画しても
-  //     要求は 1 本も出ず、アイコンは空のまま）
+  // Setting dynamicLoading back to true and letting the frame fetch was rejected on measurement:
+  //   - with no origin, the CP's authGate rejects it with a 401 (the same hole as §65.11-7)
+  //   - the CSP's connect-src would have to be opened (restoring the external fetch path)
+  //   - a set that failed once is never fetched again: loadStencilSet swallows the failure and
+  //     then sets \`packages[basename] = 1\` (measured: a redraw issued no request at all and the
+  //     icons stayed empty)
   var stencilAsked = {};
 
-  // ビューア自身の解決規則をなぞる。**basename + ".xml" だけでは足りない** ——
-  // \`mxStencilRegistry.libraries\` に載っているセットはファイル名が違う
-  // （ios7icons → ios7/icons.xml, rackGeneral → rack/general.xml, ibmcloud →
-  // ibm_cloud.xml など）。ここを外すと台帳に無い名前になり 404 になる。
+  // Mirrors the viewer's own resolution rule. basename + ".xml" is not enough: sets listed in
+  // \`mxStencilRegistry.libraries\` have different file names (ios7icons → ios7/icons.xml,
+  // rackGeneral → rack/general.xml, ibmcloud → ibm_cloud.xml, …). Get this wrong and the name is
+  // not in the registry and 404s.
   function stencilFilesFor(basename) {
     var reg = window.mxStencilRegistry;
     var prefix = String(window.STENCIL_PATH) + "/";
@@ -301,9 +307,9 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
       var out = [];
       for (var i = 0; i < lib.length; i++) {
         var f = String(lib[i]);
-        // 同じ表に SHAPES_PATH の \`.js\` も並んでいるが、それらの図形は
-        // viewer-static に焼き込み済みで、ビューア自身が末尾で
-        // \`mxStencilRegistry.allowEval = false\` を立てている（実測）。取らない。
+        // The same table also lists SHAPES_PATH \`.js\` entries, but those shapes are already
+        // baked into viewer-static and the viewer itself sets
+        // \`mxStencilRegistry.allowEval = false\` at the end (measured). Do not fetch them.
         if (f.indexOf(prefix) === 0 && f.slice(-4) === ".xml") out.push(f.slice(prefix.length));
       }
       return out;
@@ -311,9 +317,9 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     return [basename.replace("_-_", "_") + ".xml"];
   }
 
-  // 描画後のモデルから「まだ持っていないセット」を割り出す。**生の XML ではなく
-  // モデルを見る** —— 圧縮された \`<diagram>\` では生 XML が deflate のままで
-  // 何も見つからない（実測）。モデルは展開済みなので圧縮の有無を問わない。
+  // Works out which sets are still missing from the model after rendering. Read the model, not
+  // the raw XML: in a compressed \`<diagram>\` the raw XML is still deflated and nothing is found
+  // (measured). The model is already expanded, so compression makes no difference.
   function neededStencils(v) {
     var reg = window.mxStencilRegistry;
     if (!reg || !v || !v.graph || !v.graph.model) return [];
@@ -326,8 +332,8 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
       var m;
       while ((m = re.exec(style))) {
         var full = m[0];
-        if (mxCellRenderer.defaultShapes[full]) continue;                  // JS 形状は焼き込み済み
-        if (reg.stencils[full] || reg.stencils[full.toLowerCase()]) continue; // もう持っている
+        if (mxCellRenderer.defaultShapes[full]) continue;                  // JS shapes are baked in
+        if (reg.stencils[full] || reg.stencils[full.toLowerCase()]) continue; // already have it
         var parts = full.split(".").slice(1);
         if (parts.length < 2) continue;
         var files = stencilFilesFor(parts.slice(0, -1).join("/"));
@@ -339,7 +345,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     return Object.keys(need);
   }
 
-  // 申告は 1 セットにつき 1 回だけ（親が空で返しても再要求しない）。
+  // Declare each set only once; no re-request even when the parent returns nothing.
   function askForStencils(v) {
     var want = neededStencils(v);
     if (!want.length) return;
@@ -347,15 +353,15 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     post({ t: "stencils", sets: want });
   }
 
-  // 親から届いたステンシルを登録して描き直す。**render をやり直さない** ——
-  // \`graph.refresh()\` で図案だけが差し替わり、見ていた倍率と位置がそのまま残る
-  // （実測: 1.8221 倍のまま path が 1 → 3 に増えた）。
+  // Registers the stencils the parent sent and redraws. Do not re-run render: \`graph.refresh()\`
+  // swaps in the shape art alone and keeps the zoom and position the user was looking at
+  // (measured: the scale stayed at 1.8221 while paths went from 1 to 3).
   function addStencils(xmls, missing) {
-    // **取れなかったものは「頼んだ済み」から外す。** 外さないと、upstream の 1 回の
-    // 瞬断でそのフレームの寿命いっぱいアイコンが欠けたままになる —— ビューア自身の
-    // 遅延取得を否決した理由（§65.5.4-3 の \`packages[basename]=1\`）と、そっくり同じ
-    // 詰まり方をこちら側で作ることになる。実機の初回取得で raw.githubusercontent の
-    // connection reset を実際に踏んだ。
+    // Drop what could not be fetched from "already requested". Otherwise a single upstream blip
+    // leaves the icons missing for the whole life of the frame, recreating on this side exactly
+    // the dead end that got the viewer's own lazy fetching rejected (\`packages[basename]=1\` in
+    // §65.5.4-3). A first fetch on real hardware did hit a connection reset from
+    // raw.githubusercontent.
     if (missing) {
       for (var k = 0; k < missing.length; k++) delete stencilAsked[missing[k]];
     }
@@ -365,18 +371,18 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
       viewer.graph.refresh();
       postState(viewer);
     } catch (e) {
-      // 図は既に出ている。アイコンが出ないだけなので、エラーにはしない。
+      // The diagram is already up; only the icons are missing, so this is not an error.
     }
   }
 
-  // ── 操作（ズーム / パン）─────────────────────────────────────────────
-  // GraphViewer は**何も配線していない**（init は pinchEnabled=false・setPanning(false)、
-  // ホイールの購読も無し）。ツールバーのボタンしか無いので、ここで足す:
-  //   Ctrl/⌘＋ホイール … 指した点を軸に拡大縮小（トラックパッドのピンチも同じ経路で来る）
-  //   素のホイール      … 上下左右へパン
-  //   2 本指ピンチ      … 中点を軸に拡大縮小
-  //   1 本指ドラッグ    … パン
-  //   ダブルクリック/タップ … 収まり ↔ 等倍（等倍で収まっているときは 2 倍）
+  // ── Gestures (zoom / pan) ────────────────────────────────────────────────
+  // GraphViewer wires up nothing: init sets pinchEnabled=false and setPanning(false) and never
+  // subscribes to the wheel. Only the toolbar buttons exist, so these are added here:
+  //   Ctrl/Cmd + wheel   … zoom about the pointer (a trackpad pinch arrives the same way)
+  //   plain wheel        … pan in all directions
+  //   two-finger pinch   … zoom about the midpoint
+  //   one-finger drag    … pan
+  //   double click / tap … fit ↔ natural size (2x when the fit is already natural size)
   var MIN_SCALE = 0.05;
   var MAX_SCALE = 16;
 
@@ -384,12 +390,12 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     return viewer && viewer.graph;
   }
 
-  // ツールバー上の操作は素通しする（ボタンを潰さないため）。
+  // Let gestures on the toolbar through, so the buttons keep working.
   function onToolbar(target) {
     return !!(viewer && viewer.toolbar && target && viewer.toolbar.contains(target));
   }
 
-  // コンテナ左上を原点とする座標。ズームの軸に使う。
+  // Coordinates with the container's top left as origin; used as the zoom anchor.
   function localPoint(clientX, clientY) {
     var g = graph();
     if (!g) return { x: 0, y: 0 };
@@ -397,8 +403,9 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     return { x: clientX - box.left, y: clientY - box.top };
   }
 
-  // 画面上の 1 点を固定したまま倍率を変える。mxGraph は screen = (graph + translate) * scale
-  // なので、その点が動かない translate は translate + p * (1/s' - 1/s) で出る。
+  // Changes the scale while holding one point on screen fixed. In mxGraph
+  // screen = (graph + translate) * scale, so the translate that keeps that point still is
+  // translate + p * (1/s' - 1/s).
   function zoomAt(nextScale, px, py) {
     var g = graph();
     if (!g) return;
@@ -420,10 +427,10 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     g.view.scaleAndTranslate(s, t.x + dx / s, t.y + dy / s);
   }
 
-  // 最初に見せた状態へ戻す。**fitGraph は使えない** —— あれはコンテナ幅が前回と同じなら
-  // 何もしない実装（N == t で早期 return）なので、寸法が変わらないダブルタップでは
-  // 無反応になる（実測: 4.37 倍のまま動かなかった）。ビューアが控えている
-  // initialViewState をそのまま戻す方が速く、ズームボタンの基準とも食い違わない。
+  // Returns to the state first shown. fitGraph cannot be used: it does nothing when the
+  // container width is unchanged (an early return on N == t), so a double tap, which changes no
+  // dimension, has no effect (measured: it stayed at 4.37x). Restoring the initialViewState the
+  // viewer keeps is faster and does not disagree with the zoom buttons' reference.
   function resetView(v) {
     var g = v && v.graph;
     if (!g) return;
@@ -438,8 +445,8 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     postState(v);
   }
 
-  // ダブルクリック / ダブルタップ。収まっているなら等倍へ寄る、それ以外は収め直す。
-  // 収まりが既に等倍のときだけ 2 倍にする（「押しても何も起きない」を作らない）。
+  // Double click / double tap: when fitted, go to natural size; otherwise refit. Only when the
+  // fit is already natural size does it go to 2x, so the gesture is never a no-op.
   function toggleZoom(px, py) {
     var g = graph();
     if (!g) return;
@@ -454,16 +461,16 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   function installGestures() {
     var el = document.documentElement;
 
-    // ホイールは passive で登録されると preventDefault が効かない。明示的に外す。
+    // A wheel listener registered passive cannot preventDefault, so opt out explicitly.
     el.addEventListener(
       "wheel",
       function (e) {
         if (!graph() || onToolbar(e.target)) return;
-        // deltaMode: 0=px, 1=行, 2=ページ。行/ページのブラウザでも同じ効き目にする。
+        // deltaMode: 0=px, 1=line, 2=page. Keep the same feel on line/page browsers.
         var unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
         e.preventDefault();
         var p = localPoint(e.clientX, e.clientY);
-        // ctrlKey はトラックパッドのピンチでも立つ（ブラウザ共通の約束）。
+        // ctrlKey is also set by a trackpad pinch, a convention shared across browsers.
         if (e.ctrlKey || e.metaKey) {
           zoomAt(graph().view.scale * Math.exp((-e.deltaY * unit) / 400), p.x, p.y);
         } else {
@@ -485,7 +492,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
         try {
           el.setPointerCapture(e.pointerId);
         } catch (err) {
-          /* 別の要素が既に捕捉している等 —— パンできればよいので黙って続ける */
+          /* another element already has capture, etc.; panning still works, so carry on */
         }
       }
       var ids = Object.keys(points);
@@ -520,7 +527,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
       delete points[e.pointerId];
       if (Object.keys(points).length < 2) pinch = null;
       if (!graph()) return;
-      // ダブルタップ判定。dblclick はタッチでは環境差が大きいので自分で見る。
+      // Double-tap detection: dblclick varies too much across touch environments to rely on.
       var now = e.timeStamp || 0;
       var pos = { x: e.clientX, y: e.clientY };
       if (lastTapPos && now - lastTap < 350 && Math.hypot(pos.x - lastTapPos.x, pos.y - lastTapPos.y) < 30) {
@@ -559,8 +566,8 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     });
   }
 
-  // ビューア本体（4MB）のソースを親から受け取り、インライン script として評価する。
-  // 同期実行なので、append から戻った時点で GraphViewer が居る（居なければ boot 失敗）。
+  // Receives the 4 MB viewer source from the parent and evaluates it as an inline script.
+  // Execution is synchronous, so GraphViewer exists as soon as append returns; if not, boot failed.
   function boot(src) {
     if (booted) return;
     var el = document.createElement("script");
@@ -572,10 +579,10 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     }
     booted = true;
     installGestures();
-    // **ビューア自身にステンシルを取りに行かせない**（docs/log/65 §65.5.4）。必要な
-    // ものは neededStencils() が割り出し、親が CP から取って渡す。ここを true に
-    // 戻すと、認証を通れない要求・CSP の穴・失敗後に再試行しない詰まり方の 3 つが
-    // まとめて戻ってくる（どれも実測）。
+    // Never let the viewer fetch stencils itself (docs/log/65 §65.5.4). neededStencils() works
+    // out what is required and the parent fetches it from the CP. Setting this back to true
+    // brings back all three at once: requests that cannot authenticate, a hole in the CSP, and
+    // the dead end where a failed set is never retried (all measured).
     if (window.mxStencilRegistry) mxStencilRegistry.dynamicLoading = false;
     post({ t: "booted" });
     if (pending) {
@@ -585,7 +592,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     }
   }
 
-  // 描画要求は boot より先に着き得るので、その 1 通だけは保持して boot 後に流す。
+  // A render request can arrive before boot, so exactly one is held and replayed after boot.
   var pending = null;
 
   window.addEventListener("message", function (e) {
@@ -607,17 +614,18 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     render(m.xml, m.dark, m.restore);
   });
 
-  // 「この文書はもう受け取れる」を親へ知らせる。**親はこれを待ってから送る**——
-  // iframe を作った直後に送ると、まだ srcdoc の文書が無く、メッセージは初期の
-  // about:blank に配達されて消える（実測: 0/10/50ms は消え、200ms で通った）。
+  // Tells the parent this document can now receive messages; the parent waits for it before
+  // sending. Sent right after the iframe is created, there is no srcdoc document yet and the
+  // message is delivered to the initial about:blank and lost (measured: 0/10/50 ms were lost,
+  // 200 ms got through).
   post({ t: "ready" });
 
-  // ペインの寸法が変わったら描き直さずに収め直す。
+  // When the pane's size changes, refit rather than redraw.
   if (window.ResizeObserver) {
     new ResizeObserver(function () {
       if (!viewer) return;
       if (adjusted) {
-        // 倍率と位置はそのまま。コンテナの大きさだけ追従させる。
+        // Keep the scale and position; only follow the container's size.
         sizeToViewport(viewer.graph.container);
         return;
       }
@@ -627,13 +635,13 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
 })();`;
   // i18n-exempt-end
 
-  // i18n-exempt-start: HTML の骨組み（表示文言は含まない）。
+  // i18n-exempt-start: the HTML skeleton; it contains no display text.
   return `<!doctype html>
 <html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${attrEscape(csp)}">
 <style>
-/* touch-action:none が無いと、スマホのピンチはページ拡大に取られて図に届かない。
-   overscroll-behavior は、端まで動かしたときに親ペインが引っ張られるのを止める。 */
+/* Without touch-action:none, a pinch on a phone is taken as page zoom and never reaches the
+   diagram. overscroll-behavior stops the parent pane being dragged when panning past an edge. */
 html,body{margin:0;padding:0;height:100%;overflow:hidden;background:${dark ? "#1e1e1e" : "#ffffff"};
   touch-action:none;overscroll-behavior:contain;-webkit-user-select:none;user-select:none;}
 #c{position:absolute;inset:0;}

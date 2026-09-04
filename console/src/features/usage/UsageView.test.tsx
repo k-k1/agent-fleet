@@ -3,10 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { stackModel } from "./series.ts";
 import type { UsageBucket } from "./api.ts";
 
-// UsageView は core/api/client.ts を引き込み、**モジュール初期化でブラウザ globals を触る**
-// （localStorage / window.fetch — node 環境の vitest には無い）。import 時に必要な分だけ
-// スタブしてから動的 import する。純関数層（series.ts / colors.ts）を api.ts から型だけに
-// 保つ規約はそのままで、View 本体はブラウザ前提のままでよい。
+// UsageView pulls in core/api/client.ts, which touches browser globals at module init
+// (localStorage / window.fetch, absent under vitest's node environment). Stub just enough for the
+// import, then import dynamically. The rule that the pure layer (series.ts / colors.ts) depends
+// on api.ts for types only still holds; the view itself may keep assuming a browser.
 const store = new Map<string, string>();
 vi.stubGlobal("localStorage", {
   getItem: (k: string) => store.get(k) ?? null,
@@ -41,17 +41,18 @@ const legendHTML = (series: Record<string, number>, by = "feature"): string => {
 };
 
 describe("Legend", () => {
-  // ★回帰: 色スロットを持たない feature が1つだけ出ると、系列は「その他」1本になる。
-  // 「2系列未満なら凡例なし」だと**名前の無いグレーの棒**だけが残り、何の消費か読めない。
+  // Regression guard: when the only feature present has no colour slot, the sole series is
+  // "other". Hiding the legend below two series would leave an unnamed grey bar and no way to
+  // tell what was consumed.
   it("shows the OTHER entry even when it is the only series", () => {
     const html = legendHTML({ "assistant.ask": 100 });
     expect(html).toContain("ulg-sw");
     expect(html).toContain("var(--viz-other)");
-    // 畳まれた実キーはツールチップに出す（色だけに identity を持たせない）。
+    // The real folded keys go in the tooltip, so identity is never carried by colour alone.
     expect(html).toContain(dimLabel("feature", "assistant.ask"));
   });
 
-  // 畳み込みが無く系列も1本なら凡例は出さない（1色の棒に凡例は要らない）。
+  // With nothing folded and only one series there is no legend: a single-colour bar needs none.
   it("stays hidden for a single coloured series", () => {
     expect(legendHTML({ session: 100 })).toBe("");
   });

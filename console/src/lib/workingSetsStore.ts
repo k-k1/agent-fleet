@@ -1,4 +1,4 @@
-// 作業グループ (docs/log/52) — the settings-backed half: which sets exist
+// Working sets (docs/log/52) — the settings-backed half: which sets exist
 // (`workingSets`, server-synced ui-prefs) and which one THIS device is scoped
 // to (`workingSetActive`, DEVICE_LOCAL). Split from workingSets.ts so the pure
 // membership predicates stay importable under the node vitest project (this
@@ -16,7 +16,7 @@ export function workingSetList(s: Settings): WorkingSet[] {
   return normalizeWorkingSets(s.workingSets);
 }
 
-/** The set this device is currently scoped to, or null = "すべて" (no filter).
+/** The set this device is currently scoped to, or null = "All" (「すべて」, no filter).
  * A dangling selection (set deleted on another device) resolves to null instead
  * of an empty view. */
 export function activeWorkingSet(s: Settings): WorkingSet | null {
@@ -52,7 +52,7 @@ export function renameWorkingSet(id: string, name: string): void {
 
 /** Delete the group definition only — its members (repos/convs/sessions) are
  * untouched. A stale device-local selection of the deleted id falls back to
- * "すべて" via activeWorkingSet. */
+ * "All" via activeWorkingSet. */
 export function deleteWorkingSet(id: string): void {
   setSetting(
     "workingSets",
@@ -82,14 +82,14 @@ export function autoAddToActiveWorkingSet(field: WorkingSetField, key: string): 
   toggleWorkingSetMember(active.id, field, key);
 }
 
-/** Cycle すべて → set1 → set2 → … → すべて (the keyboard command). Returns the
- * newly active set, or null for すべて. */
+/** Cycle All -> set1 -> set2 -> ... -> All (the keyboard command). Returns the
+ * newly active set, or null for All. */
 export function cycleActiveWorkingSet(): WorkingSet | null {
   const s = getSettings();
   const list = workingSetList(s);
   if (list.length === 0) return null;
   const i = list.findIndex((w) => w.id === s.workingSetActive);
-  const next = i < 0 ? list[0] : list[i + 1] || null; // last set wraps to すべて
+  const next = i < 0 ? list[0] : list[i + 1] || null; // last set wraps to All
   setSetting("workingSetActive", next ? next.id : "");
   return next;
 }

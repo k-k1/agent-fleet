@@ -19,7 +19,7 @@
 // Both are the Workspace agent's job (POST fs/resolve): the agent knows the working copy's
 // real root, the read-only roots outside home, and the denylist, and it answers cwd-first /
 // repository-root-second in one round trip. A candidate it can't place stays plain text, on
-// the same contract as an unknown session slug (存在しない→リンクにしない).
+// the same contract as an unknown session slug: if it does not exist, do not link it.
 
 import { isExternalUrl } from "./filemeta.ts";
 

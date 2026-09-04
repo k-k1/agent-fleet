@@ -2,38 +2,38 @@ import { describe, expect, it } from "vitest";
 import { displayName, remainingShort, resumeClock, stateInfo, stripLabelTag } from "./sessionview.ts";
 import { t } from "./i18n/index.ts";
 
-// 状態チップの写像。ここで固定したいのは「認証切れ（docs/log/47 §4-8）が独立したチップに
-// なること」— 入力待ち に見せると送っても動かないセッションを利用者が延々と叩き、
-// 上限で停止 に混ぜると「待てば直る」と読めてしまう（認証切れは待っても直らない）。
+// The state-chip mapping. What is pinned here is that "auth expired" (docs/log/47 §4-8) gets a chip
+// of its own: shown as idle, users keep sending to a session that cannot move; folded into the
+// rate-limited chip, it reads as "wait and it will fix itself", which an expired login never does.
 describe("stateInfo", () => {
   const claude = { kind: "claude", alive: true };
 
-  it("認証切れは idle とも blocked とも別のチップになる", () => {
+  it("auth expired gets a chip distinct from both idle and blocked", () => {
     const auth = stateInfo({ ...claude, state: "auth" });
     expect(auth.text).toBe(t("state.auth_expired"));
     expect(auth.text).not.toBe(t("state.idle"));
     expect(auth.text).not.toBe(t("state.blocked"));
-    // 注意を引く色（question 系）。on（緑＝正常）ではない。
+    // An attention colour (the question family), not on (green = healthy).
     expect(auth.cls).toBe("question");
   });
 
-  it("既存の状態は変わらない", () => {
+  it("leaves the existing states unchanged", () => {
     expect(stateInfo({ ...claude, state: "idle" }).text).toBe(t("state.idle"));
     expect(stateInfo({ ...claude, state: "blocked" }).text).toBe(t("state.blocked"));
     expect(stateInfo({ ...claude, state: "working" }).text).toBe(t("state.working"));
   });
 
-  it("停止中のセッションは state に関係なく 停止中", () => {
+  it("a stopped session reads as stopped whatever its state says", () => {
     expect(stateInfo({ kind: "claude", alive: false, state: "auth" }).text).toBe(t("state.stopped"));
   });
 
-  // 利用上限のリセット待ち（docs/log/47 §4-9）。これが 入力待ち に見えていたのが元の苦情で、
-  // 「なぜ止まっているのか」「いつ動くのか」の両方が画面から消えていた。
-  it("上限のリセット待ちは 入力待ち と別のチップで、予約時刻を出す", () => {
+  // Waiting for a usage limit to reset (docs/log/47 §4-9). The original complaint was that this
+  // looked like idle, so neither "why it is stopped" nor "when it will move" was on screen.
+  it("waiting for a limit reset is a chip of its own and shows the scheduled time", () => {
     const bare = stateInfo({ ...claude, state: "limited" });
     expect(bare.text).toBe(t("state.rate_limited"));
     expect(bare.text).not.toBe(t("state.idle"));
-    // 対応が要る blocked（＝ペインで選ぶまで動かない）とも別物。
+    // Also distinct from blocked, which needs the user to choose something in the pane first.
     expect(bare.text).not.toBe(t("state.blocked"));
 
     const at = new Date();
@@ -42,134 +42,138 @@ describe("stateInfo", () => {
     expect(timed.text).toContain(resumeClock(at.toISOString()));
   });
 
-  // 予約が無い上限（自動再開 OFF・モデル別上限）でも、待ちであることは言える。
-  it("再開時刻が無い／読めないときは時刻なしのチップに落ちる", () => {
+  // Even a limit with no schedule (auto-resume off, or a per-model cap) can still say it is waiting.
+  it("falls back to a chip without a time when the resume time is missing or unreadable", () => {
     expect(stateInfo({ ...claude, state: "limited", rateLimitResumeAt: "" }).text).toBe(t("state.rate_limited"));
     expect(stateInfo({ ...claude, state: "limited", rateLimitResumeAt: "not-a-time" }).text).toBe(
       t("state.rate_limited"),
     );
   });
 
-  // 未回答の質問と同じ強さで並ばせない（限定クラスで太字を戻す）。色は question 系のまま。
-  it("リセット待ちは question 色を借りつつ limited クラスを足す", () => {
+  // It must not sit as loudly as an unanswered question; the limited class takes the bold back off.
+  // The colour stays in the question family.
+  it("a limit wait borrows the question colour but adds the limited class", () => {
     const cls = stateInfo({ ...claude, state: "limited" }).cls;
     expect(cls).toContain("question");
     expect(cls).toContain("limited");
   });
 });
 
-// 支出・残高の上限（docs/log/47 §4-10）。同じ 429 で届くので、ここを取り違えると利用者は
-// 来ないリセットを待ち続ける。
-describe("stateInfo（残高・支出の上限）", () => {
+// Spend and balance limits (docs/log/47 §4-10). They arrive as the same 429, so confusing the two
+// leaves the user waiting for a reset that never comes.
+describe("stateInfo (balance and spend limits)", () => {
   const claude = { kind: "claude", alive: true };
 
-  it("制限解除待ち とも 入力待ち とも別のチップになる", () => {
+  it("gets a chip distinct from both the rate-limit wait and idle", () => {
     const spend = stateInfo({ ...claude, state: "spend_limit" });
     expect(spend.text).toBe(t("state.spend_limit"));
     expect(spend.text).not.toBe(t("state.rate_limited"));
     expect(spend.text).not.toBe(t("state.idle"));
-    // 人が今やる側（増枠）なので、limited の落ち着いた見え方ではなく質問系の注意色。
+    // A person has to act now (raise the cap), so it takes the question family's attention colour
+    // rather than the calmer limited look.
     expect(spend.cls).toBe("question");
   });
 
-  it("再開時刻は出さない（予約は存在しない）", () => {
+  it("shows no resume time, because there is no schedule", () => {
     const at = new Date(Date.now() + 3600_000).toISOString();
     expect(stateInfo({ ...claude, state: "spend_limit", rateLimitResumeAt: at }).text).toBe(t("state.spend_limit"));
   });
 });
 
-// 日時はすべてローカル時刻のコンストラクタで組む（固定オフセットの文字列にすると、
-// 表示は実行環境の TZ で行われるので JST 以外の runner で落ちる）。
+// Build every date with the local-time constructor: a fixed-offset string would be rendered in the
+// runner's own TZ and the test would fail anywhere outside JST.
 describe("resumeClock", () => {
   const now = new Date(2026, 7, 19, 21, 0, 0);
 
-  it("同じ日なら時刻だけ", () => {
+  it("shows the time alone when it lands on the same day", () => {
     expect(resumeClock(new Date(2026, 7, 19, 23, 50, 0).toISOString(), now)).toBe("23:50");
   });
 
-  // 週次の窓は数日先に落ちうる。時刻だけだと「あと数分」に読めてしまう。
-  it("別の日なら日付を足す", () => {
+  // A weekly window can land days away; a bare time would read as "a few minutes from now".
+  it("adds the date when it lands on another day", () => {
     expect(resumeClock(new Date(2026, 7, 21, 7, 15, 0).toISOString(), now)).toBe("08/21 07:15");
   });
 
-  it("空／壊れた値は空文字", () => {
+  it("returns an empty string for an empty or broken value", () => {
     expect(resumeClock(undefined, now)).toBe("");
     expect(resumeClock("", now)).toBe("");
     expect(resumeClock("nonsense", now)).toBe("");
   });
 });
 
-// 裏で動いているものの名前を出す。汎用の「BG実行中」だけだと、サブエージェントが長文を
-// 書いている 5 分間と、何も起きていない 入力待ち の区別が利用者に付かない。
-describe("stateInfo（BG 実行中の理由）", () => {
+// Name what is running in the background. With only a generic "running in background", the user
+// cannot tell five minutes of a subagent writing a long answer from an idle session doing nothing.
+describe("stateInfo (reason for background activity)", () => {
   const idleBg = { kind: "claude", alive: true, state: "idle", backgroundBusy: true };
 
-  it("理由ごとに文言が変わる", () => {
+  it("varies the wording per reason", () => {
     expect(stateInfo({ ...idleBg, backgroundBusyReason: "subagent" }).text).toBe(t("state.idle_bg_subagent"));
     expect(stateInfo({ ...idleBg, backgroundBusyReason: "shell" }).text).toBe(t("state.idle_bg_shell"));
   });
 
-  // 理由は文言を選ぶだけ。知らない値／古い Agent／中継で落ちた場合でも、バッジ自体を
-  // 失って 入力待ち に戻ってはいけない（それが元の不具合そのもの）。
-  it("理由が無い・知らない値でも汎用文言で点灯する", () => {
+  // The reason only picks the wording. An unknown value, an older Agent or a relay that dropped it
+  // must never cost the badge itself and fall back to idle; that was the original bug.
+  it("still lights up with the generic wording when the reason is missing or unknown", () => {
     expect(stateInfo(idleBg).text).toBe(t("state.idle_bg"));
     expect(stateInfo({ ...idleBg, backgroundBusyReason: "" }).text).toBe(t("state.idle_bg"));
     expect(stateInfo({ ...idleBg, backgroundBusyReason: "process" }).text).toBe(t("state.idle_bg"));
     expect(stateInfo({ ...idleBg, backgroundBusyReason: "なにか新しい種別" }).text).toBe(t("state.idle_bg"));
   });
 
-  it("BG が立っていなければ理由は無視される", () => {
+  it("ignores the reason when the background flag is not set", () => {
     expect(stateInfo({ ...idleBg, backgroundBusy: false, backgroundBusyReason: "subagent" }).text).toBe(
       t("state.idle"),
     );
   });
 });
 
-// 停止中でも「答えを待っている対話がある」ことは出す（docs/log/75 §75.6.5）。人待ちも
-// 畳めるようにした以上、停止中 の 1 語に丸めると未回答の質問が静かに消える。
-describe("stateInfo（停止中の持ち越し）", () => {
+// A stopped session must still say that a conversation is waiting for an answer (docs/log/75
+// §75.6.5). Now that sessions waiting on a person can be folded away too, rounding everything down
+// to the single word "stopped" makes an unanswered question disappear silently.
+describe("stateInfo (carried-over state while stopped)", () => {
   const dead = { kind: "claude", alive: false };
 
-  it("持ち越しの種類ごとにバッジが変わる", () => {
+  it("varies the badge per kind of carried-over state", () => {
     expect(stateInfo({ ...dead, carried: "question" }).text).toBe(t("state.stopped_question"));
     expect(stateInfo({ ...dead, carried: "plan" }).text).toBe(t("state.stopped_plan"));
     expect(stateInfo({ ...dead, carried: "permission" }).text).toBe(t("state.stopped_permission"));
   });
 
-  it("停止中であることは崩さない（off を保ったまま注意色を足す）", () => {
+  it("keeps reading as stopped: off is retained and the attention colour is added on top", () => {
     const chip = stateInfo({ ...dead, carried: "question" });
     expect(chip.cls).toContain("off");
     expect(chip.cls).toContain("question");
   });
 
-  it("持ち越しが無ければ従来どおり 停止中", () => {
+  it("is plain stopped when nothing was carried over", () => {
     expect(stateInfo(dead).text).toBe(t("state.stopped"));
     expect(stateInfo({ ...dead, carried: "" }).text).toBe(t("state.stopped"));
   });
 
-  // 異常終了は「なぜ死んだか」の方が先。持ち越しでその警告を隠さない。
-  it("クラッシュ表示は持ち越しより優先する", () => {
+  // On an abnormal exit, why it died comes first; a carried-over state must not hide that warning.
+  it("shows the crash reason in preference to a carried-over state", () => {
     expect(stateInfo({ ...dead, carried: "question", exitReason: "oom" }).text).toBe(t("exit.oom.text"));
   });
 
-  // 稼働中の行は state が今出ているモーダルを語る。二重に見せない。
-  it("生きている行には持ち越しを出さない", () => {
+  // For a live row, state already describes the modal currently on screen; do not show it twice.
+  it("shows no carried-over state on a live row", () => {
     expect(stateInfo({ kind: "claude", alive: true, state: "idle", carried: "question" }).text).toBe(t("state.idle"));
   });
 });
 
-// 停止しないピンの残り時間（docs/log/75）。**切れたピンをバッジに残さない**のが要点 —
-// 残すと利用者は「守られているつもり」で放置し、実際には次のスイープで畳まれる。
+// Time left on a keep-alive pin (docs/log/75). The point is that an expired pin must not stay on
+// the badge: left there, the user believes the session is protected and leaves it, and the next
+// sweep folds it away.
 describe("remainingShort", () => {
   const now = new Date(2026, 7, 24, 12, 0, 0);
 
-  it("残りを人が読める形にする", () => {
+  it("renders the remaining time in a human-readable form", () => {
     expect(remainingShort(new Date(2026, 7, 24, 12, 30, 0).toISOString(), now)).toBe("30m");
     expect(remainingShort(new Date(2026, 7, 24, 16, 0, 0).toISOString(), now)).toBe("4h");
     expect(remainingShort(new Date(2026, 7, 24, 14, 15, 0).toISOString(), now)).toBe("2h15m");
   });
 
-  it("切れている・掛かっていない・壊れている は空", () => {
+  it("is empty when the pin has expired, was never set, or is broken", () => {
     expect(remainingShort(new Date(2026, 7, 24, 11, 59, 0).toISOString(), now)).toBe("");
     expect(remainingShort(undefined, now)).toBe("");
     expect(remainingShort("", now)).toBe("");
@@ -177,23 +181,24 @@ describe("remainingShort", () => {
   });
 });
 
-// ラベルの先頭タグ(workspace/agent/internal/session/label.go)。**新旧が同時に画面へ並ぶ**の
-// が要点 — ラベルは作成時に meta へ焼かれるので、セッション名入りへ変えても既存セッションは
-// 古い `[AF] ` のまま残る。片方しか剥がさないと、そこだけタグが見えたままになる。
+// The label's leading tag (workspace/agent/internal/session/label.go). The point is that the old
+// and new forms appear on screen side by side: the label is baked into meta at creation, so after
+// the switch to a session-name tag, existing sessions keep the old `[AF] `. Stripping only one form
+// leaves the tag visible on those rows.
 describe("stripLabelTag", () => {
-  it("新旧どちらのタグも剥がす", () => {
+  it("strips both the old and the new tag", () => {
     expect(stripLabelTag("[AF:s6bbilu] 94-freeze 試走2本")).toBe("94-freeze 試走2本");
     expect(stripLabelTag("[AF] 旧形式のまま残ったラベル")).toBe("旧形式のまま残ったラベル");
   });
 
-  it("AF のタグでない文字列には触らない", () => {
+  it("leaves a string that is not an AF tag alone", () => {
     expect(stripLabelTag("どこか他所で付いた --name")).toBe("どこか他所で付いた --name");
-    // 名前部分の字種は Agent の ValidName と揃える。緩めると利用者のタイトルの一部を
-    // セッション名として食いかねない。
+    // The character set of the name part follows the Agent's ValidName. Loosening it risks eating
+    // part of the user's title as if it were a session name.
     expect(stripLabelTag("[AF:日本語] t")).toBe("[AF:日本語] t");
   });
 
-  it("displayName はタイトルが無いときタグを剥がしたラベルを出す", () => {
+  it("displayName falls back to the tag-stripped label when there is no title", () => {
     const s = { name: "s6bbilu", kind: "claude", label: "[AF:s6bbilu] agent-fleet @0831-1922" };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(displayName(s as any)).toBe("agent-fleet @0831-1922");

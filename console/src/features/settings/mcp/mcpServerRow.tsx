@@ -114,8 +114,9 @@ export function ServerRow({
         defaultReason={tr("mcp.egress_reason_for", { name: s.name })}
         onProposed={onProposed}
       />
-      {/* 組み込みの "af" は接続情報を持たない（自己申告ファストパスのセッション側サーバー・
-          docs/log/51 Phase 3）ので、運用連携と同じ「接続で設定してください」を出すと嘘になる。 */}
+      {/* The builtin "af" server has no connection details (it is the session-side server of the
+          self-reporting fast path, docs/log/51 Phase 3), so showing it the same "configure this
+          under Connections" note as the operational integrations would be a lie. */}
       {s.origin === "builtin" && (
         <p className="ps-note">{tr(s.id === "af" ? "mcp.builtin_af_note" : "mcp.builtin_note")}</p>
       )}

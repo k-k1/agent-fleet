@@ -5,9 +5,9 @@
 import type { SessionKind } from "./session.ts";
 import type { ToolGrant } from "./assistant.ts";
 
-// One "作業過程" item of an assistant turn (docs/log/19): the narration the model emitted
+// One "work trace" item of an assistant turn (docs/log/19): the narration the model emitted
 // right before it called a tool. Kept alongside the final answer so the UI can show the
-// process separately (保持). Empty for tool-less replies.
+// process separately from it. Empty for tool-less replies.
 export interface ChatStep {
   text?: string; // narration before the tool call(s)
   tools?: string[]; // tool name(s) invoked in this step
@@ -65,7 +65,7 @@ export interface ChatContextUsage {
 export interface ConversationMeta {
   id: string;
   // Short addressable identity ("a"+6 chars — the assistant twin of session slugs),
-  // used by schedules (docs/log/38 アシスタント発火) and shown in the row tooltip.
+  // used by schedules (docs/log/38 assistant fire) and shown in the row tooltip.
   slug?: string;
   agent: SessionKind;
   active_agent?: SessionKind; // backend used by the latest successful turn
@@ -76,7 +76,7 @@ export interface ConversationMeta {
   updated_at: number;
   message_count: number;
   context?: ChatContextUsage; // current context fill (chat_usage.go)
-  locked?: boolean; // 削除ロック（docs/log/45）: true の間 DELETE は 403 で拒否される
+  locked?: boolean; // deletion lock (docs/log/45): DELETE is refused with 403 while true
 }
 
 // Full conversation from GET/POST /api/chat/conversations/{id}.
@@ -97,17 +97,18 @@ export interface Conversation {
   // A client that reloaded mid-answer uses it to keep the thinking indicator up and
   // poll until the reply lands (the detached turn survives the reload). Never persisted.
   in_progress?: boolean;
-  // Tool grant snapshot (assistant.ts の ToolGrant と同じ値域; legacy 会話は未設定).
+  // Tool grant snapshot (same value range as ToolGrant in assistant.ts; unset on legacy
+  // conversations).
   // af_write conversations can receive server-pushed session reports (docs/log/30), so
   // ChatView keeps them fresh with a light poll while the pane is active.
   tools?: ToolGrant;
   // Current context fill (chat_usage.go): drives the ContextBar under the chat header.
   context?: ChatContextUsage;
-  // Compaction summary waiting to ride the next prompt (docs/log/33 第2段). Display-only
+  // Compaction summary waiting to ride the next prompt (docs/log/33 stage 2). Display-only
   // here (the notice message already shows it); cleared server-side after it carries.
   pending_handoff?: string;
-  // Standing work plan (docs/log/33 第5段): carried into every fresh provider session
-  // verbatim — never summarized, never consumed. Edited from the 計画 panel, refreshed
+  // Standing work plan (docs/log/33 stage 5): carried into every fresh provider session
+  // verbatim — never summarized, never consumed. Edited from the plan panel, refreshed
   // from the recent conversation, and diff-updated by compaction.
   plan?: string;
   plan_updated_at?: number;

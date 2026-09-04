@@ -26,8 +26,8 @@ section {
   line-height: 1.6;
   padding: 56px 64px 72px;
   letter-spacing: 0.01em;
-  /* default テーマは本文を上下中央寄せにする。通常スライドは上寄せに固定し、
-     タイトル行→本文が枠の上から流れるようにする（lead だけ中央のまま）。 */
+  /* The default theme centres the body vertically. Pin ordinary slides to the top so the
+     title line and body flow from the top of the frame; only lead slides stay centred. */
   justify-content: flex-start;
 }
 

@@ -1,14 +1,14 @@
-// タブ切替でペインが「別セッションの画面」を映す回帰（ターミナルを開くと別セッションの
-// tmux にアタッチされたように見える）を押さえる。
+// Regression guard for a pane showing another session's screen after a tab switch - it looks
+// as if opening the terminal attached you to a different session's tmux.
 //
-// タブ表示では 1 セル = 1 つの TerminalView が使い回され、選択タブが変わっても
-// コンテナ div は remount されない。xterm の open() は append なので、対策が無いと
-// 1 つの div に前のタブの .xterm が残ったまま新しい .xterm が下へ積まれ、画面には
-// 前のセッションが（tmux ステータス行ごと）映り続ける。ヘッダも PTY も打鍵も新しい
-// セッションのものなので、見えている端末と繋がっている端末が食い違う。
+// In tabbed display one cell reuses one TerminalView, and the container div is not remounted
+// when the selected tab changes. xterm's open() appends, so without a guard the previous tab's
+// .xterm stays in the div and the new .xterm is stacked below it, leaving the old session
+// (tmux status line and all) on screen. The header, the PTY and the keystrokes all belong to
+// the new session, so the terminal you see is not the terminal you are connected to.
 //
-// jsdom にレイアウトは無いので「どちらが見えているか」は測れない。代わりに原因側の
-// 不変条件（1 コンテナに .xterm はちょうど 1 つ＝選択中ペインのもの）を検証する。
+// jsdom has no layout, so "which one is visible" cannot be measured. Instead this checks the
+// invariant on the cause side: exactly one .xterm per container, the selected pane's.
 import { describe, it, expect, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -29,12 +29,12 @@ describe("terminal container ownership", () => {
     const first = ensureTerm("p1", el);
     expect(termOf(el)).toEqual([first!.element]);
 
-    // 同じ div を別ペインが取る（＝タブ切替）。前のタブの .xterm は残ってはならない。
+    // Another pane takes the same div (a tab switch). The previous tab's .xterm must be gone.
     const second = ensureTerm("p2", el);
     expect(termOf(el)).toEqual([second!.element]);
     expect(second).not.toBe(first);
 
-    // 戻ったら元のインスタンス（＝スクロールバックと PTY を保ったまま）が返る。
+    // Switching back returns the original instance, scrollback and PTY intact.
     expect(ensureTerm("p1", el)).toBe(first);
     expect(termOf(el)).toEqual([first!.element]);
 
@@ -47,17 +47,17 @@ describe("terminal container ownership", () => {
     let root: Root | null = null;
     await act(async () => {
       root = createRoot(host);
-      // session=null: PTY は張らない（ここで見たいのはコンテナの所有権だけ）。
+      // session=null: no PTY is opened; only container ownership matters here.
       root.render(<TerminalView paneId="p1" session={null} />);
     });
     const container = host.querySelector(".term-body .terminal") as HTMLElement;
     expect(termOf(container)).toHaveLength(1);
 
-    // タブ切替＝paneId だけが変わる再レンダリング。TerminalView は remount されない。
+    // A tab switch is a re-render where only paneId changes; TerminalView is not remounted.
     await act(async () => {
       root!.render(<TerminalView paneId="p2" session={null} />);
     });
-    expect(host.querySelector(".term-body .terminal")).toBe(container); // 同じ div のまま
+    expect(host.querySelector(".term-body .terminal")).toBe(container); // still the same div
     expect(termOf(container)).toHaveLength(1);
 
     await act(async () => root!.unmount());

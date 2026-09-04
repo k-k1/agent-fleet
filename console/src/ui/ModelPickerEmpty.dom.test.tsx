@@ -1,16 +1,17 @@
-// 動的 kind のピッカーが「選べるモデルが 1 つも無い」ことを黙らないこと。
+// A dynamic kind's picker must not stay silent about having no selectable model at all.
 //
-// 実害: カタログが空で返ると、ピッカーは 既定 だけを出して理由を何も言わない。実機で
-// 「モデルが選べない」と報告された形がこれで、調査側も「Console の回帰」と誤診した
-// （200 の中身が {"models":[]} でも同じ絵になる）。
+// Damage: when the catalog comes back empty, the picker shows only "default" and gives no
+// reason. That is what was reported on a real machine as "I can't pick a model", and the
+// investigation mis-diagnosed it as a Console regression (a 200 whose body is
+// {"models":[]} paints the same picture).
 //
-// ⚠️ 注記は**原因を断定しない**。空の理由は「未ログイン」「認証はあるがプロバイダへ
-// 到達できない」「プランが既定のみ（Copilot Free は Auto だけ＝空が正常）」「設定で全部
-// 除外した」があり、Console はどれか分からない。**Copilot Free の画面に出ても嘘に
-// ならないこと**が文言の判定基準。
+// The note must not state a cause. Empty can mean not signed in, authenticated but the
+// provider is unreachable, a plan that only has the default (Copilot Free offers Auto only,
+// so empty is normal), or everything excluded in settings — and the Console cannot tell
+// which. The test for the wording is that it stays true on a Copilot Free screen.
 //
-// ⚠️ 取得中に出してはいけない。useModelOptions は解決するまで 既定 だけを返すので、
-// settled を見ないと開いた直後に必ず一瞬出て消える。
+// It must not appear while the fetch is in flight: useModelOptions returns only "default"
+// until it resolves, so without checking `settled` the note always flashes on open.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -63,36 +64,37 @@ afterEach(async () => {
   root = null;
 });
 
-describe("動的モデルピッカーの「既定のみ」注記", () => {
-  it("取得中は出さない（既定だけの状態は読み込み中と同じ）", async () => {
+describe("dynamic model picker's default-only note", () => {
+  it("is not shown while fetching (default-only looks identical to loading)", async () => {
     await mount("cursor");
-    expect(optionValues()).toEqual([""]); // まだ 既定 だけ
+    expect(optionValues()).toEqual([""]); // still only "default"
     expect(hints().join()).not.toContain(t("ui.model_default_only"));
   });
 
-  it("空カタログで決着したら出す", async () => {
+  it("is shown once the fetch settles on an empty catalog", async () => {
     await mount("kiro");
     await settle({ models: [] });
     expect(optionValues()).toEqual([""]);
     expect(hints().join()).toContain(t("ui.model_default_only"));
   });
 
-  it("モデルが来たら出さない", async () => {
+  it("is not shown once models arrive", async () => {
     await mount("agy");
     await settle({ models: [{ id: "sonnet-x", label: "Sonnet X" }] });
     expect(optionValues()).toContain("sonnet-x");
     expect(hints().join()).not.toContain(t("ui.model_default_only"));
   });
 
-  // 両カタログの**実物**を読む。t() は現在の表示言語しか返さないので、片方だけ
-  // 断定形に書き換えられても気付けない。
-  it("文言は ja / en とも原因を断定しない（Copilot Free の空にも出るため）", async () => {
+  // Read both catalogues themselves: t() only ever returns the current display language, so
+  // rewriting just one of them into an assertive form would go unnoticed.
+  it("states no cause in either ja or en (it also shows on Copilot Free's empty catalog)", async () => {
     const ja = (await import("../lib/i18n/locales/ja/common.ts")).common;
     const en = (await import("../lib/i18n/locales/en/common.ts")).common;
     for (const cat of [ja, en] as Record<string, string>[]) {
       const s = cat["ui.model_default_only"];
       expect(s).toBeTruthy();
-      // 断定形へ書き換えると、プランが既定のみのアカウント（空が正常）へ誤報になる。
+      // An assertive rewrite would misreport to accounts whose plan is default-only (where
+      // an empty catalog is normal).
       expect(s).not.toMatch(/ログインしていません|未ログイン|接続されていません|not signed in|sign in|not connected|failed/i);
     }
   });

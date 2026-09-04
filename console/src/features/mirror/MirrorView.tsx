@@ -355,7 +355,7 @@ export function MirrorView({
     setTurns([]);
     setPendingSends(echoStore.get(session) ?? []); // restore this session's un-landed echoes
     pendingSendsRef.current = echoStore.get(session) ?? [];
-    rejectedPlansRef.current = new Set(); // optimistic 却下 marks belong to the old session
+    rejectedPlansRef.current = new Set(); // optimistic reject marks belong to the old session
     setLoaded(false);
     setTermState("");
     setStatus("");
@@ -1279,8 +1279,8 @@ export function MirrorView({
 
 
   const onKeyDown = (e: RKeyboardEvent) => {
-    if (skillPicker.handleKeyDown(e)) return; // スキルピッカーが開いていれば ↑↓/Enter/Tab/Esc を横取り
-    if (suggest.handleKeyDown(e)) return; // Tab: チップ行への入場 / 補完サイクル
+    if (skillPicker.handleKeyDown(e)) return; // while the skill picker is open it takes ↑↓/Enter/Tab/Esc
+    if (suggest.handleKeyDown(e)) return; // Tab: enter the chip row / cycle completions
     // Scroll the transcript without leaving the composer: Ctrl/⌘+↑/↓ nudges, PageUp/PageDown
     // (and Ctrl/⌘+[ / ]) page, Ctrl/⌘+End snaps to the newest turn and re-arms auto-follow.
     // Checked before history recall so the modified arrows don't get swallowed by the ↑/↓
@@ -1818,8 +1818,10 @@ export function MirrorView({
         <ResumingNotice />
       ) : (
         <div className="mirror-compose">
-          {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨で取得する LLM 候補（v2）。
-              クリックで差し込み、⌥で即送信。flex 全幅 (.mirror-suggest) で入力行の上に載る。 */}
+          {/* Reply suggestions: frequently used short replies plus candidates derived from the
+              latest answer (Layer A), plus LLM candidates fetched with ✨ (v2). A click inserts
+              one, ⌥+click sends it immediately. Full-width flex (.mirror-suggest) above the
+              input row. */}
           {!composerLocked && (suggest.chips.length > 0 || settings.replySuggestEnabled) && (
             <SuggestRow
               rowRef={suggest.rowRef}
@@ -1833,7 +1835,7 @@ export function MirrorView({
               onNav={suggest.onNav}
               onChipKeyDown={suggest.onChipKeyDown}
               onChipClick={(e, text) => {
-                if (suggest.chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
+                if (suggest.chipMenu.clickSwallowed()) return; // release of the long-press that opened the menu
                 suggest.applySuggestion(text, e.ctrlKey || e.altKey || e.metaKey);
               }}
               chipProps={suggest.chipMenu.chipProps}
@@ -1855,11 +1857,12 @@ export function MirrorView({
             onPrev={recallPrev}
             onNext={recallNext}
           />
-          {/* スキルピッカー（docs/log/50）: コンポーサー上に浮く補完リスト。マウスは onMouseMove で
-              選択追従＋クリック確定（mousedown は preventDefault でフォーカスを奪わない —
-              CommandPalette と同型）、タップはそのまま確定、キーボードは onKeyDown が駆動。
-              引数入力中（skillArgs）は受動表示 — キーボード選択を持たないので sel も付けず、
-              クリックだけ（引数は残したままコマンドを差し替える）が生きる。 */}
+          {/* Skill picker (docs/log/50): a completion list floating over the composer. The mouse
+              tracks the selection via onMouseMove and commits on click (mousedown calls
+              preventDefault so focus is not stolen — same shape as CommandPalette), a tap commits
+              directly, and the keyboard is driven by onKeyDown. While arguments are being typed
+              (skillArgs) the list is passive: it has no keyboard selection, so no `sel` is set and
+              only clicking works (which swaps the command while keeping the arguments). */}
           {skillPicker.listVisible && (
             <SkillList
               popRef={skillPicker.popRef}
@@ -1882,7 +1885,7 @@ export function MirrorView({
               onToggle={skillPicker.toggleFromButton}
             />
           )}
-          {/* ＋ attach: the drag&drop-less path (phones foremost, handy everywhere).
+          {/* + attach: the drag&drop-less path (phones foremost, handy everywhere).
               Any file type; the same addFiles upload the paste/drop paths use. */}
           {canPasteImage && (
             <>

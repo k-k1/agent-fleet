@@ -48,9 +48,9 @@ export function SuggestRow({
           type="button"
           className="mirror-suggest-ai"
           title={tr("mirror.suggest_ai")}
-          disabled={suggesting || !running} // wsDown() はトースト副作用があるのでレンダー中は呼ばない
+          disabled={suggesting || !running} // wsDown() has a toast side effect; never call it during render
           onClick={onFetchLlm}
-          onKeyDown={onNav} // Enter は既定の click（＝候補取得）に任せる
+          onKeyDown={onNav} // leave Enter to the default click (which fetches the candidates)
         >
           <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
         </button>
@@ -66,7 +66,7 @@ export function SuggestRow({
             "mirror-suggest-chip" +
             (sg.llm ? " llm" : "") +
             (isQuickReplyPinned(pinned, sg.text) ? " pinned" : "") +
-            (sg.text === cycledText ? " cycling" : "") // Tab でいま入力欄に入れている候補
+            (sg.text === cycledText ? " cycling" : "") // the candidate Tab currently has in the input
           }
           aria-current={sg.text === cycledText ? "true" : undefined}
           title={tr("mirror.suggest_hint")}

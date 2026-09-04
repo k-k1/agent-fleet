@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { SESSION_TITLE_MAX, clampSessionTitle } from "./sessionTitle.ts";
 
-// 正は Agent の cleanTitle（workspace/agent/session.go）。ここが緩むと、提案は保存
-// できるのに起動だけ bad_title で落ちる（引き継ぎタイトルの実障害）。
+// The Agent's cleanTitle (workspace/agent/session.go) is authoritative. If this side gets laxer, a
+// proposal saves fine and only the launch fails with bad_title.
 describe("clampSessionTitle", () => {
   it("leaves a normal title alone", () => {
     expect(clampSessionTitle("docs/log/80 の続き")).toBe("docs/log/80 の続き");
@@ -12,8 +12,8 @@ describe("clampSessionTitle", () => {
   it("cuts to the create API's limit, counting code points like Go's runes", () => {
     expect(clampSessionTitle("あ".repeat(200))).toHaveLength(SESSION_TITLE_MAX);
     expect(clampSessionTitle("x".repeat(81))).toBe("x".repeat(SESSION_TITLE_MAX));
-    // 絵文字（サロゲートペア）も 1 文字として数える — UTF-16 length で切ると
-    // Go 側の 80 runes と食い違い、通るはずの名前まで削れる。
+    // An emoji (a surrogate pair) counts as one character. Cutting on UTF-16 length would
+    // disagree with Go's 80 runes and truncate names that should have passed.
     expect(Array.from(clampSessionTitle("🙂".repeat(100)))).toHaveLength(SESSION_TITLE_MAX);
   });
   it("strips control characters instead of failing the launch on them", () => {

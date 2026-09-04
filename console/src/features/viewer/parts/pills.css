@@ -1,4 +1,4 @@
-/* Floating action pills by a code selection (→ 送る / 読み上げ). body-portaled group,
+/* Floating action pills by a code selection (Send / Read out). body-portaled group,
    positioned against the viewport; the pills sit statically inside it (docs/log/19, docs/log/24). */
 .sel-pill-group {
   position: fixed;

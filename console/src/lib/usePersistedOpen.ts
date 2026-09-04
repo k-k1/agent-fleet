@@ -8,7 +8,7 @@ import { useState } from "react";
 // convention so a folded node stays folded across reloads.
 //
 // Shared by the owner-side project tree (features/project/RepoNode) and the
-// recipient-side 共有セッション tree (features/sharing/SharedProjectNode) — both
+// recipient-side shared-sessions tree (features/sharing/SharedProjectNode) — both
 // are "fold a node of the left rail" and must behave identically.
 export function usePersistedOpen(key: string, dflt = true): { open: boolean; toggle: () => void; set: (v: boolean) => void } {
   const [stored, setStored] = useState<boolean | null>(() => {

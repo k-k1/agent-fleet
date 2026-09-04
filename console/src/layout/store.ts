@@ -23,7 +23,8 @@ interface LayoutStore {
   /** True once load() has run — gates persistence so the initial single-pane
    * render can't clobber a saved layout before it's been read. */
   hydrated: boolean;
-  /** `defer` は history entry の貼り直しだけを末尾 1 回に間引く（仕切りドラッグ用）。 */
+  /** `defer` coalesces only the history-entry restamp into a single trailing call (for divider
+   * drags). */
   commit(next: Layout, push?: boolean, defer?: boolean): void;
   /** Action-route commit whose caller must know whether dirty navigation won. */
   commitAction(next: Layout, push?: boolean): Promise<boolean>;
@@ -93,32 +94,32 @@ function flushPersist(): void {
   persistTimer = null;
   persist(useLayoutStore.getState().layout);
 }
-// bare-node のテスト shim は window≒globalThis で addEventListener を持たないため関数チェック。
+// Checked as a function because the bare-node test shim makes window ~= globalThis, which has no
+// addEventListener.
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("pagehide", flushPersist);
   window.addEventListener("beforeunload", flushPersist);
 }
 
-// ── history entry は layout の「スナップショット」 ──────────────────────────
-// push する commit は新しい entry を積むが、積まない commit（タブ選択・ペイン活性・
-// 折返し・仕切りドラッグ）は entry を増やさずに layout を動かす。放置すると今立って
-// いる entry が古いままになり、次の popstate がその古いスナップショットを復元する。
-// モーダルは「戻るで閉じる」guard entry を積み、閉じるときに history.back() でそれを
-// 消費する（lib/backClose）ので、モーダルを開いて閉じただけでタブ付きグリッドの選択
-// タブが押し戻される、という形で必ず表に出ていた。だから push しない commit のあとは
-// 今の entry を貼り直す。
+// ── A history entry is a snapshot of the layout ────────────────────────────
+// A commit that pushes adds a new entry, but one that does not (tab selection, pane activation,
+// wrap, divider drag) moves the layout without adding one. Left alone, the standing entry goes
+// stale and the next popstate restores that stale snapshot. Modals push a back-to-close guard
+// entry and consume it with history.back() (lib/backClose), so this always surfaced as: open and
+// close a modal and the tabbed grid's selected tab is pushed back. Hence a commit that does not
+// push restamps the current entry.
 //
-// 貼り直しは即時が既定。「あとでまとめて」にすると、その待ち時間の中でモーダルが
-// guard entry を積んだ瞬間に貼り直し先が他人の entry へすり替わり、元の entry が古い
-// まま取り残される（＝直そうとしたバグがそのまま残る）。例外は仕切りドラッグだけで、
-// これは pointermove ごとに commit するため replaceState の回数制限（Safari 100回/
-// 30秒・Firefox 200回/10秒）に当たる。そこだけ末尾 1 回に間引く。
+// The restamp is immediate by default. Coalescing it swaps the target for someone else's entry
+// the moment a modal pushes a guard entry during the wait, leaving the original entry stale, i.e.
+// exactly the bug this fixes. The one exception is the divider drag, which commits on every
+// pointermove and so hits the replaceState rate limits (Safari 100/30s, Firefox 200/10s); only
+// there is the restamp coalesced into a single trailing call.
 const STAMP_MS = 200;
 let stampTimer: number | null = null;
 
-/** 今立っている entry に layout を書き戻す。af の layout entry 以外（backClose の
- *  guard など）は他人の entry なので触らない — layout を持たせてしまうと、その entry
- *  へ戻ったときに古い layout が「復元すべき状態」に化ける。 */
+/** Write the layout back into the standing entry. Entries that are not af layout entries (the
+ *  backClose guard, for instance) belong to someone else and must not be touched: giving one a
+ *  layout turns a stale layout into "the state to restore" when the user lands back on it. */
 function stampHistory(l: Layout): void {
   try {
     const st = history.state;
@@ -135,9 +136,9 @@ function stampNow(l: Layout): void {
   cancelDeferredStamp();
   stampHistory(l);
 }
-/** 仕切りドラッグ専用の末尾 1 回（タイマーは常に最新の layout を読む）。 */
+/** Trailing single restamp, for divider drags only (the timer always reads the latest layout). */
 function stampDeferred(): void {
-  if (typeof window === "undefined" || typeof window.setTimeout !== "function") return; // bare-node のテスト shim
+  if (typeof window === "undefined" || typeof window.setTimeout !== "function") return; // bare-node test shim
   if (stampTimer != null) return;
   stampTimer = window.setTimeout(() => {
     stampTimer = null;
@@ -150,8 +151,8 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
     const cur = get().layout;
     if (next === cur) return; // ops returned the input — a no-op
     if (push && JSON.stringify(next) === JSON.stringify(cur)) return; // no dup history entry
-    // これから離れる entry には「画面に出ていた状態」を残す（間引かれた仕切り位置が
-    // まだ乗っていないことがある）。
+    // Leave the state that was on screen on the entry we are about to leave (a coalesced divider
+    // position may not have been stamped onto it yet).
     if (push) stampNow(cur);
     set({ layout: next });
     if (get().hydrated) schedulePersist();
@@ -227,9 +228,9 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
         return;
       }
       void confirmDirtyNavigation("history", destroyed).then((proceed) => {
-        // 確認ダイアログ待ちの間に別の commit が挟まっていたら適用しない — 履歴由来の
-        // 古い layout でその commit を上書き喪失しないため（Cancel 側の復元 push も、
-        // 新しい commit が自分の履歴 entry を積んでいるので不要）。
+        // Do not apply if another commit landed while the confirm dialog was open, so a stale
+        // layout from history cannot overwrite and lose it (the Cancel-side restore push is
+        // unnecessary too: the newer commit pushed its own history entry).
         if (get().layout !== cur) return;
         if (proceed) {
           set({ layout: l });
@@ -246,7 +247,7 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
     // Minimal pop-out tabs have exactly one pane by design: "open in a new
     // pane" callers (scm → commit, mirror → doc/file, …) replace in place
     // there — commit() still pushes history, so the browser Back button
-    // restores the previous content. Splitting stays available via 展開.
+    // restores the previous content. Splitting stays available via Expand (「展開」).
     openTargetInNew: (target, force = false) =>
       commit(
         popoutMode() === "popout"
@@ -264,7 +265,7 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
     dropSplit: (srcId, refId, dir) => commit(ops.dropSplit(get().layout, srcId, refId, dir)),
     // Activation / divider drags aren't history-worthy navigations (no push).
     setActive: (id) => commit(ops.setActive(get().layout, id), false),
-    // 仕切りドラッグは pointermove ごとに来るので history の貼り直しだけ間引く（defer）。
+    // Divider drags arrive on every pointermove, so only the history restamp is coalesced (defer).
     setColRatios: (ratios) => commit(ops.setColRatios(get().layout, ratios), false, true),
     setRowRatio: (colId, r) => commit(ops.setRowRatio(get().layout, colId, r), false, true),
     setPaneWrap: (paneId, wrap) => commit(ops.setPaneWrap(get().layout, paneId, wrap), false),
@@ -280,10 +281,10 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
  * called once from the app shell boot effect (StrictMode-safe). */
 export function wireLayoutHistory(): () => void {
   const onPop = (e: PopStateEvent) => {
-    // layout を持たない entry は他人のもの（モーダルの「戻るで閉じる」guard など）。
-    // そこへ着地したときに「layout 無し＝初期レイアウト」と解釈すると、モーダルを 2 枚
-    // 重ねて上だけ閉じただけでグリッドが丸ごと消えていた。復元するのは layout entry
-    // だけにして、それ以外は今の layout を維持する。
+    // An entry without a layout belongs to someone else (a modal's back-to-close guard, say).
+    // Reading "no layout" as "initial layout" on landing there wiped the whole grid when two
+    // stacked modals had only the top one closed. Restore from layout entries only and keep the
+    // current layout otherwise.
     if (!e.state || !e.state.__af || !e.state.layout) return;
     useLayoutStore.getState().setFromHistory(e.state.layout as Layout);
   };

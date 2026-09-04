@@ -86,8 +86,8 @@ export function ChatTitleModal({ id, title, onClose, onSaved }: ChatTitleModalPr
             autoFocus
           />
         </label>
-        {/* 設定 > AI補助「チャットのタイトル提案」。オフならボタンを出さない —
-            以前は常に出ていて、押すと 400（feature_disabled）でトーストが出るだけだった。 */}
+        {/* Settings > AI assistance, "suggest chat titles". Hide the button when it is off:
+            always showing it only bought a 400 (feature_disabled) toast on click. */}
         {aiSuggest && (
           <div>
             <Button icon={suggesting ? "loading" : "lightbulb"} onClick={suggest} disabled={busy}>

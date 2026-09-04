@@ -155,7 +155,7 @@ chip row, ending with the + attach button
   font-size: 12px;
   color: var(--muted);
 }
-/* Non-image attachment chip (drag&drop / ＋): icon + name instead of a thumbnail. */
+/* Non-image attachment chip (drag&drop / +): icon + name instead of a thumbnail. */
 .ma-chip.ma-file {
   width: auto;
   max-width: 240px;
@@ -174,7 +174,7 @@ chip row, ending with the + attach button
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* ＋ attach button, left of the composer (all pointer types — phones foremost). */
+/* + attach button, left of the composer (all pointer types — phones foremost). */
 .mirror-attach-btn {
   flex: none;
   align-self: stretch;

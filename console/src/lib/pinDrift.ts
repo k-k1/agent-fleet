@@ -1,9 +1,10 @@
-// pinDrift — 設定>環境「ツールのバージョン」表のピンずれ判定。実体の版とイメージ
-// ビルド時ピン（versions.json）を比較し、色分けバッジの方向を返す。
-// 版形状は多様（semver 2.1.220 / 日付版数 2026.07.23-e383d2b / "(取得失敗)" /
-// "(timeout)"）なので、数値セグメントだけを順に比較し、判定できない形は
-// unknown（バッジなし）へ倒す。behind＝ピンより古い（更新が届いていない・警告色）、
-// ahead＝ピンより新しい（自己更新などで前進・情報色）。
+// pinDrift — drift detection for the tool-version table in Settings > Environment. Compares the
+// version actually installed against the pin baked at image build time (versions.json) and returns
+// the direction the coloured badge should show. Version shapes vary a lot (semver 2.1.220, dated
+// builds like 2026.07.23-e383d2b, a fetch-failure placeholder, "(timeout)"), so only the numeric
+// segments are compared in order and anything undecidable falls back to unknown, i.e. no badge.
+// behind = older than the pin (an update has not arrived; warning colour); ahead = newer than the
+// pin (moved forward by self-update or similar; informational colour).
 
 export type PinDrift = "behind" | "ahead" | "same" | "unknown";
 
@@ -13,9 +14,9 @@ export function pinDrift(version: string | undefined, pin: string | undefined): 
   if (!a || !b) return "unknown";
   const n = Math.max(a.length, b.length);
   for (let i = 0; i < n; i++) {
-    // 欠けたセグメントは 0（"1.2" < "1.2.3"）。cursor のピン 2026.07.23-e383d2b は
-    // sha 接尾辞が segs で落ちるので、実効の 2026.07.23（extractVer が接尾辞を落とした
-    // 形）と同日付なら same になる。
+    // A missing segment counts as 0, so "1.2" < "1.2.3". segs drops the sha suffix of a cursor pin
+    // like 2026.07.23-e383d2b, so it compares equal to the effective 2026.07.23 that extractVer
+    // produces when the dates match.
     const x = a[i] ?? 0;
     const y = b[i] ?? 0;
     if (x < y) return "behind";
@@ -24,8 +25,9 @@ export function pinDrift(version: string | undefined, pin: string | undefined): 
   return "same";
 }
 
-// 数値セグメント列へ。先頭から数値の並びだけ拾い、非数値が出たらそこで打ち切る
-// （以降はビルド sha などの接尾辞扱い）。先頭から数値が取れない形は null＝判定不能。
+// Reduce to a list of numeric segments: take the leading run of numbers and stop at the first
+// non-numeric one, treating the rest as a suffix such as a build sha. A value with no leading
+// number yields null, meaning undecidable.
 function segs(v: string | undefined): number[] | null {
   if (!v) return null;
   const out: number[] = [];

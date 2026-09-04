@@ -1,5 +1,6 @@
-/* 朗読ビュー（docs/log/24, ReaderView）: 読むための版組＋カラオケ・ハイライト。
-   原文の改行・行頭スペースを保つため pre-wrap。単位（.reader-unit）はインライン span。 */
+/* Reader view (docs/log/24, ReaderView): typesetting for reading plus karaoke highlight.
+   pre-wrap, so the source's line breaks and leading spaces survive. A unit
+   (.reader-unit) is an inline span. */
 .reader-body {
   flex: 1;
   min-height: 0;
@@ -11,23 +12,24 @@
   font-size: var(--reader-size, 17px);
   font-family: var(--reader-font, "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Noto Serif", serif);
   color: var(--fg);
-  white-space: pre-wrap; /* 改行・行頭スペースを保持 */
+  white-space: pre-wrap; /* keep line breaks and leading spaces */
   overflow-wrap: anywhere;
 }
 .reader-unit {
   border-radius: 4px;
-  scroll-margin: 20vh 20vw; /* scrollIntoView(center) の余白（縦横どちらの向きでも効く） */
+  scroll-margin: 20vh 20vw; /* margin for scrollIntoView(center); applies in both axes */
   transition: background 0.15s ease;
 }
 .reader-unit.active {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
-/* なろう形式ルビ（<ruby>base<rt>ruby</rt>）の見た目。 */
+/* Appearance of Narou-style ruby (<ruby>base<rt>ruby</rt>). */
 .reader-body rt {
   font-size: 0.5em;
   opacity: 0.8;
 }
-/* 縦書き: 文字は上→下、列は右→左。max-width/margin を解いて横スクロールで読み進める。 */
+/* Vertical writing: characters top-to-bottom, columns right-to-left. Drop max-width and
+   margin so reading advances by horizontal scroll. */
 .reader-body.vertical {
   writing-mode: vertical-rl;
   text-orientation: mixed;
@@ -39,7 +41,8 @@
 .reader-vtoggle .codicon {
   font-size: 13px;
 }
-/* ヘッダーの声セレクト（"" = 設定の話者）。ボタン群と同じ高さ感の小型 select。 */
+/* Voice select in the header ("" = the speaker configured in settings). A compact select
+   sized to look the same height as the buttons beside it. */
 .reader-voice {
   font-size: 12px;
   padding: 2px 4px;
@@ -51,11 +54,12 @@
 .reader-voice:disabled {
   opacity: 0.5;
 }
-/* ヘッダーの本文フォント切替（声セレクトと同じ小型 select の見た目を流用）。 */
+/* Body-font switch in the header; reuses the compact select look of the voice select. */
 .reader-font {
   min-width: 5.5em;
 }
-/* ヘッダーの文字サイズ（− 現在値 ＋）。中央は現在値の表示専用でボタンではない。 */
+/* Font-size control in the header (− current value +). The middle element only displays
+   the current value; it is not a button. */
 .reader-size .reader-size-val {
   min-width: 2.4em;
   justify-content: center;

@@ -79,7 +79,8 @@ export function AgyCard({
         ) : undefined
       }
     >
-      {/* 実験枠 label — always visible, connected or not (採用条件). */}
+      {/* "Experimental slot" label — always visible, connected or not: it states the
+          terms under which this agent may be used. */}
       <p className="ps-note ps-note-warn agy-exp">{tr("agents.agy_exp_label")}</p>
       {!running ? (
         <ConnPaused />

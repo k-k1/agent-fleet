@@ -1,11 +1,14 @@
-// 端末の往復時間（RTT）計測の回帰。
+// Regression guard for the terminal round-trip time (RTT) measurement.
 //
-// この数字は「打鍵が遅い」という報告に対して製品側が出せる唯一の観測量なので、静かに
-// 壊れると調査手段そのものが消える。押さえるのは 3 点:
-//   ① pong は heartbeat の生存判定に加えて RTT サンプルにもなる
-//   ② ping は 1 本だけ in-flight（Agent の pong は定数フレームで相関できないため、
-//      2 本目を出すと「どちらの往復か」が言えなくなる）
-//   ③ ソケットを張り替えたら窓は捨てる（前の経路の数字は今の経路を語らない）
+// This number is the only observation the product can offer against a "typing is slow" report,
+// so if it breaks silently the means of investigation disappears with it. Three points are
+// pinned:
+//   1. a pong is an RTT sample as well as the heartbeat's liveness signal;
+//   2. only one ping is in flight at a time - the Agent's pong is a constant frame and cannot
+//      be correlated, so a second ping makes it impossible to say which round trip was
+//      measured;
+//   3. re-attaching the socket discards the window: numbers from the previous route say
+//      nothing about the current one.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { ensureTerm, attach, disposeTerm, terminalRtt, probeTerminalRtt } from "./term.ts";
 
@@ -22,12 +25,13 @@ interface FakeSocket {
 }
 
 let sockets: FakeSocket[] = [];
-// autoPong: ping を受けたら次のマイクロタスクで pong を返す（probe の逐次計測用）。
+// autoPong: answer a ping with a pong on the next microtask, for the sequential probe.
 let autoPong = false;
 
 class FakeWS implements FakeSocket {
-  // 実物と同じ定数を持たせる: term.ts は readyState を WebSocket.OPEN 等と比較するので、
-  // 定数の無い偽物だと「常に未接続」に見えて ping が 1 本も出ない。
+  // Carry the same constants as the real class: term.ts compares readyState against
+  // WebSocket.OPEN and friends, so a fake without them looks permanently disconnected and
+  // no ping is ever sent.
   static CONNECTING = 0;
   static OPEN = 1;
   static CLOSING = 2;
@@ -61,9 +65,9 @@ class FakeWS implements FakeSocket {
   }
 }
 
-// jsdom にはレイアウトが無く、xterm が rAF 内で走らせる viewport 同期は
-// RenderService の dimensions を読んで落ちる。ここで見たいのはソケット側だけなので
-// rAF は握り潰す（term.ts 側の rAF も描画の作り直しだけで、RTT には関係しない）。
+// jsdom has no layout, so the viewport sync xterm runs inside rAF throws while reading
+// RenderService dimensions. Only the socket side matters here, so rAF is swallowed; the rAF
+// in term.ts only rebuilds the rendering and has nothing to do with RTT.
 function stubRaf() {
   vi.stubGlobal("requestAnimationFrame", () => 0);
   vi.stubGlobal("cancelAnimationFrame", () => {});
@@ -92,13 +96,13 @@ describe("terminal round-trip measurement", () => {
     attach("r1", "sfake");
     const ws = sockets[0] as unknown as FakeWS;
 
-    // まだ open していないので測定は始まっていない。
+    // Not open yet, so no measurement has started.
     expect(terminalRtt("r1")).toBeNull();
 
-    // open 直後に 1 本 ping を出す（アタッチした瞬間から数字が出るように）。
+    // One ping right after open, so a number exists from the moment of attaching.
     ws.open();
     expect(ws.pings()).toHaveLength(1);
-    expect(terminalRtt("r1")).toBeNull(); // 応答前
+    expect(terminalRtt("r1")).toBeNull(); // before the reply
 
     ws.pong();
     const first = terminalRtt("r1");
@@ -106,8 +110,8 @@ describe("terminal round-trip measurement", () => {
     expect(first!.n).toBe(1);
     expect(first!.last).toBeGreaterThanOrEqual(0);
 
-    // ★ in-flight が無い状態の pong はサンプルにしない。ここを数えると「往復して
-    // いない pong」で RTT が 0 に薄まり、遅延が数字の上から消える。
+    // A pong with nothing in flight is not a sample. Counting it would dilute the RTT toward
+    // zero with pongs that never made a round trip, erasing the latency from the number.
     ws.pong();
     ws.pong();
     expect(terminalRtt("r1")!.n).toBe(1);
@@ -125,7 +129,7 @@ describe("terminal round-trip measurement", () => {
     first.pong();
     expect(terminalRtt("r1")!.n).toBe(1);
 
-    // 経路が変わる（張り替え）＝前の窓は今の接続について何も語らない。
+    // The route changed (re-attach), so the previous window says nothing about this connection.
     attach("r1", "sfake");
     expect(terminalRtt("r1")).toBeNull();
     expect(sockets).toHaveLength(2);
@@ -141,16 +145,16 @@ describe("terminal round-trip measurement", () => {
     attach("r1", "sfake");
     const ws = sockets[0] as unknown as FakeWS;
     ws.open();
-    // open 直後の 1 本を先に決着させる。in-flight が残ったまま probe を始めると、
-    // 最初のサンプルはその ping の往復で埋まる（＝正しい振る舞いだが、本数の
-    // 検証にならない）。
+    // Settle the ping sent at open first. Starting the probe with one still in flight fills
+    // the first sample with that ping's round trip - correct behaviour, but it would stop this
+    // from testing the ping count.
     await new Promise((r) => setTimeout(r, 0));
 
     const before = ws.pings().length;
     const stats = await probeTerminalRtt("r1", 4, 0);
     expect(stats).not.toBeNull();
     expect(stats!.n).toBe(4);
-    // 逐次＝要求した本数ぶんだけ ping が増える（並行に撃たない）。
+    // Sequential: exactly as many new pings as were requested, never fired in parallel.
     expect(ws.pings().length - before).toBe(4);
     expect(stats!.max).toBeGreaterThanOrEqual(stats!.med);
 

@@ -178,7 +178,7 @@
   border-left: 2px solid color-mix(in srgb, var(--accent, #5e9ce0) 55%, var(--border));
 }
 /* Schedule-injected user turn (docs/log/38): the prompt was fired by a schedule — timed
-   (定時) or a run-now (手動発火). Same pill shape, its own (ok/green) hue so the
+   or by a manual run-now. Same pill shape, its own (ok/green) hue so the
    three injected origins (operator / chat / schedule) read apart at a glance. */
 .mt-sched {
   background: color-mix(in srgb, var(--ok, #5ec07a) 18%, transparent);

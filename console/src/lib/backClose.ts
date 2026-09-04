@@ -15,8 +15,8 @@ import type { MutableRefObject } from "react";
 // the stack has already been updated. Untracked, that echo was indistinguishable
 // from a user back-press and hit whatever layer was on top by then: UI-closing
 // the top of a STACKED pair cascaded into the one below, and SWAPPING modals in
-// one commit closed the incoming modal right after it opened (起動導線 Ph2 hub →
-// 作業を始める). `suppress` counts those self-inflicted pops so the shared
+// one commit closed the incoming modal right after it opened (launch flow Ph2 hub →
+// Start working). `suppress` counts those self-inflicted pops so the shared
 // listener swallows exactly that many popstates before treating one as the user's.
 //
 // The guard entry carries { afModal: true }; App's drawer popstate logic keys off

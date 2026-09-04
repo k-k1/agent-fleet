@@ -3,7 +3,7 @@
 // Triggers: shortly after mount, whenever the tab/PWA is brought back to the foreground
 // (visibilitychange — the key signal for a long-lived mobile PWA that never navigates),
 // on window focus, and on a slow interval. On finding a newer build it shows a sticky
-// toast with an 更新 button; tapping it reloads onto a cache-busted URL so a stale
+// toast with an update button; tapping it reloads onto a cache-busted URL so a stale
 // index.html can't keep serving the old bundle (see reloadForUpdate). We notify at most
 // once per app session to avoid nagging.
 import { useEffect, useRef } from "react";
@@ -16,7 +16,7 @@ const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const FIRST_CHECK_DELAY_MS = 4000; // let the first paint settle before hitting the network
 
 // UpdateToast — the sticky toast body. Two things the user needs to know before
-// tapping 更新, and they are NOT the same thing:
+// tapping update, and they are NOT the same thing:
 //   * reloading the Console does not touch running sessions (they live in the
 //     workspace, not the tab) — say it, or the reload reads as risky and is put off;
 //   * whether the BACKEND also moved. That's the CP-detected `stale` flag, and it

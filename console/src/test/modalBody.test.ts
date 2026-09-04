@@ -1,19 +1,21 @@
-// `<Modal>` の中身は必ず ui-modal-head / ui-modal-body / ui-modal-foot に載せる、という静的検査。
+// Static check that everything inside `<Modal>` sits on ui-modal-head / ui-modal-body /
+// ui-modal-foot.
 //
-// ui/Modal のシェルは padding を持たない。余白は head / body / foot がそれぞれ自分で持つ
-// 設計で、`<Modal>` の直下に本文を置くと**その本文だけ左右の余白がゼロ**になり、見出しは
-// 枠から 12px なのに文字と入力欄は枠線に貼りつく。
+// The ui/Modal shell carries no padding by design: head / body / foot each own their own
+// spacing. Content placed directly under `<Modal>` therefore gets zero horizontal padding, so
+// the heading sits 12px from the frame while its text and inputs stick to the border.
 //
-// 実害: 作業項目の 3 モーダル・WS 起動中ダイアログ・掃除モーダルの 5 つが同時にこの形に
-// なっていた（実測で見出し 13px / 本文 1px）。どれもテストは緑で、緑なのは「描けている」
-// ことしか確かめていなかったから。**見た目の崩れは、構造で書けば静的に捕まる**。
+// Damage: five modals had this shape at once (measured: heading 13px, body 1px). Every one of
+// them was green, because the tests only checked that something rendered. A visual break like
+// this is catchable statically once it is expressed as structure.
 //
-// 見るのは `<Modal>` の直下の**組み込み要素だけ**（div / p / footer …）。大文字始まりの子は
-// コンポーネントで、`<Modal>` の中に別のダイアログを重ねる正当な形がある
-// （ShareListModal → ShareCreateModal）。その中身は、そのファイルを見るときに検査される。
-// `{cond && <div className="ui-modal-body">}` や三項のように「描かれるとしたらこれ」が JSX で
-// 書かれている形はほどいて中を見る。関数呼び出しや変数で組み立てている形は判定を諦めて通す
-// （誤検知でテストを鬱陶しくしない）。
+// Only intrinsic elements directly under `<Modal>` are inspected (div / p / footer ...). A
+// child starting with a capital is a component, and nesting another dialog inside `<Modal>` is
+// legitimate (ShareListModal -> ShareCreateModal); its contents are checked when that file is
+// scanned. Shapes where "this is what would be rendered" is written in JSX
+// (`{cond && <div className="ui-modal-body">}`, a ternary) are unwrapped and looked into.
+// Shapes built from a function call or a variable are given up on and passed, so false
+// positives do not make the test a nuisance.
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { readFileSync, readdirSync } from "node:fs";
@@ -35,34 +37,36 @@ type El = ts.JsxElement | ts.JsxSelfClosingElement;
 const tagName = (el: El) =>
   (ts.isJsxElement(el) ? el.openingElement.tagName : el.tagName).getText();
 
-/** className の文字列リテラル部分（`"a " + b` のような式は読める分だけ）。 */
+/** The string-literal part of className; for an expression like `"a " + b`, as much as can
+ *  be read. */
 function classNameOf(el: El): string {
   const attrs = ts.isJsxElement(el) ? el.openingElement.attributes : el.attributes;
   for (const a of attrs.properties) {
     if (!ts.isJsxAttribute(a) || a.name.getText() !== "className" || !a.initializer) continue;
     if (ts.isStringLiteral(a.initializer)) return a.initializer.text;
-    return a.initializer.getText(); // {"ui-modal-body " + x} などは素のテキストで見る
+    return a.initializer.getText(); // {"ui-modal-body " + x} and the like are read as raw text
   }
   return "";
 }
 
-/** その子が描きうる JSX 要素を集める。ほどけない形（関数呼び出し等）は null を混ぜず無視。 */
+/** Collect the JSX elements this child could render. Shapes that cannot be unwrapped (a
+ *  function call, say) are ignored rather than yielding null. */
 function renderedElements(node: ts.Node): El[] {
   if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) return [node];
   if (ts.isJsxFragment(node)) return node.children.flatMap(renderedElements);
   if (ts.isJsxExpression(node)) return node.expression ? renderedElements(node.expression) : [];
   if (ts.isParenthesizedExpression(node)) return renderedElements(node.expression);
-  // cond && <X /> — 描かれるとしたらこれ
+  // cond && <X /> — this is what would be rendered
   if (ts.isBinaryExpression(node)) return renderedElements(node.right);
-  // cond ? <A /> : <B /> — どちらも描かれうる
+  // cond ? <A /> : <B /> — either could be rendered
   if (ts.isConditionalExpression(node)) {
     return [...renderedElements(node.whenTrue), ...renderedElements(node.whenFalse)];
   }
   return [];
 }
 
-describe("Modal の中身は共有のシェルに載る", () => {
-  it("★ <Modal> の直下に ui-modal-* 以外の要素を置かない（置くとその本文だけ余白ゼロになる）", () => {
+describe("modal contents sit on the shared shell", () => {
+  it("puts nothing but ui-modal-* directly under <Modal> (anything else loses its padding)", () => {
     const offenders: string[] = [];
     for (const file of tsxFiles(SRC)) {
       const text = readFileSync(file, "utf8");
@@ -74,7 +78,7 @@ describe("Modal の中身は共有のシェルに載る", () => {
             if (ts.isJsxText(child) && !child.text.trim()) continue;
             for (const el of renderedElements(child)) {
               const tag = tagName(el);
-              if (!/^[a-z]/.test(tag)) continue; // コンポーネント（入れ子のダイアログ等）は別途検査される
+              if (!/^[a-z]/.test(tag)) continue; // components (nested dialogs etc.) are checked separately
               const cls = classNameOf(el);
               if (/\bui-modal-(head|body|foot)\b/.test(cls)) continue;
               const { line } = sf.getLineAndCharacterOfPosition(el.getStart(sf));

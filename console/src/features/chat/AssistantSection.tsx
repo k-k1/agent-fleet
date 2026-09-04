@@ -367,7 +367,7 @@ export const AssistantSection = memo(function AssistantSection() {
                     </span>
                     <span className="chat-open-title">{c.title}</span>
                     {c.message_count > 0 && <span className="chat-open-meta">{c.message_count}</span>}
-                    {/* 削除ロック（docs/log/45）の鍵バッジ — セッション行と同じ語彙。 */}
+                    {/* Deletion-lock key badge (docs/log/45) — same vocabulary as a session row. */}
                     {c.locked && <Icon name="lock" className="sess-lock" title={tr("asst.locked_hint")} />}
                     {chatBusy[c.id] ? (
                       <span className="session-state working mini" title={tr("asst.in_progress")}>
@@ -451,7 +451,7 @@ export const AssistantSection = memo(function AssistantSection() {
                   <Icon name="edit" /> {tr("asst.rename")}
                 </button>
               </li>
-              {/* 作業グループ (docs/log/52): toggle this conversation's membership. */}
+              {/* Working sets (docs/log/52): toggle this conversation's membership. */}
               {wsets.length > 0 && (
                 <>
                   <li className="ui-menu-sep" aria-hidden="true" />

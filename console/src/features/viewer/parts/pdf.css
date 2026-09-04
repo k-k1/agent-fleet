@@ -1,6 +1,7 @@
 /* ---- PDF (docs/log/82) ----
-   紙は白のまま、背景だけペインの色。暗色テーマで紙を反転させる案は採らない:
-   図や写真まで反転して「別の文書」になり、印刷物と見比べられなくなる。 */
+   The paper stays white and only the surround takes the pane colour. Inverting the paper
+   under a dark theme is deliberately rejected: it inverts figures and photos too, turning
+   the page into a different document that can no longer be compared with the print. */
 .pdfview {
   position: relative;
   flex: 1;
@@ -19,7 +20,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  outline: none; /* キーボード操作用に focus は取るが、枠は出さない */
+  outline: none; /* takes focus for keyboard control, but shows no focus ring */
 }
 .pdfview-loading {
   margin: 16px;
@@ -28,9 +29,10 @@
 .pdfview-doc {
   display: flex;
   flex-direction: column;
-  /* `safe` が要る: 素の center だと、ペインより広く拡大したページは左へはみ出し、
-     はみ出した側はスクロールしても永久に届かない（実測 —— 125% で見出しの左端が
-     切れた）。safe は「収まるときだけ中央、溢れたら先頭寄せ」。 */
+  /* `safe` is required: with plain center, a page zoomed wider than the pane overflows to
+     the left and that side stays unreachable however far you scroll (measured: at 125% the
+     left edge of a heading was cut off). `safe` centres only while it fits and falls back
+     to start alignment once it overflows. */
   align-items: safe center;
   box-sizing: border-box;
   width: max-content;

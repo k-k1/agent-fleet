@@ -112,7 +112,7 @@ export function sessionsInFolder(sessions: Session[], folderName: string): Sessi
 
 // orphanSessions returns sessions that belong to no known working copy — a folder
 // that isn't in the repo list (e.g. a shell in home, or a session whose repo was
-// removed). These land in the rail's "その他のセッション" catch-all.
+// removed). These land in the rail's "other sessions" catch-all (pj.other_sessions).
 export function orphanSessions(sessions: Session[], repos: Repo[]): Session[] {
   const names = new Set(repos.map((r) => r.name));
   return sessions

@@ -1,5 +1,6 @@
-/* 稼働時間ヒートマップ（docs/log/83）。縦 24 時間 × 横 日付。
-   色は tokens.css の --uh-1..5（検証済みの単色ランプ）。ここでは形だけを決める。 */
+/* Uptime heatmap (docs/log/83): 24 hours down, dates across.
+   Colours come from --uh-1..5 in tokens.css (a validated single-hue ramp); this file only
+   decides shape. */
 
 .uptime-heatmap {
   --uh-gutter: 26px;
@@ -55,7 +56,7 @@
   cursor: pointer;
 }
 
-/* --- 凡例 ---------------------------------------------------------------- */
+/* --- Legend -------------------------------------------------------------- */
 
 .uh-legend {
   display: flex;
@@ -85,12 +86,13 @@
   border-radius: 2px;
 }
 
-/* --- マス目 -------------------------------------------------------------- */
+/* --- Grid ---------------------------------------------------------------- */
 
-/* 列数は inline style（日数で変わる）。行は見出し 1 + 24 時間。
-   ⚠️ マスは 1 列を 1fr にしない。14 列を横いっぱいに伸ばすと 1 マスが 59×9px の
-   「横棒」になり、ヒートマップではなく積み上げ棒に見える（実測・headless で確認）。
-   幅に上限を置いて左寄せし、縦横の比を 1 に近く保つ。 */
+/* The column count is an inline style (it follows the number of days). Rows are 1 header + 24
+   hours.
+   Do not make a column 1fr. Stretching 14 columns across the full width makes a cell 59x9px, a
+   horizontal bar that reads as a stacked bar chart rather than a heatmap (measured in headless).
+   Cap the width and align left so cells stay close to square. */
 .uh-grid {
   display: grid;
   gap: var(--uh-gap);
@@ -122,9 +124,9 @@
   cursor: default;
 }
 
-/* 未観測 = 塗らない。停止（灰色）と見分けがつく必要があるので、面ではなく
-   薄い破線の枠だけを置く。⚠️ ここを灰色にすると「CP が落ちていた日」が
-   「誰も働かなかった日」として自信たっぷりに表示される。 */
+/* Not observed = not painted. It has to be distinguishable from stopped (grey), so it gets a
+   faint outline instead of a fill. Filling this grey would confidently present a day the CP was
+   down as a day nobody worked. */
 .uh-unobserved {
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--viz-grid);
@@ -141,8 +143,8 @@
 .uh-lv-4 { background: var(--uh-4); }
 .uh-lv-5 { background: var(--uh-5); }
 
-/* 「起きてはいたが本数が分からない」。0 本と同じ見た目にしないための地模様。
-   色覚に依らない二次符号化も兼ねる。 */
+/* "Up, but the session count is unknown". The hatch keeps it from looking like zero sessions and
+   doubles as a secondary encoding that does not rely on colour vision. */
 .uh-unmeasured {
   background-image: repeating-linear-gradient(
     45deg,
@@ -151,7 +153,7 @@
   );
 }
 
-/* ホバー / フォーカスでマスが「応答する」。枠は面の外側に出す（2px の隙間ぶん）。 */
+/* Hover / focus makes a cell respond. The outline sits outside the fill, in the 2px gap. */
 .uh-cell:hover,
 .uh-cell:focus-visible {
   outline: 2px solid var(--fg);
@@ -162,7 +164,7 @@
   outline: 2px solid var(--accent);
 }
 
-/* --- 読み出し ------------------------------------------------------------ */
+/* --- Readout ------------------------------------------------------------- */
 
 .uh-foot {
   min-height: 34px;
@@ -174,7 +176,8 @@
   flex-wrap: wrap;
   font-size: 12px;
 }
-/* 値が主役・ラベルは従（読み手は場所を知っていて数字が欲しい）。 */
+/* The value leads and the label follows: the reader already knows where they are and wants the
+   number. */
 .uh-ro-val {
   font-weight: 600;
   color: var(--fg);
@@ -190,7 +193,7 @@
   margin: 0;
 }
 
-/* --- 表ビュー ------------------------------------------------------------ */
+/* --- Table view ---------------------------------------------------------- */
 
 .uh-table {
   width: 100%;

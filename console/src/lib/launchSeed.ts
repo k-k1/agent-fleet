@@ -1,7 +1,7 @@
 // A tiny out-of-React handoff for the first-turn prompt when a session is launched
-// from 作業を始める (LaunchModal): the modal creates the session, stashes the prompt
-// keyed by the server-allocated slug, and opens the chat mirror; MirrorView takes it
-// and shows it as an optimistic echo.
+// from the "start work" modal (「作業を始める」, LaunchModal): the modal creates the
+// session, stashes the prompt keyed by the server-allocated slug, and opens the chat
+// mirror; MirrorView takes it and shows it as an optimistic echo.
 //
 // DISPLAY ONLY — the prompt itself is delivered by the Agent (the create call's
 // initial_prompt, or POST /input {when_ready} when attachments made the text final only

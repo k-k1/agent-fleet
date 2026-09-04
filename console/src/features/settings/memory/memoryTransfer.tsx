@@ -195,7 +195,7 @@ export function TransferSection({
         <h3>{tr("mem.transfer_title")}</h3>
       </div>
 
-      {/* 持ち出し */}
+      {/* Export */}
       <div className="mem-transfer">
         <div className="mem-scope">
           <label>
@@ -217,7 +217,7 @@ export function TransferSection({
         <p className="muted ds-hint">{tr("mem.export_note")}</p>
       </div>
 
-      {/* 取り込み */}
+      {/* Import */}
       <div className="mem-transfer">
         <div className="mem-scope">
           <input
@@ -247,10 +247,10 @@ export function TransferSection({
           {preview.secrets.length > 0 && (
             <p className="mem-warn">{tr("mem.import_secrets", { n: preview.secrets.length })}</p>
           )}
-          {/* 🔴 スキャンが失敗したときは「秘密 0 件」と読める画面にしない。走査できなかったのは
-              「検出なし」より弱い保証で、Go 側も `SecretScanFailed = true // 失敗を「検出なし」に
-              見せない` と明示している（internal/memoryx/memory_import.go）。旗が無いと
-              secrets が [] になるだけで、警告が 1 つも出ずに「見つからなかった」と同じ画面になる。 */}
+          {/* A failed scan must never render as a screen that reads "0 secrets": not having been able
+              to scan is a weaker guarantee than "none found", which is why the Go side flags it
+              explicitly (internal/memoryx/memory_import.go). Without the flag `secrets` is merely
+              [], so not one warning appears and the screen is identical to "nothing found". */}
           {preview.secretScanFailed && (
             <p className="mem-warn">{tr("mem.import_secret_scan_failed")}</p>
           )}
@@ -264,8 +264,9 @@ export function TransferSection({
               {tr("mem.import_rejected", { n: preview.rejected.length })}
             </p>
           )}
-          {/* 適用のしかた。移設は履歴を運ぶ bundle でしか意味を持たない（tar は 1 世代
-              しか無いので、選ばせると「履歴を捨てるだけ」の選択肢になる）。 */}
+          {/* How to apply it. Migration only means anything for a bundle, which carries the history;
+              a tar holds a single generation, so offering the choice there would just be an
+              option that throws the history away. */}
           {preview.format === "bundle" && (
             <div className="mem-scope">
               <span className="muted">{tr("mem.import_mode_label")}</span>

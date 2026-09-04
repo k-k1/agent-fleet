@@ -71,9 +71,9 @@ export function WsStartingDialog() {
 
   return (
     <Modal title={tr("wsstart.title")} onClose={() => setDismissed(true)} className="ws-starting">
-      {/* ★ 共有の ui-modal-body に載せる。ui-modal 自身に padding は無く（見出しが自分で
-          持つ形）、直に子を置くと本文だけが枠に貼りつく —— 進捗の 1 行と `slot: …` の
-          コード枠が左右の縁に密着していた。 */}
+      {/* Wrap the body in the shared ui-modal-body: ui-modal itself has no padding (the
+          heading carries its own), so a child placed directly inside sticks to the frame —
+          the progress line and the `slot: …` code box touched the left and right edges. */}
       <div className="ui-modal-body">
         <div className="ws-starting-line">
           <Icon name="loading" spin />

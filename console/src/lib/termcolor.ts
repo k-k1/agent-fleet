@@ -5,9 +5,10 @@ import type { MsgKey } from "./i18n/index.ts";
 // hurting readability. The tint is a mostly-black base with a small amount of a vivid
 // hue mixed in.
 
-// Vivid base color per kind — mirrors tokens.css の --kind-*（dark 側の実値）。端末背景は
-// テーマに関係なく常に暗色（TERM_BASE）なので dark 値へ固定でミックスする。tokens.css の
-// パレットを変えたら必ずここも同期すること（kind-color-css-checklist）。SSM uses a per-host
+// Vivid base color per kind — mirrors the --kind-* values in tokens.css (the dark-theme
+// ones). The terminal background is always dark (TERM_BASE) regardless of theme, so the dark
+// values are what gets mixed in. Change the palette in tokens.css and this must be updated
+// with it (kind-color-css-checklist). SSM uses a per-host
 // color instead (its kind base is only the fallback when a session carries no explicit
 // host color).
 const KIND_BASE: Record<string, string> = {

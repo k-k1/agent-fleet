@@ -1,18 +1,20 @@
-// features/usage/series — /usage/series の応答 → 描画に必要な形（純関数・テスト対象）。
+// features/usage/series — turns the /usage/series response into the shape the chart needs
+// (pure functions, unit-testable).
 //
-// UsageView は「描く」だけに集中させ、集計の畳み込み・順序付け・スケールはここに寄せる。
-// サーバは既に集計済みなので、ここでやるのは *表示のための* 整形（系列の合計・スロット
-// 順の積み上げ・畳み込み）だけ。
-// api.ts からは **型だけ** を取る（型 import はビルド時に消える）。値を1つでも取ると
-// core/api/client.ts が読み込まれ、モジュール初期化で localStorage を触るため node 環境の
-// ユニットテストが落ちる — この層を純粋に保つのはテスト可能性のための設計。
+// UsageView only draws; folding, ordering and scaling live here. The server has already
+// aggregated, so all that happens here is presentation shaping (series totals, stacking in
+// slot order, folding).
+// Import **types only** from api.ts (type imports vanish at build time). Pulling in a single
+// value drags in core/api/client.ts, which touches localStorage at module init and breaks the
+// unit tests under node — keeping this layer pure is what makes it testable.
 import type { UsageAgg, UsageBucket, UsageCoverage, UsageSeries } from "./api.ts";
 import { MAX_SLOTS, OTHER_KEY, paintSeries, slotColor } from "./colors.ts";
 import type { SeriesPaint } from "./colors.ts";
 
 export const EMPTY_AGG: UsageAgg = { spend: 0, in: 0, out: 0, cread: 0, ccreate: 0, calls: 0 };
 
-/** グラフに出す指標。spend が主指標（cache_read を含まない既存定義と揃える）。 */
+/** Metric plotted on the chart. spend is the primary one (matching the existing definition,
+ *  which excludes cache_read). */
 export type UsageMetric = "spend" | "calls" | "cread" | "cost_usd" | "cost_est_usd";
 
 export const metricOf = (a: UsageAgg | undefined, m: UsageMetric): number => {
@@ -21,7 +23,7 @@ export const metricOf = (a: UsageAgg | undefined, m: UsageMetric): number => {
   return typeof v === "number" && isFinite(v) ? v : 0;
 };
 
-/** 金額の指標か（表示に $ と「≈」を付けるかの判定を1か所に持つ）。 */
+/** Whether the metric is money — the single place that decides if $ and "≈" are shown. */
 export const isMoneyMetric = (m: UsageMetric): boolean => m === "cost_usd" || m === "cost_est_usd";
 
 export function addAgg(a: UsageAgg, b: UsageAgg | undefined): UsageAgg {
@@ -38,7 +40,7 @@ export function addAgg(a: UsageAgg, b: UsageAgg | undefined): UsageAgg {
   };
 }
 
-/** 期間全体での系列ごとの合計（凡例の並び順・内訳バーの元）。 */
+/** Per-series totals over the whole range (source of the legend order and the breakdown bars). */
 export function totalsByKey(buckets: UsageBucket[]): Map<string, UsageAgg> {
   const m = new Map<string, UsageAgg>();
   for (const b of buckets) {
@@ -49,7 +51,8 @@ export function totalsByKey(buckets: UsageBucket[]): Map<string, UsageAgg> {
   return m;
 }
 
-/** 量の多い順のキー配列（畳み込み対象を決めるためだけに使う。色は順位に依存しない）。 */
+/** Keys ordered by magnitude, used only to decide what gets folded — colour does not depend
+ *  on rank. */
 export function keysByMagnitude(totals: Map<string, UsageAgg>, metric: UsageMetric): string[] {
   return [...totals.entries()]
     .sort((a, b) => metricOf(b[1], metric) - metricOf(a[1], metric) || (a[0] < b[0] ? -1 : 1))
@@ -60,7 +63,7 @@ export interface StackSeg {
   key: string;
   color: string;
   value: number;
-  /** 0..1 のバケット内比率（積み上げの高さ）。 */
+  /** 0..1 share within the bucket (the stacked height). */
   frac: number;
 }
 export interface StackRow {
@@ -70,19 +73,19 @@ export interface StackRow {
 }
 export interface StackModel {
   rows: StackRow[];
-  /** 縦軸の上端（バケット合計の最大）。0 なら全部空。 */
+  /** Top of the y axis (largest bucket total). 0 means everything is empty. */
   max: number;
-  /** 凡例（スロット順・畳み込み済み）。 */
+  /** Legend, in slot order, already folded. */
   legend: SeriesPaint[];
-  /** その他へ畳まれた実キー（凡例の注記・表で名前を出すため）。 */
+  /** The real keys folded into "other", so the legend note and the table can name them. */
   foldedKeys: string[];
 }
 
 /**
- * stackModel — バケット列を「スロット順に積んだ棒」に変換する。
+ * stackModel — turns a list of buckets into bars stacked in slot order.
  *
- * 畳み込み: 上位 MAX_SLOTS 件だけが自分の色を持ち、残りは OTHER_KEY にまとめる。
- * 積み順は必ずスロット順（colors.ts の規約2）。
+ * Folding: only the top MAX_SLOTS series keep their own colour; the rest collapse into
+ * OTHER_KEY. The stacking order is always slot order (rule 2 in colors.ts).
  */
 export function stackModel(buckets: UsageBucket[], dim: string, metric: UsageMetric): StackModel {
   const totals = totalsByKey(buckets);
@@ -91,7 +94,7 @@ export function stackModel(buckets: UsageBucket[], dim: string, metric: UsageMet
   const paintByKey = new Map(painted.map((p) => [p.key, p]));
   const foldedKeys = painted.filter((p) => p.folded).map((p) => p.key);
 
-  // 凡例＝スロットを持つ系列（スロット順）＋ 畳み込みがあれば「その他」1件。
+  // Legend = the series that hold a slot, in slot order, plus one "other" entry if anything folded.
   const legend: SeriesPaint[] = painted.filter((p) => !p.folded);
   if (foldedKeys.length) legend.push({ key: OTHER_KEY, slot: 0, color: slotColor(0), folded: true });
 
@@ -125,16 +128,17 @@ export interface BreakdownRow {
   folded: boolean;
   agg: UsageAgg;
   value: number;
-  /** 最大値に対する比（横棒の長さ）。 */
+  /** Share of the largest value (the length of the horizontal bar). */
   frac: number;
-  /** 全体に対する比（%表示）。 */
+  /** Share of the whole (shown as a percentage). */
   share: number;
 }
 
 /**
- * breakdownRows — 期間合計の内訳（横棒）。**量の多い順**に並べるが、色は
- * paintSeries が決めた実体固定の色をそのまま使う（積み上げ棒と同じ色＝読み手が
- * 2つのグラフを行き来できる）。畳まれた系列も行としては個別に出す（グレー）。
+ * breakdownRows — the range total broken down into horizontal bars. Rows are ordered by
+ * magnitude, but the colour is the entity-fixed one paintSeries chose, unchanged: the same
+ * colour as in the stacked bars, so a reader can move between the two charts. Folded series
+ * still get their own row, in grey.
  */
 export function breakdownRows(totals: Map<string, UsageAgg>, dim: string, metric: UsageMetric): BreakdownRow[] {
   const ordered = keysByMagnitude(totals, metric);
@@ -162,7 +166,8 @@ export function breakdownRows(totals: Map<string, UsageAgg>, dim: string, metric
   });
 }
 
-/** matrix（by × split）を「行＝by・列＝split」の表に整形。行は spend 降順。 */
+/** Reshapes matrix (by x split) into a table of rows = by, columns = split, rows sorted by
+ *  descending spend. */
 export interface MatrixCell {
   key: string;
   agg: UsageAgg;
@@ -190,7 +195,7 @@ export function matrixRows(matrix: Record<string, Record<string, UsageAgg>> | un
   return rows;
 }
 
-/** 1呼び出しあたりの平均（表の「平均」列）。calls 0 は 0 とする。 */
+/** Average per call (the table's average column). calls = 0 yields 0. */
 export const perCall = (agg: UsageAgg, m: UsageMetric = "spend"): number =>
   agg.calls > 0 ? metricOf(agg, m) / agg.calls : 0;
 
@@ -198,13 +203,13 @@ export interface CoverageNote {
   kind: string;
   tokens: string;
   model: string;
-  /** 完全（トークン実測＋モデル報告）なら注記は要らない。 */
+  /** Complete (tokens measured and model reported) needs no note. */
   complete: boolean;
 }
 
 /**
- * coverageNotes — 未計測バナーの元。**データから起こす**（手書きの表はドリフトする）。
- * 「トークンが exact かつモデルが reported」以外は全部注記の対象。
+ * coverageNotes — source of the "not measured" banner. Derived from the data, because a
+ * hand-written table drifts. Anything other than tokens = exact and model = reported gets a note.
  */
 export function coverageNotes(coverage: Record<string, UsageCoverage> | undefined): CoverageNote[] {
   const out: CoverageNote[] = [];
@@ -217,10 +222,10 @@ export function coverageNotes(coverage: Record<string, UsageCoverage> | undefine
   return out.sort((a, b) => (a.kind < b.kind ? -1 : 1));
 }
 
-/** hour バケットを使うべき期間か（24時間以内は時間粒度が読みやすい）。 */
+/** Whether the range wants hour buckets — up to 24h, hourly granularity reads better. */
 export const bucketFor = (rangeHours: number): "day" | "hour" => (rangeHours <= 24 ? "hour" : "day");
 
-/** 期間プリセット → from/to（ISO 文字列）。now はテストのため注入する。 */
+/** Range preset to from/to as ISO strings. now is injected so tests can control it. */
 export function rangeOf(hours: number, now: Date): { from: string; to: string; bucket: "day" | "hour" } {
   const to = new Date(now.getTime());
   const from = new Date(now.getTime() - hours * 3600 * 1000);
@@ -230,7 +235,8 @@ export function rangeOf(hours: number, now: Date): { from: string; to: string; b
 export const seriesIsEmpty = (s: UsageSeries | null): boolean =>
   !s || !s.buckets?.length || (s.totals?.calls || 0) === 0;
 
-/** 絞り込み1件（軸 × 値）。API へは `dim:value` のカンマ連結で渡す（同一軸は OR）。 */
+/** One filter term (dimension x value). Passed to the API as comma-joined `dim:value`; terms
+ *  on the same dimension are OR-ed. */
 export interface FilterTerm {
   dim: string;
   value: string;
@@ -239,11 +245,11 @@ export interface FilterTerm {
 export const filterParam = (terms: FilterTerm[]): string => terms.map((f) => `${f.dim}:${f.value}`).join(",");
 
 /**
- * 「その他」の絞り込みトグル。**畳まれた実キー全部の OR に展開する**（同一軸は OR）。
+ * Filter toggle for "other". Expands to an OR over every folded key (same dimension = OR).
  *
- * その他は実体ではないので、そのままでは絞り込めない = グレーの棒だけ中身を確かめる手段が
- * 無くなる（色スロットを持たない feature が1つ出た時にまさにこれが起きていた）。全部
- * 選択済みなら解除、そうでなければ全部立てる。
+ * "Other" is not an entity, so it cannot be filtered as itself, and without this the grey bar
+ * would be the one bar whose contents cannot be inspected. If all keys are already selected,
+ * clear them; otherwise set them all.
  */
 export function toggleFoldedFilter(cur: FilterTerm[], dim: string, keys: string[]): FilterTerm[] {
   if (!keys.length) return cur;
@@ -251,7 +257,7 @@ export function toggleFoldedFilter(cur: FilterTerm[], dim: string, keys: string[
   return foldedFilterOn(cur, dim, keys) ? without : [...without, ...keys.map((value) => ({ dim, value }))];
 }
 
-/** 畳まれたキーが全部絞り込まれているか（＝「その他」が選択状態か）。 */
+/** Whether every folded key is filtered, i.e. whether "other" reads as selected. */
 export const foldedFilterOn = (cur: FilterTerm[], dim: string, keys: string[]): boolean =>
   keys.length > 0 && keys.every((k) => cur.some((f) => f.dim === dim && f.value === k));
 

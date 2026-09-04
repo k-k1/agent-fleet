@@ -32,7 +32,7 @@ export function Section({ id, title, icon, count, actions, defaultOpen = true, o
   const controlled = openProp !== undefined;
   const open = controlled ? openProp : openState;
   // Publish the sticky header band's height as --sec-head-h on the section, so
-  // body content that also pins (the 絞り込み bar) can offset itself to sit right
+  // body content that also pins (the filter bar) can offset itself to sit right
   // below the header instead of guessing the height (it differs by header actions).
   const rootRef = useRef<HTMLElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
