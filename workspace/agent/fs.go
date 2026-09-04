@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
 // Read-only file browser for the Console explorer (docs/17 P3-5 段2). Rooted at
@@ -57,11 +58,41 @@ func allowedReadRoots() []string {
 	return []string{browseRoot(), scratchRoot(), agentFleetDocsRoot()}
 }
 
+// codexGeneratedImagesRoot is the sole readable exception beneath Codex's
+// otherwise-private state directory. image_gen writes its finished images here;
+// auth, configuration, sessions, and every other CODEX_HOME child remain denied.
+func codexGeneratedImagesRoot() string {
+	return filepath.Join(paths.CodexHome(), "generated_images")
+}
+
+// isCodexGeneratedImagesPath reports whether p is the generated-images root or
+// one of its descendants. It prevents the File tree and search APIs from
+// enumerating this private-state exception: generated files are reachable only
+// through the concrete userfile path attached to a Codex transcript.
+func isCodexGeneratedImagesPath(p string) bool {
+	root, err := filepath.Abs(codexGeneratedImagesRoot())
+	if err != nil {
+		return false
+	}
+	full, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(root, full)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // resolveAbs handles an absolute query path (see safeBrowsePath). It serves the file only
 // when it sits under an allowed read root, returning the absolute path plus a display path
 // (home-relative when under the browse root, else the absolute path). Denylisted paths
 // under the browse root are refused.
 func resolveAbs(clean, root string) (full, rel string, ok bool) {
+	// CODEX_HOME is normally beneath the browse root, where .codex is denied.
+	// Check the one generated-image subdirectory first so this narrow read-only
+	// exception is not swallowed by that broader denylist.
+	if isCodexGeneratedImagesPath(clean) {
+		return clean, clean, true
+	}
 	for _, ar := range allowedReadRoots() {
 		r, err := filepath.Rel(ar, clean)
 		if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
@@ -230,7 +261,7 @@ type fsEntry struct {
 func handleFSTree(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("path")
 	full, rel, ok := safeBrowsePath(q)
-	if !ok || !fsQueryResolvedOK(q, full) {
+	if !ok || isCodexGeneratedImagesPath(full) || !fsQueryResolvedOK(q, full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
