@@ -23,7 +23,6 @@ import { useT } from "../../lib/i18n/index.ts";
 import { displayName, remainingShort, KEEP_AWAKE_HOURS } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionTerminal, openSessionChat } from "./open.ts";
-import { writeLS } from "../mirror/transcript/blocks.tsx";
 import { useSessionUI } from "./ui.ts";
 import { useSessionsStore } from "./store.ts";
 import { HandoffModal } from "./HandoffModal.tsx";
@@ -170,23 +169,6 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
               >
                 <Icon name={s.driver === "managed" ? "terminal" : "server-process"} />
                 {s.driver === "managed" ? tr("sess.switch_to_tui") : tr("sess.switch_to_managed")}
-              </button>
-            )}
-            {/* 変更ファイル（docs/log/68）— ミラーを開いて帯を広げる。専用のペイン種は
-                作らない（ADR 0049 決定 4）ので、「覗く」導線はミラーを開くこと自体で、
-                その開閉状態は帯が per-session に憶えている localStorage を先に書いて
-                渡す。転写を持たない kind（shell/ssm）には一覧の材料が無い。 */}
-            {agentOf(s.kind).caps.transcript && (
-              <button
-                type="button"
-                className="ui-menu-item"
-                onClick={() => {
-                  onClose();
-                  writeLS("af.mirror-files-open." + s.name, "1");
-                  openSessionChat(s.name);
-                }}
-              >
-                <Icon name="edit" /> {tr("srow.changed_files")}
               </button>
             )}
             {s.remoteUrl && (
