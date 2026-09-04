@@ -41,15 +41,15 @@ func (a Admin) TenantSlotClass(w http.ResponseWriter, r *http.Request) {
 			choices = append(choices, c)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"tenant":             t.Slug,
-		"slot_class":         lim.SlotClass,
-		"classes":            choices,
-		"default_slot_class": sizing.DefaultSlotClass,
+	writeJSON(w, http.StatusOK, tenantSlotClassWire{
+		Tenant:           t.Slug,
+		SlotClass:        lim.SlotClass,
+		Classes:          choices,
+		DefaultSlotClass: sizing.DefaultSlotClass,
 		// editable is false where the concept does not exist — a runtime with no
 		// classes, or a deployment that declared a single unnamed ladder. The screen
 		// then says so rather than offering a control that changes nothing.
-		"editable": len(sizing.SlotClasses) > 0,
+		Editable: len(sizing.SlotClasses) > 0,
 	})
 }
 
@@ -107,4 +107,25 @@ func (a Admin) SetTenantSlotClass(w http.ResponseWriter, r *http.Request) {
 // store that cannot be read cannot be written either, so the write fails too.
 func (a Admin) tenantLimitsFor(r *http.Request, tenantID string) Limits {
 	return a.cp.LimitsFor(r.Context(), tenantID)
+}
+
+// tenantSlotClassWire — GET /api/admin/tenants/{slug}/slot-class のレスポンス
+// （Console の `MachineView`、console/src/features/settings/tenant/tenantMachine.tsx）。
+//
+// 旧: map[string]any{"tenant":…, "slot_class":…, "classes":…,
+//
+//	"default_slot_class":…, "editable":…}
+//
+// 5 キーとも無条件なので **omitempty は付けない**。slot_class は "" を取りうる
+// （＝配備既定に従う）ので、付けるとキーごと消えて Console の判定が変わる。
+// Classes は make(…, 0, n) 済みで nil にならない＝`[]` が出る。
+//
+// ⚠️ tenant は Console が prop で持つ slug の echo。`MachineView` は宣言していないが
+// **読んでもいない**。
+type tenantSlotClassWire struct {
+	Tenant           string                       `json:"tenant"`
+	SlotClass        string                       `json:"slot_class"`
+	Classes          []runtime.WorkspaceSlotClass `json:"classes"`
+	DefaultSlotClass string                       `json:"default_slot_class"`
+	Editable         bool                         `json:"editable"`
 }

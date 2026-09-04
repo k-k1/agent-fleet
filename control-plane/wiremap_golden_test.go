@@ -93,20 +93,27 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 	}
 
 	t.Run("条件付きキーを持つ変数 map を開けている", func(t *testing.T) {
-		// gitServerAPI.blob は m := map[...]{...} のあと if で 4 キーを足す形。
-		got := byFunc["gitServerAPI.blob"]
-		if len(got) == 0 {
-			t.Fatal("gitServerAPI.blob の書き出し地点を 1 つも拾えていない")
-		}
-		want := []string{"binary", "content", "lfs", "lfs_oid", "path", "ref", "size", "too_large"}
-		for _, s := range got {
-			if !wireMapHasAll(s.Keys, want) {
-				t.Errorf("blob のキー集合が痩せている: %v（%v を含むべき）", s.Keys, want)
+		// 🔴 **標本を名前で指さない。**以前はここが gitServerAPI.blob を名指ししていたが、
+		// **この track がそれを struct 化した瞬間に保証ごと落ちた**（#347 で同じ形を踏み、
+		// ここで 2 度目）。**自分の仕事で消えるものは保証にならない。**
+		//
+		// 選んでいた理由は「変数 map ＋ 条件文でキーを足す形を開けていること」なので、
+		// **理由のほうを機械に書く**——その性質を持つサイトが在り、キーも条件も
+		// 記録できていることを見る。名指しが要らなくなるので、次の変換でも落ちない。
+		var withCond []wireMapSite
+		for _, s := range sites {
+			if len(s.CondKeys) > 0 && len(s.Keys) > len(s.CondKeys) {
+				// 条件付きキーと無条件キーの**両方**を持つ＝
+				// 「基底の map リテラル ＋ if で足す」形を開けている証拠。
+				withCond = append(withCond, s)
 			}
-			if len(s.CondKeys) == 0 {
-				t.Errorf("blob の条件付きキーを 1 つも記録していない（omitempty の要否が読めなくなる）")
-			}
 		}
+		if len(withCond) == 0 {
+			t.Fatal("「基底のキー ＋ 条件付きキー」を両方持つサイトが 1 つも無い＝" +
+				"変数 map の追跡か条件分岐の判定が壊れている（omitempty の要否が読めなくなる）")
+		}
+		t.Logf("基底＋条件付きの両方を開けたサイト: %d 件（例: %s の %v / cond=%v）",
+			len(withCond), withCond[0].Func, withCond[0].Keys, withCond[0].CondKeys)
 	})
 
 	t.Run("形状関数の戻り値を2段たどれている", func(t *testing.T) {
@@ -117,9 +124,24 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 		// 🔴 ここを「キーが 1 つ以上あれば緑」で書いていて実際に取り逃した:
 		// 再帰の深さ上限が浅く、containerStats まで降りずに 3 キーで止まっていたのに
 		// **緑のまま通った**。キー数ではなく**具体的なキー名**を要求する。
-		got := byFunc["workspaceAPI.stats"]
+		// 🔴 標本は**免除表から採る**——免除は「構造的に struct 化できない」ものなので、
+		// **この track の変換では消えない**ことが理由として機械に書かれている。
+		// 名指しをやめられない箇所（2 段目のキー名を要求するため）は、
+		// せめて**消えない性質を持つ集合から選ぶ**。
+		const sample = "workspaceAPI.stats"
+		exempt := false
+		for _, ex := range wiremapExemptions() {
+			if ex.Func == sample {
+				exempt = true
+			}
+		}
+		if !exempt {
+			t.Fatalf("%s が免除表に無い。標本は「変換で消えない」ものから採る約束なので、"+
+				"免除でなくなったなら標本も選び直すこと。", sample)
+		}
+		got := byFunc[sample]
 		if len(got) == 0 {
-			t.Fatal("workspaceAPI.stats を拾えていない（形状関数の戻り値を開けていない）")
+			t.Fatal(sample + " を拾えていない（形状関数の戻り値を開けていない）")
 		}
 		// running/starting/oom_recent = workspaceStats 自身（1 段目）
 		// exit_code/oom_killed/cpu_pct/mem_max/oom_kill_total = containerStats の中（2 段目）

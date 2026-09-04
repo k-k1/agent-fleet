@@ -5,7 +5,7 @@
 #   dyn     = 非リテラルのキーがある（キー集合は静的に確定しない＝struct 化できない）
 #   partial = 変数が複数回代入されており、キー集合を開けきれていない
 # 🔴 キーが減った/増えた差分は、ワイヤが変わった可能性そのもの。撮り直す理由を PR に書くこと。
-# count: 126
+# count: 118
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
@@ -32,10 +32,7 @@ git_lfs_locks.go gitServerAPI.lfsUnlock x1 {lock}
 internal/mcpsrv/mcp_server.go ServerAPI.AdminDelete x1 {deleted,name}
 internal/mcpsrv/mcp_server.go ServerAPI.AdminList x1 {servers,tenant}
 internal/mcpsrv/mcp_server.go ServerAPI.Distribute x1 {servers,unreadable}
-internal/tenantsrv/tenant_network.go Admin.SetTenantNetwork x1 {allowed_cidrs,tenant}
-internal/tenantsrv/tenant_network.go Admin.TenantNetwork x1 {allowed_cidrs,editable,proxy_hops,reason,tenant,your_ip} cond{your_ip}
 internal/tenantsrv/tenant_slot_class.go Admin.SetTenantSlotClass x1 {slot_class,tenant}
-internal/tenantsrv/tenant_slot_class.go Admin.TenantSlotClass x1 {classes,default_slot_class,editable,slot_class,tenant}
 internal/tenantsrv/tenants.go Admin.AddMembership x1 {role,tenant,user_key}
 internal/tenantsrv/tenants.go Admin.CleanHome x1 {cleaned,tenant}
 internal/tenantsrv/tenants.go Admin.CreateTenant x1 {existed,name,slug}
@@ -49,16 +46,12 @@ internal/tenantsrv/tenants.go Admin.PoolStatus x1 {runtime}
 internal/tenantsrv/tenants.go Admin.RemoveMembership x1 {leftovers,purged,removed,tenant}
 internal/tenantsrv/tenants.go Admin.SetMembershipRole x1 {role,tenant,user_key}
 internal/tenantsrv/tenants.go Admin.SetTenantLimits x1 {allow_agent_self_update,allowed_slot_classes,home_backup_every,home_hibernate_after,interaction_idle_timeout,max_sessions,max_workspace_cpu,max_workspace_disk_gb,max_workspace_mem,max_workspaces,pool_budget,session_idle_timeout,tenant,terminal_history_retention_days,ws_idle_timeout} cond{pool_budget}
-internal/tenantsrv/tenants.go Admin.SetTenantLogin x1 {allowed_domains,allowed_providers,auto_join_domains,hidden_providers,tenant}
 internal/tenantsrv/tenants.go Admin.SetUserLimit x1 {cpu_effective,cpu_limit,disk_effective,disk_gb,max_sessions,mem_effective,mem_limit,slot_class,slot_class_effective,slot_class_note,tenant,user_key}
 internal/tenantsrv/tenants.go Admin.StopWorkspace x1 {stopped,tenant}
 internal/tenantsrv/tenants.go Tenants.List x2 {super_admin,tenants}
 internal_git.go gitServerAPI.branches x1 {branches,default_branch}
-internal_git.go gitServerAPI.repoCreate x1 {clone_url,created_at,default_branch,name,provider}
 internal_git.go gitServerAPI.repoDelete x1 {deleted}
-internal_git.go gitServerAPI.repoRename x1 {clone_url,created_at,default_branch,name,provider}
 internal_git.go gitServerAPI.reposList x1 {repos}
-internal_git_browse.go gitServerAPI.blob x4 {binary,content,lfs,lfs_oid,path,ref,size,too_large} cond{binary,lfs,lfs_oid,too_large}
 internal_git_browse.go gitServerAPI.commits x2 {commits,path,ref}
 internal_git_browse.go gitServerAPI.tree x2 {entries,path,ref}
 login_provider_api.go loginProviderAPI.list x1 {providers}
@@ -79,7 +72,6 @@ pat.go patAPI.revoke x1 {ok}
 routes.go registerAuthRoutes x1 {image,runtime,version,workspace_image} cond{image,runtime,workspace_image}
 schedule.go scheduleAPI.delete x1 {deleted,id}
 schedule.go scheduleAPI.runs x1 {runs,schedule_id}
-session_handoff.go sessionHandoffAPI.create x1 {acceptedSessionName,branch,createdAt,decidedAt,expiresAt,headSha,id,recipientUserKey,repoRemote,sessionId,sessionName,status,title}
 session_handoff.go sessionHandoffAPI.decide x1 {status}
 session_handoff.go sessionHandoffAPI.listOwned x1 {offers}
 session_handoff.go sessionHandoffAPI.listReceived x1 {offers}
