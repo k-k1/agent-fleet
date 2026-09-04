@@ -69,9 +69,25 @@ func readHostStats() (load1 float64, ncpu int, memUsed, memTotal uint64) {
 // 登録側で withSuperAdmin に包む）.
 func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ store.Identity) {
 	load1, ncpu, memUsed, memTotal := readHostStats()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"load1": load1, "ncpu": ncpu, "mem_used": memUsed, "mem_total": memTotal,
+	writeJSON(w, http.StatusOK, hostStatsWire{
+		Load1: load1, Ncpu: ncpu, MemUsed: memUsed, MemTotal: memTotal,
 	})
+}
+
+// hostStatsWire — GET /api/admin/host-stats のレスポンス（Console の `HostStats`、
+// console/src/app/WsBar.tsx）。
+//
+// 旧: map[string]any{"load1":…, "ncpu":…, "mem_used":…, "mem_total":…}
+// 4 キーとも無条件なので **omitempty は付けない**。
+// ⚠️ Go の型は readHostStats の戻り値そのまま（load1 float64 / ncpu int /
+// mem_* uint64）。**uint64 を float64 で受け直さないこと**——大きな値で桁が落ちる。
+// TS 側は ncpu を任意（`ncpu?`）にしているが、Go は常に出す。**ワイヤは常に出す側が正**で、
+// TS の緩さに合わせて omitempty を足すとワイヤが変わる。
+type hostStatsWire struct {
+	Load1    float64 `json:"load1"`
+	Ncpu     int     `json:"ncpu"`
+	MemUsed  uint64  `json:"mem_used"`
+	MemTotal uint64  `json:"mem_total"`
 }
 
 // --- Container stats (all users, scoped to the caller's own workspace) ---

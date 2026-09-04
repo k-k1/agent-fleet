@@ -275,9 +275,9 @@ func HandleSessionSettingsGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	caps := d.Capabilities()
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"model": snap.Settings.Model, "effort": snap.Settings.Effort, "mode": snap.Settings.Mode,
-		"dynamicModel": caps.DynamicModel, "dynamicEffort": caps.DynamicEffort, "dynamicMode": caps.DynamicMode,
+	httpx.WriteJSON(w, http.StatusOK, managedThreadSettingsWire{
+		Model: snap.Settings.Model, Effort: snap.Settings.Effort, Mode: snap.Settings.Mode,
+		DynamicModel: caps.DynamicModel, DynamicEffort: caps.DynamicEffort, DynamicMode: caps.DynamicMode,
 	})
 }
 
@@ -360,4 +360,23 @@ func HandleSessionSettings(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"updated": name, "model": snap.Settings.Model, "effort": snap.Settings.Effort, "mode": snap.Settings.Mode,
 	})
+}
+
+// managedThreadSettingsWire — GET /sessions/{name}/settings のレスポンス
+// （Console の `ManagedThreadSettings`、console/src/core/api/client.ts）。
+//
+// 旧: map[string]any{"model":…, "effort":…, "mode":…, "dynamicModel":…,
+//
+//	"dynamicEffort":…, "dynamicMode":…}
+//
+// 6 キーとも無条件なので **omitempty は付けない**。model/effort/mode は空文字を
+// 取りうる（未設定＝CLI の既定に従う）ので、omitempty を付けるとキーごと消えて
+// Console の「未設定」表示が変わる。
+type managedThreadSettingsWire struct {
+	Model         string `json:"model"`
+	Effort        string `json:"effort"`
+	Mode          string `json:"mode"`
+	DynamicModel  bool   `json:"dynamicModel"`
+	DynamicEffort bool   `json:"dynamicEffort"`
+	DynamicMode   bool   `json:"dynamicMode"`
 }

@@ -1,0 +1,126 @@
+# map[string]any を直に返している JSON 書き出し地点のキー集合。生成物 —— 手で編集しない。
+# 更新: cd control-plane && go test -run TestWireMapGolden -update-wiremap-golden ./...
+# 形式: <ファイル> <関数> x<同一形状の件数> {キー集合} [cond{条件付きキー}] [dyn|partial]
+#   cond    = 条件文の中で足されるキー（struct 化するなら omitempty の要否を判断する対象）
+#   dyn     = 非リテラルのキーがある（キー集合は静的に確定しない＝struct 化できない）
+#   partial = 変数が複数回代入されており、キー集合を開けきれていない
+# 🔴 キーが減った/増えた差分は、ワイヤが変わった可能性そのもの。撮り直す理由を PR に書くこと。
+# count: 118
+admin_sessions.go adminAPI.allSessions x1 {sessions}
+admin_stats.go adminAPI.memberSessions x3 {sessions}
+admin_stats.go adminAPI.memberStats x1 {cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
+admin_stats.go adminAPI.memberStats x1 {running}
+audit.go adminAPI.audit x1 {audit}
+cloudcost.go adminAPI.cloudCost x1 {attributed_micro,from,members,meta,shared_micro,shared_services,to} cond{shared_micro,shared_services}
+cloudcost.go adminAPI.oneMemberCloudCost x1 {days,from,meta,services,to,total_micro}
+drawio_stencils.go drawioStencils.index x1 {cached,sets,version}
+egress.go egressAPI.allowlistAdd x1 {entry,id,state}
+egress.go egressAPI.allowlistList x1 {allowlist,defaults}
+egress.go egressAPI.mode x2 {enforce,mode}
+egress.go egressAPI.policy x1 {allowlist,enforce}
+egress.go egressAPI.stats x1 {days,egress,enforce,mode}
+egress_member.go egressAPI.propose x1 {already,entry,id,state}
+egress_member.go egressAPI.propose x1 {already,entry,state}
+egress_member.go egressAPI.propose x1 {entry,id,state}
+git_lfs.go gitServerAPI.lfsBatch x1 {objects,transfer}
+git_lfs.go writeLFSErr x1 {message}
+git_lfs_locks.go gitServerAPI.lfsLockCreate x1 {lock}
+git_lfs_locks.go gitServerAPI.lfsLockCreate x2 {lock,message}
+git_lfs_locks.go gitServerAPI.lfsLocksList x1 {locks,next_cursor}
+git_lfs_locks.go gitServerAPI.lfsLocksVerify x1 {next_cursor,ours,theirs}
+git_lfs_locks.go gitServerAPI.lfsUnlock x1 {lock}
+internal/mcpsrv/mcp_server.go ServerAPI.AdminDelete x1 {deleted,name}
+internal/mcpsrv/mcp_server.go ServerAPI.AdminList x1 {servers,tenant}
+internal/mcpsrv/mcp_server.go ServerAPI.Distribute x1 {servers,unreadable}
+internal/tenantsrv/tenant_slot_class.go Admin.SetTenantSlotClass x1 {slot_class,tenant}
+internal/tenantsrv/tenants.go Admin.AddMembership x1 {role,tenant,user_key}
+internal/tenantsrv/tenants.go Admin.CleanHome x1 {cleaned,tenant}
+internal/tenantsrv/tenants.go Admin.CreateTenant x1 {existed,name,slug}
+internal/tenantsrv/tenants.go Admin.CreateTenant x1 {name,slug}
+internal/tenantsrv/tenants.go Admin.DeleteMembership x1 {deleted,tenant}
+internal/tenantsrv/tenants.go Admin.DeleteTenant x1 {deleted,memberships_deleted}
+internal/tenantsrv/tenants.go Admin.DestroyWorkspace x1 {destroyed,leftovers,tenant}
+internal/tenantsrv/tenants.go Admin.ListMembers x1 {members,tenant}
+internal/tenantsrv/tenants.go Admin.ListTenants x1 {super_admin,tenants}
+internal/tenantsrv/tenants.go Admin.PoolStatus x1 {runtime}
+internal/tenantsrv/tenants.go Admin.RemoveMembership x1 {leftovers,purged,removed,tenant}
+internal/tenantsrv/tenants.go Admin.SetMembershipRole x1 {role,tenant,user_key}
+internal/tenantsrv/tenants.go Admin.SetTenantLimits x1 {allow_agent_self_update,allowed_slot_classes,home_backup_every,home_hibernate_after,interaction_idle_timeout,max_sessions,max_workspace_cpu,max_workspace_disk_gb,max_workspace_mem,max_workspaces,pool_budget,session_idle_timeout,tenant,terminal_history_retention_days,ws_idle_timeout} cond{pool_budget}
+internal/tenantsrv/tenants.go Admin.SetUserLimit x1 {cpu_effective,cpu_limit,disk_effective,disk_gb,max_sessions,mem_effective,mem_limit,slot_class,slot_class_effective,slot_class_note,tenant,user_key}
+internal/tenantsrv/tenants.go Admin.StopWorkspace x1 {stopped,tenant}
+internal/tenantsrv/tenants.go Tenants.List x2 {super_admin,tenants}
+internal_git.go gitServerAPI.branches x1 {branches,default_branch}
+internal_git.go gitServerAPI.repoDelete x1 {deleted}
+internal_git.go gitServerAPI.reposList x1 {repos}
+internal_git_browse.go gitServerAPI.commits x2 {commits,path,ref}
+internal_git_browse.go gitServerAPI.tree x2 {entries,path,ref}
+login_provider_api.go loginProviderAPI.list x1 {providers}
+memo.go memoAPI.flush x1 {ids,sent,sentAt}
+metrics.go workspaceAPI.stats x1 {cpu_pct,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
+notification.go notificationAPI.list x1 {items,maxSeq,sourceState,unseenCount}
+oauth_bitbucket.go config.handleBitbucketOAuthStart x1 {authorize_url}
+oauth_github_device.go config.handleGithubDevicePoll x1 {connected}
+oauth_github_device.go config.handleGithubDevicePoll x1 {interval,pending}
+oauth_github_device.go config.handleGithubDevicePoll x1 {pending}
+oauth_github_device.go config.handleGithubDeviceStart x1 {expires_in,flow_id,interval,user_code,verification_uri}
+oauth_jira.go config.handleJiraOAuthStart x1 {authorize_url}
+oauth_link.go accountAPI.detachLoginMethod x1 {detached}
+oauth_link.go accountAPI.loginMethods x1 {enabled,linkable,linked}
+pat.go patAPI.create x1 {expires_at,id,name,scope,tenant,token}
+pat.go patAPI.list x1 {ceiling,tokens}
+pat.go patAPI.revoke x1 {ok}
+routes.go registerAuthRoutes x1 {image,runtime,version,workspace_image} cond{image,runtime,workspace_image}
+schedule.go scheduleAPI.delete x1 {deleted,id}
+schedule.go scheduleAPI.runs x1 {runs,schedule_id}
+session_handoff.go sessionHandoffAPI.decide x1 {status}
+session_handoff.go sessionHandoffAPI.listOwned x1 {offers}
+session_handoff.go sessionHandoffAPI.listReceived x1 {offers}
+session_handoff.go sessionHandoffAPI.recipients x1 {context,members,pendingOfferId}
+session_handoff.go sessionHandoffAPI.withdraw x1 {status}
+session_handoff.go writeHandoffErr x1 {error}
+session_share.go sessionShareAPI.approve x1 {reconciled,status}
+session_share.go sessionShareAPI.approve x1 {status}
+session_share.go sessionShareAPI.delete x1 {deleted}
+session_share.go sessionShareAPI.handoffProposals x1 {proposals}
+session_share.go sessionShareAPI.listOwned x1 {shares}
+session_share.go sessionShareAPI.listProposals x1 {proposals}
+session_share.go sessionShareAPI.listReceived x1 {sessions}
+session_share.go sessionShareAPI.messages x1 {} dyn+partial
+session_share.go sessionShareAPI.patch x1 {createdAt,id,permission,recipientUserKey,scope,updatedAt}
+session_share.go sessionShareAPI.propose x1 {expiresAt,id,status}
+session_share.go sessionShareAPI.put x1 {createdAt,id,permission,recipientUserKey,scope,updatedAt}
+session_share.go sessionShareAPI.reject x1 {status}
+session_share.go sessionShareAPI.searchRecipients x1 {members}
+session_share_marks.go sessionShareAPI.marksAdd x1 {mark}
+session_share_marks.go sessionShareAPI.marksRead x1 {marks}
+tenant_git_oauth_api.go tenantGitOAuthAPI.availability x1 {} dyn
+tenant_git_oauth_api.go tenantGitOAuthAPI.list x1 {providers,tenant}
+tenant_git_oauth_api.go tenantGitOAuthAPI.remove x1 {deleted,provider}
+tenant_idp_api.go tenantIdPAPI.list x1 {providers,tenant}
+tenant_idp_api.go tenantIdPAPI.queue x1 {providers}
+tenant_idp_api.go tenantIdPAPI.remove x1 {deleted}
+tenant_idp_api.go tenantIdPAPI.setStatus x1 {error,members}
+tenant_idp_api.go tenantIdPAPI.setStatus x1 {id,status}
+tts.go registerTTSRoutes x1 {dict}
+tts.go registerTTSRoutes x1 {providers}
+tts.go registerTTSRoutes x1 {speakers}
+tts.go ttsAdminAPI.get x1 {dict,enabled,engine,managed,polly}
+tts.go ttsAdminAPI.put x1 {dict,enabled,engine,managed,polly}
+tts.go ttsAdminAPI.putDict x1 {dict,enabled,engine,managed,polly}
+update.go updateApply x2 {error}
+update.go updateApply x2 {mode,ok,to}
+usage.go adminAPI.usage x1 {days,from,to,totals}
+workitems.go workItemsAPI.deleteQuery x1 {ok}
+workitems.go workItemsAPI.deleteSession x1 {ok}
+workspace_handlers.go workspaceAPI.cleanHome x1 {name,state}
+workspace_handlers.go workspaceAPI.get x1 {bootPhase,name,stale,state} cond{bootPhase,stale}
+workspace_handlers.go workspaceAPI.recreate x1 {name,state}
+workspace_handlers.go workspaceAPI.sessionsList x1 {sessions}
+workspace_handlers.go workspaceAPI.startResolved x1 {name,state}
+workspace_handlers.go workspaceAPI.stop x1 {error}
+workspace_handlers.go workspaceAPI.stop x1 {name,state}
+workspace_handlers.go workspaceAPI.whoami x1 {auth_mode,email,email_header,preferred_username,resolved_user,sanitized_user,scheduler_enabled,x_forwarded_user}
+ws_settings.go wsSettingsAPI.get x1 {agentUpdate,allowAgentUpdate}
+ws_settings.go wsSettingsAPI.put x1 {agentUpdate,allowAgentUpdate}
+ws_settings.go wsSettingsAPI.reissuePreview x1 {agentUpdate,allowAgentUpdate,previewReissued}
+ws_settings.go wsSettingsAPI.sharedPreviews x2 {domain,items}

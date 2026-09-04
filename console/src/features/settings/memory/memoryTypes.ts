@@ -75,4 +75,11 @@ export interface ImportPreview {
   unavailable: string[];
   rejected: string[];
   secrets: SecretFinding[];
+  /** 秘密のスキャン自体が失敗したことを示す旗（Go 側 memoryImportPreview.SecretScanFailed）。
+   *  🔴 `secrets: []` と意味が違う——「検出なし」ではなく「検出できなかった」。
+   *  Go 側は `json:"secretScanFailed,omitempty"` なので **false のときキーが出ない**。
+   *  ここで optional にして「未定義＝false」で扱うのは意図的で、この面では
+   *  「キーが無い」と「false」が同じ意味になるのが正しい（走査は成功したが旗が立たなかった
+   *  ＝失敗していない）。**真のときだけ意味を持つ旗**なので、ゼロ値と欠落を潰してよい。 */
+  secretScanFailed?: boolean;
 }

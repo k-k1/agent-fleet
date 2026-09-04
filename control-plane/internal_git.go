@@ -28,13 +28,31 @@ func (a gitServerAPI) cloneURL(slug, name string) string {
 	return strings.TrimRight(a.publicBaseURL, "/") + "/git/" + slug + "/" + name + ".git"
 }
 
-func (a gitServerAPI) repoDTO(slug string, g store.GitRepo) map[string]any {
-	return map[string]any{
-		"name":           g.Name,
-		"default_branch": g.DefaultBranch,
-		"clone_url":      a.cloneURL(slug, g.Name),
-		"created_at":     g.CreatedAt,
-		"provider":       "internal",
+// internalRepoWire — 内部 git リポジトリ 1 件のワイヤ形（Console の `InternalRepo`、
+// console/src/features/settings/workspace/InternalReposTab.tsx）。
+//
+// 旧: map[string]any{"name":…, "default_branch":…, "clone_url":…, "created_at":…, "provider":…}
+// 5 キーとも無条件なので **omitempty は付けない**（default_branch / created_at は
+// 空文字を取りうるので、付けるとキーごと消えてワイヤが変わる）。
+//
+// ⚠️ provider は常に "internal" の定数。Console の `InternalRepo` はこれを宣言して
+// いないが**読んでもいない**（`ProviderCard` は別物の UI 部品）ので、型化しても
+// ワイヤも画面も変わらない。**型化すると以後は wire.golden が撮る側に移る。**
+type internalRepoWire struct {
+	Name          string `json:"name"`
+	DefaultBranch string `json:"default_branch"`
+	CloneURL      string `json:"clone_url"`
+	CreatedAt     string `json:"created_at"`
+	Provider      string `json:"provider"`
+}
+
+func (a gitServerAPI) repoDTO(slug string, g store.GitRepo) internalRepoWire {
+	return internalRepoWire{
+		Name:          g.Name,
+		DefaultBranch: g.DefaultBranch,
+		CloneURL:      a.cloneURL(slug, g.Name),
+		CreatedAt:     g.CreatedAt,
+		Provider:      "internal",
 	}
 }
 
@@ -46,7 +64,7 @@ func (a gitServerAPI) reposList(w http.ResponseWriter, r *http.Request, _ store.
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	out := make([]map[string]any, 0, len(repos))
+	out := make([]internalRepoWire, 0, len(repos))
 	for _, g := range repos {
 		out = append(out, a.repoDTO(mv.TenantSlug, g))
 	}

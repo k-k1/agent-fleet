@@ -51,10 +51,10 @@ func HandleServersGet(w http.ResponseWriter, r *http.Request) {
 	for _, d := range reg.Servers {
 		out = append(out, wireMCPServer(d))
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"servers":         out,
-		"tenantFetchedAt": reg.TenantFetchedAt,
-		"shadowed":        reg.Shadowed,
+	httpx.WriteJSON(w, http.StatusOK, mcpRegistryWire{
+		Servers:         out,
+		TenantFetchedAt: reg.TenantFetchedAt,
+		Shadowed:        reg.Shadowed,
 	})
 }
 
@@ -188,4 +188,18 @@ func writeMCPErr(w http.ResponseWriter, err error) {
 	default:
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 	}
+}
+
+// mcpRegistryWire — GET /mcp/servers のレスポンス（Console の `Registry`、
+// console/src/features/settings/mcp/mcpWire.ts）。
+//
+// 旧: map[string]any{"servers":…, "tenantFetchedAt":…, "shadowed":…}
+// 🔴 3 キーとも**無条件に**入っていたので omitempty は付けない。
+// とくに mcpreg.Registry 側の同名フィールドは `omitempty` 付きだが、**それは別の型の
+// 別の経路**であって、ここの map は 0 でも nil でもキーを出していた。**写してはいけない。**
+// Shadowed は nil を取りうる（＝`null`）。空スライスへ正規化すると `[]` になり別物。
+type mcpRegistryWire struct {
+	Servers         []mcpServerWire `json:"servers"`
+	TenantFetchedAt int64           `json:"tenantFetchedAt"`
+	Shadowed        []string        `json:"shadowed"`
 }

@@ -144,9 +144,24 @@ func (a egressAPI) checkHosts(w http.ResponseWriter, r *http.Request, _ store.Id
 	if enforce {
 		mode = "enforce"
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"configured": a.proxy != "", "mode": mode, "enforce": enforce, "hosts": out,
+	writeJSON(w, http.StatusOK, egressCheckWire{
+		Configured: a.proxy != "", Mode: mode, Enforce: enforce, Hosts: out,
 	})
+}
+
+// egressCheckWire — GET /api/egress/check のレスポンス（Console の `EgressCheck`、
+// console/src/features/settings/mcp/egressCheck.ts）。
+//
+// 旧: map[string]any{"configured":…, "mode":…, "enforce":…, "hosts":…}
+// 4 キーとも無条件に入っていたので **omitempty は付けない**（付けると
+// configured=false / mode="" のときにキーが消えてワイヤが変わる）。
+// Hosts は make 済みで nil にならないため `{}` が出る。等価は
+// wiremap_equiv_test.go の TestWireEquivEgressCheck が旧 map と突き合わせて示す。
+type egressCheckWire struct {
+	Configured bool                         `json:"configured"`
+	Mode       string                       `json:"mode"`
+	Enforce    bool                         `json:"enforce"`
+	Hosts      map[string]egressHostVerdict `json:"hosts"`
 }
 
 // propose (POST /api/egress/propose) files a request to allow one destination. Body:

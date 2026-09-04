@@ -32,22 +32,22 @@ func (a Admin) TenantNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 	info := a.cp.ClientIPFrom(r.Context())
 	hops := a.cp.TrustedProxyHops()
-	out := map[string]any{
-		"tenant":        t.Slug,
-		"allowed_cidrs": cidrs,
-		"proxy_hops":    hops,
+	out := tenantNetworkWire{
+		Tenant:       t.Slug,
+		AllowedCIDRs: cidrs,
+		ProxyHops:    hops,
 		// your_ip is what a rule would be matched against, NOT what the browser thinks
 		// its address is. Showing anything else would be a comfortable lie.
-		"your_ip": "",
+		YourIP: "",
 		// editable is false when this deployment cannot name its callers. The screen
 		// then explains it instead of offering a control that would either do nothing
 		// or lock everybody out; the save endpoint refuses for the same reason, so a
 		// stale page cannot get past it.
-		"editable": info.OK && !(hops <= 0 && info.Forwarded),
-		"reason":   proxyMisconfigReason(hops, info),
+		Editable: info.OK && !(hops <= 0 && info.Forwarded),
+		Reason:   proxyMisconfigReason(hops, info),
 	}
 	if info.OK {
-		out["your_ip"] = info.IP.String()
+		out.YourIP = info.IP.String()
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -140,5 +140,36 @@ func (a Admin) SetTenantNetwork(w http.ResponseWriter, r *http.Request) {
 	// The normalized text goes back so the screen shows what was actually stored:
 	// 192.0.2.7/24 is saved as 192.0.2.0/24, and an editor who is not told would keep
 	// believing the rule says something it does not.
-	writeJSON(w, http.StatusOK, map[string]any{"tenant": t.Slug, "allowed_cidrs": stored})
+	writeJSON(w, http.StatusOK, tenantNetworkSavedWire{Tenant: t.Slug, AllowedCIDRs: stored})
+}
+
+// tenantNetworkWire — GET /api/admin/tenants/{slug}/network のレスポンス
+// （Console の `NetworkView`、console/src/features/settings/tenant/tenantNetwork.tsx）。
+//
+// 旧: map[string]any{"tenant":…, "allowed_cidrs":…, "proxy_hops":…, "your_ip":"",
+//
+//	"editable":…, "reason":…} ＋ info.OK なら your_ip を**上書き**。
+//
+// 🔴 your_ip は**まず "" で必ず入れてから上書き**する形なので、**常に出る**キーであって
+// 条件付きではない（走査は if の中の代入を見て cond と印を付けるが、それは過大評価）。
+// したがって 6 キーとも omitempty は付けない。reason も "" を取りうる（＝正常）。
+//
+// ⚠️ tenant は Console が prop で受け取っている slug の echo。`NetworkView` は宣言して
+// いないが**読んでもいない**ので、型化してもワイヤも画面も変わらない。
+type tenantNetworkWire struct {
+	Tenant       string `json:"tenant"`
+	AllowedCIDRs string `json:"allowed_cidrs"`
+	ProxyHops    int    `json:"proxy_hops"`
+	YourIP       string `json:"your_ip"`
+	Editable     bool   `json:"editable"`
+	Reason       string `json:"reason"`
+}
+
+// tenantNetworkSavedWire — PUT の応答。保存後の**正規化済みテキスト**を返す
+// （192.0.2.7/24 → 192.0.2.0/24）。GET とはキー集合が違うので別の型にする。
+//
+// 旧: map[string]any{"tenant":…, "allowed_cidrs":…}
+type tenantNetworkSavedWire struct {
+	Tenant       string `json:"tenant"`
+	AllowedCIDRs string `json:"allowed_cidrs"`
 }

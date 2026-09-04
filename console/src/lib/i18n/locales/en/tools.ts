@@ -616,6 +616,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mem.import_rejected": "{n} entry/entries were skipped as out of scope.",
   "mem.import_unavailable": "Cannot import — this environment has no destination for: {kinds}",
   "mem.import_secrets": "The imported contents include {n} item(s) that look like secrets.",
+  "mem.import_secret_scan_failed": "The secret scan of the imported contents failed — this is NOT a confirmation that there are no secrets.",
   "mem.import_do": "Import",
   "mem.import_mode_label": "How to apply",
   "mem.import_mode_replace": "Replace only the selected scope (keep this environment's history)",
