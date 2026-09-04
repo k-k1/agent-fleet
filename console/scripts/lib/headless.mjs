@@ -25,24 +25,72 @@ const TYPES = {
   ".json": "application/json",
 };
 
-/** ディレクトリを 127.0.0.1 の空きポートで配る。 */
+/** ディレクトリを 127.0.0.1 の空きポートで配る。
+ *
+ *  返り値の `requests` は**配ったものの記録**（`{ path, status }` の配列）。
+ *  これが要るのは、**「ページが実際に何を取りに来たか」は DOM に出ないから**である
+ *  —— 同梱アセット（pdf.js の cMap / 標準14フォント）のコピーを丸ごと落としても、
+ *  pdf:check は **11 件すべて OK のまま通っていた**（2026-09-04 実測）。
+ *  取りに来た URL と、それを配れたかどうかを見るしかない。 */
 export function serveDir(dir) {
+  const requests = [];
   const server = http.createServer((req, res) => {
-    const file = path.join(dir, decodeURIComponent(req.url.split("?")[0]));
+    const urlPath = req.url.split("?")[0];
+    const file = path.join(dir, decodeURIComponent(urlPath));
     if (!file.startsWith(dir) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+      requests.push({ path: urlPath, status: 404 });
       res.writeHead(404).end("not found");
       return;
     }
+    requests.push({ path: urlPath, status: 200 });
     res.writeHead(200, { "Content-Type": TYPES[path.extname(file)] || "application/octet-stream" });
     fs.createReadStream(file).pipe(res);
   });
-  return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ server, port: server.address().port })));
+  return new Promise((r) =>
+    server.listen(0, "127.0.0.1", () => r({ server, requests, port: server.address().port })),
+  );
+}
+
+// 実ブラウザの居場所。**環境ごとに違い、どれも「無いかもしれない」**:
+//   - この Workspace のコンテナ … /usr/bin/chromium（イメージに焼いてある）
+//   - GitHub の ubuntu-latest  … /usr/bin/chromium も /usr/bin/google-chrome も在る
+//     （実測 2026-09-04・ci.yml の使い捨て probe: Chromium 151.0.7922.0 /
+//      Google Chrome 151.0.7922.173・CHROME_BIN=/usr/bin/google-chrome）
+// 既定を 1 本のパス文字列で持っていると、**在るあいだは正しく、無くなった日に
+// 「debugging port が開かない」という原因を指さない形で落ちる**（spawn の ENOENT は
+// stdio を捨てているので誰の目にも入らない）。候補を並べて、選んだ実体を名前で言う。
+const CHROMIUM_CANDIDATES = ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"];
+
+const usable = (p) => {
+  try {
+    fs.accessSync(p, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** 使うブラウザの実体を決める。明示された 1 本（引数 / CHROMIUM / CHROME_BIN）は
+ *  **黙って別のブラウザへ回さない**（頼んだものと違うもので測るのが一番わかりにくい）。 */
+export function resolveChromium(explicit = "") {
+  const asked = explicit || process.env.CHROMIUM || "";
+  if (asked) {
+    if (usable(asked)) return asked;
+    throw new Error(`指定されたブラウザが実行できない: ${asked}（CHROMIUM / 引数で指定された）`);
+  }
+  const tried = [...CHROMIUM_CANDIDATES, process.env.CHROME_BIN || ""].filter(Boolean);
+  const found = tried.find(usable);
+  if (found) return found;
+  throw new Error(
+    "実ブラウザが見つからない。CHROMIUM=<path> で指定するか、chromium を入れること。探した先: " + tried.join(" "),
+  );
 }
 
 /** headless Chromium を上げ、CDP を繋いだハンドルを返す。 */
-export async function startBrowser({ chromium = process.env.CHROMIUM || "/usr/bin/chromium", size = "1000,760" } = {}) {
+export async function startBrowser({ chromium = "", size = "1000,760" } = {}) {
+  const bin = resolveChromium(chromium);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-headless-"));
-  const proc = spawn(chromium, [
+  const proc = spawn(bin, [
     "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
     "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
     `--user-data-dir=${dir}`, `--window-size=${size}`,
@@ -52,14 +100,20 @@ export async function startBrowser({ chromium = process.env.CHROMIUM || "/usr/bi
     "about:blank",
   ], { stdio: ["ignore", "ignore", "ignore"] });
 
+  // spawn の失敗（ENOENT / EACCES）は既定では誰にも見えない —— stdio を捨てているので
+  // 12 秒待って「debugging port が開かない」に化ける。理由をそのまま持って落ちる。
+  let spawnErr = null;
+  proc.on("error", (e) => (spawnErr = e));
+
   let port = 0;
   for (let i = 0; i < 120 && !port; i++) {
     await sleep(100);
+    if (spawnErr) throw new Error(`ブラウザを起動できない: ${bin}: ${spawnErr.message}`);
     try {
       port = Number(fs.readFileSync(path.join(dir, "DevToolsActivePort"), "utf8").split("\n")[0]) || 0;
     } catch {}
   }
-  if (!port) throw new Error("chromium did not open a debugging port");
+  if (!port) throw new Error(`chromium did not open a debugging port (${bin})`);
 
   const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
   const ws = new WebSocket(targets.find((t) => t.type === "page").webSocketDebuggerUrl);

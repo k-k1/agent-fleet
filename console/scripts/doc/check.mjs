@@ -244,10 +244,30 @@ try {
 
   // CSS が本当に当たっている。viewer.css は @import だけの索引なので、parts の
   // コピーを落とすと **無スタイルのまま全項目 OK で撮れてしまう**（判定は 1 文字も
-  // 変わらず、画像だけが別物になる）。撮る前に、既定値（16px）と違う計算後スタイルを
-  // 1 つ見て、目視に頼らず落とす。
-  const styled = await b.evaluate("getComputedStyle(document.querySelector('.docpreview-note')).fontSize");
-  check(styled === "11px", "viewer.css の parts が当たっている", `.docpreview-note font-size=${styled}`);
+  // 変わらず、画像だけが別物になる）。撮る前に、目視に頼らず落とす。
+  //
+  // ⚠️ **「font-size が 11px ちょうど」で見ない**（2026-09-04）。守りたいのは
+  // 「parts が当たっていること」であって 11px そのものではないのに、
+  // **doc.css の font-size を 11px → 12px にしただけでこの検査は赤くなっていた**（実測）。
+  // 代わりに **同じタグの素の要素**を隣に置いて突き合わせる: parts が当たっていれば
+  // 計算後スタイルはどこかで既定と違い、当たっていなければ全部一致する。
+  // これなら CSS の値をいくつに変えても緑のまま、コピーを落とした瞬間だけ赤くなる。
+  const styled = await b.evaluate(
+    `(() => { const el = document.querySelector('.docpreview-note');
+       if (!el) return { error: '.docpreview-note が無い' };
+       const bare = document.createElement(el.tagName);
+       el.parentNode.insertBefore(bare, el);            // 同じ親＝継承の条件をそろえる
+       const a = getComputedStyle(el), b = getComputedStyle(bare);
+       const props = ['display', 'fontSize', 'paddingLeft', 'borderBottomStyle', 'backgroundColor'];
+       const diff = props.filter((p) => a[p] !== b[p]).map((p) => p + '=' + a[p] + '≠' + b[p]);
+       bare.remove();
+       return { diff, fontSize: a.fontSize }; })()`,
+  );
+  check(
+    !styled.error && styled.diff.length > 0,
+    "viewer.css の parts が当たっている",
+    styled.error || (styled.diff.length ? styled.diff.join(" / ") : `素の要素と全項目が同じ（font-size=${styled.fontSize}）`),
+  );
 
   if (SHOT) await b.screenshot(SHOT);
 
