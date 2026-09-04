@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, apiJSON, raw } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useSettings, setSettings } from "../../../lib/settings.ts";
@@ -77,7 +77,7 @@ function OpencodeWorkspaceRow({ st, reload }: { st: any; reload: () => void }) {
   const save = async (value: string) => {
     const res = await apiJSON("api/connections/opencode/workspace", "PUT", { id: value });
     if (res && res.error) {
-      toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
+      toast(tr("common.save_failed_msg", { msg: errDetail(res.error) }));
       return;
     }
     setEditing(false);
@@ -167,7 +167,7 @@ export function OpencodeCard({
     try {
       const res = await apiJSON("api/connections/opencode", "PUT", { env: envName, key: key.trim() });
       if (res && res.error) {
-        toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
+        toast(tr("common.save_failed_msg", { msg: errDetail(res.error) }));
         return;
       }
       setKey("");
@@ -187,7 +187,7 @@ export function OpencodeCard({
     try {
       const res = await api("api/connections/opencode/oauth/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast(tr("agents.oc_account_failed", { msg: res?.error?.message ? `: ${res.error.message}` : "" }));
+        toast(tr("agents.oc_account_failed", { msg: res?.error ? `: ${errDetail(res.error)}` : "" }));
         return;
       }
       setFlow({

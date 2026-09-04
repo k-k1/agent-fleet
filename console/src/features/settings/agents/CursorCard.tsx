@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, apiJSON, raw } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
@@ -27,7 +27,7 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: any;
     try {
       const res = await api("api/connections/cursor/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast(tr("agents.cursor_auth_failed", { msg: res?.error?.message || "" }));
+        toast(tr("agents.cursor_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
       }
       setFlow({ url: res.url, flow_id: res.flow_id, status: tr("git.oauth_waiting") });

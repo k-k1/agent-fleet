@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, apiJSON, raw } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useSettings, setSetting } from "../../../lib/settings.ts";
@@ -35,7 +35,7 @@ export function ClaudeCard({
     try {
       const res = await api("api/connections/claude/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast(tr("agents.claude_auth_failed", { msg: res?.error?.message || "" }));
+        toast(tr("agents.claude_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
       }
       window.open(res.url, "_blank", "noopener");
@@ -55,7 +55,7 @@ export function ClaudeCard({
     try {
       const r = await apiJSON("api/connections/claude/complete", "POST", { flow_id: flow.flow_id, code: c });
       if (r && r.error) {
-        toast(tr("conn.connect_failed", { msg: String(r.error.message || r.error) }));
+        toast(tr("conn.connect_failed", { msg: errDetail(r.error) }));
         return;
       }
       setFlow(null);

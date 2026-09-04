@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { api, apiJSON } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { OnOff, Row } from "../parts/controls.tsx";
 import { useSettings, setSetting } from "../../../lib/settings.ts";
@@ -77,7 +77,7 @@ export function AgentsTab() {
     (path: string, setState: (d: any) => void) => async (patch: unknown) => {
       const d = await apiJSON(path, "PUT", patch);
       if (d && d.error) {
-        toast(tr("common.save_failed_msg", { msg: d.error.message || "" }));
+        toast(tr("common.save_failed_msg", { msg: errDetail(d.error) }));
         return;
       }
       setState(d);

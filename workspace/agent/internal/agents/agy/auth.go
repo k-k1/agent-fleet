@@ -93,15 +93,15 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	switch req.Method {
 	case "", "oauth":
 	case "gcp-project":
-		httpx.WriteErr(w, http.StatusNotImplemented, "method_unsupported", "gcp-project 経路は M2 で実装予定です（docs/log/32）")
+		httpx.WriteErr(w, http.StatusNotImplemented, "method_unsupported", "the gcp-project path is planned for M2 (docs/log/32)")
 		return
 	default:
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_method", "method は oauth か gcp-project を指定してください")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_method", "method must be oauth or gcp-project")
 		return
 	}
 	if SignedIn() {
 		// A signed-in agy shows no login selector — the flow below would just hang.
-		httpx.WriteErr(w, http.StatusConflict, "already_connected", "すでに接続済みです。再認証するには一度切断してください。")
+		httpx.WriteErr(w, http.StatusConflict, "already_connected", "already connected; disconnect first to re-authenticate")
 		return
 	}
 	flows.Reap()
@@ -125,7 +125,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	// "Select login method:" — option 1 (Google OAuth) is pre-selected; Enter picks it.
 	if f.WaitFor(selectorRe, 20*time.Second) == "" {
 		f.Close()
-		httpx.WriteErr(w, http.StatusBadGateway, "no_selector", "agy が ログイン方式セレクタを表示しませんでした")
+		httpx.WriteErr(w, http.StatusBadGateway, "no_selector", "agy did not show the sign-in method selector")
 		return
 	}
 	if _, err := f.Ptmx.Write([]byte(keyEnter)); err != nil {
@@ -136,7 +136,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	url := sanitizeAuthURL(f.WaitFor(urlRe, 20*time.Second))
 	if url == "" {
 		f.Close()
-		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "agy が認可 URL を表示しませんでした")
+		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "agy did not print an authorization URL")
 		return
 	}
 	id := flows.Put(f)
@@ -200,7 +200,7 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := driveOnboarding(f, 60*time.Second); err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "login_failed", "ログインが完了しませんでした（"+err.Error()+"）")
+		httpx.WriteErr(w, http.StatusBadGateway, "login_failed", "login did not complete ("+err.Error()+")")
 		return
 	}
 	// The main-screen header shows "email (plan)" — capture it for Status()'s

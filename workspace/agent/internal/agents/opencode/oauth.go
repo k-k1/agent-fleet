@@ -284,14 +284,14 @@ func waitOAuthMethod(addr string, timeout time.Duration) error {
 // with a flow_id the Console polls. POST /connections/opencode/oauth/start.
 func HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	if !Available() {
-		httpx.WriteErr(w, http.StatusConflict, "opencode_unsupported", "opencode が見つかりません（旧イメージの可能性）")
+		httpx.WriteErr(w, http.StatusConflict, "opencode_unsupported", "opencode not found (the image may predate it)")
 		return
 	}
 	addr, err := oauthDaemon()
 	if err != nil {
 		// Reached when managed opencode is turned off. Interactive CLI login
 		// (`opencode auth login`) remains available from a terminal session.
-		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable", "opencode serve を起動できませんでした: "+err.Error())
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable", "could not start opencode serve: "+err.Error())
 		return
 	}
 	// health alone is not enough: /global/health returns 200 from the moment of startup, but
@@ -310,7 +310,7 @@ func HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 	at := env.Data
 	if at.AttemptID == "" || at.URL == "" {
-		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "opencode が認証 URL を返しませんでした")
+		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "opencode did not return an auth URL")
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -355,13 +355,13 @@ func HandleOAuthPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.FlowID == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "flow_id が必要です")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "flow_id is required")
 		return
 	}
 	oauthTouch() // mid-flow, keep the zero-demand watcher from folding the daemon up
 	addr, up := oauthProbe()
 	if !up {
-		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable", "opencode serve が停止しました")
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable", "opencode serve stopped")
 		return
 	}
 	var env envelope[attemptStatus]
@@ -411,7 +411,7 @@ func HandleOAuthDisconnect(w http.ResponseWriter, r *http.Request) {
 	addr, err := oauthDaemon()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable",
-			"opencode serve を起動できなかったため切断できませんでした: "+err.Error())
+			"cannot disconnect because opencode serve would not start: "+err.Error())
 		return
 	}
 	id, err := credentialID(addr)

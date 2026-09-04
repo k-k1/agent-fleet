@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { apiJSON, raw } from "../../../core/api/client.ts";
+import { apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
@@ -33,7 +33,7 @@ export function AgyCard({
     try {
       const res = await apiJSON("api/connections/agy/start", "POST", { method });
       if (!res || res.error || !res.url) {
-        toast(tr("agents.agy_auth_failed", { msg: res?.error?.message || "" }));
+        toast(tr("agents.agy_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
       }
       window.open(res.url, "_blank", "noopener");
@@ -53,7 +53,7 @@ export function AgyCard({
     try {
       const r = await apiJSON("api/connections/agy/complete", "POST", { flow_id: flow.flow_id, code: c });
       if (r && r.error) {
-        toast(tr("conn.connect_failed", { msg: String(r.error.message || r.error) }));
+        toast(tr("conn.connect_failed", { msg: errDetail(r.error) }));
         return;
       }
       setFlow(null);

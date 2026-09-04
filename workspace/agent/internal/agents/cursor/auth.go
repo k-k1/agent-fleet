@@ -122,12 +122,12 @@ var loginFlows = agents.NewFlowStore(loginFlowTTL)
 // do the Cursor-side polling. POST /connections/cursor/start.
 func HandleStart(w http.ResponseWriter, r *http.Request) {
 	if _, err := exec.LookPath(bin()); err != nil {
-		httpx.WriteErr(w, http.StatusConflict, "cursor_unsupported", "cursor-agent が見つかりません（旧イメージの可能性）")
+		httpx.WriteErr(w, http.StatusConflict, "cursor_unsupported", "cursor-agent not found (the image may predate it)")
 		return
 	}
 	if loggedInFresh() {
 		// A signed-in cursor prints no login URL — the scrape below would just hang.
-		httpx.WriteErr(w, http.StatusConflict, "already_connected", "すでに接続済みです。再認証するには一度切断してください。")
+		httpx.WriteErr(w, http.StatusConflict, "already_connected", "already connected; disconnect first to re-authenticate")
 		return
 	}
 	loginFlows.Reap()
@@ -141,7 +141,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	url := sanitizeURL(f.WaitFor(loginURLRe, 20*time.Second))
 	if url == "" {
 		f.Close()
-		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "cursor がログイン URL を表示しませんでした")
+		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "cursor did not print a login URL")
 		return
 	}
 	id := loginFlows.Put(f)

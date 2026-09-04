@@ -136,12 +136,12 @@ var loginFlows = agents.NewFlowStore(loginFlowTTL)
 // to do the AWS-side polling. POST /connections/kiro/start.
 func HandleStart(w http.ResponseWriter, r *http.Request) {
 	if _, err := exec.LookPath(bin()); err != nil {
-		httpx.WriteErr(w, http.StatusConflict, "kiro_unsupported", "kiro-cli が見つかりません（未導入の可能性）")
+		httpx.WriteErr(w, http.StatusConflict, "kiro_unsupported", "kiro-cli not found (it may not be installed)")
 		return
 	}
 	if loggedInFresh() {
 		// A signed-in kiro prints no login URL — the scrape below would just hang.
-		httpx.WriteErr(w, http.StatusConflict, "already_connected", "すでに接続済みです。再認証するには一度切断してください。")
+		httpx.WriteErr(w, http.StatusConflict, "already_connected", "already connected; disconnect first to re-authenticate")
 		return
 	}
 	loginFlows.Reap()
@@ -155,7 +155,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	url := loginURLRe.FindString(f.WaitFor(loginURLRe, 20*time.Second))
 	if url == "" {
 		f.Close()
-		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "kiro がログイン URL を表示しませんでした")
+		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "kiro did not print a login URL")
 		return
 	}
 	code := loginCodeRe.FindString(f.Clean()) // best-effort; the URL already embeds user_code
