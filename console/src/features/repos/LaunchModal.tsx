@@ -27,6 +27,7 @@ import { useEffortOptions } from "../../lib/agentModels.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
 import type { LaunchSectionKey } from "./launchPrefs.ts";
+import { useLaunchPrompt } from "./launchDraft.ts";
 import { repoPromptTemplates } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
 import { api } from "../../core/api/client.ts";
@@ -186,7 +187,10 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // ドライバ（docs/log/27 P2/P3）: managed 対応 kind は managed が既定（§9.2）。
   // CLI(TUI) はユーザーの明示的な選択 — セッション毎に TUI プロセス分のメモリを払う。
   const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
-  const [prompt, setPrompt] = useState(initialPrompt ?? "");
+  // 最初のプロンプトはリポジトリ毎に localStorage へ書き戻す（launchDraft）。閉じても
+  // 残り、起動できたときだけ消える。initialPrompt（引き継ぎ・メモ送信・作業項目の種）は
+  // 下書きより優先される。
+  const [prompt, setPrompt, clearPromptDraft] = useLaunchPrompt(repo, initialPrompt);
   // 初期値は人が打った文字とは限らない（引き継ぎ提案・作業項目・メンバー引き継ぎ）。
   // maxLength は打鍵にしか効かないので、流し込まれた値はここで作成 API の規則へ詰める —
   // さもないと「編集もできたのに起動だけ bad_title で落ちる」になる。
@@ -407,6 +411,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       useExisting,
     });
     if (r?.ok) {
+      // 起動できた＝この文章は新しいセッションへ渡り切った。ここが下書きを捨てる唯一の
+      // 地点で、失敗（名前衝突など）で戻ってきたときは打った文章をそのまま残す。
+      clearPromptDraft();
       onClose();
       return;
     }

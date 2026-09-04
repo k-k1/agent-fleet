@@ -71,14 +71,40 @@ const rowFor = (name: string) => must(branchRows().find((b) => b.textContent?.in
 const dirRow = (name: string) =>
   must([...document.querySelectorAll(".dirpick-row")].find((b) => b.textContent?.includes(name)), `folder row "${name}"`);
 
-async function render(kinds = ["claude"]): Promise<void> {
+async function render(kinds = ["claude"], extra: { repo?: string; initialPrompt?: string } = {}): Promise<void> {
   await act(async () => {
     root!.render(
-      <LaunchModal repo="app" branch="main" kinds={kinds} onClose={() => {}} onLaunch={onLaunch} />,
+      <LaunchModal
+        repo={extra.repo ?? "app"}
+        branch="main"
+        kinds={kinds}
+        initialPrompt={extra.initialPrompt}
+        onClose={() => {}}
+        onLaunch={onLaunch}
+      />,
     );
   });
   await act(async () => {
     await Promise.resolve();
+  });
+}
+
+// Close and reopen the dialog, the way ✕ / Esc does: the component unmounts, so anything
+// that survives has to have been persisted.
+async function reopen(extra: { repo?: string; initialPrompt?: string } = {}): Promise<void> {
+  act(() => root?.unmount());
+  root = createRoot(host);
+  await render(["claude"], extra);
+}
+
+const promptBox = () => must(document.querySelector<HTMLTextAreaElement>("textarea"), "最初のプロンプト textarea");
+
+async function type(text: string): Promise<void> {
+  const el = promptBox();
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    setter.call(el, text);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
 
@@ -203,6 +229,50 @@ describe("LaunchModal branch mode", () => {
     await expand("Location");
     const input = must(document.querySelector<HTMLInputElement>(".subdirpick-input"), "作業ディレクトリ input");
     expect(input.value).toBe("console");
+  });
+
+  // 最初のプロンプトの下書き（launchDraft）: 閉じても残り、リポジトリ毎に分かれ、起動
+  // できたときだけ消える。ここが逆になると「場所を見に行って戻ったら打った文章が消えて
+  // いた」か、逆に「起動済みの文章が次の起動に居座る」のどちらかになる。
+  it("keeps the typed first prompt per repo when the dialog is closed", async () => {
+    await render();
+    await type("直して");
+    await reopen();
+    expect(promptBox().value).toBe("直して");
+
+    await reopen({ repo: "other" }); // 別のリポジトリには漏れない
+    expect(promptBox().value).toBe("");
+  });
+
+  it("drops the draft once the session has started", async () => {
+    await render();
+    await type("直して");
+    expect(localStorage.getItem("af.launch-prompt.app")).toBe("直して"); // 消える前に在ったこと
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().prompt).toBe("直して");
+    expect(localStorage.getItem("af.launch-prompt.app")).toBe(null);
+    await reopen();
+    expect(promptBox().value).toBe("");
+  });
+
+  // 起動に失敗して戻ってきたときは、打った文章がそのまま要る（衝突を直して押し直す）。
+  it("keeps the draft when the launch did not happen", async () => {
+    onLaunch = vi.fn<Launch>(async () => ({ ok: false, conflict: "local" }));
+    await render();
+    await type("直して");
+    await click(byText("Start in a worktree"));
+    expect(promptBox().value).toBe("直して");
+    await reopen();
+    expect(promptBox().value).toBe("直して");
+  });
+
+  // 引き継ぎ提案・メモ送信・作業項目が入れる種は、呼び出し側が「この文章で始める」と決めて
+  // 開いた箱なので、前の書きかけより強い。
+  it("prefers a seeded first prompt over the stored draft", async () => {
+    await render();
+    await type("書きかけ");
+    await reopen({ initialPrompt: "引き継ぎの本文" });
+    expect(promptBox().value).toBe("引き継ぎの本文");
   });
 
   it("offers to use the colliding branch when a LOCAL name is taken", async () => {
