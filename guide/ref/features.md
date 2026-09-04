@@ -32,7 +32,7 @@ If a feature ships and does not appear here, it is not done
 | Hand a session to another member | member | session ⋯ menu | [02 Sessions](../member/02-sessions.md) |
 | Share a session read-only | member | Shared sessions | [02 Sessions](../member/02-sessions.md) |
 | Highlights | member | mirror, on a selection | [09 Working with others](../member/09-collaboration.md) |
-| Changed files | member | session ⋯ menu | [09 Working with others](../member/09-collaboration.md) |
+| Changed files | member | strip under the mirror header | [09 Working with others](../member/09-collaboration.md) |
 | Context usage gauge | member | session header | [06 Agents](../member/06-agents.md) |
 | Abort detection and auto-resume | member | automatic | [09 Working with others](../member/09-collaboration.md) |
 

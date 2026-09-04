@@ -29,8 +29,10 @@ highlight survives, where "look at the bit about the retry" does not.
 
 ## Seeing what a session changed
 
-**Changed files** in a session's ⋯ menu lists the files that session actually touched,
-and takes you straight to one.
+The **Changed files** strip under the conversation header lists the files that session
+actually touched, and takes you straight to one. Click its heading to fold it open or
+closed; the choice is remembered per session. **Ctrl+P** (**⌘P** on macOS), then **Tab**
+to "Changed files", reaches the same list.
 
 It answers the question you have at review time — "what did this thing do to my
 working copy?" — without reading the whole conversation back. It is derived from the
