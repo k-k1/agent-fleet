@@ -169,9 +169,9 @@ func (a gitServerAPI) blob(w http.ResponseWriter, r *http.Request, _ store.Ident
 	sizeOut, _ := exec.CommandContext(r.Context(), "git", "--git-dir", bareDir, "cat-file", "-s", treeish).Output()
 	size, _ := strconv.ParseInt(strings.TrimSpace(string(sizeOut)), 10, 64)
 
-	resp := map[string]any{"ref": ref, "path": path, "size": size}
+	resp := gitBlobWire{Ref: ref, Path: path, Size: size}
 	if size > maxBlobPreview {
-		resp["too_large"] = true
+		resp.TooLarge = true
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
@@ -182,20 +182,52 @@ func (a gitServerAPI) blob(w http.ResponseWriter, r *http.Request, _ store.Ident
 	}
 	if bytes.HasPrefix(content, []byte("version https://git-lfs")) {
 		// An LFS pointer — show it as such rather than the raw pointer text.
-		resp["lfs"] = true
+		resp.LFS = true
 		if m := lfsPointerOID.FindSubmatch(content); m != nil {
-			resp["lfs_oid"] = string(m[1])
+			resp.LFSOID = string(m[1])
 		}
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	if bytes.IndexByte(content, 0) >= 0 {
-		resp["binary"] = true
+		resp.Binary = true
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	resp["content"] = string(content)
+	text := string(content)
+	resp.Content = &text
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// gitBlobWire — GET /api/internal-git/repos/{name}/blob のレスポンス
+// （Console の `Blob`、console/src/features/settings/workspace/InternalRepoBrowser.tsx）。
+//
+// 旧: map[string]any{"ref":…, "path":…, "size":…} を resp に置き、4 つの出口が
+//
+//	それぞれ too_large / lfs(+lfs_oid) / binary / content を足して返す。
+//	つまり**出口ごとにキー集合が違う**ので、任意キーは omitempty で表す。
+//
+// 🔴 Content だけポインタなのは、**omitempty が忠実にならない唯一のキー**だから:
+// content は `string(content)` なので**空ファイルなら ""** になり、旧コードは
+// `"content": ""` を**出す**。string + omitempty だと**その空を消してしまう**
+// （在るのに消える＝ワイヤが変わる）。nil = キー無し / &"" = 空で出す、で区別する。
+//
+// 他の任意キーは omitempty で忠実:
+//   - too_large / lfs / binary は **true しか代入されない**ので、false は「無い」と同義。
+//   - lfs_oid は `([0-9a-f]{64})` の捕獲＝**必ず 64 文字**で、空を取れない
+//     （git_gc.go:157 の正規表現）。
+//
+// ⚠️ ref は Console が自分でクエリに載せて送った値の echo。Console の `Blob` は
+// これを宣言していないが**読んでもいない**ので、型化してもワイヤも画面も変わらない。
+type gitBlobWire struct {
+	Ref      string  `json:"ref"`
+	Path     string  `json:"path"`
+	Size     int64   `json:"size"`
+	TooLarge bool    `json:"too_large,omitempty"`
+	LFS      bool    `json:"lfs,omitempty"`
+	LFSOID   string  `json:"lfs_oid,omitempty"`
+	Binary   bool    `json:"binary,omitempty"`
+	Content  *string `json:"content,omitempty"`
 }
 
 // commits (GET .../repos/{name}/commits?ref=&path=&limit=) returns recent

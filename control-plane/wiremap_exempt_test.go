@@ -11,6 +11,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/wiretest"
 )
 
 // wiremapExemption — 「この map サイトは struct 化しない」という宣言。
@@ -116,8 +118,8 @@ func TestWiremapExemptionsAreStillNeeded(t *testing.T) {
 // 🔴 テスト関数ではなくここに本体を置くのは、**対照がこれを最後まで駆動できるようにする**ため。
 // 判定だけを共有して報告をテスト関数に書くと、**報告側（t.Errorf）を消しても対照は緑のまま**
 // になり、#345 で指摘された穴が形を変えて残る。
-// 引数の t を interface にしてあるので、対照は recordT を渡して「実際に報告されたか」を見る。
-func reportStaleExemptions(t wireEquivT, exs []wiremapExemption, byFunc map[string][]wireMapSite) {
+// 引数の t を interface にしてあるので、対照は wiretest.Recorder を渡して「実際に報告されたか」を見る。
+func reportStaleExemptions(t wiretest.TB, exs []wiremapExemption, byFunc map[string][]wireMapSite) {
 	t.Helper()
 	for _, ex := range exs {
 		if ok, why := exemptionStillNeeded(ex, byFunc); !ok {
@@ -201,11 +203,11 @@ func TestWiremapExemptionReverseCheckActuallyFires(t *testing.T) {
 	byFunc := wiremapSitesByFunc(t)
 	// 🔴 **出荷される逆検査を最後まで駆動する。**判定を写して書き直すと、
 	// 本物を潰しても対照が緑のままになる（#345 のレビューで実測された穴）。
-	// recordT を渡すので、判定と報告の**どちらを潰しても**この対照が赤くなる。
+	// wiretest.Recorder を渡すので、判定と報告の**どちらを潰しても**この対照が赤くなる。
 	check := func(ex wiremapExemption) bool { // true = 実際に報告された＝赤くなるべき
-		rec := &recordT{}
+		rec := &wiretest.Recorder{}
 		reportStaleExemptions(rec, []wiremapExemption{ex}, byFunc)
-		return len(rec.errs) > 0
+		return len(rec.Errs()) > 0
 	}
 
 	t.Run("対象が消えた免除は赤くなる", func(t *testing.T) {

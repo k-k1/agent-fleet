@@ -267,10 +267,10 @@ func (a Admin) SetTenantLogin(w http.ResponseWriter, r *http.Request, ident stor
 			" allowed=" + a.cp.JoinCSV(allowed) + " hidden=" + a.cp.JoinCSV(hidden),
 		At: store.NowTS(),
 	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"tenant": t.Slug, "allowed_providers": a.cp.JoinCSV(provs),
-		"auto_join_domains": a.cp.JoinCSV(autoJoin), "allowed_domains": a.cp.JoinCSV(allowed),
-		"hidden_providers": a.cp.JoinCSV(hidden),
+	writeJSON(w, http.StatusOK, tenantLoginWire{
+		Tenant: t.Slug, AllowedProviders: a.cp.JoinCSV(provs),
+		AutoJoinDomains: a.cp.JoinCSV(autoJoin), AllowedDomains: a.cp.JoinCSV(allowed),
+		HiddenProviders: a.cp.JoinCSV(hidden),
 	})
 }
 
@@ -1211,4 +1211,24 @@ func (a Admin) PoolStatus(w http.ResponseWriter, r *http.Request, _ store.Identi
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+// tenantLoginWire — PUT /api/admin/tenants/{slug}/login の応答
+// （Console の `TenantLoginFields`、console/src/features/settings/tenant/tenantLoginTypes.ts）。
+//
+// 旧: map[string]any{"tenant":…, "allowed_providers":…, "auto_join_domains":…,
+//
+//	"allowed_domains":…, "hidden_providers":…}
+//
+// 5 キーとも無条件なので **omitempty は付けない**。CSV は空文字を取りうる
+// （＝制限なし）ので、付けるとキーごと消えて「制限なし」と「未設定」が区別できなくなる。
+//
+// ⚠️ tenant は Console が prop で持つ slug の echo。`TenantLoginFields` は宣言して
+// いないが**読んでもいない**。
+type tenantLoginWire struct {
+	Tenant           string `json:"tenant"`
+	AllowedProviders string `json:"allowed_providers"`
+	AutoJoinDomains  string `json:"auto_join_domains"`
+	AllowedDomains   string `json:"allowed_domains"`
+	HiddenProviders  string `json:"hidden_providers"`
 }

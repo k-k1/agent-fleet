@@ -94,13 +94,57 @@ func (a sessionHandoffAPI) open(ctx context.Context, o store.SessionHandoffOffer
 }
 
 // handoffOfferDTO は所有者向け（本文なし）。A の手元には元の提案があるので、台帳は状態が読めれば足りる。
-func handoffOfferDTO(o store.SessionHandoffOffer, recipientKey string) map[string]any {
-	return map[string]any{
-		"id": o.ID, "sessionId": o.CatalogID, "sessionName": o.SourceSessionName,
-		"recipientUserKey": recipientKey, "title": o.Title, "status": o.Status,
-		"branch": o.Branch, "repoRemote": o.RepoRemote, "headSha": o.HeadSha,
-		"createdAt": o.CreatedAt, "expiresAt": o.ExpiresAt, "decidedAt": o.DecidedAt,
-		"acceptedSessionName": o.AcceptedSessionName,
+// handoffOfferWire — 引き継ぎ提案 1 件の基本形（作成の応答・所有者側の一覧）。
+//
+// 旧: map[string]any{"id":…, "sessionId":…, …} の 13 キー（handoffOfferDTO の戻り値）。
+// 13 キーとも無条件なので **omitempty は付けない**（branch / headSha / decidedAt などは
+// 空文字を取りうるので、付けるとキーごと消える）。
+//
+// 🔴 **受信箱だけがキーを 3 つ足す**（listReceived が `d["ownerUserKey"]=…` などで後から詰めていた）。
+// そこを omitempty で表すのは**誤り**——`ownerUserKey` は `keys[…]` にキーが無ければ `""`、
+// `prompt` は `a.open()` が空を返しうるので、**旧コードは「空文字で出す」が omitempty は「消す」**。
+// なので**埋め込みで別の型にする**（下の handoffOfferInboxWire）。埋め込みは JSON で
+// 平坦化されるので、omitempty 無しで両方の変種を忠実に再現できる。
+type handoffOfferWire struct {
+	ID                  string `json:"id"`
+	SessionID           string `json:"sessionId"`
+	SessionName         string `json:"sessionName"`
+	RecipientUserKey    string `json:"recipientUserKey"`
+	Title               string `json:"title"`
+	Status              string `json:"status"`
+	Branch              string `json:"branch"`
+	RepoRemote          string `json:"repoRemote"`
+	HeadSha             string `json:"headSha"`
+	CreatedAt           string `json:"createdAt"`
+	ExpiresAt           string `json:"expiresAt"`
+	DecidedAt           string `json:"decidedAt"`
+	AcceptedSessionName string `json:"acceptedSessionName"`
+}
+
+// handoffOfferInboxWire — 受信箱の 1 件。基本形に 3 キーを足した 16 キー。
+//
+// 旧: map[string]any（handoffOfferDTO の戻り値）に listReceived が
+//
+//	d["ownerUserKey"] / d["prompt"] / d["sourceSessionKind"] を後から詰めていた形。
+//
+// 🔴 埋め込みなので JSON は**平坦**に出る（`{"id":…, …, "ownerUserKey":…}`）。
+// 基本形と足す 3 つで**実効 json 名の衝突は無い**——衝突すると encoding/json は
+// **どちらも出さない**ので無言でキーが消えるが、それは等価テストが
+// 「キーが消えた」で捕まえる（13 / 16 の絶対数も別に固定してある）。
+type handoffOfferInboxWire struct {
+	handoffOfferWire
+	OwnerUserKey      string `json:"ownerUserKey"`
+	Prompt            string `json:"prompt"`
+	SourceSessionKind string `json:"sourceSessionKind"`
+}
+
+func handoffOfferDTO(o store.SessionHandoffOffer, recipientKey string) handoffOfferWire {
+	return handoffOfferWire{
+		ID: o.ID, SessionID: o.CatalogID, SessionName: o.SourceSessionName,
+		RecipientUserKey: recipientKey, Title: o.Title, Status: o.Status,
+		Branch: o.Branch, RepoRemote: o.RepoRemote, HeadSha: o.HeadSha,
+		CreatedAt: o.CreatedAt, ExpiresAt: o.ExpiresAt, DecidedAt: o.DecidedAt,
+		AcceptedSessionName: o.AcceptedSessionName,
 	}
 }
 
@@ -378,11 +422,12 @@ func (a sessionHandoffAPI) listReceived(w http.ResponseWriter, r *http.Request, 
 	keys := a.userKeys(r.Context(), mv.TenantID)
 	out := []any{}
 	for _, o := range rows {
-		d := handoffOfferDTO(o, keys[o.RecipientMembershipID])
-		d["ownerUserKey"] = keys[o.OwnerMembershipID]
-		d["prompt"] = a.open(r.Context(), o)
-		d["sourceSessionKind"] = o.SourceSessionKind
-		out = append(out, d)
+		out = append(out, handoffOfferInboxWire{
+			handoffOfferWire:  handoffOfferDTO(o, keys[o.RecipientMembershipID]),
+			OwnerUserKey:      keys[o.OwnerMembershipID],
+			Prompt:            a.open(r.Context(), o),
+			SourceSessionKind: o.SourceSessionKind,
+		})
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"offers": out})
