@@ -45,7 +45,7 @@ func TestRouteTableGolden(t *testing.T) {
 		t.Logf("wrote %s (%d routes)", routesGoldenPath, len(got))
 		return
 	}
-	assertGoldenLines(t, routesGoldenPath, got)
+	assertGoldenLines(t, routesGoldenPath, "-update-routes-golden", got)
 }
 
 // muxRoutes は組み上がった *http.ServeMux から登録済みの (method, path) を取り出す。
@@ -206,12 +206,16 @@ func writeRoutesGolden(t *testing.T, path string, lines []string) {
 	}
 }
 
-func assertGoldenLines(t *testing.T, path string, got []string) {
+// assertGoldenLines は突き合わせと「直し方の案内」。⚠️ updateFlag を**呼び出し側から
+// 受け取る**こと。以前はここで `-update-routes-golden` を決め打ちしていて、wire ゴールデン
+// が赤くなった人に**そのゴールデンを何も直さないフラグ**を教えていた（実際に踏んだ）。
+// wiremap 側は同じ理由で独自のヘルパへ逃げていたが、逃げるのではなく引数にするのが筋。
+func assertGoldenLines(t *testing.T, path, updateFlag string, got []string) {
 	t.Helper()
 	if diff := lineDiff(readGoldenLines(t, path), got); diff != "" {
 		t.Errorf("%s と一致しない:\n%s\n"+
-			"意図した増減なら -update-routes-golden で撮り直す。"+
-			"身に覚えが無いなら、移送でルートを落としている。", path, diff)
+			"意図した増減なら %s で撮り直す。"+
+			"身に覚えが無いなら、移送でルートを落としている。", path, diff, updateFlag)
 	}
 }
 

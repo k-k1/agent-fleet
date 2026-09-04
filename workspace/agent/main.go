@@ -49,12 +49,24 @@ func main() {
 		runInstallJDK(os.Args[2:])
 		return
 	}
+	// Arch self-repair's Console face: turn what af-arch-repair could NOT put back into
+	// a notification the member can actually see (the repair script only reaches the
+	// container's stdout). See arch_residue.go for why it is keyed on content.
+	if len(os.Args) > 1 && os.Args[1] == "notify-arch-residue" {
+		runNotifyArchResidue(os.Args[2:])
+		return
+	}
 	// On-demand pinned installers (docs/log/35 §35.7.2): chromium+CJK font for the
-	// browser pane, the Go toolchain, and AWS CLI + Session Manager plugin for
-	// ssm sessions. Lean rootfs deployments install these into the home on first
-	// use; versions come from the versions.json pins. See install_tools.go.
+	// browser pane, node (docs/decisions/0068), the Go toolchain, and AWS CLI +
+	// Session Manager plugin for ssm sessions. Lean rootfs deployments install these
+	// into the home on first use; versions come from the versions.json pins (node
+	// resolves the newest patch of the selected major). See install_tools.go.
 	if len(os.Args) > 1 && os.Args[1] == "install-chromium" {
 		runInstallChromium(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "install-node" {
+		runInstallNode(os.Args[2:])
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "install-go" {

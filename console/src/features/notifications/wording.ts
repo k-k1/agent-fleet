@@ -23,6 +23,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "handoff-offer": "noti.kind_handoff_offer",
   "handoff-accepted": "noti.kind_handoff_accepted",
   "handoff-expired": "noti.kind_handoff_expired",
+  "arch-residue": "noti.kind_arch_residue",
 };
 
 /** 行見出しの訳。未知の kind（新しい CP と古い Console）だけ生の識別子へ落とす。 */
@@ -169,6 +170,16 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       body: t("notif.rate_limit_resumed.body", { name }),
       speech: t("notif.rate_limit_resumed.speech", { name }),
     };
+  }
+  if (n.kind === "arch-residue") {
+    // CPU の系統が変わり、自動では戻せなかったものが残っている（docs/decisions/0068）。
+    // 対象はセッションではなくワークスペースなので押しても遷移先は無い——行に「何が」を
+    // 出しきることが仕事で、読んだ人がターミナルで直せるだけの情報を入れる。
+    const repos = Array.isArray(n.payload.repos) ? (n.payload.repos as unknown[]).map(String) : [];
+    const bins = Array.isArray(n.payload.bins) ? (n.payload.bins as unknown[]).map(String) : [];
+    const items = [...repos, ...bins];
+    const body = items.length ? items.join(", ") : t("notif.arch_residue.body_generic");
+    return { title: t("notif.arch_residue.title"), body, speech: t("notif.arch_residue.speech") };
   }
   const rawSource = String(n.payload.source || n.displayName || "AI");
   const source = rawSource === "claude" ? "Claude" : rawSource === "codex" ? "Codex" : rawSource;

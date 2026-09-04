@@ -5,7 +5,7 @@
 # docs/11-phase1-plan.md / docs/09-portability.md 参照。
 
 # --- build the agent (Go) ---
-FROM golang:1.26-bookworm AS agentbuild
+FROM golang:1.26-trixie AS agentbuild
 WORKDIR /src
 COPY agent/go.mod agent/go.sum ./
 RUN go mod download
@@ -16,13 +16,13 @@ ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-X main.buildVersion=${VERSION}" -o /out/workspace-agent .
 
 # --- runtime ---
-FROM node:22-bookworm-slim
+FROM node:22-trixie-slim
 # Links the GHCR package to this repository — see control-plane/Dockerfile for why.
 LABEL org.opencontainers.image.source="https://github.com/k-k1/agent-fleet" \
       org.opencontainers.image.description="Agent Fleet per-user workspace — isolated container running the agent CLIs" \
       org.opencontainers.image.licenses="Apache-2.0"
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git git-lfs subversion tmux vim openssh-client ca-certificates gnupg curl wget less procps htop strace tzdata \
+      git git-lfs git-delta subversion tmux vim openssh-client ca-certificates gnupg curl wget less procps htop strace tzdata \
       ripgrep fd-find bat jq unzip zip \
       build-essential pkg-config \
       python3 python3-pip python3-venv python3-dev python-is-python3 \
@@ -34,9 +34,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # pkg-config + python3-dev) so cgo / node-gyp / source-built wheels compile, plus
 # common utilities (wget, jq, unzip/zip, gnupg, htop), fd/bat (Debian ships them
 # as fdfind/batcat; symlinked to the expected names), and subversion for svn repos
-# (HTTPS via libserf, pulled as a dep). git-delta is not in bookworm, so it's
-# intentionally omitted (add via its GitHub .deb if wanted).
-# Python 3 (bookworm = 3.11) baked in as a baseline tool, like git/tmux. python-is-
+# (HTTPS via libserf, pulled as a dep). git-delta was omitted while the base was
+# bookworm (not in that suite); trixie's main has it, so it is a plain install now
+# (docs/decisions/0068 — one of the benefits that moved the base, not a cost).
+# Python 3 (trixie = 3.13) baked in as a baseline tool, like git/tmux. python-is-
 # python3 provides `python`. Debian (PEP 668) marks the system env externally-managed,
 # which blocks `pip install` into it; allow break-system-packages so `pip install
 # --user <pkg>` lands in the persistent home (~/.local, on PATH). venvs work as usual.
@@ -108,12 +109,18 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # SigV4. Worth baking rather than leaving to uvx: the dependency tree is botocore +
 # awscrt (~20MB of wheels), so a cold fetch is the difference between an MCP server
 # that starts and one the CLI gives up on.
+# ⚠️ cloudwatch と同じく import まで踏む。この venv の `bin/python` は python3.13 ではなく
+# `/usr/bin/python3` へのリンクなので、interpreter の major が動いた日に**リンクは切れず、
+# 黙って新しい python で起動して site-packages を見失う**——`test -x` は通ってしまう型で
+# ある（docs/decisions/0068 決定 4）。import 名は実インストールで確認済み。
 ARG AWS_MCP_PROXY_VERSION=1.6.5
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 \
     uv tool install --python /usr/bin/python3 "mcp-proxy-for-aws==${AWS_MCP_PROXY_VERSION}"; \
     test -x /usr/local/bin/mcp-proxy-for-aws; \
+    /usr/local/share/uv/tools/mcp-proxy-for-aws/bin/python \
+      -c "import mcp_proxy_for_aws"; \
     fi
 
 # Chromium for the in-container browser pane and headless UI verification. Debian's
@@ -123,16 +130,25 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # recommendation (suppressed by --no-install-recommends). Bump the ARG after Debian
 # publishes the same security build for both architectures. Fonts and fontconfig are
 # explicit so Japanese pages render without depending on a transient recommendation.
-# ⚠ bookworm-security は「現行ビルドだけ」を持ち、古い版はミラーから消える。ピンを
+# ⚠ trixie-security は「現行ビルドだけ」を持ち、古い版はミラーから消える。ピンを
 # 放置すると、この層のキャッシュが破れた次のビルドで `Version ... was not found` と
 # 落ちる（＝別の ARG を触った瞬間に無関係に見える形で発火する）。上流のセキュリティ
 # 更新に追随して bump すること。現行版は
-# `curl -fsSL http://security.debian.org/debian-security/dists/bookworm-security/main/binary-<arch>/Packages.xz | xz -dc | grep -A5 '^Package: chromium$'` で確認できる。
-ARG CHROMIUM_VERSION=151.0.7922.173-1~deb12u1
+# `curl -fsSL http://security.debian.org/debian-security/dists/trixie-security/main/binary-<arch>/Packages.xz | xz -dc | grep -A5 '^Package: chromium$'` で確認できる。
+# ⚠⚠ 版を比べるときは**左右で同じ索引を読むこと**（docs/decisions/0068 決定 3）。security
+# スイートと main スイートは別の版を指すので、片方を security・片方を main で読むと
+# **存在しない版差が出る**。実際それで「trixie にすると chromium が下がる」という誤った
+# 代償が 1 度記録され、ベース更新の判断を狂わせた。ここに書くのは常に security の版。
+ARG CHROMIUM_VERSION=152.0.7977.75-1~deb13u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
-# （docs/log/35 §35.7.1-5。ライブラリ一覧は playwright の Debian 12 chromium deps 準拠）。
+# （docs/log/35 §35.7.1-5。ライブラリ一覧は playwright の chromium deps 準拠）。
+# ⚠ `…t64` は誤記ではない。Debian の 64-bit time_t 移行で 6 個が改名されており
+# （libasound2 / libatk-bridge2.0-0 / libatk1.0-0 / libatspi2.0-0 / libcups2 /
+# libglib2.0-0）、trixie には旧名が存在しない。**t64 を外すとこの枝だけが落ちる**——
+# しかも e2e.yml は BAKE_OPTIONAL_TOOLS=1 の枝しかビルドしないので e2e は緑のまま。
+# 検証は BAKE_OPTIONAL_TOOLS=0 のビルドを別に 1 本回すこと（docs/decisions/0068）。
 RUN apt-get update \
  && if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then \
       apt-get install -y --no-install-recommends \
@@ -146,8 +162,8 @@ RUN apt-get update \
     else \
       apt-get install -y --no-install-recommends \
         fontconfig fonts-dejavu-core \
-        libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 \
-        libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 \
+        libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2 \
+        libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 libnspr4 libnss3 \
         libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 \
         libxfixes3 libxkbcommon0 libxrandr2; \
     fi \
@@ -228,12 +244,15 @@ RUN set -eux; \
 # GitHub fetch); the entrypoint seeds the hook only when `rtk` is on PATH.
 # rtk-ai/rtk is public, so the asset + checksums download without auth.
 #
-# ⚠️ amd64 gets a STATIC musl binary. arm64 does not exist: upstream publishes only
-# `rtk-aarch64-unknown-linux-gnu`, which requires **GLIBC_2.39**, and this image is
-# Debian 12 (**glibc 2.36**) — the download and the sha256 both pass and the binary
-# then cannot start (measured on Graviton4, 2026-08-22, docs/log/70 §70.9.2). Exactly the
-# shape docs/log/43 recorded for kiro, except kiro publishes an aarch64 musl variant and
-# rtk does not (checked across v0.45.0 and every dev-0.45.1-rc).
+# ⚠️ amd64 gets a STATIC musl binary. arm64 has no musl asset: upstream publishes only
+# `rtk-aarch64-unknown-linux-gnu`, which requires **GLIBC_2.39** (exactly two symbols,
+# `pidfd_getpid` / `pidfd_spawnp` — verified with readelf on v0.47.0). On the old
+# Debian 12 base (**glibc 2.36**) the download and the sha256 both passed and the binary
+# then could not start (measured on Graviton4, 2026-08-22, docs/log/70 §70.9.2). The base
+# is now Debian 13 (**glibc 2.41 >= 2.39**), so it is expected to load — but "loads" is
+# not "works", so nothing here asserts it (docs/decisions/0068). Exactly the shape
+# docs/log/43 recorded for kiro, except kiro publishes an aarch64 musl variant and rtk
+# does not (checked across v0.47.0 and dev-0.48.0-rc.400).
 #
 # So the binary is VERIFIED BY RUNNING IT, and a version that cannot run is removed
 # rather than shipped. That is deliberately not an `arch = arm64` check: the day
@@ -385,8 +404,11 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # オンデマンド導入（workspace-agent install-kiro／初回起動時の自動導入・§4-2 決定）に回し、
 # BAKE_AGENT_CLIS=1（覚悟のノブ）でのみ焼く。
 #
-# arch 別アセット: x86_64 は gnu 版（install.sh の glibc 下限 2.34・Debian 12 は 2.36 で
-# 充足）、aarch64 は **musl 版**（gnu は glibc 2.39 要求で Debian 12 では動かない — 実測）。
+# arch 別アセット: x86_64 は gnu 版（install.sh の glibc 下限 2.34・Debian 13 は 2.41 で
+# 充足）、aarch64 は **musl 版**（gnu は glibc 2.39 要求で、旧 Debian 12 ベースでは動かな
+# かった — 実測）。⚠️ Debian 13（glibc 2.41）なら gnu 版も要求を満たすが、**musl のまま
+# 据え置く**。現に動いていて検証済みの経路を、ベース更新と同じ変更で入れ替えると、
+# 何かが壊れたときに二分できなくなる（docs/decisions/0068 決定 6）。
 # sha256 は manifest 掲載値をそのまま ARG に写す（bump は KIRO_VERSION と両 arch の sha を
 # 揃えて書き換え。値は `curl -fsSL .../stable/latest/manifest.json | jq` で確認）。
 #
@@ -571,7 +593,10 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY gh-auth-wrapper.sh /usr/local/bin/gh
 # ビルド生成物をタスクローカルの作業ディスクへ逃がすヘルパー（ADR 0044 決定 3）。
 COPY af-scratch.sh /usr/local/bin/af-scratch
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/af-scratch
+# アーキ変更後に利用者自身の ~/.local 導入物を同じ版で戻す（entrypoint から呼ばれる）。
+# entrypoint に埋めず別ファイルにしてあるのは、単体で走らせて検証できるようにするため。
+COPY af-arch-repair.sh /usr/local/bin/af-arch-repair
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/af-scratch /usr/local/bin/af-arch-repair
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
 # rtk.ts (token-saving command rewrite, the opencode analog of claude's rtk hook —

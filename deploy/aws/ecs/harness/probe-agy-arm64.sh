@@ -32,7 +32,7 @@
 # So: one instance per generation, and `/proc/cpuinfo` Features recorded next to the
 # result so the two can be correlated rather than guessed at.
 #
-# The probe runs inside `node:22-bookworm-slim` — the workspace image's own base — so
+# The probe runs inside `node:22-trixie-slim` — the workspace image's own base — so
 # the libc under agy is the one production uses, not the AL2023 host's.
 set -euo pipefail
 
@@ -115,9 +115,9 @@ say "has_rng|\$(grep -qw rng /proc/cpuinfo && echo yes || echo no)"
 systemctl start docker 2>/dev/null || true
 for i in \$(seq 30); do docker info >/dev/null 2>&1 && break; sleep 2; done
 
-# node:22-bookworm-slim is the workspace image's own base, so agy sees production's
+# node:22-trixie-slim is the workspace image's own base, so agy sees production's
 # libc rather than the AL2023 host's.
-docker run --rm node:22-bookworm-slim bash -c '
+docker run --rm node:22-trixie-slim bash -c '
   set -e
   apt-get update >/dev/null 2>&1 && apt-get install -y --no-install-recommends curl ca-certificates >/dev/null 2>&1
   cd /tmp
@@ -181,7 +181,7 @@ done
 
 echo
 echo "=== agy on Graviton — docs/log/32 Track B / decisions/0008 / docs/log/70 §70.13 ==="
-echo "agy $AGY_VERSION-$AGY_BUILD (linux-arm/cli_linux_arm64.tar.gz), inside node:22-bookworm-slim"
+echo "agy $AGY_VERSION-$AGY_BUILD (linux-arm/cli_linux_arm64.tar.gz), inside node:22-trixie-slim"
 for ty in "${TYPE_LIST[@]}"; do
   echo "--- $ty"
   cat "/tmp/agy-$ty.txt" 2>/dev/null || echo "(no output)"

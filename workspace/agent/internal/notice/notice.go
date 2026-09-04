@@ -19,10 +19,16 @@ import (
 )
 
 type Event struct {
-	ID          string         `json:"id"`
-	Kind        string         `json:"kind"`
-	SessionName string         `json:"sessionName"`
-	SessionKind string         `json:"sessionKind"`
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	SessionName string `json:"sessionName"`
+	SessionKind string `json:"sessionKind"`
+	// TargetType is what the notification is ABOUT. Empty = "session", which is what
+	// every event was until workspace-level ones appeared (arch-residue), so old
+	// agents talking to a new Control Plane keep their meaning. Set it explicitly for
+	// anything that is not a session: an empty SessionName under the default target
+	// produces a notification pointing at a session the Console cannot open.
+	TargetType  string         `json:"targetType,omitempty"`
 	DisplayName string         `json:"displayName"`
 	CreatedAt   string         `json:"createdAt"`
 	Payload     map[string]any `json:"payload"`

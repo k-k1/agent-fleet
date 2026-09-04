@@ -1,7 +1,7 @@
 # buildMux() が登録する (method, path) の全件。生成物 —— 手で編集しない。
 # 更新: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .
 # ANY = メソッド指定なしの登録。
-# count: 247
+# count: 249
 GET /agents/memory/diff
 GET /agents/memory/export
 POST /agents/memory/import
@@ -120,6 +120,8 @@ DELETE /connections/svn
 GET /copilot/usage
 GET /env/jdk-install
 POST /env/jdk-install
+GET /env/node-install
+POST /env/node-install
 GET /env/tool-versions
 GET /env/toolchains
 PUT /env/toolchains

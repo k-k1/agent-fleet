@@ -1,7 +1,7 @@
 # buildMux() が登録する (method, path) の全件。生成物 —— 手で編集しない。
 # 更新: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = メソッド指定なしの登録。AF_MCP_ENABLED=true で撮っている。
-# count: 435
+# count: 437
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
@@ -182,6 +182,8 @@ GET /api/egress/check
 POST /api/egress/propose
 GET /api/env/jdk-install
 POST /api/env/jdk-install
+GET /api/env/node-install
+POST /api/env/node-install
 GET /api/env/tool-versions
 GET /api/env/toolchains
 PUT /api/env/toolchains

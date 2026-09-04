@@ -54,10 +54,13 @@ func notificationToDTO(n store.Notification) notificationDTO {
 }
 
 type agentNotification struct {
-	ID          string         `json:"id"`
-	Kind        string         `json:"kind"`
-	SessionName string         `json:"sessionName"`
-	SessionKind string         `json:"sessionKind"`
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	SessionName string `json:"sessionName"`
+	SessionKind string `json:"sessionKind"`
+	// Empty = "session" (see drainAgentOutbox): the Agent only learned to send
+	// workspace-level events later, and old Agents must keep their meaning.
+	TargetType  string         `json:"targetType"`
 	DisplayName string         `json:"displayName"`
 	CreatedAt   string         `json:"createdAt"`
 	Payload     map[string]any `json:"payload"`
@@ -102,8 +105,18 @@ func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtim
 	acked := make([]string, 0, len(body.Notifications))
 	for _, in := range body.Notifications {
 		payload, _ := json.Marshal(in.Payload)
+		// The Agent's outbox was session-only until workspace-level events appeared
+		// (arch-residue). An empty targetType therefore has to keep meaning "session",
+		// or an older Agent's events would all become untargeted after a CP upgrade.
+		// ⚠️ For a non-session target, leave id/kind empty rather than passing the
+		// (empty) session name through: the Console guards on target.type before
+		// navigating, and a "session" target with a blank id is one it cannot open.
+		targetType, targetID, targetKind := "session", in.SessionName, in.SessionKind
+		if in.TargetType != "" && in.TargetType != "session" {
+			targetType, targetID, targetKind = in.TargetType, "", ""
+		}
 		n := store.Notification{EventID: in.ID, MembershipID: membershipID, Kind: in.Kind,
-			TargetType: "session", TargetID: in.SessionName, TargetKind: in.SessionKind,
+			TargetType: targetType, TargetID: targetID, TargetKind: targetKind,
 			DisplayName: in.DisplayName, Payload: string(payload), CreatedAt: in.CreatedAt}
 		if n.CreatedAt == "" {
 			n.CreatedAt = store.NowTS()

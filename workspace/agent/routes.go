@@ -297,6 +297,10 @@ func buildMux() *http.ServeMux {
 	// source of a JDK at all on ECS, where /usr/lib/jvm is empty.
 	mux.HandleFunc("POST /env/jdk-install", handleJDKInstall)
 	mux.HandleFunc("GET /env/jdk-install", handleJDKInstall)
+	// node の同型。⚠️ JDK と同じ穴が node にも開いていた（未導入の版を選ぶと黙って
+	// 何も起きない）——docs/decisions/0068 と node_install.go 冒頭。
+	mux.HandleFunc("POST /env/node-install", handleNodeInstall)
+	mux.HandleFunc("GET /env/node-install", handleNodeInstall)
 	// バンドルツールの版レポート（実効 / 焼き込み / ~/.local override / ビルド時ピン）。
 	mux.HandleFunc("GET /env/tool-versions", handleToolVersions)
 

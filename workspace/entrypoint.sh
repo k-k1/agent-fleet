@@ -74,6 +74,34 @@ af_arch_was="$(cat "$AF_ARCH_STAMP" 2>/dev/null || true)"
 if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
   echo "[entrypoint] arch: この home は $af_arch_was で作られ、いま $af_arch_now の上に居ます"
   echo "[entrypoint] arch: アーキ依存の導入物を入れ直します（初回は数分かかることがあります）"
+  # 🔴 消す前に、利用者自身の npm グローバルを版つきで控える。`~/.local/lib/node_modules`
+  # には製品の CLI と利用者の `npm i -g` が同居していて、下のループはディレクトリごと
+  # 消す（native addon が壊れている以上それが正しい）。しかし boot-install が戻すのは
+  # **製品の 4 本だけ**なので、控えないと利用者の分だけが黙って消える。復旧は最後の
+  # af-arch-repair が行う。
+  mkdir -p "$HOME/.local/share/agent-fleet" 2>/dev/null || true
+  node -e '
+    const fs = require("fs"), path = require("path");
+    const root = process.argv[1];
+    // boot-install が自分で戻すものは控えない（二重導入になる）。
+    const skip = new Set(["@anthropic-ai/claude-code", "opencode-ai", "@openai/codex", "@github/copilot"]);
+    const out = [];
+    const add = (rel) => {
+      try {
+        const p = JSON.parse(fs.readFileSync(path.join(root, rel, "package.json"), "utf8"));
+        if (p.name && p.version && !skip.has(p.name)) out.push(p.name + "@" + p.version);
+      } catch {}
+    };
+    let ents = [];
+    try { ents = fs.readdirSync(root); } catch { process.exit(0); }
+    for (const e of ents) {
+      if (e.startsWith("@")) {              // スコープ付きは 1 段下りる
+        try { for (const s of fs.readdirSync(path.join(root, e))) add(e + "/" + s); } catch {}
+      } else if (e !== ".bin") add(e);
+    }
+    if (out.length) process.stdout.write(out.join("\n") + "\n");
+  ' "$HOME/.local/lib/node_modules" > "$HOME/.local/share/agent-fleet/arch-repair-npm" 2>/dev/null || true
+  [ -s "$HOME/.local/share/agent-fleet/arch-repair-npm" ] || rm -f "$HOME/.local/share/agent-fleet/arch-repair-npm"
   for rel in \
     .local/bin/claude .local/bin/codex .local/bin/opencode .local/bin/copilot \
     .local/bin/rtk .local/bin/agy .local/bin/.agy.version \
@@ -91,18 +119,84 @@ if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_ar
   # 巻き込まないため）。
   if [ -L "$HOME/.local/bin/agent" ]; then rm -f "$HOME/.local/bin/agent"; fi
   # JDK は名前にアーキが入っている（temurin-<major>-jdk-<arch>）ので、他アーキの分だけ
-  # 落とせばよい。入れ直しは Console の toolchains / install-jdk の仕事。
+  # 落とせばよい。**入れ直しはこの同じ起動の中で自動的に済む**——下の java ブロックが
+  # 選択中の版を探し、`find_jh` は他アーキのディレクトリを採らないので「無い」と判定して
+  # `workspace-agent install-jdk` を呼ぶ。利用者の操作は要らない。
+  # ⚠️ 戻るのは **toolchains.json で選択中の版だけ**。選択していないのに入れてあった版は
+  #    ここで消えたまま戻らない（必要なら Console のツールチェーンで入れ直す）。
   for d in "$HOME"/.local/share/agent-fleet/jvm/temurin-*-jdk-*; do
     [ -d "$d" ] || continue
     case "$d" in *-jdk-"$af_arch_now") continue ;; esac
     rm -rf "$d" && echo "[entrypoint] arch: 削除 ${d#"$HOME"/}"
   done
-  echo "[entrypoint] arch: ⚠️ ~/repos 配下の node_modules / target / .venv と、自分で ~/.local へ入れた"
-  echo "[entrypoint] arch:    ツールは $af_arch_was 用のままです。使う前に入れ直してください（~/repos は触っていません）"
+  # 復旧そのものは起動の最後（node / java / go の選択が済んでから）に回す。ここで走らせると
+  # 選択前の python / node で入れ直すことになる。印だけ置いて af-arch-repair に渡す。
+  AF_ARCH_REPAIR_FROM="$af_arch_was"
 fi
 if [ -n "$af_arch_now" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
   mkdir -p "$(dirname "$AF_ARCH_STAMP")" 2>/dev/null || true
   printf '%s\n' "$af_arch_now" > "$AF_ARCH_STAMP" 2>/dev/null || true
+fi
+
+# --- ベースイメージの python の major が動いたときの通知（docs/decisions/0068 決定 4） ---
+# 上のアーキ刻印と同じ仕掛けだが、**何も消さない**ところが決定的に違う。
+#
+# `pip install --user` の産物は `~/.local/lib/python<major>/site-packages` にあり、python が
+# 3.11 → 3.13 に動くと**消えるのではなく見えなくなる**（新しい python は別のディレクトリを
+# 見る）。拡張は `…cpython-311-….so` の ABI タグ付きなので寄せても駄目で、入れ直しが要る。
+# さらに `~/.local/bin` のランチャは `#!/usr/bin/python3` なので**残って起動し**、新しい
+# python で即 ModuleNotFoundError になる——症状は「昨日まで動いていた」で、原因はどこにも
+# 出ない。だから知らせる。
+#
+# ⚠️ 入れ直しはこちらでやらない。起動時にネットワークを要求し、数分かかり、黙って別の
+#    バージョンを解決するからで、これは上のアーキ自己修復が「利用者が自分で入れた
+#    `~/.local` のツールは消さない」と決めているのと同じ線引きである。
+# ⚠️ これは**アーキのイベントではない**。amd64 のメンバーも全員が新イメージの初回起動で
+#    1 回踏むので、上のブロックには原理的に乗らない。
+af_py_now="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+AF_PY_STAMP="$HOME/.local/share/agent-fleet/python-major"
+af_py_was="$(cat "$AF_PY_STAMP" 2>/dev/null || true)"
+af_py_changed=0
+if [ -n "$af_py_now" ] && [ -n "$af_py_was" ] && [ "$af_py_was" != "$af_py_now" ]; then
+  af_py_changed=1
+  echo "[entrypoint] python: ベースの python が $af_py_was から $af_py_now に上がりました"
+  af_py_old_sp="$HOME/.local/lib/python$af_py_was/site-packages"
+  af_py_pkgs=""
+  if [ -d "$af_py_old_sp" ]; then
+    # dist-info のディレクトリ名は `<name>-<version>.dist-info`。名前だけを取り出す。
+    # ⚠️ dist-info 側の名前は `-` が `_` に正規化されている（cfn-lint → cfn_lint）ので
+    #    PEP 503 の正準形（`-`）へ戻す。そのまま出すと pip には通るが、利用者が
+    #    PyPI で検索したときに見つからない名前を見せることになる。
+    for d in "$af_py_old_sp"/*.dist-info; do
+      [ -d "$d" ] || continue
+      b="$(basename "$d" .dist-info)"
+      af_py_pkgs="$af_py_pkgs $(printf '%s' "${b%-*}" | tr '_.' '--')"
+    done
+  fi
+  if [ -n "$af_py_pkgs" ]; then
+    # shellcheck disable=SC2086 # 意図的な word splitting（前後の空白を潰して 1 行にする）
+    echo "[entrypoint] python: ⚠️ 次は python$af_py_was 用のまま残っており、$af_py_now からは見えません:"
+    echo "[entrypoint] python:   $(echo $af_py_pkgs)"
+    echo "[entrypoint] python:   入れ直す: pip install --user --force-reinstall $(echo $af_py_pkgs)"
+    echo "[entrypoint] python:   （古い方は消していません。要らなければ rm -rf $af_py_old_sp）"
+  fi
+  if [ -d "$HOME/.local/share/uv/tools" ]; then
+    af_uv_tools=""
+    for d in "$HOME"/.local/share/uv/tools/*; do
+      [ -d "$d" ] || continue
+      af_uv_tools="$af_uv_tools $(basename "$d")"
+    done
+    if [ -n "$af_uv_tools" ]; then
+      echo "[entrypoint] python: ⚠️ uv tool も同じです（venv は起動できるのに import だけ落ちます）:"
+      echo "[entrypoint] python:   $(echo $af_uv_tools)"
+      echo "[entrypoint] python:   入れ直す: uv tool upgrade --reinstall --all"
+    fi
+  fi
+  echo "[entrypoint] python: ⚠️ ~/repos 配下の .venv も python$af_py_was のままです（~/repos は触っていません）"
+fi
+if [ -n "$af_py_now" ] && [ "$af_py_was" != "$af_py_now" ]; then
+  mkdir -p "$(dirname "$AF_PY_STAMP")" 2>/dev/null || true
+  printf '%s\n' "$af_py_now" > "$AF_PY_STAMP" 2>/dev/null || true
 fi
 
 # claude records installMethod="native" and self-checks its launcher at
@@ -867,7 +961,7 @@ if [ -n "$GO_VER" ] && [ "$GO_VER" != "system" ]; then
   fi
 fi
 
-# node: install/activate the selected version via nvm (home volume → persists).
+# node: install/activate the selected version (home volume → persists).
 # "system" / empty keeps the image's base node.
 if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
   export NVM_DIR="$HOME/.nvm"
@@ -876,13 +970,50 @@ if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
     curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash >/dev/null 2>&1 \
       || echo "[entrypoint] WARN: nvm install failed (continuing)"
   fi
+  # ⚠️ 版を入れるのは nvm ではなく `workspace-agent install-node` にした。理由は 2 つ:
+  # ① nvm 自体が入らない環境（GitHub へ出られない等）でも選択が効くこと、② Console の
+  # 「導入」ボタンと**同じ経路**であること——JDK で同型の穴（選んだのに入らない）を直した
+  # のと同じ形である（docs/decisions/0068）。置き場は nvm と同じ
+  # ~/.nvm/versions/node/v<full> なので nvm とも共存する。導入済みなら即戻る。
+  # stdout に導入先の bin ディレクトリを返すので、それを PATH の先頭へ置く。
+  # ⚠️ ここで `ls | tail -1` に戻さないこと——それが辞書順で v22.9.0 を掴んだ元のバグで、
+  #    install-node は数値比較で解決している（env_toolchains.go nodeBinFor と同じ規則）。
+  af_node_bin="$(workspace-agent install-node "$NODE_VER" 2>/dev/null || true)"
+  if [ -n "$af_node_bin" ] && [ -x "$af_node_bin/node" ]; then
+    export PATH="$af_node_bin:$PATH"
+  fi
   if [ -s "$NVM_DIR/nvm.sh" ]; then
     # shellcheck disable=SC1091
     . "$NVM_DIR/nvm.sh"
-    nvm install "$NODE_VER" >/dev/null 2>&1 && nvm alias default "$NODE_VER" >/dev/null 2>&1
+    nvm alias default "$NODE_VER" >/dev/null 2>&1
     nvm use "$NODE_VER" >/dev/null 2>&1
-    echo "[entrypoint] node $(node -v 2>/dev/null)"
   fi
+  # ⚠️ 選択した版になったかを必ず突き合わせる。導入も `nvm use` も失敗すると `node -v` は
+  # **イメージの素の node** を答える。突き合わせずに版を出していたので、ログは成功に見える
+  # のに選択と違う node が走っている、という状態が無言で通っていた。
+  af_node_now="$(node -v 2>/dev/null)"
+  case "${af_node_now#v}" in
+    "${NODE_VER#v}" | "${NODE_VER#v}".*) echo "[entrypoint] node $af_node_now" ;;
+    *) echo "[entrypoint] WARN: node $NODE_VER を選択しましたが、いま走っているのは ${af_node_now:-不明} です（導入に失敗？）" ;;
+  esac
 fi
+
+# --- アーキ変更の自動復旧（利用者自身の導入物）------------------------------------
+# ここまで来ていれば node / java / go の選択は済んでいるので、入れ直しは**選択された
+# ツールチェーンで**行われる。JDK と node（選択中の版）は既にそれぞれのブロックが自力で
+# 戻しているので、残っているのは利用者自身が入れたもの＝af-arch-repair の担当。
+# ⚠️ python の major も同時に動いた起動では pip の入れ直しをさせない（同じ版が新しい
+#    python 用に存在するとは限らず、黙って別バージョンに解決される）。通知だけに落とす。
+if [ -n "${AF_ARCH_REPAIR_FROM:-}" ] || [ -s "$HOME/.local/share/agent-fleet/arch-repair-npm" ]; then
+  AF_REPAIR_PY=$([ "${af_py_changed:-0}" = 1 ] && echo 0 || echo 1) \
+    af-arch-repair "${AF_ARCH_REPAIR_FROM:-?}" "$af_arch_now" || true
+fi
+# 直せなかった分（~/repos の生成物・自前バイナリ）を利用者に届く場所へ出す。
+# ⚠️ ここまでの [entrypoint] / [arch-repair] の出力はコンテナの stdout ＝運用者の
+#    docker logs にしか出ない。利用者に見せる経路は無いので、通知にしないと
+#    「Exec format error だけが原因不明で出る」が続く（docs/decisions/0068 決定 4）。
+# 残骸が無ければ何もしない。残骸の**内容**をキーにするので、同じままなら増えず、
+# 直せば自然に消える（arch_residue.go）。
+workspace-agent notify-arch-residue "${AF_ARCH_REPAIR_FROM:-}" || true
 
 exec "$@"

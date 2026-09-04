@@ -1,7 +1,7 @@
 # Console / CP が読む代表的な DTO の JSON キー集合。生成物 —— 手で編集しない。
 # 更新: cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .
 # 形式: <型>.<キーパス> <JSON上の型>[,omitempty]（[]=配列 / raw=素通し JSON）
-# count: 79
+# count: 80
 Repo.ahead number
 Repo.behind number
 Repo.branch string
@@ -39,6 +39,7 @@ notice.Event.kind string
 notice.Event.payload object
 notice.Event.sessionKind string
 notice.Event.sessionName string
+notice.Event.targetType string,omitempty
 resources.Stats.cpu_pct number,omitempty
 resources.Stats.disk_total number,omitempty
 resources.Stats.disk_used number,omitempty

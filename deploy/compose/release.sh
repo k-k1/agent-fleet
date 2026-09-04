@@ -49,6 +49,15 @@ WS_IMAGE="$REGISTRY/workspace:$VERSION"
 # Distribution default is lean (no baked CLIs). BAKE_AGENT_CLIS=1 restores the
 # fully-baked build.
 BAKE_AGENT_CLIS="${BAKE_AGENT_CLIS:-0}"
+# Size-driven knob, independent of the licence-driven one above: 0 skips chromium /
+# CJK fonts / Go / awscli / the ops MCP servers and installs only the runtime
+# libraries the on-demand chromium needs. The native lean rootfs is the real consumer
+# (deploy/release/build.sh sets it), and until now that was the ONLY place this branch
+# was ever built — so nothing in CI exercised it and a change that breaks only that
+# branch shipped green. Exposed here so dev-image.yml can bake it on demand
+# (docs/decisions/0068 決定 7; the Debian 13 move broke exactly this branch via the
+# t64 package renames). Default 1 = unchanged behaviour for every existing caller.
+BAKE_OPTIONAL_TOOLS="${BAKE_OPTIONAL_TOOLS:-1}"
 # Which CPU architectures the WORKSPACE image is built for (docs/log/70 §70.9). Empty =
 # the host's, which is what every release so far has published. Set to
 # "linux/amd64,linux/arm64" to publish one tag holding both — ECS and docker then pull
@@ -142,17 +151,19 @@ if [ "$DO_BUILD" = 1 ]; then
       echo "ERROR: WS_PLATFORMS needs --push (a manifest list cannot be loaded into the local docker)" >&2
       exit 1
     fi
-    echo "==> buildx $WS_IMAGE (BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS, platforms=$WS_PLATFORMS) -> pushed"
+    echo "==> buildx $WS_IMAGE (BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS, BAKE_OPTIONAL_TOOLS=$BAKE_OPTIONAL_TOOLS, platforms=$WS_PLATFORMS) -> pushed"
     docker buildx build --platform "$WS_PLATFORMS" --push -t "$WS_IMAGE" \
       --build-arg "VERSION=$VERSION" \
       --build-arg "BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS" \
+      --build-arg "BAKE_OPTIONAL_TOOLS=$BAKE_OPTIONAL_TOOLS" \
       --provenance=false \
       "$ROOT/workspace"
   else
-    echo "==> build $WS_IMAGE (BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS)"
+    echo "==> build $WS_IMAGE (BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS, BAKE_OPTIONAL_TOOLS=$BAKE_OPTIONAL_TOOLS)"
     docker build -t "$WS_IMAGE" \
       --build-arg "VERSION=$VERSION" \
       --build-arg "BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS" \
+      --build-arg "BAKE_OPTIONAL_TOOLS=$BAKE_OPTIONAL_TOOLS" \
       "$ROOT/workspace"
   fi
   rm -rf "$DOCS_STAGE"

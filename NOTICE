@@ -41,9 +41,9 @@ distribution). Proprietary agent CLIs (Claude Code, GitHub Copilot CLI,
 Antigravity CLI) are NOT bundled — deployments fetch them directly from their
 official distribution channels at first start (boot-install).
 
-Base system and utilities (Debian GNU/Linux, via the node:22-bookworm images):
+Base system and utilities (Debian GNU/Linux, via the node:22-trixie images):
   Debian packages under their respective licenses, including:
-  git (GPL-2.0), git-lfs (MIT), subversion (Apache-2.0), tmux (ISC),
+  git (GPL-2.0), git-lfs (MIT), git-delta (MIT), subversion (Apache-2.0), tmux (ISC),
   vim (Vim license), curl (curl license), wget (GPL-3.0), OpenSSH client
   (BSD-style), GnuPG (GPL-3.0), ripgrep (MIT), fd-find (MIT/Apache-2.0),
   bat (MIT/Apache-2.0), jq (MIT), htop (GPL-2.0), procps (GPL-2.0/LGPL-2.1),
@@ -95,7 +95,7 @@ Fonts installed on demand by the native lean rootfs (install-chromium):
 Source code availability: components licensed under the GPL/LGPL family are
 unmodified Debian packages; their corresponding sources are available from the
 Debian archive (https://www.debian.org / `apt-get source <pkg>` against the
-bookworm suite recorded in the image). The statically linked git and bubblewrap
+trixie suite recorded in the image). The statically linked git and bubblewrap
 binaries in the native package are built unmodified from the upstream release
 tarballs at the exact versions pinned in deploy/release/native/Dockerfile.tools
 (those tarballs are the corresponding source). On written request to the
