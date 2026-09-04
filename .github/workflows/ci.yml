@@ -178,6 +178,22 @@ jobs:
           bash -n workspace/entrypoint.sh
           ./deploy/local/keep-relocate-test.sh
 
+  # 配備物（deploy/aws/ecs）は **実 AWS でしか全体は動かない**が、動かない理由で
+  # 何も検査しないと、壊れたことに気付くのが「立て直せなかった日」になる。ここでは
+  # `aws` / `crane` を差し替えて踏める分岐＝**控えの復旧点まわり**だけを見る
+  # （何を測っていないかはスクリプトの冒頭に書いてある）。CFN は 1 度も呼ばない＝課金 0。
+  deploy-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: capture / teardown の復旧点まわり
+        run: ./deploy/aws/ecs/capture-restore-test.sh
+      # ⚠️ この 1 本は**既にある検査**で、いままで release-gate.yml でしか走っていなかった
+      # （＝撤収の順序を壊した PR は、リリースの日まで緑に見える）。同じ偽 aws の上で
+      # 5 秒なので、PR ごとにも回す。**中身は 1 行も変えていない。**
+      - name: 撤収／立ち上げの順序（release-gate と同じ 1 本）
+        run: ./deploy/local/ecs-lifecycle-stub-test.sh
+
   console:
     runs-on: ubuntu-latest
     defaults:
