@@ -1,6 +1,7 @@
 package chatx
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,10 +16,16 @@ import (
 
 // withTempHome points HOME at a temp dir so the fstore/conversation stores write
 // under the test's own tree (mirrors the other handler tests' pattern).
+//
+// 🔥 待ち手を積む位置がすべて。`t.Cleanup` は LIFO なので、**`t.Setenv` の後**に積んだ
+// この待ちが HOME 復帰より先に走る（前に積むと復帰の後＝手遅れ）。待たずに return すると
+// HandleChatReport が投げた配送 goroutine が**復帰後の実 HOME**へ通知を書き、利用者の
+// Console に幽霊通知が出る（chat_report.go の interimDeliveries を参照）。
 func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Cleanup(WaitInterimDeliveries)
 	return dir
 }
 
@@ -470,6 +477,78 @@ func TestPlanReportInterimKeepsArm(t *testing.T) {
 	}
 	if !SessionReportPending(m.Name) {
 		t.Fatal("interim plan report must NOT consume the arm")
+	}
+}
+
+// TestInterimDeliveryIsAwaitable pins the seam that keeps a test from writing into the
+// USER'S real state: HandleChatReport の配送は goroutine なので、テストが待たずに return
+// すると `t.Setenv("HOME")` の復帰後に `notice.Put` が走り、通知が**実 HOME** の
+// notification-outbox へ落ちる（2026-09-04、利用者の Console に「プラン検証」の幽霊通知が
+// 出た。押しても消えた temp HOME の会話を指すので「会話が見つかりません」）。
+//
+// だから検査は**ポーリングしない**: WaitInterimDeliveries から戻った時点で、会話への追記も
+// 通知の書き出しも temp HOME 側で終わっていること。待ちの継ぎ目を外すと（Add/Done を消す）
+// ここが即座に落ちる＝変異が検出できる。
+func TestInterimDeliveryIsAwaitable(t *testing.T) {
+	home := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json"),
+		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conv := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
+	if err := SaveConv(conv); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: "slot46", Dir: t.TempDir(), Kind: session.KindClaude, Title: "配送待ち"}
+	session.WriteMeta(m)
+	AddInstruction(m.Name, conv.ID, "operator")
+
+	req := httptest.NewRequest(http.MethodPost, "/chat/report",
+		strings.NewReader(`{"name":"slot46","kind":"question"}`))
+	rec := httptest.NewRecorder()
+	HandleChatReport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	WaitInterimDeliveries()
+
+	// ① 通知が temp HOME のアウトボックスに居る（＝実 HOME へ漏れていない）。
+	outbox := filepath.Join(home, ".config", "agent-fleet", "notification-outbox")
+	ents, err := os.ReadDir(outbox)
+	if err != nil || len(ents) != 1 {
+		t.Fatalf("待ちから戻った時点で通知が %s に無い (err=%v, 件数=%d)", outbox, err, len(ents))
+	}
+	b, err := os.ReadFile(filepath.Join(outbox, ents[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ev struct {
+		Kind        string            `json:"kind"`
+		DisplayName string            `json:"displayName"`
+		Payload     map[string]string `json:"payload"`
+	}
+	if err := json.Unmarshal(b, &ev); err != nil {
+		t.Fatal(err)
+	}
+	if ev.Kind != "session-report" || ev.DisplayName != m.Title || ev.Payload["conversation_id"] != conv.ID {
+		t.Fatalf("通知の中身 = %+v（宛先の会話 %s を指していない）", ev, conv.ID)
+	}
+	// ② 会話への追記も終わっている。
+	c, err := LoadConv(conv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reports := 0
+	for i := range c.Messages {
+		if c.Messages[i].Role == "report" {
+			reports++
+		}
+	}
+	if reports != 1 {
+		t.Fatalf("待ちから戻った時点の報告メッセージ = %d 件, want 1", reports)
 	}
 }
 

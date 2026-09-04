@@ -31,6 +31,16 @@ export function notificationKindLabel(kind: string): string {
   return key ? t(key) : kind;
 }
 
+// notificationRowSubtitle は通知センターの行の副題。既定は displayName（多くの kind では
+// セッションの表示名）だが、**セッション報告だけは行き先が会話**なので「誰から → どの会話へ」
+// まで出す。payload に会話名が乗っているのに displayName しか出していなかった間、行からは
+// どの会話宛の報告か分からず、押して初めて（消えていれば）分からないまま行き止まった。
+export function notificationRowSubtitle(n: NotificationWordingInput): string {
+  const conv = typeof n.payload.conversationTitle === "string" ? n.payload.conversationTitle : "";
+  if (n.kind === "session-report" && conv) return `${n.displayName} → ${conv}`;
+  return n.displayName;
+}
+
 // Notification wording is deliberately browser-state free: the center, desktop
 // delivery, TTS replay, and node tests must all resolve the same localized text.
 export interface NotificationWordingInput {

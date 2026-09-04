@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
@@ -398,7 +399,11 @@ func HandleChatReport(w http.ResponseWriter, r *http.Request) {
 	// 絞ると2問目にオペレーターが答えられなくなる。
 	if body.Kind == "question" || body.Kind == "plan-approval" {
 		for _, conv := range instrConvs(open) {
-			go deliverSessionReport(body.Name, conv, body.Kind, body.Reason)
+			interimDeliveries.Add(1)
+			go func(conv string) {
+				defer interimDeliveries.Done()
+				deliverSessionReport(body.Name, conv, body.Kind, body.Reason)
+			}(conv)
 		}
 		markInstrInterim(body.Name, body.Kind, time.Now())
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": true, "interim": true})
@@ -407,6 +412,26 @@ func HandleChatReport(w http.ResponseWriter, r *http.Request) {
 	reportRec.hint(body.Name, body.Kind, body.Reason)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false, "hinted": true})
 }
+
+// interimDeliveries counts the detached interim-delivery goroutines spawned above.
+// 本番では誰も待たない（投げっぱなしが正しい）が、**テストは待たないと実環境を壊す**。
+//
+// 🔥 実際に起きたこと（2026-09-04）: `TestPlanReportInterimKeepsArm` は
+// `t.Setenv("HOME", t.TempDir())` で隔離しているのに、**利用者の Console に本物の通知**
+// 「セッションから報告が届きました／プラン検証」が出た。テストは「会話に報告が載った」
+// のを見て return するが、goroutine はその後 `notice.Put` へ進む — そのときには
+// `t.Setenv` の復帰が終わっていて、`paths.AgentConfigDir()` は**実 `~/.config/agent-fleet`**
+// を返す。落ちた通知の `conversation_id` は消えた temp HOME の会話を指すので、押しても
+// 「会話が見つかりません」にしかならない幽霊が CP 側に 7 日残る（ブリッジ設定があれば
+// Slack/Discord へも飛ぶ）。実測: `-race -count=100` で outbox 11 件・bridge-queue 13 件。
+//
+// なので待てるようにする。待ち手は `t.Setenv` より**後**に `t.Cleanup` を積むこと
+// （Cleanup は LIFO ＝ HOME 復帰より先に走る）。同型の罠が t.TempDir() の掃除にもある。
+var interimDeliveries sync.WaitGroup
+
+// WaitInterimDeliveries blocks until every in-flight interim delivery has finished.
+// テスト専用の継ぎ目（package main / sessionx のテストも HandleChatReport を叩くので公開）。
+func WaitInterimDeliveries() { interimDeliveries.Wait() }
 
 // deliverSessionReport is the interim (non-consuming) delivery: 会話に追記し、通知
 // センターへ流し、許可されていればオペレーターの自動ターンを回す。呼び出し側が

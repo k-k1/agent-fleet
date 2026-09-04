@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -559,9 +560,28 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// Genuine Console-typed input (not an operator/MCP injection): mirror it into
 		// the session's Discord thread so the thread reflects both directions (docs/log/37
 		// Fix ②). Best-effort + async — never blocks or fails the input.
-		go bridge.MirrorUserInput(name, body.Prompt)
+		mirrorUserInputAsync(name, body.Prompt)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
+}
+
+// inputMirrors counts the detached Discord/Slack ミラー goroutine。本番では誰も待たない
+// （投げっぱなしが正しい — 転記が遅くても入力は返す）が、**テストは待たないと実環境を
+// 触る**: ミラーは secrets.Load() で資格情報ストアを読むので、`t.Setenv("HOME")` が
+// 復帰したあとに走ると利用者の実 `~/.config/agent-fleet` を開き、`secrets.enc.lock` を
+// 残す（実測）。ブリッジが設定されていれば、テストの入力が本物のスレッドへ転記されうる。
+// 待ち手は withTempHome の t.Setenv より**後**に積む（Cleanup は LIFO）。
+var inputMirrors sync.WaitGroup
+
+// WaitInputMirrors blocks until every in-flight input mirror has finished（テスト専用）。
+func WaitInputMirrors() { inputMirrors.Wait() }
+
+func mirrorUserInputAsync(name, prompt string) {
+	inputMirrors.Add(1)
+	go func() {
+		defer inputMirrors.Done()
+		bridge.MirrorUserInput(name, prompt)
+	}()
 }
 
 // writePeerErr maps a peer rejection (session_peer.go) onto its HTTP status. 4xx across
@@ -634,7 +654,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	case scheduleInjectionSource(source) != "":
 		// 報告 OFF の定時実行（TUI 側と同じ）— 台帳も Discord も無し。
 	default:
-		go bridge.MirrorUserInput(meta.Name, prompt) // docs/log/37 Fix ②: Console-input mirror
+		mirrorUserInputAsync(meta.Name, prompt) // docs/log/37 Fix ②: Console-input mirror
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name})
 }
