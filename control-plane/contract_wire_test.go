@@ -77,16 +77,16 @@ func cpContractFamilies() []contractFamily {
 			binding: ssmHostBinding,
 			tsPath:  "../console/src/types/session.ts",
 			tsName:  "SsmHost",
-			tsKeys:  keySet("id", "alias", "profileId", "region", "instanceId", "documentName", "accountId"),
-			tsOnly: map[string]string{
-				// 🔴 **実害のある穴**。`StartModal.tsx:185` の ssmCardSub が `h.accountId` を読み、
-				// 真なら「アカウント <id>」をカードの副題に出す。**ssmHostDTO は accountId を出さない**ので
-				// この分岐は常に偽＝**この表示は一度も出たことがない。**
-				// 兄弟の `ssmProfileDTO` が `accountId` を持つ（ssm.go:44）が、**別の実体**であり、
-				// 同じ関数は profile の label をわざわざ `ssmProfiles.find()` で引いている。
-				// **profile から引くのか host に載せるのかは設計判断。**
-				"accountId": "【穴】StartModal.tsx:185,686 が h.accountId を読んでカード副題を出すが、ssmHostDTO は出さない＝この表示は出ない。兄弟の ssmProfileDTO(ssm.go:44) が持つ",
-			},
+			tsKeys:  keySet("id", "alias", "profileId", "region", "instanceId", "documentName"),
+			// `accountId` の免除はここに在ったが、**穴を塞いだので外した**（2026-09-04）。
+			// この検査が見つけた実害バグ: `SsmHost.accountId` は宣言だけあって ssmHostDTO が
+			// 出さないので常に undefined ＝カード副題のアカウント表示が**一度も描かれていなかった**
+			// （optional なので型検査は鳴らない）。**アカウント id はホストではなくプロファイルの
+			// 属性**なので、Console 側を `ssmProfileDTO` から引く形に直し（StartModal.tsx の
+			// ssmAcctLabel）、死んでいた `SsmHost.accountId` の宣言を削った＝**ワイヤは不変**。
+			// 免除を外す前に逆検査が実際に赤くなること（「もう要らない——SsmHost から消えた」）を
+			// 確認済み。
+			tsOnly: map[string]string{},
 			goOnly: map[string]string{
 				"createdAt": "【穴】ssmHostDTO は出しているが Console の SsmHost に宣言が無い。",
 			},

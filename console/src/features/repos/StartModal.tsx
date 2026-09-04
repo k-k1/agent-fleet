@@ -52,6 +52,9 @@ type Stage = "place" | "clone" | "newdir" | "home" | "ssm";
 interface SsmProfile {
   id: string;
   label: string;
+  /** SSO アカウント id。**ホストではなくプロファイルの属性**（control-plane の
+   * ssmProfileDTO が持つ）。ホスト側のカード副題もここから引く —— 下記 ssmAcctLabel。 */
+  accountId: string;
 }
 
 interface SsmInstance {
@@ -180,9 +183,20 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   // keep the dropdown for the long tail.
   const SSM_CARD_ALL_MAX = 8;
   const SSM_CARD_TOP = 6;
-  const ssmProfileLabel = (pid: string) => ssmProfiles?.find((p) => p.id === pid)?.label || "";
+  // ホストが参照するプロファイルの実体。ラベルもアカウント id も**ホストではなく
+  // プロファイルの属性**なので、同じ 1 箇所から引く。
+  // 🔴 以前ここは `h.accountId` を読んでいたが、**ssmHostDTO は accountId を出さない**ので
+  // 常に undefined ＝カード副題のアカウント表示は一度も描かれていなかった（optional なので
+  // 型検査も鳴らない）。ワイヤは変えず、既にプロファイルを引いているこの経路に相乗りする。
+  const ssmProfileOf = (pid: string) => ssmProfiles?.find((p) => p.id === pid);
+  const ssmProfileLabel = (pid: string) => ssmProfileOf(pid)?.label || "";
+  // 未取得（ssmProfiles === null）のあいだは空に落ちる —— ラベルの従来の劣化挙動と同じ。
+  const ssmAcctLabel = (pid: string) => {
+    const acct = ssmProfileOf(pid)?.accountId;
+    return acct ? tr("start.ssm_acct", { id: acct }) : "";
+  };
   const ssmCardSub = (h: SsmHost) =>
-    [ssmProfileLabel(h.profileId), h.accountId ? tr("start.ssm_acct", { id: h.accountId }) : "", h.instanceId].filter(Boolean).join(" · ");
+    [ssmProfileLabel(h.profileId), ssmAcctLabel(h.profileId), h.instanceId].filter(Boolean).join(" · ");
   const ssmAllAsCards = (ssmHosts?.length || 0) <= SSM_CARD_ALL_MAX;
   const rankedSsmHosts = [...visibleSsmHosts].sort((a, b) => {
     const ua = settings.ssmHostUsage?.[a.id];
@@ -680,12 +694,15 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                   {!ssmAllAsCards && (
                     <select value={ssmHostId} onChange={(e) => setSsmHostId(e.target.value)}>
                       <option value="">{tr("start.select_host")}</option>
-                      {visibleSsmHosts.map((h) => (
-                        <option key={h.id} value={h.id}>
-                          {h.alias} — {h.instanceId}
-                          {h.accountId ? ` (${tr("start.ssm_acct", { id: h.accountId })})` : ""}
-                        </option>
-                      ))}
+                      {visibleSsmHosts.map((h) => {
+                        const acct = ssmAcctLabel(h.profileId); // カード副題と同じ経路（プロファイル側）
+                        return (
+                          <option key={h.id} value={h.id}>
+                            {h.alias} — {h.instanceId}
+                            {acct ? ` (${acct})` : ""}
+                          </option>
+                        );
+                      })}
                     </select>
                   )}
                   {visibleSsmHosts.length === 0 && <span className="ui-field-hint">{tr("start.no_matching_hosts")}</span>}
