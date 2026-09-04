@@ -12,6 +12,11 @@ import { clearDraft, readDraft } from "../../lib/draft.ts";
 
 const KEY = (repo: string): string | null => (repo ? "af.launch-prompt." + repo : null);
 
+// 添付（貼り付けた画像）の下書きの鍵。文章と同じくリポジトリ毎・同じ寿命だが、置き場は
+// IndexedDB（lib/attachDraft）— localStorage に画像のバイト列を置くと、設定や UI の
+// 覚え書きが同居している 5MB の枠をこれだけで使い切る。
+export const launchAttachKey = (repo: string): string | null => (repo ? "af.launch-attach." + repo : null);
+
 export function readLaunchPrompt(repo: string): string {
   return readDraft(KEY(repo));
 }

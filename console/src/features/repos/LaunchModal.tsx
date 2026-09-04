@@ -27,7 +27,8 @@ import { useEffortOptions } from "../../lib/agentModels.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
 import type { LaunchSectionKey } from "./launchPrefs.ts";
-import { useLaunchPrompt } from "./launchDraft.ts";
+import { launchAttachKey, useLaunchPrompt } from "./launchDraft.ts";
+import { makeAttachment, useAttachDraft } from "../../lib/attachDraft.ts";
 import { repoPromptTemplates } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
 import { api } from "../../core/api/client.ts";
@@ -195,12 +196,13 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // maxLength は打鍵にしか効かないので、流し込まれた値はここで作成 API の規則へ詰める —
   // さもないと「編集もできたのに起動だけ bad_title で落ちる」になる。
   const [title, setTitle] = useState(() => clampSessionTitle(initialTitle ?? ""));
-  // Pasted images awaiting the launch: raw File + an object URL for the chip preview.
+  // Pasted images awaiting the launch: the raw File + an object URL for the chip preview.
   // Uploaded only after the session is minted (in onStartWork), then referenced in the
   // first prompt. Agents without the imagePaste cap (shell/ssm) make paste a no-op.
-  const [images, setImages] = useState<{ file: File; url: string }[]>([]);
-  const imagesRef = useRef(images);
-  imagesRef.current = images;
+  // Persisted per repo like the prompt above (lib/attachDraft): closing the dialog to go
+  // look at a branch and coming back must not cost the screenshot that was pasted in.
+  const attach = useAttachDraft(launchAttachKey(repo));
+  const images = attach.items;
   const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null); // hidden ＋ picker (the phone path)
@@ -318,24 +320,17 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     if (!coarsePointer()) textRef.current?.focus({ preventScroll: true });
   }, []);
 
-  // Revoke every held preview URL when the modal unmounts (avoids leaking object URLs).
-  useEffect(() => () => imagesRef.current.forEach((x) => URL.revokeObjectURL(x.url)), []);
-
   // Switching to an agent without image support drops any staged images (they'd have
-  // nowhere to go). Runs only on that transition.
+  // nowhere to go) — including the persisted draft. Runs only on that transition.
   useEffect(() => {
-    if (!canPasteImage)
-      setImages((prev) => {
-        prev.forEach((x) => URL.revokeObjectURL(x.url));
-        return prev.length ? [] : prev;
-      });
+    if (!canPasteImage) attach.clear();
   }, [canPasteImage]);
 
   // Stage image File(s) as pending attachments (raw File + a preview URL). Actual upload
   // waits for the session (onStartWork). Shared by clipboard paste and the ＋ picker.
   const addImages = (files: File[]) => {
     if (!canPasteImage || !files.length) return;
-    setImages((prev) => [...prev, ...files.map((f) => ({ file: f, url: URL.createObjectURL(f) }))]);
+    attach.add(files.map((f) => makeAttachment(f)));
   };
 
   // Paste image(s) into the prompt. Non-image pastes fall through to the default (text).
@@ -359,11 +354,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     addImages(files);
   };
 
-  const removeImage = (i: number) =>
-    setImages((prev) => {
-      if (prev[i]) URL.revokeObjectURL(prev[i].url);
-      return prev.filter((_, idx) => idx !== i);
-    });
+  const removeImage = (i: number) => attach.remove(i);
 
   // {{repo}}/{{branch}}/{{path}} auto-embed from this repo's row context.
   const expand = (body: string) =>
@@ -403,7 +394,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       skipPermissions: hasPermChoice ? skipPerm : undefined,
       prompt: prompt.trim(),
       title: title.trim(),
-      images: canPasteImage ? images.map((x) => x.file) : [],
+      images: canPasteImage ? images.flatMap((x) => (x.file ? [x.file] : [])) : [],
       worktree,
       subdir,
       base: worktree ? wtBase : "",
@@ -411,9 +402,10 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       useExisting,
     });
     if (r?.ok) {
-      // 起動できた＝この文章は新しいセッションへ渡り切った。ここが下書きを捨てる唯一の
-      // 地点で、失敗（名前衝突など）で戻ってきたときは打った文章をそのまま残す。
+      // 起動できた＝この文章と添付は新しいセッションへ渡り切った。ここが下書きを捨てる
+      // 唯一の地点で、失敗（名前衝突など）で戻ってきたときは打った文章も添付も残す。
       clearPromptDraft();
+      attach.clear();
       onClose();
       return;
     }
@@ -576,7 +568,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
           {images.length > 0 && (
             <div className="mirror-attach">
               {images.map((im, i) => (
-                <div className="ma-chip" key={im.url}>
+                <div className="ma-chip" key={im.id}>
                   <img className="ma-thumb" src={im.url} alt="" />
                   <button type="button" className="ma-del" title={tr("common.delete")} onClick={() => removeImage(i)}>
                     <Icon name="close" />

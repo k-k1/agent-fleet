@@ -3,6 +3,8 @@
 // EXISTING branch out into the worktree instead (base=<branch>, no new branch,
 // use_existing). Those three fields going out wrong is the difference between
 // "start work on develop" and "silently fork a divergent develop".
+import "fake-indexeddb/auto";
+import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import { act } from "react";
@@ -36,6 +38,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { LaunchModal } = await import("./LaunchModal.tsx");
+const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 
 type Launch = (o: LaunchOpts) => Promise<LaunchResult>;
@@ -95,9 +98,31 @@ async function reopen(extra: { repo?: string; initialPrompt?: string } = {}): Pr
   act(() => root?.unmount());
   root = createRoot(host);
   await render(["claude"], extra);
+  await settle(); // 添付の下書きは IndexedDB から非同期に戻ってくる
 }
 
 const promptBox = () => must(document.querySelector<HTMLTextAreaElement>("textarea"), "最初のプロンプト textarea");
+// 添付チップ（貼り付け待ちの画像）。
+const chips = () => [...document.querySelectorAll(".mirror-attach .ma-chip")];
+
+// クリップボードから画像を貼る。jsdom には DataTransfer が無いので、ハンドラが読む
+// clipboardData だけを生のイベントに載せる（React は native event から読む）。
+async function pasteImage(name: string): Promise<void> {
+  const file = new File(["PNGBYTES"], name, { type: "image/png" });
+  const ev = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "clipboardData", {
+    value: { items: [{ kind: "file", type: "image/png", getAsFile: () => file }] },
+  });
+  await act(async () => {
+    promptBox().dispatchEvent(ev);
+  });
+  await settle();
+}
+
+// IndexedDB も React も、書き込み・読み出しが数マイクロタスク先で終わる。
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+}
 
 async function type(text: string): Promise<void> {
   const el = promptBox();
@@ -121,6 +146,10 @@ const launchedWith = (): LaunchOpts => onLaunch.mock.calls[0][0] as LaunchOpts;
 
 beforeEach(() => {
   localStorage.clear();
+  // 添付の下書きは IndexedDB（lib/attachDraft）。テスト毎に真っさらな DB と、そこへ
+  // 張り直した接続で始める。
+  globalThis.indexedDB = new IDBFactory();
+  resetAttachDraftDB();
   tree = { "repos/app": ["console", "workspace"], "repos/app/console": ["src"] };
   served = [
     { name: "main", unix: 3, current: true },
@@ -273,6 +302,42 @@ describe("LaunchModal branch mode", () => {
     await type("書きかけ");
     await reopen({ initialPrompt: "引き継ぎの本文" });
     expect(promptBox().value).toBe("引き継ぎの本文");
+  });
+
+  // 添付（貼り付けた画像）も文章と同じ寿命（lib/attachDraft）: 閉じても残り、起動できた
+  // ときだけ消える。ここが抜けていたのが元の不具合で、「場所を見に行って戻ったら貼った
+  // スクリーンショットだけ消えていた」— 文章は残るぶん、消えたことに気づきにくい。
+  it("keeps a pasted image per repo when the dialog is closed", async () => {
+    await render();
+    await pasteImage("shot.png");
+    expect(chips()).toHaveLength(1);
+    await reopen();
+    expect(chips()).toHaveLength(1);
+    expect(chips()[0].querySelector("img.ma-thumb")?.getAttribute("src")).toMatch(/^blob:/);
+
+    await reopen({ repo: "other" }); // 別のリポジトリには漏れない
+    expect(chips()).toHaveLength(0);
+  });
+
+  it("hands the restored image to the launch, then forgets it", async () => {
+    await render();
+    await pasteImage("shot.png");
+    await reopen(); // 一度閉じて開き直しても、起動に渡るのは同じファイル
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().images.map((f) => f.name)).toEqual(["shot.png"]);
+    await reopen();
+    expect(chips()).toHaveLength(0);
+  });
+
+  // 起動に失敗して戻ってきたときは、文章と同じく添付もそのまま要る。
+  it("keeps the pasted image when the launch did not happen", async () => {
+    onLaunch = vi.fn<Launch>(async () => ({ ok: false, conflict: "local" }));
+    await render();
+    await pasteImage("shot.png");
+    await click(byText("Start in a worktree"));
+    expect(chips()).toHaveLength(1);
+    await reopen();
+    expect(chips()).toHaveLength(1);
   });
 
   it("offers to use the colliding branch when a LOCAL name is taken", async () => {
