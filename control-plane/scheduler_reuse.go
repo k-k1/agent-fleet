@@ -363,6 +363,17 @@ func reuseMissingPolicy(sch store.Schedule) string {
 // reuseCreateTitle is the human-readable title for a reuse session the scheduler creates.
 // A pinned recreate adopts the operator's target name so the replacement is recognizable;
 // a managed session is titled from the label/id.
+//
+// The "定時: " prefix stays Japanese on purpose — do not "finish" it in an i18n sweep.
+// It is the only thing marking a managed session as schedule-owned in the session list,
+// which matters because rotation archives it (retireSession) and a session named only
+// "毎朝レビュー" gives the user no warning of that. The turn-level origin badge
+// (TurnSourceSchedule) covers the mirror, not the list. Translating the prefix in place
+// would freeze the language into a stored, user-renameable name — the write-time locale
+// resolution ADR 0033 rejected — and an English Console would still show the label in
+// whatever language the operator wrote it. Removing the prefix needs a session-level
+// origin field and a badge to replace it; until that exists, leaving it alone is the
+// decision (2026-09-05).
 func reuseCreateTitle(sch store.Schedule, pinned bool) string {
 	if pinned {
 		return sch.ReuseTarget
