@@ -767,16 +767,42 @@ func pidAlive(pid int, agentBin string) bool {
 		return false
 	}
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	if err != nil {
-		// No /proc (e.g. darwin dev host): the liveness signal alone has to do.
-		return true
+	return cmdlineIsAgent(b, err, agentBin, procfsPresent())
+}
+
+// cmdlineIsAgent turns one /proc/<pid>/cmdline read into the liveness verdict. Split out
+// because the interesting cases are the failures, and they are not reproducible on demand
+// against a real process (see the table test).
+//
+// The read happens AFTER Kill(pid, 0) said the pid exists, so an error means the entry
+// vanished in between — which on a host with /proc means the process was reaped, not that
+// its state is unknown. Answering "alive" there reports a dead agent as live, and it is
+// not hypothetical: Start reaps in the background (`go cmd.Wait()`), so every agent exit
+// has a window where the zombie is collected between those two calls. It cost a red CI
+// job on a test that asks "is the stopped agent gone yet".
+//
+// Measured, on Linux: only a REAPED pid errors. A zombie still has its entry and reads as
+// an EMPTY cmdline — as does, briefly, a process still coming up through execve. Neither
+// is a running agent yet, and every caller polls, so an empty read needs no special case:
+// the name simply does not match.
+func cmdlineIsAgent(cmdline []byte, readErr error, agentBin string, procfs bool) bool {
+	if readErr != nil {
+		// No /proc at all (a darwin dev host): the liveness signal alone has to do.
+		return !procfs
 	}
-	argv0 := string(b)
+	argv0 := string(cmdline)
 	if i := strings.IndexByte(argv0, 0); i >= 0 {
 		argv0 = argv0[:i]
 	}
 	return filepath.Base(argv0) == filepath.Base(agentBin)
 }
+
+// procfsPresent answers once whether this host exposes /proc; pidAlive runs in polling
+// loops and the answer cannot change while the process lives.
+var procfsPresent = sync.OnceValue(func() bool {
+	_, err := os.Stat("/proc/self/cmdline")
+	return err == nil
+})
 
 // Linux process start time makes a PID identity stable across reuse. On hosts
 // without /proc, the existing executable-name guard remains the best signal.
