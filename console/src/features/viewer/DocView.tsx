@@ -11,7 +11,9 @@ import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { MarkdownView } from "./MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { SelectionFloat } from "../../ui/SelectionFloat.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
+import { useSelectionCapture } from "../../lib/selectionCapture.ts";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
@@ -80,7 +82,6 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
   // Comments expanded to full text (neither quote nor body clipped). The list is collapsed by
   // default.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const pillRef = useRef<HTMLDivElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLOListElement>(null);
   // Follows the composer's send-key setting: Ctrl+Enter or Enter (lib/settings mirrorSend).
@@ -104,14 +105,8 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
   }, [comments, listOpen, expanded]);
 
   // Floating elements are measured after paint and then clamped, and re-clamped on resize while
-  // open, so splitting a pane or rotating a phone cannot leave the buttons unreachable.
-  useLayoutEffect(() => {
-    if (!pill || draft) return;
-    const fit = () => clampFixed(pillRef.current, pill.x, pill.y);
-    fit();
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
-  }, [pill, draft]);
+  // open, so splitting a pane or rotating a phone cannot leave the buttons unreachable. (The
+  // pill does the same through SelectionFloat, which also decides floating vs docked.)
   useLayoutEffect(() => {
     if (!draft) return;
     const fit = () => clampFixed(popRef.current, draft.x, draft.y);
@@ -129,9 +124,8 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
     applyQuoteMarks(root, key ? comments.map((c) => ({ quote: c.quote, nth: c.nth })) : []);
   }, [content, comments, key]);
 
-  // Show the pill once a selection settles. Touch selection (long press and drag) fires no
-  // mouseup, so selectionchange is also watched, debounced — same approach as ReaderView and
-  // FileView.
+  // Show the pill once a selection settles (lib/selectionCapture — shared with ReaderView,
+  // FileView and the transcript marks).
   const capture = () => {
     const root = bodyRef.current?.querySelector<HTMLElement>(".markdown");
     if (!key || !root) return;
@@ -147,20 +141,7 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
       y: Math.round(anchor.rect.top - PILL_OFFSET),
     });
   };
-  const captureRef = useRef(capture);
-  captureRef.current = capture;
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const onSelChange = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => captureRef.current(), 250);
-    };
-    document.addEventListener("selectionchange", onSelChange);
-    return () => {
-      document.removeEventListener("selectionchange", onSelChange);
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
+  useSelectionCapture(capture);
 
   const startDraft = () => {
     if (!pill) return;
@@ -197,7 +178,7 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
           </span>
         )}
       </ViewHead>
-      <div className="md-scroll" ref={bodyRef} onMouseUp={() => captureRef.current()}>
+      <div className="md-scroll" ref={bodyRef} onMouseUp={() => capture()}>
         <MarkdownView
           source={content || ""}
           onOpenFile={(path, line, column, openInNew) => {
@@ -269,7 +250,7 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
       {pill &&
         !draft &&
         createPortal(
-          <div className="sel-pill-group" ref={pillRef} style={{ left: pill.x, top: Math.max(EDGE, pill.y) }}>
+          <SelectionFloat x={pill.x} y={pill.y} className="sel-pill-group">
             <button
               type="button"
               className="sel-send-pill"
@@ -280,7 +261,7 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
             >
               <Icon name="comment-discussion" /> {tr("plan.add_comment")}
             </button>
-          </div>,
+          </SelectionFloat>,
           document.body,
         )}
       {draft &&

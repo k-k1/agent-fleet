@@ -4,8 +4,9 @@
 //
 // The order in which these two effects register on the surface is load-bearing; do not move
 // the call site in FileView.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { RefObject } from "react";
+import { useSelectionCapture } from "../../../lib/selectionCapture.ts";
 import { lineRangeOfSelection } from "./fileDom.ts";
 import { editorPill, type SelectionPill } from "../selectionPill.ts";
 import type { EditorSelectionReport } from "../../editor/selection.ts";
@@ -63,25 +64,10 @@ export function useSelectionPill(opts: {
   }, [editorSurface]);
 
   // Touch text-selection (long-press + drag handles on mobile) does NOT fire mouseup/
-  // keyup, so the pill never appeared on phones. `selectionchange` fires for touch too;
-  // debounce it (selection updates continuously while dragging the handles) and reuse the
-  // same capture. Keep a ref so the mount-once listener always calls the latest closure
-  // (captureSelection closes over sendOpen). captureSelection itself is scoped to this
-  // view's codegrid, so selections elsewhere just clear our pill.
-  const captureRef = useRef(captureSelection);
-  captureRef.current = captureSelection;
-  useEffect(() => {
-    let t: ReturnType<typeof setTimeout> | null = null;
-    const onSelChange = () => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => captureRef.current(), 250);
-    };
-    document.addEventListener("selectionchange", onSelChange);
-    return () => {
-      document.removeEventListener("selectionchange", onSelChange);
-      if (t) clearTimeout(t);
-    };
-  }, []);
+  // keyup, so the pill never appeared on phones. The shared subscription (lib/selectionCapture)
+  // watches `selectionchange`, which fires for touch too. captureSelection itself is scoped to
+  // this view's codegrid, so selections elsewhere just clear our pill.
+  useSelectionCapture(captureSelection);
 
   return { sel, setSel, captureSelection, captureEditorSelection };
 }

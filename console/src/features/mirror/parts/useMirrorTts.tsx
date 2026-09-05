@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../../../ui/Icon.tsx";
+import { SelectionFloat } from "../../../ui/SelectionFloat.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
+import { useSelectionCapture } from "../../../lib/selectionCapture.ts";
 import { displayName } from "../../../lib/sessionview.ts";
 import type { Session } from "../../../types/session.ts";
 import type { Settings } from "../../../lib/settings.ts";
@@ -354,22 +356,9 @@ export function useMirrorTts({
     const rect = range.getBoundingClientRect();
     setTtsPill({ x: Math.round(rect.left), y: Math.round(rect.top - 34), idx: Number(idx), body: turnBody, block });
   };
-  // A touch selection (long press + drag) fires no mouseup, so selectionchange updates it too,
-  // debounced and reading the latest closure through a ref — the same as ReaderView.
-  const ttsCaptureRef = useRef(captureTtsSel);
-  ttsCaptureRef.current = captureTtsSel;
-  useEffect(() => {
-    let t: ReturnType<typeof setTimeout> | null = null;
-    const onSelChange = () => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => ttsCaptureRef.current(), 250);
-    };
-    document.addEventListener("selectionchange", onSelChange);
-    return () => {
-      document.removeEventListener("selectionchange", onSelChange);
-      if (t) clearTimeout(t);
-    };
-  }, []);
+  // A touch selection (long press + drag) fires no mouseup, so selectionchange updates it too
+  // (lib/selectionCapture) — the same as ReaderView.
+  useSelectionCapture(captureTtsSel);
   // Auto read-aloud of a new answer (P2): assistant turns appended by polling go into the reading
   // queue — the active pane only, or every open pane under ttsAutoReadAllPanes, where panes
   // serialise by waiting on the single playback. The first load (tail) and a reset (idx winding
@@ -487,7 +476,7 @@ export function useMirrorTts({
   const pillPortal =
     ttsPill &&
     createPortal(
-      <div className="sel-pill-group" style={{ left: ttsPill.x, top: Math.max(4, ttsPill.y) }}>
+      <SelectionFloat x={ttsPill.x} y={ttsPill.y} className="sel-pill-group">
         <button
           type="button"
           className="sel-send-pill"
@@ -500,7 +489,7 @@ export function useMirrorTts({
         >
           <Icon name="unmute" /> {tr("chat.read_from_here")}
         </button>
-      </div>,
+      </SelectionFloat>,
       document.body,
     );
 

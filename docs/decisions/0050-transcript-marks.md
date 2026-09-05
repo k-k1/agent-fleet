@@ -133,3 +133,37 @@ show the pill) and `canRemove(mark)` (whether to show a delete route for that ma
   the list strip). All are implemented, and the checks on real hardware (long-press selection versus
   horizontal swipe on a phone, measuring the contrast, sharing between two accounts) are recorded in
   [docs/69](../log/69-transcript-marks.md) §69.11.
+
+## Addendum (2026-09-05): on a phone the colours are docked to the bottom edge
+
+Reported from a real Android phone: the colour swatches were **completely hidden** behind the
+browser's own text-selection menu (Copy / Share / Select all). Not a z-index problem — that menu
+is native UI drawn above all web content, and it is anchored **directly above the selection**,
+which is exactly where the pill was placed (`rect.top - 40`). It also spans most of a phone's
+width, so there is no room to dodge sideways, and it cannot be suppressed from the page
+(`-webkit-touch-callout` covers the iOS long-press callout on links, not the selection menu;
+suppressing it for real means `user-select: none` plus a hand-written selection, which costs
+Copy). iOS Safari puts its callout in the same place, so this is not Android-specific.
+
+**Decision 8 — where a selection-driven control goes is decided by the pointer, not by the
+surface.** On a fine pointer it keeps floating at the selection. On a **primary** coarse pointer
+(`(pointer: coarse)` — a phone or tablet, not a touchscreen laptop driven by a mouse) the whole
+group docks to the bottom edge, the one band the native menu never claims: a selection low enough
+to push the menu down makes it flip above the selection instead. Docked, the swatches also grow
+to a 40px tap target. One component owns this (`console/src/ui/SelectionFloat.tsx`) and all six
+selection-driven surfaces go through it — the marks, both read-aloud pills, the viewer's send
+pill and the plan-comment pill were separate copies of the same coordinates and the same bug.
+
+**Second defect found by reading that code, touch-only.** Tapping a control collapses the
+selection, `selectionchange` fires immediately and the capture 250 ms later cleared the control
+while the finger was still on it, so a tap held longer than the debounce did nothing. A mouse
+never saw it (every button cancels the mousedown that would collapse the selection; on touch the
+synthetic mousedown arrives long after the fact). A press now suspends capture until shortly
+after release, and the capture subscription itself is shared
+(`console/src/lib/selectionCapture.ts`).
+
+**None of this is verifiable by a test.** The native menu is not in the DOM and headless Chromium
+never draws it, so a control hidden underneath it looks correct to jsdom, to a CDP screenshot and
+to a desktop reviewer. What the tests pin is the decision (coarse ⇒ docked, and no inline `top`
+that would put the group back over the selection) and the press/capture ordering. Whether the
+control is reachable is a question only a real phone answers.

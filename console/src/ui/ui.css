@@ -891,3 +891,46 @@
 .view-spacer {
   flex: 1;
 }
+
+/* Selection-driven control groups (ui/SelectionFloat.tsx). The floating case keeps each caller's
+   own group class (.sel-pill-group, .tmark-pill); what is declared here is the docked case a
+   COARSE pointer gets, because the browser's native selection menu (Copy / Share / Select all)
+   is painted above all web content directly over the space above the selection. Two classes, so
+   the override beats the callers' single-class group rules whatever the @import order. */
+.sel-float {
+  position: fixed;
+  z-index: 60;
+}
+.sel-float.sel-float-docked {
+  left: 50%;
+  right: auto;
+  top: auto;
+  bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  /* `left: 50%` leaves a fixed box only the RIGHT half of the viewport to shrink-to-fit in (the
+     transform that centres it runs after layout), so four 40px swatches wrapped onto two rows at
+     393px wide — measured. max-content sizes to the row itself and max-width still folds it on a
+     narrow phone. */
+  width: max-content;
+  max-width: calc(100vw - 20px);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); /* the value both floating groups already use */
+}
+/* Docked means a thumb, not a mouse: the 22px swatch and the compact pill are both well under
+   the ~44px a finger needs, and they now sit in a bar with room to grow. */
+.sel-float-docked .tmark-swatch {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+}
+.sel-float-docked .sel-send-pill {
+  padding: 9px 14px;
+  font-size: 13px;
+}
