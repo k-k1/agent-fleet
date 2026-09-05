@@ -133,8 +133,9 @@ export function TranscriptTurn({
           sendDisabled={caps.planSendDisabled}
         />
       ) : item.p.kind === "userfile" ? (
-        // Files the agent shared via SendUserFile — a panel; each opens in a pane. With
-        // no way to open one (shared view), the panel is not rendered at all.
+        // Files the agent shared via SendUserFile — a panel; a card opens in a pane, an
+        // image card enlarges in the lightbox instead. With no way to open one (shared
+        // view), the panel is not rendered at all.
         caps.openFile ? (
           <UserFileBlock
             key={item.i}
@@ -142,6 +143,7 @@ export function TranscriptTurn({
             caption={item.p.caption}
             onOpen={caps.openFile}
             fileURL={caps.fileURL}
+            onZoom={caps.openImage}
           />
         ) : null
       ) : item.p.kind === "thinking" ? (

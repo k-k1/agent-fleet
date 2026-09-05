@@ -300,6 +300,7 @@ export const mirror = {
   // UserFileBlock / planTitle
   "mirror.shared_files": "共有ファイル",
   "mirror.open_in_pane": "別ペインで開く: {path}",
+  "mirror.zoom_image": "拡大表示: {path}",
   "mirror.plan_fallback": "プラン",
   "mirror.plan_expand": "プラン全文を表示",
   "mirror.plan_collapse": "プラン全文をたたむ",

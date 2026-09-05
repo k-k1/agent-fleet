@@ -6,7 +6,7 @@
 //
 //   ErrorBlock    onReauth          (was useSettingsUI.openSettings)
 //   PastedThumb   loadPastedImage   (was raw(api/sessions/{name}/pasted/…))
-//   FileThumb     fileURL           (was downloadURL)
+//   FileCard      fileURL           (was downloadURL)
 //
 // — which is what lets the shared-session view mount the same blocks without a route to
 // somebody else's Workspace. See capabilities.ts for the rule about absent callbacks.
@@ -1087,34 +1087,96 @@ export function PlanBlock({
 // FileThumb renders an inline preview of an image a card lists. The bytes come from
 // the caller's URL builder (the mirror's downloadURL carries the tenant as a query param,
 // so a plain <img src> works — no blob dance like PastedThumb, whose endpoint needs a
-// header). If the fetch fails (e.g. the path isn't under a servable root), it hides itself
-// so the card falls back to the icon+name row rather than showing a broken image.
-export function FileThumb({ path, fileURL }: { path: string; fileURL?: (path: string) => string }) {
-  const [failed, setFailed] = useState(false);
-  if (failed || !fileURL) return null;
+// header). A fetch that fails (e.g. the path isn't under a servable root) is reported to
+// the caller, which then stops rendering the thumb rather than showing a broken image.
+//
+// Deliberately stateless: a failure also restructures the card around it (FileCard), and
+// state inside a component that is remounted by that restructuring is not a memory — it
+// resets, the <img> mounts again and the broken picture comes back.
+export function FileThumb({ path, src, onFail }: { path: string; src: string; onFail: () => void }) {
   return (
     <span className="mt-file-thumb">
-      <img src={fileURL(path)} alt={baseName(path)} loading="lazy" onError={() => setFailed(true)} />
+      <img src={src} alt={baseName(path)} loading="lazy" onError={onFail} />
     </span>
   );
 }
 
+// FileCard is one shared file. A plain file is a single button that opens it in a pane.
+// An image whose thumbnail actually loaded is split in two: the card enlarges the picture
+// in place (lightbox), and only the corner button opens the pane — the pane is for editing
+// and diffing, looking at the picture is the common case and should not cost a pane. The
+// two targets cannot nest, so the card is a div here; `.mt-file-item` still carries the
+// frame either way. A thumbnail that fails to load falls back to the plain card: with no
+// picture on screen there is nothing to enlarge.
+function FileCard({
+  path,
+  onOpen,
+  fileURL,
+  onZoom,
+}: {
+  path: string;
+  onOpen: (path: string) => void;
+  fileURL?: (path: string) => string;
+  onZoom?: (url: string) => void;
+}) {
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const src = fileURL && imageFormat(path) ? fileURL(path) : "";
+  const showThumb = !!src && !thumbFailed;
+  const zoom = showThumb && onZoom ? () => onZoom(src) : null;
+  const body = (
+    <>
+      {showThumb && <FileThumb path={path} src={src} onFail={() => setThumbFailed(true)} />}
+      <span className="mt-file-top">
+        <FileIcon name={baseName(path)} />
+        <span className="mt-file-name">{baseName(path)}</span>
+        {!zoom && <Icon name="split-horizontal" className="mt-file-open" />}
+      </span>
+      <span className="mt-file-path muted">{path}</span>
+    </>
+  );
+  if (!zoom) {
+    return (
+      <button type="button" className="mt-file-item" title={tr("mirror.open_in_pane", { path })} onClick={() => onOpen(path)}>
+        {body}
+      </button>
+    );
+  }
+  return (
+    <div className="mt-file-item image">
+      <button type="button" className="mt-file-zoom" title={tr("mirror.zoom_image", { path })} onClick={zoom}>
+        {body}
+      </button>
+      <button
+        type="button"
+        className="mt-file-pane"
+        title={tr("mirror.open_in_pane", { path })}
+        aria-label={tr("mirror.open_in_pane", { path })}
+        onClick={() => onOpen(path)}
+      >
+        <Icon name="split-horizontal" />
+      </button>
+    </div>
+  );
+}
+
 // UserFileBlock shows the files an agent shared via SendUserFile as a compact panel:
-// an optional caption and one clickable row per file (icon + name + path), each opening
-// the file in its own split pane. Image files also get an inline thumbnail so the user
-// sees the picture in the mirror without opening it; clicking still opens the full
-// FileView. Paths are browse-root-relative (resolved server-side); a file outside the
-// browse root still lists here but will report an error on open (and its thumb hides).
+// an optional caption and one clickable card per file (icon + name + path). Image files
+// also get an inline thumbnail so the user sees the picture in the mirror without opening
+// it — see FileCard for which part of a card opens what. Paths are browse-root-relative
+// (resolved server-side); a file outside the browse root still lists here but will report
+// an error on open (and its thumb hides).
 export function UserFileBlock({
   files,
   caption,
   onOpen,
   fileURL,
+  onZoom,
 }: {
   files?: string[];
   caption?: string;
   onOpen: (path: string) => void;
   fileURL?: (path: string) => string;
+  onZoom?: (url: string) => void;
 }) {
   const list = files || [];
   if (list.length === 0) return null;
@@ -1128,15 +1190,7 @@ export function UserFileBlock({
       {caption && <div className="mt-files-caption">{caption}</div>}
       <div className={"mt-files-list" + (list.length > 1 ? " grid" : "")}>
         {list.map((p, i) => (
-          <button key={p + i} type="button" className="mt-file-item" title={tr("mirror.open_in_pane", { path: p })} onClick={() => onOpen(p)}>
-            {imageFormat(p) && <FileThumb path={p} fileURL={fileURL} />}
-            <span className="mt-file-top">
-              <FileIcon name={baseName(p)} />
-              <span className="mt-file-name">{baseName(p)}</span>
-              <Icon name="split-horizontal" className="mt-file-open" />
-            </span>
-            <span className="mt-file-path muted">{p}</span>
-          </button>
+          <FileCard key={p + i} path={p} onOpen={onOpen} fileURL={fileURL} onZoom={onZoom} />
         ))}
       </div>
     </div>
