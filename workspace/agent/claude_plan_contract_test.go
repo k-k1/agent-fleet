@@ -43,6 +43,7 @@ import (
 const (
 	planModalWait   = 4 * time.Minute
 	planOutcomeWait = 3 * time.Minute
+	planApproveWait = 30 * time.Second
 )
 
 // A tiny request that only makes claude produce a plan. In plan mode it stops at
@@ -180,8 +181,27 @@ func TestClaudePlanApprovalContractLive(t *testing.T) {
 	t.Logf("approve-key premise OK: default = %q (%d options)", opts[def].label, len(opts))
 
 	// The same keystroke production approves with (PLAN_APPROVE_KEYS = ["Enter"] in planDecision.ts).
-	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "Enter").CombinedOutput(); err != nil {
-		t.Fatalf("approve: %v: %s", err, out)
+	//
+	// Then confirm the modal actually closed. A single blind Enter has been seen not to register
+	// (2026-09-05): the run failed three minutes later at part B with "the plan never appeared in
+	// the transcript", i.e. a harness flake wearing a contract break's costume, and the same
+	// version passed on the re-run. Re-send once and, if it is still up, say which of the two it
+	// is - part B can then be trusted to mean what it says.
+	approve := func() {
+		if out, err := tmuxx.Cmd("send-keys", "-t", tn, "Enter").CombinedOutput(); err != nil {
+			t.Fatalf("approve: %v: %s", err, out)
+		}
+	}
+	approve()
+	if !waitPlanMenuGone(tn, planApproveWait) {
+		t.Logf("the approval keystroke did not close the modal within %s - re-sending Enter once", planApproveWait)
+		approve()
+		if !waitPlanMenuGone(tn, planApproveWait) {
+			t.Fatalf("the approval modal is still up after two Enters (%s). Production approves with "+
+				"Enter alone (PLAN_APPROVE_KEYS in planDecision.ts), so a reproducible failure here "+
+				"means the approve button no longer approves\npane:\n%s",
+				2*planApproveWait, tmuxx.CapturePane(tn))
+		}
 	}
 
 	// --- B: classify the outcome text through production's read path ---------------
@@ -276,6 +296,33 @@ func hasYesRow(opts []planMenuOption) bool {
 		if isYesLabel(o.label) {
 			return true
 		}
+	}
+	return false
+}
+
+// planMenuUp reports whether the ExitPlanMode modal is still on screen. It asks for the pointer
+// row (❯) as well as the options, because after approval the rendered history can still carry the
+// option lines while nothing is selectable any more.
+func planMenuUp(frame string) bool {
+	opts := parseLivePlanMenu(frame)
+	if len(opts) < 2 || !hasYesRow(opts) {
+		return false
+	}
+	for _, o := range opts {
+		if o.isDefault {
+			return true
+		}
+	}
+	return false
+}
+
+func waitPlanMenuGone(tn string, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if !planMenuUp(tmuxx.CapturePane(tn)) {
+			return true
+		}
+		time.Sleep(time.Second)
 	}
 	return false
 }
