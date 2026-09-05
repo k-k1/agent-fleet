@@ -1474,6 +1474,8 @@ export function MirrorView({
     loadPastedImage: (name) =>
       raw(`api/sessions/${q(session)}/pasted/${encodeURIComponent(name)}`).then((r) => (r.ok ? r.blob() : null)),
     fileURL: downloadURL,
+    // 512 is twice the card's 240 px cap, so it still looks right on a HiDPI screen.
+    thumbURL: (p: string) => downloadURL(p, 512),
     openFile,
     openImage: setLightbox,
     openDiff,

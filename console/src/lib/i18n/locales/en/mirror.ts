@@ -275,6 +275,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.reject_continue": "Reject (keep going)",
   "mirror.shared_files": "Shared files",
   "mirror.open_in_pane": "Open in another pane: {path}",
+  "mirror.zoom_image": "Enlarge: {path}",
   "mirror.plan_fallback": "Plan",
   "mirror.plan_expand": "Show the full plan",
   "mirror.plan_collapse": "Collapse the full plan",

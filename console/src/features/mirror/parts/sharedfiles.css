@@ -109,3 +109,49 @@
 .mt-file-item:hover .mt-file-open {
   opacity: 1;
 }
+/* An image card carries two targets (see FileCard): the card itself enlarges the picture,
+   the corner button opens the pane. The frame stays on .mt-file-item, so the inner button
+   resets everything a <button> brings with it and just re-lays out the column. */
+.mt-file-item.image {
+  position: relative;
+  padding: 0;
+}
+.mt-file-zoom {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: zoom-in;
+}
+/* Legible over any picture (the thumbnail reaches the card's top edge), and always
+   visible: on touch there is no hover to reveal it, and it is the only way to the pane. */
+.mt-file-pane {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+}
+.mt-file-pane:hover,
+.mt-file-pane:focus-visible {
+  opacity: 1;
+  border-color: var(--chat-accent);
+  background: color-mix(in srgb, var(--chat-accent) 14%, var(--bg));
+}
