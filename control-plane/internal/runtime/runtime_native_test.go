@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -117,6 +118,85 @@ func TestNativeStopCancellationWaitsForQuiescenceWithoutCleanup(t *testing.T) {
 	}
 	if sameNativeProcess(pid, rt.agentBin, "") {
 		t.Fatalf("old process %d still live when canceled Stop returned", pid)
+	}
+}
+
+// Pins the verdict for each way the /proc read can come back. The one that matters is a
+// missing entry on a host that HAS /proc: the read happens after Kill(pid, 0) already said
+// the pid exists, so the entry can only have vanished because the process was reaped —
+// and Start reaps in the background, so that window opens on every agent exit. Calling it
+// "alive" reports a dead agent as live, which is what turned
+// TestNativeStopCancellationWaitsForQuiescenceWithoutCleanup red on a loaded CI runner.
+func TestCmdlineIsAgentVerdicts(t *testing.T) {
+	const bin = "/opt/af/workspace-agent"
+	cases := []struct {
+		name     string
+		cmdline  []byte
+		readErr  error
+		procfs   bool
+		wantLive bool
+	}{
+		{"our agent", []byte("workspace-agent\x00-flag\x00"), nil, true, true},
+		{"pid recycled by something else", []byte("/usr/bin/vim\x00file\x00"), nil, true, false},
+		{"zombie: exited, not yet reaped", []byte{}, nil, true, false},
+		{"reaped between the signal probe and the read", nil, os.ErrNotExist, true, false},
+		{"no procfs on this host", nil, os.ErrNotExist, false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := cmdlineIsAgent(c.cmdline, c.readErr, bin, c.procfs); got != c.wantLive {
+				t.Fatalf("cmdlineIsAgent = %v, want %v", got, c.wantLive)
+			}
+		})
+	}
+}
+
+// The zombie and reaped cases against a real process, because the verdict rests on a
+// measured kernel behaviour: a process that has exited but not been reaped still answers
+// Kill(pid, 0) and still HAS a /proc entry — its cmdline is simply empty — while a reaped
+// one has no entry at all. If that ever flipped, pidAlive would start calling every
+// freshly stopped agent "alive".
+func TestPidAliveTreatsAZombieAsGone(t *testing.T) {
+	cmd := exec.Command("/bin/sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	pid := cmd.Process.Pid
+	// Polled, not asserted once: cmd.Start() returns as soon as execve is past its point
+	// of no return, and for a moment after that the kernel still shows an EMPTY cmdline
+	// (measured — asserting immediately fails perhaps one run in three). Liveness is the
+	// stable state here, so waiting for it is sound; the interesting assertions below are
+	// single-shot against a state that cannot heal.
+	deadline := time.Now().Add(2 * time.Second)
+	for !pidAlive(pid, "sleep") {
+		if time.Now().After(deadline) {
+			t.Fatal("a running process never read as alive")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := cmd.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	// Deliberately NOT reaped yet: wait for state Z rather than for cmd.Wait().
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		st, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+		if err == nil {
+			if i := strings.LastIndex(string(st), ") "); i >= 0 && strings.HasPrefix(string(st)[i+2:], "Z") {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Skip("the process never sat in Z long enough to observe (already reaped)")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if pidAlive(pid, "sleep") {
+		t.Fatal("a zombie reads as a live agent")
+	}
+	_ = cmd.Wait()
+	if pidAlive(pid, "sleep") {
+		t.Fatal("a reaped pid reads as a live agent")
 	}
 }
 
