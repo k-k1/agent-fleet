@@ -10,6 +10,7 @@ import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
 import { langFor, countLines, isMarpDoc, imageFormat, isDrawioFile, isPdfFile, documentFormat } from "../../lib/filemeta.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { SelectionFloat } from "../../ui/SelectionFloat.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { coarsePointer } from "../../lib/device.ts";
@@ -858,7 +859,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
       {sel &&
         !sendOpen &&
         createPortal(
-          <div className="sel-pill-group" style={{ left: sel.x, top: Math.max(4, sel.y) }}>
+          <SelectionFloat x={sel.x} y={sel.y} className="sel-pill-group">
             <button
               type="button"
               className="sel-send-pill"
@@ -878,7 +879,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
                 <Icon name="unmute" /> {tr("view.read_out")}
               </button>
             )}
-          </div>,
+          </SelectionFloat>,
           document.body,
         )}
       {sendOpen &&

@@ -38,6 +38,16 @@ export const coarsePointer = (): boolean =>
       (navigator.maxTouchPoints || 0) > 0,
   );
 
+// primaryCoarsePointer asks the narrower question: is the pointer the reader is USING a finger?
+// coarsePointer above answers "can this device be touched at all" — deliberately broad, because
+// suppressing autofocus on a hybrid laptop costs nothing. Placement cannot use that: a laptop
+// with a touchscreen would move its controls out of the way of a native selection menu its
+// browser never shows. `(pointer: coarse)` describes the PRIMARY input, so a phone and a tablet
+// match while a touchscreen laptop driven by a mouse does not. Evaluated at call time, so a
+// tablet that gains a keyboard/trackpad follows.
+export const primaryCoarsePointer = (): boolean =>
+  typeof window !== "undefined" && Boolean(window.matchMedia?.("(pointer: coarse)")?.matches);
+
 // isStandalonePWA detects the installed-app display mode (no browser chrome, so no
 // native reload button) — iOS Safari exposes this only via navigator.standalone,
 // everyone else via the display-mode media query.

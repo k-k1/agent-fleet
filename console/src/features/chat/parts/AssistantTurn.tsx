@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
+import { SelectionFloat } from "../../../ui/SelectionFloat.tsx";
 import { prettyModel } from "../../../lib/modelName.ts";
 import { t, useT } from "../../../lib/i18n/index.ts";
 import { useSettings } from "../../../lib/settings.ts";
@@ -148,7 +149,7 @@ export function AssistantTurn({
         {text && <ChatMarkdown source={text} breaks />}
       </div>
       {selPill && (
-        <div className="sel-pill-group" style={{ left: selPill.x, top: Math.max(4, selPill.y) }}>
+        <SelectionFloat x={selPill.x} y={selPill.y} className="sel-pill-group">
           <button
             type="button"
             className="sel-send-pill"
@@ -157,7 +158,7 @@ export function AssistantTurn({
           >
             <Icon name="unmute" /> {tr("chat.read_from_here")}
           </button>
-        </div>
+        </SelectionFloat>
       )}
       <div className="chat-msg-foot">
         {ts > 0 && <span className="cm-time">{formatMsgTS(ts)}</span>}

@@ -15,7 +15,9 @@ import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { SelectionFloat } from "../../ui/SelectionFloat.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
+import { useSelectionCapture } from "../../lib/selectionCapture.ts";
 import { useSettings, setSetting, READER_FONTS, readerFontStack } from "../../lib/settings.ts";
 import { useLocale, useT } from "../../lib/i18n/index.ts";
 import { startNarration, BLOCK_BEAT, SENT_BEAT, TAME_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
@@ -246,22 +248,8 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
   };
 
   // Touch selection (long press and drag) emits no mouseup, so the pill is also updated from
-  // selectionchange. That fires repeatedly, hence the debounce, and the effect runs once on
-  // mount, so the latest closure is reached through a ref.
-  const captureRef = useRef(captureSelection);
-  captureRef.current = captureSelection;
-  useEffect(() => {
-    let t: ReturnType<typeof setTimeout> | null = null;
-    const onSelChange = () => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => captureRef.current(), 250);
-    };
-    document.addEventListener("selectionchange", onSelChange);
-    return () => {
-      document.removeEventListener("selectionchange", onSelChange);
-      if (t) clearTimeout(t);
-    };
-  }, []);
+  // selectionchange (lib/selectionCapture).
+  useSelectionCapture(captureSelection);
   const togglePause = () => {
     const h = handleRef.current;
     if (!h) return;
@@ -420,11 +408,11 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
       )}
       {selPill &&
         createPortal(
-          <div className="sel-pill-group" style={{ left: selPill.x, top: Math.max(4, selPill.y) }}>
+          <SelectionFloat x={selPill.x} y={selPill.y} className="sel-pill-group">
             <button type="button" className="sel-send-pill" onMouseDown={(e) => e.preventDefault()} onClick={startFromSelection}>
               <Icon name="unmute" /> {tr("view.read_from_here")}
             </button>
-          </div>,
+          </SelectionFloat>,
           document.body,
         )}
     </div>

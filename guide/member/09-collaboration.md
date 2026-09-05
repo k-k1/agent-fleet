@@ -23,6 +23,9 @@ green, blue or pink — and the passage stays marked.
   them.
 - **Remove highlight** takes yours away. Removing one does not touch anybody else's.
 - Colour carries no meaning the product enforces — it means whatever your team decides.
+- On a phone or tablet the colours appear in a bar at the **bottom of the screen** instead of
+  beside the selection: your browser's own Copy / Share menu already covers the space just above
+  whatever you selected.
 
 Use it when a conversation is long and the interesting part is three screens up: a
 highlight survives, where "look at the bit about the retry" does not.

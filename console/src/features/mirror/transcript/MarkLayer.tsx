@@ -5,15 +5,18 @@
 // selection and click are document-level events, and one subscription per turn would mean 400
 // listeners on a long transcript.
 //
-// Positioning uses placeFixed (the same tool as the menu). Selections are captured from a debounced
-// selectionchange: a touch long-press selection emits no mouseup, so mouseup alone would miss it
-// (same approach as plan comments).
+// Placement is SelectionFloat's job: floating by the selection on a mouse, docked to the bottom
+// edge on a touch device, where the browser's own selection menu owns the space above the
+// selection. Selections are captured through useSelectionCapture (a touch long-press selection
+// emits no mouseup, so mouseup alone would miss it) — same as plan comments.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../../../ui/Icon.tsx";
+import { SelectionFloat } from "../../../ui/SelectionFloat.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
 import { placeFixed } from "../../../lib/placeFixed.ts";
+import { useSelectionCapture } from "../../../lib/selectionCapture.ts";
 import { selectionAnchor } from "../../viewer/quoteMarks.ts";
 import { MARK_CLASS } from "./markPaint.ts";
 import { MARKABLE_KINDS, MARK_COLORS, parseRootKey, type MarkColor, type TranscriptMark } from "./marks.ts";
@@ -29,8 +32,6 @@ const COLOR_LABEL: Record<MarkColor, () => string> = {
   pink: () => tr("mirror.mark.color.pink"),
 };
 
-/** How long to wait for the selection to settle. Same as plan comments. */
-const SELECT_DEBOUNCE = 250;
 /** Show the pill slightly above the selection. */
 const PILL_OFFSET = 40;
 
@@ -65,7 +66,6 @@ function rootOfSelection(): HTMLElement | null {
 export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [card, setCard] = useState<Card | null>(null);
-  const pillRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const capture = useCallback(() => {
@@ -97,20 +97,7 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
     });
   }, [marks]);
 
-  const captureRef = useRef(capture);
-  captureRef.current = capture;
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const onSel = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => captureRef.current(), SELECT_DEBOUNCE);
-    };
-    document.addEventListener("selectionchange", onSel);
-    return () => {
-      document.removeEventListener("selectionchange", onSel);
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
+  useSelectionCapture(capture);
 
   // Clicking an existing highlight shows who drew it and when (plus a remove action for whoever
   // may remove it).
@@ -140,11 +127,10 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  // Floating elements are measured after they render and then nudged into place, so a selection at
-  // the right edge cannot push the buttons off screen.
-  useEffect(() => {
-    if (draft && pillRef.current) placeFixed(pillRef.current, draft.x, draft.y);
-  }, [draft]);
+  // The card is measured after it renders and then nudged into place, so one opened at the right
+  // edge cannot push its buttons off screen. (The pill's own placement is SelectionFloat's.) The
+  // card is not selection-driven — tapping an existing mark makes no selection, so the native
+  // selection menu is not in play here.
   useEffect(() => {
     if (card && cardRef.current) placeFixed(cardRef.current, card.x, card.y);
   }, [card]);
@@ -162,7 +148,7 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
   return createPortal(
     <>
       {draft && (
-        <div className="tmark-pill" ref={pillRef} role="group" aria-label={tr("mirror.mark.pill")}>
+        <SelectionFloat x={draft.x} y={draft.y} className="tmark-pill" role="group" aria-label={tr("mirror.mark.pill")}>
           {MARK_COLORS.map((c) => (
             <button
               key={c}
@@ -174,7 +160,7 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
               onClick={() => paint(c)}
             />
           ))}
-        </div>
+        </SelectionFloat>
       )}
       {card && (
         <div className="tmark-card" ref={cardRef}>
