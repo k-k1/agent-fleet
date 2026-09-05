@@ -74,6 +74,9 @@
     "react-test-renderer": "^19.2.7",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "^0.9.12"
   }
 }
