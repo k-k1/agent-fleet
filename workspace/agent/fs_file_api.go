@@ -303,6 +303,26 @@ func handleFSDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := filepath.Base(path.display)
+	// `thumb=<max edge>` asks for a downscaled preview instead of the original bytes
+	// (fs_thumb.go). It is advisory: anything that cannot be scaled falls through to the
+	// original, so a caller needs no capability check and an older Agent that ignores the
+	// parameter is simply the fallback.
+	if edge := thumbEdge(r.URL.Query().Get("thumb")); edge > 0 {
+		if data, ct, ok := thumbnail(opened.file, path.display, fi.Size(), fi.ModTime(), edge); ok {
+			w.Header().Set("Content-Type", ct)
+			w.Header().Set("Content-Disposition", "inline; filename*=UTF-8''"+url.PathEscape(name))
+			// Short and revalidated rather than immutable: the URL names a path, not a
+			// revision, so a regenerated file has to be able to replace what a card is
+			// already showing. ServeContent answers the revalidation with a 304.
+			w.Header().Set("Cache-Control", "private, max-age=60")
+			http.ServeContent(w, r, name, fi.ModTime(), bytes.NewReader(data))
+			return
+		}
+		// No rewind needed before falling through: thumbnail() leaves the offset wherever
+		// its decode attempt stopped, and http.ServeContent seeks to the end for the size
+		// and back to the start itself. (Verified by removing this comment's assumption:
+		// the fallback test serves the whole file either way.)
+	}
 	ct := "application/octet-stream"
 	if it := imageContentType(name); it != "" {
 		ct = it

@@ -43,8 +43,14 @@ export interface TranscriptCaps {
    * Workspace, so there is nothing a recipient could fetch).
    */
   loadPastedImage?: (name: string) => Promise<Blob | null>;
-  /** Direct <img src> for a shared file. Absent → FileThumb renders nothing. */
+  /** Direct <img src> for a shared file, full size. Absent → FileCard shows no picture. */
   fileURL?: (path: string) => string;
+  /**
+   * The same bytes downscaled for a card-sized <img>. Absent → the card falls back to
+   * fileURL, which is correct but pulls the original (a shared render is megabytes to
+   * paint 190x240 px). Never used for the lightbox: enlarging must show the real file.
+   */
+  thumbURL?: (path: string) => string;
 
   // ── Navigation ────────────────────────────────────────────────────────────────
   /** Open a file in its own pane. Absent → UserFileBlock is not rendered. */

@@ -287,9 +287,16 @@ export function previewURL(port: string | number, path = "/"): string {
 // Build a download URL for a home-relative file. Opened as a top-level
 // navigation (anchor), so — like preview/terminal — the tenant rides as a query
 // param (a download click can't carry the X-AF-Tenant header fetch() injects).
-export function downloadURL(path: string): string {
+//
+// `thumb` asks the Agent for a preview downscaled to that longest edge instead of the
+// original bytes. It is advisory in both directions: an image the Agent cannot scale — and
+// an Agent too old to know the parameter — answers with the original, so a caller never
+// has to check first. Only ever pass it for an <img> that displays small: a viewer, a
+// lightbox and the download button all want the real file.
+export function downloadURL(path: string, thumb?: number): string {
   const u = new URL(rel("api/fs/download"));
   u.searchParams.set("path", path);
+  if (thumb) u.searchParams.set("thumb", String(thumb));
   if (selectedTenant) u.searchParams.set("tenant", selectedTenant);
   return u.toString();
 }

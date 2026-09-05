@@ -1112,17 +1112,23 @@ function FileCard({
   path,
   onOpen,
   fileURL,
+  thumbURL,
   onZoom,
 }: {
   path: string;
   onOpen: (path: string) => void;
   fileURL?: (path: string) => string;
+  thumbURL?: (path: string) => string;
   onZoom?: (url: string) => void;
 }) {
   const [thumbFailed, setThumbFailed] = useState(false);
-  const src = fileURL && imageFormat(path) ? fileURL(path) : "";
+  const full = fileURL && imageFormat(path) ? fileURL(path) : "";
+  // The card paints a downscaled copy; the lightbox always gets the real file. A shared
+  // render is megabytes, and letting the browser shrink it to 190x240 px would download
+  // every one of them before the panel could paint.
+  const src = full && thumbURL ? thumbURL(path) : full;
   const showThumb = !!src && !thumbFailed;
-  const zoom = showThumb && onZoom ? () => onZoom(src) : null;
+  const zoom = showThumb && onZoom ? () => onZoom(full) : null;
   const body = (
     <>
       {showThumb && <FileThumb path={path} src={src} onFail={() => setThumbFailed(true)} />}
@@ -1170,12 +1176,14 @@ export function UserFileBlock({
   caption,
   onOpen,
   fileURL,
+  thumbURL,
   onZoom,
 }: {
   files?: string[];
   caption?: string;
   onOpen: (path: string) => void;
   fileURL?: (path: string) => string;
+  thumbURL?: (path: string) => string;
   onZoom?: (url: string) => void;
 }) {
   const list = files || [];
@@ -1190,7 +1198,7 @@ export function UserFileBlock({
       {caption && <div className="mt-files-caption">{caption}</div>}
       <div className={"mt-files-list" + (list.length > 1 ? " grid" : "")}>
         {list.map((p, i) => (
-          <FileCard key={p + i} path={p} onOpen={onOpen} fileURL={fileURL} onZoom={onZoom} />
+          <FileCard key={p + i} path={p} onOpen={onOpen} fileURL={fileURL} thumbURL={thumbURL} onZoom={onZoom} />
         ))}
       </div>
     </div>

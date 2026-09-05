@@ -143,6 +143,7 @@ export function TranscriptTurn({
             caption={item.p.caption}
             onOpen={caps.openFile}
             fileURL={caps.fileURL}
+            thumbURL={caps.thumbURL}
             onZoom={caps.openImage}
           />
         ) : null

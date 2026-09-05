@@ -38,11 +38,15 @@ const turnsWith = (...files: string[]): Turn[] => [
 // The mirror's own capability set for this panel: a URL builder for the bytes, a pane and a
 // lightbox. (The shared-session view has none of them and drops the panel entirely — that is
 // TranscriptView.dom.test.tsx.)
+const FULL = (p: string) => `https://cp.example/api/fs/download?path=${encodeURIComponent(p)}`;
+const THUMB = (p: string) => `${FULL(p)}&thumb=512`;
+
 function ownerCaps(sink: { opened: string[]; zoomed: string[] }): TranscriptCaps {
   return {
     agentName: "Claude",
     session: "s1",
-    fileURL: (p: string) => `https://cp.example/api/fs/download?path=${encodeURIComponent(p)}`,
+    fileURL: FULL,
+    thumbURL: THUMB,
     openFile: (p: string) => sink.opened.push(p),
     openImage: (u: string) => sink.zoomed.push(u),
   };
@@ -60,11 +64,30 @@ describe("a shared image card", () => {
     expect(card!.querySelector("button button")).toBeNull(); // the targets are siblings, not nested
 
     click(el.querySelector(".mt-file-zoom"));
-    expect(sink.zoomed).toEqual(["https://cp.example/api/fs/download?path=out%2Fshot.png"]);
+    expect(sink.zoomed).toEqual([FULL("out/shot.png")]);
     expect(sink.opened).toEqual([]); // enlarging must not also open a pane
 
     click(el.querySelector(".mt-file-pane"));
     expect(sink.opened).toEqual(["out/shot.png"]);
+  });
+
+  it("paints the downscaled copy but enlarges the real file", () => {
+    // A shared render is megabytes; the card displays it at ~190x240 px. Painting the
+    // original here is invisible in a screenshot and only shows up as a slow panel, so
+    // the source of the <img> is worth pinning. The lightbox must NOT be downscaled.
+    const sink = { opened: [] as string[], zoomed: [] as string[] };
+    const el = render(turnsWith("out/shot.png"), ownerCaps(sink));
+
+    expect(el.querySelector<HTMLImageElement>(".mt-file-thumb img")!.getAttribute("src")).toBe(THUMB("out/shot.png"));
+    click(el.querySelector(".mt-file-zoom"));
+    expect(sink.zoomed).toEqual([FULL("out/shot.png")]);
+  });
+
+  it("still paints the original when the agent offers no downscaling", () => {
+    const sink = { opened: [] as string[], zoomed: [] as string[] };
+    const el = render(turnsWith("out/shot.png"), { ...ownerCaps(sink), thumbURL: undefined });
+
+    expect(el.querySelector<HTMLImageElement>(".mt-file-thumb img")!.getAttribute("src")).toBe(FULL("out/shot.png"));
   });
 
   it("falls back to the plain open-in-pane card when the thumbnail cannot load", () => {
