@@ -3,6 +3,11 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.15.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.15.1) — 2026-09-05
+
+workspace イメージを amd64 に加えて arm64 でも公開しました。`ecs-ec2` の配備で、公式の
+イメージのまま Graviton スロットを動かせます。コードは 0.15.0 と同一です。
+
 ## [0.15.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.15.0) — 2026-09-05
 
 ワークスペースのイメージが Debian 13 になり、ファイル一覧がエージェントの作業に自分で
