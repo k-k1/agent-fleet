@@ -20,7 +20,12 @@
 // - Vertical wins (|dx| <= |dy| is ignored) so scrolling is never stolen. Passing the
 //   long-press window (500ms) cancels the candidate, so dragging the mirror's selection
 //   handles cannot turn into an edge swipe.
+// - One finger only: a second one means a pinch (zooming an image, the page) and cancels
+//   the candidate, whenever it lands.
+// - While the page itself is pinch-zoomed, nothing is recognised at all: a drag there is
+//   the user panning the visual viewport.
 import { swipeBlocked } from "./swipeGuard.ts";
+import { zoom } from "./viewport.ts";
 
 /** Screen-state reads and side effects (App.tsx wires these to the store). */
 export interface SwipeSurfaces {
@@ -76,6 +81,16 @@ export function installSwipeGestures(win: Window, s: SwipeSurfaces): () => void 
   const onStart = (e: TouchEvent) => {
     const touch = e.touches[0];
     cancelGesture();
+    // A second finger is a pinch, never a session swipe. Leaving the candidate armed
+    // would rotate mid-pinch: touches[0] is the finger already down, and spreading two
+    // fingers carries it well past 70px sideways.
+    if (e.touches.length > 1) return;
+    // Once the page is pinch-zoomed, a one-finger drag pans the visual viewport to the
+    // part being read; clientX travels with it, so every pan used to change session or
+    // pull the drawer out. 1.01 is the same "not zoomed" tolerance as viewport.ts.
+    // (win is the app window here, which is what zoom() measures against.)
+    const vv = win.visualViewport;
+    if (vv && zoom(vv) > 1.01) return;
     const phone = s.phone();
     // Above phone width this is only active on touch devices (tablets); a mouse machine
     // has no use for an edge-swipe rail.
@@ -98,6 +113,12 @@ export function installSwipeGestures(win: Window, s: SwipeSurfaces): () => void 
 
   const onMove = (e: TouchEvent) => {
     if (!mode && !rotate) return;
+    // A finger landing after the gesture started (pinch out of a one-finger pan) turns
+    // it into a pinch; drop the candidate rather than measure the surviving finger.
+    if (e.touches.length > 1) {
+      cancelGesture();
+      return;
+    }
     const touch = e.touches[0];
     if (!touch) return;
     const dx = touch.clientX - sx;

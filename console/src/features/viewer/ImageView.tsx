@@ -156,6 +156,12 @@ export function ImageView({ src, alt, onLoad }: ImageViewProps) {
     <div
       ref={boxRef}
       className={"imgview" + (scale > 1 ? " zoomed" : "")}
+      // While zoomed, a horizontal drag pans the image, so the phone's swipe-to-rotate
+      // must stand down (swipeGuard.ts): panning a zoomed image used to switch session
+      // out from under the finger. The pan is a CSS transform, not a scroll container,
+      // so the guard cannot detect it on its own. At fit nothing here consumes the
+      // drag, and the swipe keeps working.
+      {...(scale > 1 ? { "data-no-swipe": "" } : {})}
       onDoubleClick={onDoubleClick}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
